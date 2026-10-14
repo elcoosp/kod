@@ -33,8 +33,9 @@ fn mock_handles_get_and_post() {
         eprintln!("probe: GET status = {}", r.status());
         assert!(r.status().is_success());
 
-        // POST /v1/chat/completions — non-streaming variant first to
-        // see whether the request even reaches the router.
+        // POST /v1/chat/completions, non-streaming: the mock answers
+        // with a plain JSON completion (per the OpenAI spec, an absent
+        // or false `stream` is non-streaming).
         let body = serde_json::json!({
             "model": "mock-model",
             "messages": [{"role": "user", "content": "hi"}],
@@ -45,10 +46,32 @@ fn mock_handles_get_and_post() {
             .json(&body)
             .send()
             .await
-            .expect("POST /v1/chat/completions");
-        eprintln!("probe: POST status = {}", r2.status());
+            .expect("POST /v1/chat/completions (non-streaming)");
+        eprintln!("probe: POST (stream=false) status = {}", r2.status());
+        assert!(r2.status().is_success());
         let text = r2.text().await.unwrap_or_default();
-        eprintln!("probe: POST body = {text}");
-        assert!(text.contains("data:"), "POST body missing SSE: {text}");
+        eprintln!("probe: POST (stream=false) body = {text}");
+        assert!(
+            text.contains("chat.completion") && !text.contains("data:"),
+            "non-streaming POST must return JSON, not SSE: {text}"
+        );
+
+        // POST with `stream: true` returns SSE.
+        let body = serde_json::json!({
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true,
+        });
+        let r3 = client
+            .post(format!("{base}/chat/completions"))
+            .json(&body)
+            .send()
+            .await
+            .expect("POST /v1/chat/completions (streaming)");
+        eprintln!("probe: POST (stream=true) status = {}", r3.status());
+        assert!(r3.status().is_success());
+        let text = r3.text().await.unwrap_or_default();
+        eprintln!("probe: POST (stream=true) body = {text}");
+        assert!(text.contains("data:"), "streaming POST body missing SSE: {text}");
     });
 }

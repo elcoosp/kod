@@ -5091,9 +5091,56 @@ impl TuiLoop {
                 }
             }
             "/export" => {
-                let arg = parts.next().map(|s| s.to_string());
+                // `/export --json <path>` writes the `Vec<Message>` JSON
+                // that `/load` reads back — the message `/load` prints
+                // on a non-JSON file has always named this flag, but it
+                // did not exist, so the documented round-trip was a
+                // dead end.
+                let mut json = false;
+                let mut path_arg: Option<String> = None;
+                for tok in parts.by_ref() {
+                    match tok {
+                        "--json" => json = true,
+                        other => path_arg = Some(other.to_string()),
+                    }
+                }
+                if json {
+                    let body = match serde_json::to_string_pretty(self.app.messages()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.app
+                                .push_system_message(&format!("Export failed: {e}"));
+                            return Ok(());
+                        }
+                    };
+                    match path_arg {
+                        None => {
+                            self.app.push_system_message(&format!(
+                                "Session JSON ({} bytes). To write it to a file, run /export --json <path>.",
+                                body.len(),
+                            ));
+                        }
+                        Some(path) => {
+                            let p = std::path::PathBuf::from(&path);
+                            let _ = std::fs::create_dir_all(
+                                p.parent().unwrap_or(std::path::Path::new(".")),
+                            );
+                            match std::fs::write(&p, body.as_bytes()) {
+                                Ok(()) => self.app.push_system_message(&format!(
+                                    "Exported session JSON ({} bytes) to {}",
+                                    body.len(),
+                                    p.display(),
+                                )),
+                                Err(e) => {
+                                    self.app.push_system_message(&format!("Export failed: {e}"))
+                                }
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 let markdown = self.app.export_markdown();
-                match arg {
+                match path_arg {
                     None => {
                         self.app
                             .push_system_message(&format!(

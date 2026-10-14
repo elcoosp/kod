@@ -57,6 +57,13 @@ pub enum MockStep {
         /// JSON string the model would emit as `function.arguments`.
         arguments: String,
     },
+    /// The request fails with an HTTP error before any content is
+    /// streamed. Exercises the provider's error path and the TUI's
+    /// error rendering.
+    Error {
+        status: u16,
+        message: String,
+    },
 }
 
 /// Per-request configuration shared by the router's handlers.
@@ -221,7 +228,21 @@ async fn models() -> axum::Json<serde_json::Value> {
 /// delta, then `[DONE]`.
 async fn chat_completions(
     State(state): State<Arc<AppState>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // The client streams by default; the swarm decomposer and other
+    // non-streaming callers set `"stream": false` and expect a plain
+    // JSON completion, not SSE. Branch on the body so both paths work.
+    // Per the OpenAI spec, an absent `stream` means `false`. The
+    // streaming provider path sets it explicitly; the swarm
+    // decomposer (non-streaming `generate`) omits it.
+    let stream_field = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("stream").cloned());
+    let streaming = stream_field.and_then(|s| s.as_bool()).unwrap_or(false);
+
     let n = state
         .request_count
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -230,7 +251,49 @@ async fn chat_completions(
     // answer rather than an empty stream.
     let step_index = n.min(state.script.len() - 1);
     let step = state.script[step_index].clone();
-    eprintln!("mock: serving chat completion #{n} (step {step_index})");
+    eprintln!(
+        "mock: serving chat completion #{n} (step {step_index}, streaming={streaming})"
+    );
+
+    // Non-streaming request: answer with one plain JSON completion.
+    if !streaming {
+        let content = match &step {
+            MockStep::Text(t) => t.clone(),
+            MockStep::ToolCall { .. } => String::new(),
+            MockStep::Error { status, message } => {
+                let body = serde_json::json!({
+                    "error": { "message": message, "type": "mock_error" }
+                });
+                let status = axum::http::StatusCode::from_u16(*status)
+                    .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+                return (status, axum::Json(body)).into_response();
+            }
+        };
+        let body = serde_json::json!({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "mock-model",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": content },
+                "finish_reason": "stop",
+            }],
+        });
+        return axum::Json(body).into_response();
+    }
+
+    // An `Error` step is an HTTP error response, not an SSE stream —
+    // the provider must surface it as a typed error before any
+    // content commits.
+    if let MockStep::Error { status, message } = &step {
+        let body = serde_json::json!({
+            "error": { "message": message, "type": "mock_error" }
+        });
+        let status = axum::http::StatusCode::from_u16(*status)
+            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        return (status, axum::Json(body)).into_response();
+    }
 
     let events = match step {
         MockStep::Text(t) => sse_text_events(&t, state.byte_by_byte),
@@ -240,9 +303,13 @@ async fn chat_completions(
             // one turn collapse into a single row.
             sse_tool_call_events(&name, &arguments, n)
         }
+        // Handled above.
+        MockStep::Error { .. } => unreachable!("error step returned before SSE"),
     };
     let stream = stream::iter(events.into_iter().map(Ok::<_, Infallible>));
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// SSE events for a tool call.

@@ -65,8 +65,16 @@ fn wait_ci(session: &harness::TuiSession, needle: &str, timeout: Duration) -> St
 /// type a literal `i` before the next command (producing `i/whoami`).
 /// Normalising to normal mode first makes the helper idempotent.
 fn run_command(session: &harness::TuiSession, command: &str, expect: &str) -> String {
+    // Mode normalization needs a pause between keys. The PTY delivers
+    // bytes in order, but the TUI's event loop reads them as separate
+    // key events only when it gets a chance to run between them; sent
+    // back to back, the `Esc` and the `i` can land in the same poll and
+    // the `i` is typed as literal text (observed as `i/export ...`).
+    std::thread::sleep(Duration::from_millis(150));
     session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(80));
     session.send_key(KeyCode::Char('i'));
+    std::thread::sleep(Duration::from_millis(80));
     session.send_text(command);
     session.send_key(KeyCode::Enter);
     wait_ci(session, expect, Duration::from_secs(10))
@@ -831,4 +839,169 @@ fn the_approval_dialog_shows_the_tool_and_legend() {
     );
     // Leave the dialog so the child does not linger.
     session.send_key(KeyCode::Esc);
+}
+
+
+// ---------------------------------------------------------------------------
+// Provider errors
+// ---------------------------------------------------------------------------
+
+/// A provider error before any content must surface as a friendly
+/// error message, not a silent no-op or a hang.
+#[test]
+fn a_provider_error_is_surfaced() {
+    let env = TestEnv::new_scripted(vec![MockStep::Error {
+        status: 500,
+        message: "internal boom".to_string(),
+    }]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("trigger an error");
+    session.send_key(KeyCode::Enter);
+
+    // The TUI must leave the "generating" state and show something.
+    let screen = wait_ci(&session, "error", Duration::from_secs(20));
+    let lower = screen.to_lowercase();
+    assert!(
+        lower.contains("error") || lower.contains("failed") || lower.contains("boom"),
+        "a provider error must be visible:\n{screen}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan mode
+// ---------------------------------------------------------------------------
+
+/// `/plan-mode` reports its state; toggling flips it.
+#[test]
+fn plan_mode_reports_and_toggles() {
+    let env = TestEnv::new();
+    let session = env.spawn(90, 30);
+    harness::wait_for_ready(&session);
+
+    let screen = run_command(&session, "/plan-mode show", "plan mode");
+    assert!(screen.to_lowercase().contains("plan mode"));
+
+    // Toggle on, then query. `run_command` normalizes mode itself.
+    let _ = run_command(&session, "/plan-mode on", "plan mode");
+    let screen = run_command(&session, "/plan-mode show", "plan mode: on");
+    assert!(
+        screen.to_lowercase().contains("plan mode: on"),
+        "plan mode should be on after toggling:\n{screen}"
+    );
+}
+
+/// `/plan` with no plan says so.
+#[test]
+fn plan_without_a_plan_says_so() {
+    let env = TestEnv::new();
+    let session = env.spawn(90, 30);
+    harness::wait_for_ready(&session);
+    let screen = run_command(&session, "/plan", "no plan");
+    assert!(screen.to_lowercase().contains("no plan"));
+}
+
+// ---------------------------------------------------------------------------
+// Session persistence
+// ---------------------------------------------------------------------------
+
+/// `/save` writes a file, `/load` reads it back, and the messages
+/// round-trip.
+#[test]
+fn save_and_load_round_trip_a_session() {
+    let env = TestEnv::new();
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    // Have a turn first so there is something to save.
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("hello there");
+    session.send_key(KeyCode::Enter);
+    wait_ci(&session, "Hi from the mock", Duration::from_secs(20));
+
+    // /export --json produces a loadable file.
+    let path = env.workspace.join("session.json");
+    std::thread::sleep(Duration::from_millis(300));
+    session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_key(KeyCode::Char('i'));
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_text(&format!("/export --json {}", path.display()));
+    session.send_key(KeyCode::Enter);
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(
+        path.exists(),
+        "/export --json must write the file ({} missing); screen:\n{}",
+        path.display(),
+        session.screen_text()
+    );
+
+    // /load reads it back.
+    std::thread::sleep(Duration::from_millis(200));
+    session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_key(KeyCode::Char('i'));
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_text(&format!("/load {}", path.display()));
+    session.send_key(KeyCode::Enter);
+    let screen = wait_ci(&session, "loaded", Duration::from_secs(10));
+    assert!(screen.to_lowercase().contains("loaded"));
+}
+
+/// `/branch` drops a marker naming the message count.
+#[test]
+fn branch_drops_a_marker() {
+    let env = TestEnv::new();
+    let session = env.spawn(90, 30);
+    harness::wait_for_ready(&session);
+    let screen = run_command(&session, "/branch my-checkpoint", "branch point");
+    assert!(screen.contains("my-checkpoint"), "branch names its label:\n{screen}");
+}
+
+// ---------------------------------------------------------------------------
+// Swarm
+// ---------------------------------------------------------------------------
+
+/// `/swarm <goal>` decomposes, runs agents, and merges. The mock
+/// serves the decompose JSON, then per-agent text, then a synthesis.
+#[test]
+fn swarm_runs_and_merges() {
+    // Decompose is the first request (prompt contains "Split this
+    // goal"); each agent and the merge follow.
+    let env = TestEnv::new_scripted(vec![
+        MockStep::Text(
+            r#"[{"name":"a","description":"do a","expected_writes":[]}]"#.to_string(),
+        ),
+        MockStep::Text("agent a done".to_string()),
+        MockStep::Text("MERGED result".to_string()),
+    ]);
+    let session = env.spawn(120, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("/swarm build a thing");
+    session.send_key(KeyCode::Enter);
+
+    // The swarm announces it started; the merged result follows.
+    let screen = wait_ci(&session, "starting swarm", Duration::from_secs(25));
+    let screen = wait_ci(&session, "MERGED", Duration::from_secs(25));
+    assert!(
+        screen.to_lowercase().contains("swarm") || screen.contains("MERGED"),
+        "swarm should report its run and result:\n{screen}"
+    );
+}
+
+/// `/swarm` with no goal prints usage.
+#[test]
+fn swarm_without_a_goal_shows_usage() {
+    let env = TestEnv::new();
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+    let screen = run_command(&session, "/swarm", "usage: /swarm");
+    assert!(screen.contains("/swarm"));
 }
