@@ -4,11 +4,11 @@
 
 Continuation of session 10's bug-hunt arc, targeting the class that has
 already produced real bugs twice: a config field that is parsed,
-stored, and silently never read. HEAD moved b345586 to 18f365f.
-One real bug fixed (ToolPolicy.network). A second real hit
-(redact_argument_paths) found but deliberately not fixed — it needs a
-design decision. A third candidate (ToolPolicy.domains) is flagged for
-one more grep. Tests: 4225 passing, 3 skipped, 0 leaks.
+stored, and silently never read. HEAD moved b345586 to 625b8b4.
+Two real bugs fixed: ToolPolicy.network (18f365f) and
+redact_argument_paths (625b8b4). A third candidate
+(ToolPolicy.domains) is flagged for one more grep. Tests: 4236
+passing, 3 skipped, 0 leaks.
 
 ## Current repo state
 
@@ -16,11 +16,11 @@ one more grep. Tests: 4225 passing, 3 skipped, 0 leaks.
 |---|---|
 | Repo | /Users/adm/Documents/Repos/kod |
 | Branch | main |
-| HEAD | 18f365f |
+| HEAD | 625b8b4 |
 | Working tree | clean |
 | Clippy | 0 warnings (workspace, all-targets, -D warnings) |
 | cargo fmt --check | clean |
-| Tests | 4225 passing, 3 skipped, 0 leaky |
+| Tests | 4236 passing, 3 skipped, 0 leaky |
 | Tags | v0.1.0 (997ab7f), v0.1.1 (193c8f7) |
 | Disk | ~15 GiB free |
 
@@ -98,7 +98,7 @@ test with:
 
 nextest exit 100. Restored, all three pass.
 
-### redact_argument_paths — parsed and dropped (REAL, NOT fixed)
+### redact_argument_paths — parsed and dropped (REAL, fixed in 625b8b4)
 
 Declared at crates/kod-config/src/config.rs:65, inside RedactConfig.
 The field's doc comment promises: when set, paths that match this list
@@ -113,26 +113,36 @@ is the declaration itself. The documented example is
 docs/brainstorms/KOD-IM-INTEGRATION-PLAN.md:317. It is not in
 docs/config-reference.md.
 
-Why it was not fixed: the doc supports two readings and they give
-different code.
+The doc supports two readings and they give different code.
 
 1. Wholesale: a tool call whose path argument matches the glob has its
-   entire arguments object redacted (the model sees a placeholder and
-   cannot reconstruct the call). This is "the model cannot see the
-   arguments at all", taken literally.
+   entire arguments object redacted.
 
 2. Field-scoped: only the credential-bearing field (content for
-   write_file, new_string for patch_file) is replaced, so the path
-   stays visible and the model can still reason about the call. This
-   is "when a write_file is about to place a literal credential",
-   taken literally.
+   write_file, new_string for patch_file) is replaced.
 
-These are not the same behaviour and a user reading the docs could
-expect either. Picking one without a design decision is guessing at
-intent, which session 10's handoff explicitly said not to do. Decide
-first, then implement.
+Resolution (625b8b4): the doc's operative clause is "the model cannot
+see the arguments at all", so the wholesale reading won. A matching
+call keeps its tool name and id but its arguments become a single
+explanatory JSON object -- valid JSON, so the provider wire layer and
+any downstream parser still see a well-formed ToolCall. The switch is
+independent of in_prompt: a normal coding session wants un-redacted
+read_file results but not a credential in an outgoing write_file.
 
-Relevant wiring, all verified this session:
+Wiring, as implemented:
+
+- kod_config::policy::arguments_path_matches_redact_list is the single
+  public matcher. It reuses extract_path_arg, resolve_path, and
+  glob_matches, so argument redaction cannot drift from the policy
+  engine's path semantics. Six tests pin it in kod-config.
+- kod_core::engine::state::redact_tool_call_arguments is the pure loop
+  (free function, unit-testable without an engine). Four tests.
+- redact_messages_for_prompt (crates/kod-core/src/engine/state.rs)
+  calls it as switch (a); in_prompt content redaction is switch (b).
+- One e2e test builds an engine with KOD_CONFIG_DIR pointing at a
+  config that sets redact_argument_paths, and asserts the secret is
+  gone from the wire-visible arguments. Proven to fail without the
+  wire-in (left: 0, right: 1; nextest rc=100).
 
 - ChatMessage (crates/kod-types/src/message.rs:8) already carries
   tool_calls: Vec<ToolCall> and tool_call_id: Option<String>.
@@ -171,11 +181,8 @@ written nor read, it is the same as redact_argument_paths.
 
 ## Where the next agent should pick up
 
-1. Decide the redact_argument_paths semantics (wholesale vs
-   field-scoped, above), then implement, test, and prove. This is the
-   single most concrete unstarted item.
-
-2. Resolve ToolPolicy.domains with one more grep (above). Small.
+1. Resolve ToolPolicy.domains with one more grep (above). Small.
+   It is the last candidate in this class.
 
 3. Re-run the config-field scan (below) after every fix in this
    class. The scan is mechanical and cheap, and each pass has found a
