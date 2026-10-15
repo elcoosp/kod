@@ -224,6 +224,33 @@ pub trait ProtocolHandler: Send + Sync {
             url: url.to_string(),
         })
     }
+
+    /// The filesystem path a `write` to this URL would touch, when the
+    /// scheme addresses a real file. The read/write tools run
+    /// `can_write` on this before dispatching, so a write-capable
+    /// handler cannot be used to bypass the path gates (`.git` deny,
+    /// allowlist, swarm write-set).
+    ///
+    /// `url_path_target` covers URLs that literally carry a path
+    /// (`conflict://rel/path`); this covers URLs that name a resource
+    /// the handler maps back to a path (`conflict://<id>` — a
+    /// registered block). Default `None`: a store scheme
+    /// (`artifact://`, `memory://`) writes no file.
+    fn write_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
+        let _ = (url, ctx);
+        None
+    }
+
+    /// The filesystem path a `resolve` of this URL reads, when the
+    /// scheme maps a resource back to a file (`conflict://<id>` — a
+    /// registered block). The read tool runs `can_read` on this
+    /// before dispatching, so the id form cannot bypass the
+    /// `forbidden_paths` check. Default `None`: a store scheme
+    /// (`artifact://`, `memory://`) reads no file.
+    fn read_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
+        let _ = (url, ctx);
+        None
+    }
 }
 
 /// The scheme → handler map.
@@ -345,6 +372,25 @@ impl ProtocolRouter {
                 known: self.known_schemes(),
             })?;
         handler.write(url, content, ctx).await
+    }
+
+    /// The filesystem path a `write` to `url` would touch, when the
+    /// handler maps the URL back to a file. `None` for a store scheme
+    /// or an unknown scheme. The write tool gates on this before
+    /// dispatching.
+    pub fn write_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
+        let scheme = scheme_of(url)?;
+        let handler = self.handlers.get(&scheme)?;
+        handler.write_target_path(url, ctx)
+    }
+
+    /// The filesystem path a `resolve` of `url` reads, when the
+    /// handler maps the URL back to a file. The read tool gates on
+    /// this before dispatching.
+    pub fn read_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
+        let scheme = scheme_of(url)?;
+        let handler = self.handlers.get(&scheme)?;
+        handler.read_target_path(url, ctx)
     }
 
     /// Convert a [`ProtocolError`] into a `KodError` that carries the

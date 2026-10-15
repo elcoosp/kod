@@ -337,6 +337,22 @@ impl ProtocolHandler for ConflictHandler {
         })
     }
 
+    fn read_target_path(&self, url: &str, _ctx: &ResolveContext) -> Option<PathBuf> {
+        let id = url.strip_prefix("conflict://")?;
+        let g = self.store.entries.lock().ok()?;
+        g.get(id).map(|reg| reg.path.clone())
+    }
+
+    fn write_target_path(&self, url: &str, _ctx: &ResolveContext) -> Option<PathBuf> {
+        // `conflict://<id>` writes a registered block; the id maps
+        // back to the file that was scanned. The write tool runs
+        // `can_write` on this path before dispatching, so the id form
+        // cannot bypass the `.git` deny / allowlist / write-set.
+        let id = url.strip_prefix("conflict://")?;
+        let g = self.store.entries.lock().ok()?;
+        g.get(id).map(|reg| reg.path.clone())
+    }
+
     async fn write(
         &self,
         url: &str,

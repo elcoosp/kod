@@ -349,6 +349,16 @@ impl Tool for ReadFileTool {
                 context.holder.clone(),
                 context.working_dir.clone(),
             );
+            // Gate the path a resolve would read. `url_path_target`
+            // covers a URL that literally carries a path; the
+            // handler's `read_target_path` covers a URL that names a
+            // resource it maps back to a path (`conflict://<id>`).
+            // Pre-fix the id form skipped `can_read`, so a
+            // `forbidden_paths` entry was bypassed.
+            if let Some(target) = router.read_target_path(path, &rctx) {
+                let resolved = context.resolve_path(&target.to_string_lossy())?;
+                context.can_read(&resolved)?;
+            }
             return match router.resolve(path, &rctx).await {
                 Ok(r) => {
                     // Tier 1.3 — a URL read is still a read. The
@@ -735,14 +745,26 @@ impl Tool for WriteFileTool {
                     reason: "File writing not permitted".to_string(),
                 });
             }
-            if let Some(target) = crate::internal_url::url_path_target(path) {
-                let resolved = context.resolve_path(&target.to_string_lossy())?;
-                context.can_write(&resolved)?;
-            }
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
             );
+            // Gate the path a write would touch. `url_path_target`
+            // covers a URL that literally carries a path
+            // (`conflict://rel/path`); the handler's
+            // `write_target_path` covers a URL that names a resource
+            // it maps back to a path (`conflict://<id>`). Pre-fix the
+            // id form skipped `can_write` entirely — the write-set,
+            // the `.git` deny, and the allowlist were all bypassed and
+            // the handler wrote the file directly.
+            if let Some(target) = crate::internal_url::url_path_target(path) {
+                let resolved = context.resolve_path(&target.to_string_lossy())?;
+                context.can_write(&resolved)?;
+            }
+            if let Some(target) = router.write_target_path(path, &rctx) {
+                let resolved = context.resolve_path(&target.to_string_lossy())?;
+                context.can_write(&resolved)?;
+            }
             return match router.write(path, content, &rctx).await {
                 Ok(()) => Ok(ToolResult::Success(serde_json::json!({
                     "path": path,
@@ -2154,6 +2176,127 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn conflict_id_read_bypasses_forbidden_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let f = temp.path().join("blocked.txt");
+        std::fs::write(
+            &f,
+            "before\n<<<<<<< HEAD\nSECRET_MARKER\n=======\nnew\n>>>>>>> x\nafter\n",
+        )
+        .unwrap();
+        let store = std::sync::Arc::new(crate::conflict_handler::ConflictStore::new());
+        let handler = crate::conflict_handler::ConflictHandler::new(store);
+        let router =
+            crate::internal_url::ProtocolRouter::new().register(std::sync::Arc::new(handler));
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            forbidden_paths: vec!["**/blocked.txt".to_string()],
+            ..Default::default()
+        });
+        ctx.protocol_router = Some(router);
+        let mut scan_ctx = ctx.clone();
+        scan_ctx.permissions.forbidden_paths = Vec::new();
+        let read = ReadFileTool::new();
+        let listing = read
+            .execute(
+                &serde_json::json!({ "path": "conflict://blocked.txt" }),
+                &scan_ctx,
+            )
+            .await
+            .unwrap();
+        let listing_text = match &listing {
+            ToolResult::Success(v) => v["content"].as_str().unwrap().to_string(),
+            other => panic!("scan failed: {other:?}"),
+        };
+        let id = listing_text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("conflict://"))
+            .unwrap_or_else(|| panic!("no id in {listing_text}"))
+            .to_string();
+        let r = read
+            .execute(
+                &serde_json::json!({ "path": format!("conflict://{id}") }),
+                &ctx,
+            )
+            .await;
+        // Refused either as a propagated PermissionDenied (the
+        // `can_read` gate) or as an error-shaped tool result.
+        match &r {
+            Err(_) | Ok(ToolResult::Error(_)) => {}
+            other => panic!("reading a forbidden file block by id must be refused, got: {other:?}"),
+        }
+    }
+
+    /// `write_file conflict://<id>` skipped `can_write` entirely. The
+    /// write path calls `can_write` only when `url_path_target`
+    /// returns `Some` — which it does for `conflict://<path>` but NOT
+    /// for a bare `conflict://<id>` (no slash/dot). The handler then
+    /// writes `reg.path` directly, bypassing the `.git` hard-deny, the
+    /// path allowlist, and the swarm write-set. A swarm agent whose
+    /// write-globs are `src/**` could resolve a conflict in a file
+    /// outside its claim.
+    #[tokio::test]
+    async fn conflict_id_write_bypasses_write_globs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let outside = temp.path().join("outside.txt");
+        std::fs::write(
+            &outside,
+            "before\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> x\nafter\n",
+        )
+        .unwrap();
+
+        let store = std::sync::Arc::new(crate::conflict_handler::ConflictStore::new());
+        let handler = crate::conflict_handler::ConflictHandler::new(store);
+        let router =
+            crate::internal_url::ProtocolRouter::new().register(std::sync::Arc::new(handler));
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        });
+        ctx.protocol_router = Some(router);
+        // The agent may only write under src/.
+        ctx.allowed_write_globs = Some(vec!["src/**".to_string()]);
+
+        // Scan to register the block and get its id.
+        let read = ReadFileTool::new();
+        let listing = read
+            .execute(
+                &serde_json::json!({ "path": "conflict://outside.txt" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let listing_text = match &listing {
+            ToolResult::Success(v) => v["content"].as_str().unwrap().to_string(),
+            other => panic!("scan failed: {other:?}"),
+        };
+        let id = listing_text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("conflict://"))
+            .unwrap_or_else(|| panic!("no id in {listing_text}"))
+            .to_string();
+
+        // Write via the bare id — outside the write set.
+        let w = WriteFileTool::new();
+        let r = w
+            .execute(
+                &serde_json::json!({
+                    "path": format!("conflict://{id}"),
+                    "content": "resolved",
+                }),
+                &ctx,
+            )
+            .await;
+        let allowed = matches!(&r, Ok(ToolResult::Success(_)));
+        assert!(
+            !allowed,
+            "a conflict://<id> write outside the write set must be refused, got: {r:?}"
+        );
+    }
 
     /// The internal-URL branch of `read_file` (conflict://, artifact://,
     /// …) checked `Refuse` but not `Redact`, so a protected file read
