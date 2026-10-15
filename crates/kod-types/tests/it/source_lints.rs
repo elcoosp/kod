@@ -496,3 +496,91 @@ fn no_bogus_watchdog_retry_event() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a content reader that honours `can_read` but not `read_protection`
+// ---------------------------------------------------------------------------
+//
+// `[policy.read_protection]` (redact/refuse for secret paths) is installed
+// by default, and `read_file` honours it. Four tools shipped without it —
+// grep (search.rs), git_diff (git.rs), the internal-URL branch of
+// read_file, and the speculative-read path — each returning a protected
+// file's content in the clear. The fix is always the same: consult
+// `context.read_protection` and redact or refuse.
+//
+// This lint flags a source file that reads file content (`read_to_string`
+// or `fs::read(`) and gates it with `can_read`, but never mentions
+// `read_protection`. Such a file is reading the filesystem on behalf of
+// the model and forgetting the protection layer.
+//
+// Exemptions: a file whose reads never reach the model (an internal
+// consumer, a test helper, a config loader). Listed explicitly so a new
+// content reader must either honour the protection or justify an entry.
+
+/// Files that read content + call `can_read` without consulting
+/// `read_protection`, reviewed as non-content-returning.
+///
+/// - `lsp_tools.rs`: reads a file only to send its text to the language
+///   server; the tool returns diagnostic metadata (file/line/column/
+///   severity/message), never file content. The LSP extension set
+///   (`.rs`/`.py`/`.ts`/`.go`) does not overlap the default protected set
+///   (`.env`/`.pem`/`.key`/`.ssh/**`), and even an overlapping user glob
+///   would only surface a diagnostic's message text.
+const READ_PROTECTION_EXEMPT: &[&str] = &["crates/kod-core-tools/src/lsp_tools.rs"];
+
+#[test]
+fn content_reader_must_consult_read_protection() {
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    for path in all_production_sources() {
+        let rel = path
+            .strip_prefix(workspace_root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if READ_PROTECTION_EXEMPT.contains(&rel.as_str()) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut reads_content = false;
+        let mut calls_can_read = false;
+        let mut mentions_protection = false;
+        let mut first_read_line = 0usize;
+        for (i, line) in production_lines(&path).iter().map(|(n, l)| (*n, l)) {
+            if is_comment(line) {
+                continue;
+            }
+            if line.contains("read_to_string") || line.contains("fs::read(") {
+                reads_content = true;
+                if first_read_line == 0 {
+                    first_read_line = i;
+                }
+            }
+            if line.contains("can_read") {
+                calls_can_read = true;
+            }
+            if line.contains("read_protection") {
+                mentions_protection = true;
+            }
+        }
+        let _ = content; // silence an unused warning on some targets
+        if reads_content && calls_can_read && !mentions_protection {
+            bad.push((
+                path.clone(),
+                first_read_line,
+                "reads content + can_read, never read_protection".to_string(),
+            ));
+        }
+    }
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "a content reader gates on `can_read` but never consults \
+             `read_protection` — a protected file's content would reach \
+             the model in the clear. Consult `context.read_protection` \
+             (redact or refuse) or add the file to \
+             `READ_PROTECTION_EXEMPT` with a reason:",
+        );
+    }
+}
