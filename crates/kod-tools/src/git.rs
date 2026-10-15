@@ -378,9 +378,30 @@ impl Tool for GitDiffTool {
         // external diff does not turn the call into a GUI launch.
         args.push("--no-color".to_string());
         args.push("--no-ext-diff".to_string());
+        // `[policy.read_protection]` is installed by default and
+        // `read_file` honours it, but `git_diff` shows file content
+        // too and called only `can_read`. An explicitly-named
+        // protected path is refused under `Refuse` (same posture as
+        // `read_file`); under `Redact` the rendered diff is masked
+        // below, which also covers the no-path (whole-repo) case.
+        let mut protected_for_redact = false;
         if let Some(p) = path {
             let resolved = context.resolve_path(p)?;
             context.can_read(&resolved)?;
+            if let Some(rp) = context.read_protection.as_ref()
+                && rp.matches(&resolved)
+            {
+                match rp.mode {
+                    kod_config::ReadMode::Refuse => {
+                        return Ok(ToolResult::Error(format!(
+                            "git_diff refused: {} matches a read-protection pattern.",
+                            resolved.display(),
+                        )));
+                    }
+                    kod_config::ReadMode::Redact => protected_for_redact = true,
+                    kod_config::ReadMode::Allow => {}
+                }
+            }
             // git wants a path relative to the repo root or a path git
             // understands; passing the canonical absolute path works
             // for both in-tree and sub-directory invocations.
@@ -394,6 +415,19 @@ impl Tool for GitDiffTool {
         };
 
         let (rendered, truncated) = truncate_git_output(&raw);
+
+        // Mask a protected path's changed lines. The redactor is the
+        // same one `read_file` uses, so the tools agree on what a
+        // secret is. It masks by value pattern, so it also covers a
+        // whole-repo diff whose content touches a protected file.
+        let rendered = if protected_for_redact {
+            match context.redactor.as_ref() {
+                Some(r) => r.redact(&rendered).0,
+                None => rendered,
+            }
+        } else {
+            rendered
+        };
 
         Ok(ToolResult::Success(serde_json::json!({
             "staged": staged,
@@ -866,6 +900,51 @@ mod tests {
             }
             other => panic!("expected success, got {other:?}"),
         }
+    }
+
+    /// `git_diff` shows file content and honoured only `can_read`.
+    /// Like `read_file` and `search_files`, it must respect
+    /// `[policy.read_protection]`: a diff of a protected file (a
+    /// `.env` change) otherwise hands the model the secret that
+    /// `read_file` would have redacted.
+    #[tokio::test]
+    async fn git_diff_does_not_leak_a_protected_path() {
+        let (_tmp, repo) = init_repo().await;
+        // Commit a first version so a later change shows in `git diff`
+        // (an untracked file produces no diff at all).
+        std::fs::write(repo.join(".env"), "API_KEY=placeholder\n").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&repo)
+            .status();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-q", "-m", "seed", "--no-verify"])
+            .current_dir(&repo)
+            .status();
+        std::fs::write(
+            repo.join(".env"),
+            "API_KEY=sk-abcdef1234567890ABCDEFGH\nMORE=x\n",
+        )
+        .unwrap();
+
+        let mut ctx = git_ctx(&repo);
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/.env".to_string()],
+        });
+
+        let tool = GitDiffTool::new();
+        let result = tool
+            .execute(&serde_json::json!({ "path": ".env" }), &ctx)
+            .await
+            .unwrap();
+        let body = format!("{result:?}");
+        assert!(
+            !body.contains("sk-abcdef"),
+            "git_diff leaked a protected file's secret: {body}"
+        );
     }
 
     #[tokio::test]

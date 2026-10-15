@@ -100,6 +100,26 @@ impl Tool for SearchFilesTool {
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
+        // `[policy.read_protection]` is installed by default and
+        // `read_file` honours it, but this tool called only
+        // `can_read` (the permission bitmask) and walked straight
+        // past the protection. An explicitly-named protected file is
+        // refused under `Refuse`, exactly as `read_file` refuses it;
+        // under `Redact` the *displayed* lines are redacted below.
+        let protection = context.read_protection.as_ref();
+        let protected = |p: &std::path::Path| -> Option<kod_config::ReadMode> {
+            let rp = protection?;
+            if rp.matches(p) { Some(rp.mode) } else { None }
+        };
+        if resolved.is_file()
+            && let Some(kod_config::ReadMode::Refuse) = protected(&resolved)
+        {
+            return Ok(ToolResult::Error(format!(
+                "search_files refused: {} matches a read-protection pattern.",
+                resolved.display(),
+            )));
+        }
+
         let folded = if case_insensitive {
             format!("(?i){}", pattern)
         } else {
@@ -135,6 +155,13 @@ impl Tool for SearchFilesTool {
         let mut truncated = false;
 
         'outer: for file in files {
+            // A read-protected file is never searched under `Refuse`
+            // (the same posture `read_file` takes); under `Redact`
+            // its matched lines are masked below.
+            let file_mode = protected(&file);
+            if let Some(kod_config::ReadMode::Refuse) = file_mode {
+                continue;
+            }
             // M-38: cap before reading (grep's limit) — a multi-GB log
             // otherwise OOMs before the match loop.
             if let Ok(md) = std::fs::metadata(&file)
@@ -146,6 +173,16 @@ impl Tool for SearchFilesTool {
                 Ok(t) => t,
                 Err(_) => continue,
             };
+            // When the file is protected and the mode is `Redact`,
+            // mask each displayed line before it reaches the model.
+            // Matching itself runs on the raw text so line numbers
+            // and hit positions stay exact; only the shown content is
+            // sanitized.
+            let redact_line: Option<&kod_types::redact::Redactor> =
+                match (file_mode, context.redactor.as_ref()) {
+                    (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
+                    _ => None,
+                };
             let lines: Vec<&str> = text.lines().collect();
             for (idx, line) in lines.iter().enumerate() {
                 if regex.is_match(line) {
@@ -160,6 +197,13 @@ impl Tool for SearchFilesTool {
                             format!("{}…", s)
                         } else {
                             l.to_string()
+                        };
+                        // Mask a protected file's shown line. The
+                        // redactor is the same one `read_file` uses,
+                        // so the two tools agree on what a secret is.
+                        let truncated_line = match redact_line {
+                            Some(r) => r.redact(&truncated_line).0,
+                            None => truncated_line,
                         };
                         block.push_str(&format!(
                             "{} {:>5} | {}\n",
@@ -234,6 +278,48 @@ mod coverage_search_files_tool {
             }
             other => panic!("got {other:?}"),
         }
+    }
+
+    /// A directory-wide grep must not surface a read-protected
+    /// file's content. `read_file` honours `[policy.read_protection]`
+    /// (redact/refuse), but `SearchFilesTool` called only `can_read`
+    /// (the permission bitmask) and walked straight past the
+    /// protection — so `grep pattern=KEY path=.` returned the secret
+    /// line from a `.env` that `read_file` would have redacted.
+    /// `read_protection` is installed by default (CLI/TUI call
+    /// `set_read_protection`), so this was live.
+    #[tokio::test]
+    async fn grep_does_not_leak_a_protected_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(".env"),
+            "API_KEY=sk-abcdef1234567890ABCDEFGH\nOTHER=ok\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("normal.rs"), "let x = 1;\n").unwrap();
+
+        let mut ctx = ctx(tmp.path());
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/.env".to_string()],
+        });
+
+        let tool = SearchFilesTool::new();
+        // A pattern that matches the secret line.
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "API_KEY"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let body = format!("{r:?}");
+        assert!(
+            !body.contains("sk-abcdef"),
+            "grep leaked a protected file's secret: {body}"
+        );
     }
 
     #[tokio::test]
