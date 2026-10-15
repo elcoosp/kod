@@ -2138,6 +2138,151 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 mod tests {
     use super::*;
 
+    /// CLASS-LEVEL INVARIANT for every `read_file` content path.
+    ///
+    /// Four bugs (37771f1, 64b631f, 79774d0, and the speculative
+    /// redaction leak) shared one shape: a content path returned
+    /// bytes that violated an invariant the *other* path honoured.
+    /// Rather than one test per bug, this drives the full matrix of
+    /// {prefetched, disk} x {numbered, plain} x {single-line secret,
+    /// multi-line secret, no secret} and asserts the two invariants
+    /// every path must satisfy:
+    ///
+    /// 1. SECURITY: a secret matching read-protection never appears
+    ///    in the returned `content`, on any path.
+    /// 2. CONSISTENCY: when a `tag` is returned (the model may edit),
+    ///    the numbered `N:` labels must address the RAW file's lines
+    ///    — label N's text equals raw line N — because the edit
+    ///    store snapshotted the raw bytes. No tag is acceptable (the
+    ///    model just cannot edit); a WRONG tag is not.
+    ///
+    /// A new content path that skips redaction or renumbers the view
+    /// fails here, not in production.
+    #[tokio::test]
+    async fn read_file_content_invariants_hold_across_paths() {
+        const SINGLE_LINE: &str = "OPENAI=sk-abcdef1234567890ABCDEFGH\ncomment = \"x\"\n";
+        const MULTI_LINE: &str =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n";
+        const NO_SECRET: &str = "fn main() {}\n// second\n";
+
+        // (file body, protect it?, expected secret fragment or "")
+        let cases: &[(&str, bool, &str)] = &[
+            (SINGLE_LINE, true, "sk-abcdef"),
+            (MULTI_LINE, true, "MIIEowIBAAKCAQEA"),
+            (NO_SECRET, false, ""),
+        ];
+
+        for (body, protected, secret) in cases {
+            for &numbered in &[false, true] {
+                for &prefetch in &[false, true] {
+                    let temp = tempfile::TempDir::new().unwrap();
+                    let name = if *protected { "secret.env" } else { "plain.rs" };
+                    let path = temp.path().join(name);
+                    std::fs::write(&path, body).unwrap();
+
+                    let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+                        read_files: true,
+                        ..Default::default()
+                    });
+                    ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::edit_hashline::EditStore::new(),
+                    )));
+                    if *protected {
+                        ctx.redactor =
+                            Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+                        ctx.read_protection = Some(kod_config::ReadProtection {
+                            enabled: true,
+                            mode: kod_config::ReadMode::Redact,
+                            deny: vec!["**/*.env".to_string()],
+                        });
+                    }
+                    if prefetch {
+                        let canonical = std::fs::canonicalize(&path).unwrap();
+                        ctx.prefetched_read = Some(crate::context::PrefetchedRead {
+                            path: canonical,
+                            text: body.to_string(),
+                        });
+                    }
+
+                    let params = serde_json::json!({ "path": name, "numbered": numbered });
+                    let r = ReadFileTool::new().execute(&params, &ctx).await.unwrap();
+                    let v = match r {
+                        ToolResult::Success(v) => v,
+                        other => panic!(
+                            "read_file({name}, numbered={numbered}, prefetch={prefetch}) \
+                             must succeed, got {other:?}"
+                        ),
+                    };
+                    let shown = v["content"].as_str().unwrap();
+                    let label = format!("file={name} numbered={numbered} prefetch={prefetch}");
+
+                    // Invariant 1: SECURITY.
+                    if !secret.is_empty() {
+                        assert!(!shown.contains(secret), "{label}: secret leaked: {shown:?}");
+                    }
+
+                    // Invariant 2: CONSISTENCY. A returned tag means
+                    // the model may edit, so the labels must be the
+                    // raw file's line numbers.
+                    let has_tag = v.get("tag").and_then(|t| t.as_str()).is_some();
+                    if has_tag {
+                        let raw_lines: Vec<&str> = body.lines().collect();
+                        // A tag means the model may edit, and every
+                        // edit addresses a RAW line number. So the
+                        // numbered view must carry exactly one `N:`
+                        // row per raw line — no more (a prepended
+                        // notice adds a phantom row) and no fewer (a
+                        // multi-line secret collapsed to one row).
+                        // This count check is what catches a numbering
+                        // shift that a per-line "row exists" check
+                        // would miss.
+                        let n_rows = shown
+                            .lines()
+                            .filter(|l| {
+                                l.split_once(':')
+                                    .map(|(n, _)| {
+                                        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .count();
+                        assert_eq!(
+                            n_rows,
+                            raw_lines.len(),
+                            "{label}: tag present but the numbered view has \
+                             {n_rows} rows for {} raw lines — labels do not \
+                             address the raw bytes: {shown:?}",
+                            raw_lines.len(),
+                        );
+                        for (i, raw_line) in raw_lines.iter().enumerate() {
+                            let want = format!("{}:", i + 1);
+                            let got =
+                                shown
+                                    .lines()
+                                    .find(|l| l.starts_with(&want))
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "{label}: tag present but no {want} row \
+                                         (line {n} unaddressable): {shown:?}",
+                                            n = i + 1
+                                        )
+                                    });
+                            if secret.is_empty() {
+                                assert_eq!(
+                                    got,
+                                    format!("{}:{}", i + 1, raw_line),
+                                    "{label}: line {n} label does not address \
+                                     the raw line",
+                                    n = i + 1
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Concurrent `atomic_write` calls to *different* files in the
     /// same directory must all succeed. Pre-fix the temp filename
     /// was `.{pid}-{nanos}` — same dir, same pid, same microsecond
