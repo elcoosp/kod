@@ -4,11 +4,11 @@
 
 Continuation of session 10's bug-hunt arc, targeting the class that has
 already produced real bugs twice: a config field that is parsed,
-stored, and silently never read. HEAD moved b345586 to 625b8b4.
-Two real bugs fixed: ToolPolicy.network (18f365f) and
-redact_argument_paths (625b8b4). A third candidate
-(ToolPolicy.domains) is flagged for one more grep. Tests: 4236
-passing, 3 skipped, 0 leaks.
+stored, and silently never read. HEAD moved b345586 to a0332b2.
+Three real bugs fixed: ToolPolicy.network (18f365f),
+redact_argument_paths (625b8b4), and ToolPolicy.domains (a0332b2).
+All three are security-relevant and unreleased. Tests: 4248 passing,
+3 skipped, 0 leaks.
 
 ## Current repo state
 
@@ -16,11 +16,11 @@ passing, 3 skipped, 0 leaks.
 |---|---|
 | Repo | /Users/adm/Documents/Repos/kod |
 | Branch | main |
-| HEAD | 625b8b4 |
+| HEAD | a0332b2 |
 | Working tree | clean |
 | Clippy | 0 warnings (workspace, all-targets, -D warnings) |
 | cargo fmt --check | clean |
-| Tests | 4236 passing, 3 skipped, 0 leaky |
+| Tests | 4248 passing, 3 skipped, 0 leaky |
 | Tags | v0.1.0 (997ab7f), v0.1.1 (193c8f7) |
 | Disk | ~15 GiB free |
 
@@ -163,38 +163,42 @@ Wiring, as implemented:
   KodConfig::load_cached().security.redact.redact_argument_paths, the
   same cached-load pattern the existing redaction helpers use.
 
-### ToolPolicy.domains — third candidate, verify before acting
+### ToolPolicy.domains — parsed and dropped (REAL, fixed in a0332b2)
 
 Declared at crates/kod-config/src/policy.rs:114, sibling of network.
-The non-test scan for .domains found exactly one occurrence: a doc
-comment at crates/kod-tools/src/context.rs:739 that says "Populated by
-the engine from ToolPolicy.domains when a ...". No production read of
-the field was found. That doc comment may be another
-assertion-of-behaviour-that-does-not-exist (the session-10 lint
-no_bogus_watchdog_retry_event exists precisely because that shape
-keeps recurring).
+ToolContext.allowed_domains is enforced in crates/kod-tools/src/web.rs
+(a non-empty list restricts web_fetch to those hosts), but nothing
+populated it. The doc comment at context.rs:739 claimed "the engine
+from ToolPolicy.domains" did; that was false -- the third
+assertion-of-behaviour-that-does-not-exist this class has produced. A
+[tools.web_fetch] domains = [...] allow-list was parsed, stored, and
+silently ignored.
 
-Do not assume. Run one grep for the struct-literal write (domains:)
-and the field at context.rs:739, then decide. If the field is written
-but never read, it is the same bug as network; if it is neither
-written nor read, it is the same as redact_argument_paths.
+Fix: PolicyEngine::web_fetch_allowed_domains() reads the effective
+per-tool policy; KodEngine::web_fetch_allowed_domains_setting() returns
+it (empty when no policy is installed); the per-call context builder
+assigns ToolContext.allowed_domains. The inline subdomain match in
+web.rs became domain_allowed() (case-insensitive, '.'-prefix so
+notdocs.rs does not match docs.rs).
+
+Tests: 2 accessor (kod-config), 2 engine wiring, 7 domain_allowed, and
+an e2e that installs an allow-list and drives a real web_fetch round --
+it refuses evil.example.com before any network call. The e2e was
+proven to fail without the populate (the fetch reached DNS lookup
+instead of the policy refusal).
 
 ## Where the next agent should pick up
 
-1. Resolve ToolPolicy.domains with one more grep (above). Small.
-   It is the last candidate in this class.
+1. Re-run the config-field scan (below). All three known hits are
+   fixed; the next pass either finds a new field in this class or
+   confirms none remain. The scan is mechanical and cheap.
 
-3. Re-run the config-field scan (below) after every fix in this
-   class. The scan is mechanical and cheap, and each pass has found a
-   real bug.
-
-4. v0.1.0 still carries the PolicyEngine security bug. Unchanged from
+2. v0.1.0 still carries the PolicyEngine security bug. Unchanged from
    session 10. Options: mark it superseded, delete it, or regenerate
    its notes from git-cliff.
 
-5. Cut a release whenever a security-relevant fix lands. 18f365f is
-   security-relevant (a placebo security knob, now enforced) and is
-   unreleased. This is a habit, not a bug hunt.
+3. Cut a release. Three security-relevant fixes (18f365f, 625b8b4,
+   a0332b2) are unreleased. This is a habit, not a bug hunt.
 
 ### The config-field scan (reproducible)
 
