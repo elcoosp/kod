@@ -16,6 +16,17 @@ impl KodEngine {
         *self.policy.write().await = Some(policy);
     }
 
+    /// The effective `web_fetch` domain allow-list from the installed
+    /// policy, or empty when no policy is installed (no restriction).
+    /// The per-call context builder threads this into
+    /// `ToolContext.allowed_domains`.
+    pub async fn web_fetch_allowed_domains_setting(&self) -> Vec<String> {
+        match self.policy.read().await.as_ref() {
+            Some(p) => p.web_fetch_allowed_domains(),
+            None => Vec::new(),
+        }
+    }
+
     /// Install the MCP host (D6.1). Called by the CLI/TUI at startup
     /// when `[mcp.servers]` is non-empty. When this is not called,
     /// no MCP tools are registered — a session without MCP is the
@@ -345,5 +356,108 @@ impl LearnedAllow {
             tool_name: call.tool_name.clone(),
             args_hash: format!("{h:016x}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod web_fetch_domains_wiring_tests {
+    //! `ToolPolicy.domains` was declared and documented but never
+    //! consumed. The engine reads it via
+    //! `web_fetch_allowed_domains_setting`, which the per-call
+    //! context builder threads into `ToolContext.allowed_domains`.
+
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    fn engine() -> KodEngine {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let e = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+        std::mem::forget(tmp);
+        e
+    }
+
+    fn policy_with_domains(domains: Option<Vec<String>>) -> Arc<kod_config::PolicyEngine> {
+        policy_with_domains_and_mode(domains, None)
+    }
+
+    fn policy_with_domains_and_mode(
+        domains: Option<Vec<String>>,
+        mode: Option<kod_config::Decision>,
+    ) -> Arc<kod_config::PolicyEngine> {
+        let mut policy = kod_config::Policy {
+            preset: kod_config::Preset::Standard,
+            ..kod_config::Policy::default()
+        };
+        let mut tools = BTreeMap::new();
+        tools.insert(
+            "web_fetch".to_string(),
+            kod_config::ToolPolicy {
+                domains,
+                mode,
+                ..Default::default()
+            },
+        );
+        policy.tools = tools;
+        Arc::new(kod_config::PolicyEngine::from_effective_for_tests(policy))
+    }
+
+    #[tokio::test]
+    async fn no_policy_means_no_domain_restriction() {
+        let e = engine();
+        assert!(e.web_fetch_allowed_domains_setting().await.is_empty());
+    }
+
+    // End-to-end: the installed allow-list reaches a real
+    // `web_fetch` round and refuses a non-allowlisted host *before*
+    // any network call (the domain check precedes URL parsing and the
+    // SSRF filter). This is the wire-in the accessor test does not
+    // cover.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn web_fetch_refuses_a_non_allowlisted_domain() {
+        let e = engine();
+        e.set_network_access(true);
+        // Allow web_fetch so the policy gate does not fire before
+        // the domain check; the domain list is what must refuse.
+        e.set_policy(policy_with_domains_and_mode(
+            Some(vec!["docs.rs".to_string()]),
+            Some(kod_config::Decision::Allow),
+        ))
+        .await;
+        e.start().await.unwrap();
+
+        let calls = vec![kod_types::ToolCall {
+            id: None,
+            tool_name: "web_fetch".to_string(),
+            arguments: serde_json::json!({"url": "https://evil.example.com/"}),
+        }];
+        let round = e.run_tool_calls(&calls, "test", None).await;
+        assert_eq!(round.results.len(), 1);
+        match &round.results[0] {
+            kod_types::ToolResult::Error(msg) => {
+                assert!(
+                    msg.contains("allow-list"),
+                    "the refusal must name the policy allow-list, got: {msg}"
+                );
+            }
+            other => panic!("expected a refusal, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn installed_policy_exposes_the_allow_list() {
+        let e = engine();
+        assert!(e.policy().await.is_none(), "no policy installed yet");
+        e.set_policy(policy_with_domains(Some(vec!["docs.rs".to_string()])))
+            .await;
+        assert_eq!(
+            e.web_fetch_allowed_domains_setting().await,
+            vec!["docs.rs".to_string()]
+        );
     }
 }

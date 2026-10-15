@@ -305,11 +305,7 @@ impl Tool for WebFetchTool {
                 .ok()
                 .and_then(|u| u.host_str().map(|s| s.to_lowercase()))
                 .unwrap_or_default();
-            let allowed = context.allowed_domains.iter().any(|d| {
-                let d = d.to_lowercase();
-                host == d || host.ends_with(&format!(".{d}"))
-            });
-            if !allowed {
+            if !domain_allowed(&host, &context.allowed_domains) {
                 return Ok(ToolResult::Error(format!(
                     "refusing to fetch {}: the effective policy allow-list is {:?}",
                     url_str, context.allowed_domains
@@ -740,8 +736,70 @@ fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
     None
 }
 
+/// Is `host` covered by `allowed`? A pattern matches the exact host
+/// or any subdomain (`docs.rs` allows `docs.rs` and `*.docs.rs`).
+/// Case-insensitive on both sides. Empty `allowed` is handled by the
+/// caller (means "no restriction").
+fn domain_allowed(host: &str, allowed: &[String]) -> bool {
+    let host = host.to_lowercase();
+    allowed.iter().any(|d| {
+        let d = d.to_lowercase();
+        host == d || host.ends_with(&format!(".{d}"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn exact_host_is_allowed() {
+        let a = vec!["docs.rs".to_string()];
+        assert!(domain_allowed("docs.rs", &a));
+    }
+
+    #[test]
+    fn subdomain_is_allowed() {
+        let a = vec!["docs.rs".to_string()];
+        assert!(domain_allowed("www.docs.rs", &a));
+        assert!(domain_allowed("a.b.docs.rs", &a));
+    }
+
+    #[test]
+    fn unrelated_host_is_refused() {
+        let a = vec!["docs.rs".to_string()];
+        assert!(!domain_allowed("evil.com", &a));
+    }
+
+    #[test]
+    fn substring_tail_is_not_a_subdomain() {
+        // `notdocs.rs` must not match `docs.rs` via a naive
+        // `ends_with("docs.rs")`; the `.`-prefix requirement blocks it.
+        let a = vec!["docs.rs".to_string()];
+        assert!(!domain_allowed("notdocs.rs", &a));
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        let a = vec!["Docs.RS".to_string()];
+        assert!(domain_allowed("docs.rs", &a));
+        assert!(domain_allowed("WWW.DOCS.RS", &a));
+    }
+
+    #[test]
+    fn empty_allow_list_is_handled_by_the_caller() {
+        // `domain_allowed` is only reached when the list is
+        // non-empty; with an empty slice it returns false, and the
+        // caller's `is_empty()` guard means that path is never taken.
+        assert!(!domain_allowed("docs.rs", &[]));
+    }
+
+    #[test]
+    fn any_of_multiple_patterns_matches() {
+        let a = vec!["docs.rs".to_string(), "github.com".to_string()];
+        assert!(domain_allowed("api.github.com", &a));
+        assert!(domain_allowed("docs.rs", &a));
+        assert!(!domain_allowed("gitlab.com", &a));
+    }
 
     /// Delta §14.5 wiring: a 429 retries once with the same UA, then
     /// succeeds. Pre-fix, `web_retry` was never called, so this fetch

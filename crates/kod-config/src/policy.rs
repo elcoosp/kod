@@ -465,6 +465,20 @@ impl PolicyEngine {
         &self.effective
     }
 
+    /// The domain allow-list for `web_fetch` from the effective
+    /// per-tool policy. Empty means "no policy-imposed restriction"
+    /// (the SSRF filter still applies). Reads `ToolPolicy.domains`,
+    /// which was declared and documented but never consumed; the
+    /// engine threads this into `ToolContext.allowed_domains`, where
+    /// `web_fetch` enforces it.
+    pub fn web_fetch_allowed_domains(&self) -> Vec<String> {
+        self.effective
+            .tools
+            .get("web_fetch")
+            .and_then(|tp| tp.domains.clone())
+            .unwrap_or_default()
+    }
+
     /// What layer set the policy for `tool`, if there is a per-tool
     /// entry. For preset-only decisions the answer is `Preset`.
     pub fn source_for(&self, tool: &str) -> PolicySource {
@@ -1114,6 +1128,35 @@ mod tests {
         );
         assert_eq!(d.outcome, Decision::Deny); // read-only: unchanged
         assert_eq!(d.source, PolicySource::Preset);
+    }
+
+    // `ToolPolicy.domains` was declared and documented as the
+    // `web_fetch` allow-list; nothing read it. The engine now reads
+    // it through `web_fetch_allowed_domains`.
+    #[test]
+    fn web_fetch_allowed_domains_reads_per_tool_policy() {
+        let mut effective = Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        };
+        effective.tools.insert(
+            "web_fetch".to_string(),
+            ToolPolicy {
+                domains: Some(vec!["docs.rs".to_string()]),
+                ..Default::default()
+            },
+        );
+        let e = PolicyEngine {
+            effective,
+            sources: BTreeMap::new(),
+        };
+        assert_eq!(e.web_fetch_allowed_domains(), vec!["docs.rs".to_string()]);
+    }
+
+    #[test]
+    fn web_fetch_allowed_domains_is_empty_without_a_per_tool_entry() {
+        let e = engine(Preset::Standard);
+        assert!(e.web_fetch_allowed_domains().is_empty());
     }
 
     #[test]

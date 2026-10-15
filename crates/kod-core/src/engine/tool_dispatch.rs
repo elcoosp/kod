@@ -922,6 +922,12 @@ impl KodEngine {
             tool_context.allowed_write_globs = Some(globs);
         }
         tool_context.permissions.network_access = self.network_access_setting();
+        // D3-C5: thread the effective `[tools.web_fetch] domains`
+        // allow-list. `web_fetch` enforces `allowed_domains`, but
+        // nothing populated it — the field's own doc comment claimed
+        // the engine did. Same parsed-and-dropped shape as
+        // `ToolPolicy.network` and `redact_argument_paths`.
+        tool_context.allowed_domains = self.web_fetch_allowed_domains_setting().await;
 
         // P2-d: let `execute_command` hand a `run_in_background`
         // request to the job runner. Installed for every transcript —
