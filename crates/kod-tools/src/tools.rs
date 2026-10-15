@@ -579,6 +579,26 @@ impl Tool for ReadFileTool {
             // issue; single-line secrets, the common case, preserve
             // the count exactly.)
             let (redacted, notice) = redact_read_content_parts(&raw_content, context, &resolved);
+            // A redaction must not change the line COUNT, or the
+            // numbered view no longer addresses the raw bytes the
+            // edit store snapshotted. A single-line secret (the
+            // common case) preserves the count; a multi-line secret
+            // (a PEM block collapses to one `[REDACTED:…]` line)
+            // does not. When the count differs, refuse to number:
+            // degrade to unnumbered with no `tag`, exactly like the
+            // truncated case, so the model cannot edit against wrong
+            // line numbers. It can re-read a specific range instead.
+            if redacted.lines().count() != raw_content.lines().count() {
+                return Ok(ToolResult::Success(serde_json::json!({
+                    "path": resolved.to_string_lossy().to_string(),
+                    "content": redacted,
+                    "truncated": false,
+                    "binary": false,
+                    "numbered": false,
+                    "numbered_downgraded": "a multi-line secret was redacted; line counts no longer match the file, so numbering is disabled",
+                    "redaction_notice": notice,
+                })));
+            }
             let numbered_text = crate::edit_hashline::render_numbered(&redacted, usize::MAX);
             let mut payload = serde_json::json!({
                 "path": resolved.to_string_lossy().to_string(),
@@ -2210,6 +2230,54 @@ mod tests {
         assert!(v.get("tag").is_some(), "a tag is required for edits: {v}");
         let shown = v["content"].as_str().unwrap();
         assert!(shown.contains("1:"), "content must be N:line rows: {shown}");
+    }
+
+    /// A multi-line redaction (a PEM private key collapses to one
+    /// `[REDACTED:...]` line) changes the line count, so the numbered
+    /// view can no longer address the raw bytes the edit store
+    /// snapshotted. The read must refuse to number rather than hand
+    /// the model line numbers that point at the wrong content.
+    #[tokio::test]
+    async fn multiline_redaction_disables_numbering() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("key.pem");
+        let raw =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n";
+        std::fs::write(&path, raw).unwrap();
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        });
+        use crate::edit_hashline::EditStore;
+        ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.pem".to_string()],
+        });
+
+        let read_tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "key.pem", "numbered": true });
+        let r = read_tool.execute(&params, &ctx).await.unwrap();
+        let v = match r {
+            ToolResult::Success(v) => v,
+            other => panic!("expected success, got {other:?}"),
+        };
+        assert_eq!(
+            v["numbered"],
+            serde_json::json!(false),
+            "numbering must be disabled when a redaction changes the line count: {v}"
+        );
+        assert!(
+            v.get("tag").is_none(),
+            "no tag, so the model cannot edit against shifted lines: {v}"
+        );
+        assert!(
+            v["content"].as_str().unwrap().contains("[REDACTED:"),
+            "the secret must still be redacted: {v}"
+        );
     }
 
     /// The numbered view the model edits against must use the RAW
