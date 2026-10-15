@@ -565,19 +565,33 @@ impl Tool for ReadFileTool {
                     .unwrap_or([0, 0])
             });
             // The rendered `N:line` rows shown to the model use the
-            // REDACTED content — the model must not see a secret the
-            // policy redacted. The numbered output is regenerated from
-            // the redacted text so the line indices it shows match
-            // the redacted text the model sees.
-            let numbered_text = crate::edit_hashline::render_numbered(&content, usize::MAX);
-            return Ok(ToolResult::Success(serde_json::json!({
+            // REDACTED content (the model must not see a secret the
+            // policy redacted), but the LINE NUMBERS must match the
+            // RAW bytes, because that is what the edit store
+            // snapshotted and what `PUT n.=m` addresses. The notice
+            // is therefore carried as a separate field, not prepended
+            // as a line: a prepended notice shifts every number by
+            // one, and `PUT 2.=2` would edit raw line 2 while the
+            // model believed line 2 was the redacted secret.
+            //
+            // (A multi-line redaction — a PEM block — can still
+            // change the line count. That is a separate, narrower
+            // issue; single-line secrets, the common case, preserve
+            // the count exactly.)
+            let (redacted, notice) = redact_read_content_parts(&raw_content, context, &resolved);
+            let numbered_text = crate::edit_hashline::render_numbered(&redacted, usize::MAX);
+            let mut payload = serde_json::json!({
                 "path": resolved.to_string_lossy().to_string(),
                 "content": numbered_text,
                 "truncated": false,
                 "binary": false,
                 "numbered": true,
                 "tag": tag.map(crate::edit_hashline::tag_hex),
-            })));
+            });
+            if let Some(n) = notice {
+                payload["redaction_notice"] = serde_json::json!(n);
+            }
+            return Ok(ToolResult::Success(payload));
         }
 
         Ok(ToolResult::Success(serde_json::json!({
@@ -2053,31 +2067,51 @@ impl Tool for FileInfoTool {
     }
 }
 
-/// Tier 1.3 — sanitize a read_file payload.
-fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::path::Path) -> String {
+/// Tier 1.3 — sanitize a read_file payload. Returns the sanitized
+/// text and, when anything was redacted, a one-line notice. The
+/// caller chooses where the notice goes: the plain path prepends it
+/// to `content`; the numbered path must keep the notice OUT of the
+/// line-numbered body, because a prepended line shifts every number
+/// and the model would then edit the wrong raw line (the edit store's
+/// snapshot is the raw bytes, numbered from 1).
+fn redact_read_content_parts(
+    content: &str,
+    context: &ToolContext,
+    resolved: &std::path::Path,
+) -> (String, Option<String>) {
     let Some(redactor) = context.redactor.as_ref() else {
-        return content.to_string();
+        return (content.to_string(), None);
     };
     let Some(rp) = context.read_protection.as_ref() else {
-        return content.to_string();
+        return (content.to_string(), None);
     };
     if !rp.matches(resolved) {
-        return content.to_string();
+        return (content.to_string(), None);
     }
     let (sanitized, events) = redactor.redact(content);
     if events.is_empty() {
-        return sanitized;
+        return (sanitized, None);
     }
     let summary = events
         .iter()
         .map(|e| format!("{}×{}", e.rule, e.count))
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
-        "// ⓘ {} secret(s) redacted ({summary}).\n{}",
+    let notice = format!(
+        "// ⓘ {} secret(s) redacted ({summary}).",
         events.iter().map(|e| e.count).sum::<usize>(),
-        sanitized,
-    )
+    );
+    (sanitized, Some(notice))
+}
+
+/// Tier 1.3 — sanitize a read_file payload, prepending the redaction
+/// notice to the content. Used by the plain (non-numbered) path.
+fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::path::Path) -> String {
+    let (sanitized, notice) = redact_read_content_parts(content, context, resolved);
+    match notice {
+        Some(n) => format!("{n}\n{sanitized}"),
+        None => sanitized,
+    }
 }
 
 #[cfg(test)]
@@ -2176,6 +2210,59 @@ mod tests {
         assert!(v.get("tag").is_some(), "a tag is required for edits: {v}");
         let shown = v["content"].as_str().unwrap();
         assert!(shown.contains("1:"), "content must be N:line rows: {shown}");
+    }
+
+    /// The numbered view the model edits against must use the RAW
+    /// file's line numbers, because the edit store's snapshot is the
+    /// raw bytes. `redact_read_content` prepends a notice line
+    /// ("// ⓘ N secret(s) redacted …"), which shifts every numbered
+    /// row by one: pre-fix the model saw the file's line 1 as "2:",
+    /// so `PUT 1.=1` addressed the wrong line (or none, if the file
+    /// is short). The model must see raw numbering with redacted
+    /// content.
+    #[tokio::test]
+    async fn numbered_redaction_preserves_raw_line_numbers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret.env");
+        let raw = "OPENAI=sk-abcdef1234567890ABCDEFGH\ncomment = \"x\"\n";
+        std::fs::write(&path, raw).unwrap();
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        });
+        use crate::edit_hashline::EditStore;
+        ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        });
+
+        let read_tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "secret.env", "numbered": true });
+        let r = read_tool.execute(&params, &ctx).await.unwrap();
+        let v = match r {
+            ToolResult::Success(v) => v,
+            other => panic!("expected success, got {other:?}"),
+        };
+        let shown = v["content"].as_str().unwrap();
+        // Find the row labelled `2:`; it must be the file's second
+        // line (`comment`), which is what `PUT 2.=2` edits.
+        let row2 = shown
+            .lines()
+            .find(|l| l.starts_with("2:"))
+            .unwrap_or_else(|| panic!("no row labelled 2: in {shown:?}"));
+        assert!(
+            row2.contains("comment"),
+            "row 2 must be the file's line 2; the redaction notice must \
+             not shift the numbering. Got row2 = {row2:?}, full = {shown:?}"
+        );
+        assert!(
+            shown.contains("[REDACTED:"),
+            "the secret must still be redacted: {shown:?}"
+        );
     }
 
     /// A speculative read must apply read-protection redaction just
