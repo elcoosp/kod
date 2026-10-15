@@ -403,32 +403,28 @@ impl Tool for ReadFileTool {
             )));
         }
 
-        // Delta §10: use a speculative read when the engine performed
-        // one for exactly this path. The engine validated the file's
-        // identity via the TOCTOU digest check before placing the
-        // bytes here, so the content is trustworthy. Still applies
-        // the size cap and binary probe below, because a caller that
-        // set `prefetched_read` may have read a larger file than the
-        // tool would.
+        // Delta §10: a speculatively-read buffer, if one matches this
+        // path. It
+        // only *supplies* the bytes; the shared tail below (binary
+        // probe, UTF-8 decode, read-protection redaction, numbered
+        // mode, edit-store snapshot) runs identically for the
+        // speculative and the ordinary path. Pre-fix the speculative
+        // branch early-returned here, which skipped redaction (a
+        // secret leak) and numbered mode (no `tag`, so the model
+        // could not edit the file). The engine's TOCTOU validation
+        // makes the bytes trustworthy; it says nothing about whether
+        // they are safe to show the model, which is the tail's job.
+        let mut prefetched: Option<Vec<u8>> = None;
         if let Some(pf) = context.prefetched_read.as_ref()
             && pf.path == resolved
         {
             let mut buf: Vec<u8> = pf.text.as_bytes().to_vec();
-            let truncated = buf.len() > MAX_READ_BYTES;
-            if truncated {
+            if buf.len() > MAX_READ_BYTES {
                 buf.truncate(MAX_READ_BYTES);
             }
             let probe_len = buf.len().min(1024);
-            let looks_binary = buf[..probe_len].contains(&0u8);
-            if !looks_binary {
-                let content = String::from_utf8_lossy(&buf).into_owned();
-                return Ok(ToolResult::Success(serde_json::json!({
-                    "path": resolved.display().to_string(),
-                    "content": content,
-                    "size": total_size,
-                    "truncated": truncated,
-                    "source": "speculative-read",
-                })));
+            if !buf[..probe_len].contains(&0u8) {
+                prefetched = Some(buf);
             }
             // Binary detection fired: fall through to the ordinary
             // read so the hex-preview branch below produces the
@@ -448,17 +444,23 @@ impl Tool for ReadFileTool {
         // in the type system, and inconsistent with how directories
         // were handled. One shape for "the model should reason about
         // this," one shape for "the tool itself failed."
-        let mut file = match std::fs::File::open(&resolved) {
-            Ok(f) => f,
-            Err(e) => {
-                return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+        let mut buf: Vec<u8> = match prefetched {
+            Some(b) => b,
+            None => {
+                let mut file = match std::fs::File::open(&resolved) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+                    }
+                };
+                let mut b: Vec<u8> = Vec::with_capacity(8192);
+                file.by_ref()
+                    .take(MAX_READ_BYTES as u64 + 1)
+                    .read_to_end(&mut b)
+                    .map_err(KodError::Io)?;
+                b
             }
         };
-        let mut buf: Vec<u8> = Vec::with_capacity(8192);
-        file.by_ref()
-            .take(MAX_READ_BYTES as u64 + 1)
-            .read_to_end(&mut buf)
-            .map_err(KodError::Io)?;
         let truncated = buf.len() > MAX_READ_BYTES;
         if truncated {
             buf.truncate(MAX_READ_BYTES);
@@ -2135,6 +2137,96 @@ mod tests {
     /// byte-for-byte guard against the on-disk content failed on every
     /// edit with a misleading "stale edit" error — the file was never
     /// stale, the snapshot was just the wrong bytes.
+    /// A speculative read must honor `numbered: true` like the
+    /// ordinary path. Pre-fix the `prefetched_read` early return
+    /// skipped the numbered branch entirely, so a `read_file`
+    /// requesting line numbers got plain content and no `tag` — the
+    /// model could then not edit the file, because the edit tool's
+    /// tag guard needs the snapshot the numbered path records.
+    #[tokio::test]
+    async fn speculative_read_still_honors_numbered() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("plain.rs");
+        std::fs::write(&path, "fn main() {}\n// second\n").unwrap();
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        });
+        use crate::edit_hashline::EditStore;
+        ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        ctx.prefetched_read = Some(crate::context::PrefetchedRead {
+            path: canonical,
+            text: "fn main() {}\n// second\n".to_string(),
+        });
+
+        let read_tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "plain.rs", "numbered": true });
+        let r = read_tool.execute(&params, &ctx).await.unwrap();
+        let v = match r {
+            ToolResult::Success(v) => v,
+            other => panic!("expected success, got {other:?}"),
+        };
+        assert_eq!(
+            v["numbered"],
+            serde_json::json!(true),
+            "numbered must survive: {v}"
+        );
+        assert!(v.get("tag").is_some(), "a tag is required for edits: {v}");
+        let shown = v["content"].as_str().unwrap();
+        assert!(shown.contains("1:"), "content must be N:line rows: {shown}");
+    }
+
+    /// A speculative read must apply read-protection redaction just
+    /// like the ordinary path does. Pre-fix the `prefetched_read`
+    /// early return skipped `redact_read_content`, so a file matching
+    /// `[policy.read_protection]` in `Redact` mode leaked its secret
+    /// whenever the engine had pre-read it — a security regression in
+    /// a path the ordinary-read tests do not exercise.
+    #[tokio::test]
+    async fn speculative_read_still_redacts_a_protected_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret.env");
+        std::fs::write(&path, "OPENAI=sk-abcdef1234567890ABCDEFGH\n").unwrap();
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        });
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        });
+        // The engine hands the prefetched bytes to the tool. The
+        // path must match the tool's resolved path byte-for-byte —
+        // `resolve_path` canonicalizes, so canonicalize here too.
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        ctx.prefetched_read = Some(crate::context::PrefetchedRead {
+            path: canonical,
+            text: "OPENAI=sk-abcdef1234567890ABCDEFGH\n".to_string(),
+        });
+
+        let read_tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "secret.env" });
+        let r = read_tool.execute(&params, &ctx).await.unwrap();
+        let v = match r {
+            ToolResult::Success(v) => v,
+            other => panic!("expected success, got {other:?}"),
+        };
+        let shown = v["content"].as_str().unwrap();
+        assert!(
+            !shown.contains("sk-abcdef"),
+            "secret must not leak through the speculative-read path: {shown}"
+        );
+        assert!(
+            shown.contains("[REDACTED:"),
+            "expected a redaction marker: {shown}"
+        );
+    }
+
     #[tokio::test]
     async fn numbered_read_with_redaction_still_edits() {
         use crate::context::ToolContext;
