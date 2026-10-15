@@ -350,13 +350,30 @@ impl Tool for ReadFileTool {
                 context.working_dir.clone(),
             );
             return match router.resolve(path, &rctx).await {
-                Ok(r) => Ok(ToolResult::Success(serde_json::json!({
-                    "path": path,
-                    "content": r.text,
-                    "mime": r.mime,
-                    "immutable": r.immutable,
-                    "source": "internal-url",
-                }))),
+                Ok(r) => {
+                    // Tier 1.3 — a URL read is still a read. The
+                    // source path is not always recoverable from the
+                    // URL (`conflict://<id>` names a registered block,
+                    // not a file), so the per-path check above cannot
+                    // cover every case. Apply the redactor to the
+                    // returned content whenever read-protection is
+                    // enabled: it masks secrets by value pattern, so a
+                    // result with no secret is unchanged. Fail-closed,
+                    // no false positives. Pre-fix this branch checked
+                    // only `Refuse`, so `read_file conflict://<id>` on
+                    // a protected file leaked the block body.
+                    let text = match (&context.read_protection, &context.redactor) {
+                        (Some(rp), Some(redactor)) if rp.enabled => redactor.redact(&r.text).0,
+                        _ => r.text,
+                    };
+                    Ok(ToolResult::Success(serde_json::json!({
+                        "path": path,
+                        "content": text,
+                        "mime": r.mime,
+                        "immutable": r.immutable,
+                        "source": "internal-url",
+                    })))
+                }
                 Err(e) => Ok(ToolResult::Error(e.to_string())),
             };
         }
@@ -2137,6 +2154,79 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The internal-URL branch of `read_file` (conflict://, artifact://,
+    /// …) checked `Refuse` but not `Redact`, so a protected file read
+    /// through a protocol URL returned raw content while the same file
+    /// read as a plain path was redacted. Same class as the grep and
+    /// git_diff leaks.
+    #[tokio::test]
+    async fn internal_url_read_redacts_a_protected_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret.txt");
+        std::fs::write(
+            &path,
+            "before\n<<<<<<< HEAD\nAPI_KEY=sk-abcdef1234567890ABCDEFGH\n=======\nother\n>>>>>>> x\nafter\n",
+        )
+        .unwrap();
+
+        let store = std::sync::Arc::new(crate::conflict_handler::ConflictStore::new());
+        let handler = crate::conflict_handler::ConflictHandler::new(store);
+        let router =
+            crate::internal_url::ProtocolRouter::new().register(std::sync::Arc::new(handler));
+
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        });
+        ctx.protocol_router = Some(router);
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/secret.txt".to_string()],
+        });
+
+        let tool = ReadFileTool::new();
+        // Step 1: scanning the path registers the block and returns
+        // its id in the listing text.
+        let listing = tool
+            .execute(
+                &serde_json::json!({ "path": "conflict://secret.txt" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let listing_text = match &listing {
+            ToolResult::Success(v) => v["content"].as_str().unwrap().to_string(),
+            other => panic!("scan failed: {other:?}"),
+        };
+        let id = listing_text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("conflict://"))
+            .unwrap_or_else(|| panic!("no conflict id in {listing_text}"))
+            .to_string();
+
+        // Step 2: resolve the block by id. `url_path_target` returns
+        // None for a bare id (no slash/dot), so the read-protection
+        // check is skipped and the handler returns the block body —
+        // which contains the file's actual content.
+        let r = tool
+            .execute(
+                &serde_json::json!({ "path": format!("conflict://{id}") }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let body = match &r {
+            ToolResult::Success(v) => v["content"].as_str().unwrap_or("").to_string(),
+            other => panic!("block read failed: {other:?}"),
+        };
+        assert!(
+            !body.contains("sk-abcdef"),
+            "internal-URL block read leaked a protected file's secret: {body}"
+        );
+    }
 
     /// CLASS-LEVEL INVARIANT for every `read_file` content path.
     ///
