@@ -624,6 +624,49 @@ impl KodEngine {
         walk(value, &vault)
     }
 
+    /// Obfuscate registered secrets in every string of a JSON value.
+    ///
+    /// Mirror of [`Self::deobfuscate_json`], for the outbound path.
+    /// `obfuscate` is applied to message `content` at the request
+    /// build site, but a tool call's `arguments` also reach the
+    /// provider (as the assistant message's `tool_calls`). Pre-fix
+    /// those arguments were never scrubbed, so a registered secret the
+    /// model put into a tool call leaked on every subsequent request.
+    pub(crate) async fn obfuscate_json(&self, value: &mut serde_json::Value) -> usize {
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) => std::sync::Arc::clone(v),
+            None => return 0,
+        };
+        fn walk(
+            v: &mut serde_json::Value,
+            vault: &kod_types::secret_placeholder::SecretVault,
+        ) -> usize {
+            let mut n = 0;
+            match v {
+                serde_json::Value::String(s) => {
+                    let out = vault.obfuscate(s);
+                    if out != *s {
+                        *s = out;
+                        n += 1;
+                    }
+                }
+                serde_json::Value::Array(a) => {
+                    for item in a.iter_mut() {
+                        n += walk(item, vault);
+                    }
+                }
+                serde_json::Value::Object(o) => {
+                    for (_, item) in o.iter_mut() {
+                        n += walk(item, vault);
+                    }
+                }
+                _ => {}
+            }
+            n
+        }
+        walk(value, &vault)
+    }
+
     /// The current redactor (shared handle).
     pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
         self.redactor.clone()

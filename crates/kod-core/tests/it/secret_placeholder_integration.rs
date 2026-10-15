@@ -174,6 +174,82 @@ async fn a_secret_in_the_user_message_is_obfuscated_before_the_provider_sees_it(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_raw_secret_reaches_the_provider_in_any_request_field() {
+    // Class-level invariant: scan EVERY string field of EVERY request
+    // the provider sees (message content, system segments, and
+    // tool-call arguments) for the raw secret. The outbound
+    // obfuscation site scrubs `m.content`; this test proves whether
+    // `m.tool_calls[].arguments` is covered too.
+    let (provider, seen) = RecordingProvider::new();
+    let tmp = TempDir::new().unwrap();
+    let cfg = fixture_config(tmp.path());
+    let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("s.kod")).unwrap());
+    let vault = Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+        [1u8; 32],
+    ));
+    let _placeholder = vault.register("super-secret-value-1234");
+    engine.set_secret_vault(vault).await;
+
+    // The model emits a tool call carrying the RAW secret in its
+    // arguments (worst case: a model that somehow saw the raw value).
+    provider.script(GenerationResponse::ToolCalls {
+        calls: vec![ToolCall {
+            id: Some("call-1".into()),
+            tool_name: "write_file".into(),
+            arguments: serde_json::json!({
+                "path": "note.txt",
+                "content": "API_KEY=super-secret-value-1234",
+            }),
+        }],
+        usage: None,
+    });
+    provider.script(GenerationResponse::Text {
+        content: "done".into(),
+        usage: None,
+    });
+
+    let provider = Arc::new(provider);
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        "default",
+        provider as Arc<dyn LlmProvider>,
+        ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(Arc::new(reg), ModelRef::new("default", ""), None)
+        .await;
+    engine.start().await.unwrap();
+    let _ = engine.process("go").await;
+
+    let requests = seen.lock().unwrap();
+    for (ri, req) in requests.iter().enumerate() {
+        for (mi, m) in req.messages.iter().enumerate() {
+            assert!(
+                !m.content.contains("super-secret-value-1234"),
+                "raw secret in request {ri} message {mi} content",
+            );
+            for (ci, call) in m.tool_calls.iter().enumerate() {
+                assert!(
+                    !call
+                        .arguments
+                        .to_string()
+                        .contains("super-secret-value-1234"),
+                    "raw secret in request {ri} message {mi} tool_call {ci} arguments: {}",
+                    call.arguments,
+                );
+            }
+        }
+        for seg in &req.system.segments {
+            assert!(
+                !seg.text.contains("super-secret-value-1234"),
+                "raw secret in system"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_vault_the_raw_secret_reaches_the_provider() {
     // Control: the pre-§14.1 behaviour must be exactly what a
     // default engine does. A no-vault engine sends the raw bytes.

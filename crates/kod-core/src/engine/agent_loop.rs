@@ -1377,13 +1377,22 @@ impl KodEngine {
                             })
                             .collect(),
                     };
-                    let messages: Vec<kod_types::ChatMessage> = messages
-                        .into_iter()
-                        .map(|mut m| {
-                            m.content = v.obfuscate(&m.content);
-                            m
-                        })
-                        .collect();
+                    let mut messages: Vec<kod_types::ChatMessage> = messages;
+                    for m in messages.iter_mut() {
+                        m.content = v.obfuscate(&m.content);
+                    }
+                    // A tool call's `arguments` also reach the
+                    // provider (as the assistant message's
+                    // `tool_calls`). Pre-fix only `content` was
+                    // scrubbed, so a registered secret in a tool call
+                    // leaked on every subsequent request. This runs on
+                    // the outgoing copy only — the transcript keeps
+                    // the placeholder form.
+                    for m in messages.iter_mut() {
+                        for call in m.tool_calls.iter_mut() {
+                            let _ = self.obfuscate_json(&mut call.arguments).await;
+                        }
+                    }
                     (system, messages)
                 }
                 _ => (system, messages),
