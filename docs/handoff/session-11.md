@@ -268,7 +268,95 @@ confirm it stays fixed).
 
 ---
 
-Where to start: decide the redact_argument_paths semantics (item 1).
-It is the last known parsed-and-dropped field with a doc-established
-promise; everything else in this class is either fixed or needs one
-grep to confirm.
+Where to start: the security bug hunt found two classes worth a
+follow-up pass. (1) Run the content-reader scan again after any new
+tool lands — the source lint catches the shape, but a reader that
+consults read_protection and forgets a *different* gate would slip
+past. (2) The `xd://` dispatch is dead (default all-false permissions,
+no production caller to `with_tool_permissions`): wire it through the
+caller's real context or remove the scheme.
+
+---
+
+## Addendum — security bug hunt (later in session 11)
+
+HEAD moved a0332b2 → 2e3ddf5. Two classes of security bug found, six
+real fixes, plus one class-level invariant test and one source lint.
+Tests: 4259 passing, 3 skipped.
+
+### Class 1: read_file's numbered view vs the raw bytes it edits
+
+The numbered view the model edits against must agree with the raw bytes
+the edit store snapshots. Redaction runs on the display path; the store
+guards the raw path; nothing kept them aligned. Four bugs:
+
+- **37771f1 — speculative read skipped redaction + numbering.** The
+  prefetch branch early-returned after the binary probe, so a
+  `[policy.read_protection]` file in `Redact` mode leaked its secret
+  whenever the engine had pre-read it, and `numbered: true` lost its
+  `tag`.
+- **64b631f — redaction notice shifted line numbers.** The numbered
+  view regenerated from the notice-prefixed string, so file line 1
+  showed as `2:`; `PUT 2.=2` edited the wrong raw line.
+- **79774d0 — multi-line redaction changed the line count.** A PEM key
+  collapsed to one `[REDACTED]` line but the view still emitted a tag;
+  `PUT 1.=1` would clobber the whole key. Now refuses to number when
+  the counts differ.
+- **f86a08c — class-level invariant.** `read_file_content_invariants_hold_across_paths`
+  drives {prefetched, disk} × {numbered, plain} × {single, multi, no
+  secret} and asserts (1) no protected secret in the output, (2) a
+  returned tag means exactly one `N:` row per raw line. Verified to
+  catch all three shapes by re-injection.
+
+### Class 2: content readers bypassing read_protection
+
+`[policy.read_protection]` is installed by default; `read_file` honors
+it, but three other readers gated only on `can_read` and returned a
+protected file's content in the clear.
+
+- **efe13f4 — grep (search_files) + git_diff.** A directory grep
+  returned the secret line from a `.env`; `git diff path=.env` returned
+  it on a `+` line.
+- **121002e — read_file's internal-URL branch.** Checked `Refuse` but
+  not `Redact`; `conflict://<id>` skipped the path check entirely and
+  returned the block body verbatim.
+- **43d80bb — source lint.** `content_reader_must_consult_read_protection`
+  flags any production file that reads content + calls `can_read` but
+  never mentions `read_protection`. One documented exemption
+  (`lsp_tools.rs`).
+
+### Class 3: internal-URL write/read bypassing the path gates
+
+The write and read paths gated the filesystem only when
+`url_path_target` returned `Some` — true for `conflict://<path>`, NOT
+for a bare `conflict://<id>`.
+
+- **2e3ddf5 — conflict://<id> bypassed can_write/can_read.** Write: a
+  swarm agent with `write-globs = ["src/**"]` could resolve a conflict
+  in a file outside its claim (write-set, `.git` deny, allowlist all
+  bypassed). Read: `forbidden_paths` bypassed. Fix: `ProtocolHandler`
+  gained `read_target_path` / `write_target_path` (default None for
+  store schemes); the tools gate the mapped path before dispatching.
+
+### Not a bug (reviewed)
+
+- `xd://` dispatch builds a fresh `ToolContext` from only
+  `tool_permissions` (never set) → all-false permissions → fail-closed.
+  The feature is *dead*, not exploitable: `with_tool_permissions` has
+  no production caller. Worth wiring or removing.
+
+### Reproducible scans used
+
+    # content readers that skip read_protection
+    for f in $(find crates -name '*.rs' -not -path '*/target/*' -not -path '*/tests/*'); do
+      grep -q 'read_to_string\|fs::read(' "$f" && grep -q 'can_read' "$f" \
+        && ! grep -q 'read_protection' "$f" && echo "$f"
+    done
+
+    # pub fns with zero call sites (found the speculation early-return)
+    # see the per-field scan in the main body; the same shape finds
+    # a dead public fn: grep the name, count call-sites, read the
+    # zero-caller ones.
+
+---
+
