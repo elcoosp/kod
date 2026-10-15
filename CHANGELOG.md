@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.2] - 2026-10-15
+
+### Security
+
+- **`ToolPolicy.network` was parsed and ignored.** The field's own doc
+  comment promised it overrode `llm.network_access` per tool; `decide()`
+  never read it. A `[tools.web_fetch] network = false` had no effect.
+  A `network = false` tool is now denied outright; the override may
+  only narrow, never widen. (18f365f)
+
+- **`redact_argument_paths` was parsed and ignored.** The field promised
+  that matching paths are redacted in `ToolCall.arguments` before the
+  model sees them; nothing read it, so a credential-bearing
+  `write_file` reached the provider in the clear. Matching calls now
+  have their arguments replaced with a redaction marker, independent of
+  `in_prompt`. (625b8b4)
+
+- **`ToolPolicy.domains` was parsed and ignored.** `web_fetch` enforced
+  an allow-list, but nothing populated it from the config, so a
+  `[tools.web_fetch] domains = [...]` restriction did nothing and every
+  public host the SSRF filter allows was reachable. The engine now
+  threads the list into the tool context. (a0332b2)
+
+### Fixed
+
+- A `web_fetch` domain allow-list now matches case-insensitively and
+  refuses `notdocs.rs` for a `docs.rs` pattern (a `.`-prefix boundary,
+  not a bare `ends_with`). (a0332b2)
+
 ## [0.1.1] - 2026-10-14
 
 ### Security
