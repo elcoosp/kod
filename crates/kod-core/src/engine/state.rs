@@ -1,5 +1,45 @@
 use super::*;
 
+/// Blank the `arguments` of every tool call whose path argument
+/// matches one of `patterns` (from
+/// `[security.redact] redact_argument_paths`).
+///
+/// Pure so it is unit-testable without a `KodEngine` or a config file.
+/// Returns the number of calls whose arguments were replaced.
+///
+/// The doc comment on `RedactConfig::redact_argument_paths` promises
+/// "the model cannot see the arguments at all", so this is a
+/// wholesale replacement: the call keeps its tool name and id, but
+/// its `arguments` object becomes a single explanatory field. Keeping
+/// a well-formed JSON object (rather than a bare string or `null`)
+/// means the provider wire layer and any downstream parser see a
+/// valid `ToolCall`.
+pub(crate) fn redact_tool_call_arguments(
+    patterns: &[String],
+    messages: &mut [kod_types::ChatMessage],
+    working_dir: &std::path::Path,
+) -> usize {
+    if patterns.is_empty() {
+        return 0;
+    }
+    let mut n = 0_usize;
+    for m in messages.iter_mut() {
+        for call in m.tool_calls.iter_mut() {
+            if kod_config::policy::arguments_path_matches_redact_list(
+                patterns,
+                &call.arguments,
+                working_dir,
+            ) {
+                call.arguments = serde_json::json!({
+                    "redacted": "arguments matched security.redact.redact_argument_paths",
+                });
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 impl KodEngine {
     /// Install an on-disk state store (Tier 3.4). Loads any
     /// previously-saved plans and decision logs into memory. Call
@@ -53,29 +93,50 @@ impl KodEngine {
     }
 
     /// Redact secrets from a message list before the prompt is built
-    /// (Tier 1.3). No-op when `[security.redact] in_prompt = false`.
+    /// (Tier 1.3).
     ///
-    /// Returns the redacted list and the total number of redactions
-    /// that fired. Content is redacted in place; `tool_call_id`,
-    /// `role`, and `id` are untouched so the transcript stays
-    /// coherent.
+    /// Two independent switches, both under `[security.redact]`:
+    ///
+    /// * `in_prompt` runs the one-way [`kod_types::redact::Redactor`]
+    ///   over every message's `content`.
+    /// * `redact_argument_paths` blanks the `arguments` of any tool
+    ///   call whose path argument matches one of the globs. This is
+    ///   independent of `in_prompt`: a user may want argument
+    ///   redaction on while leaving result redaction off (a normal
+    ///   coding session needs un-redacted `read_file` results, but a
+    ///   `write_file` about to place a literal credential should not
+    ///   carry it into the prompt).
+    ///
+    /// Returns the total number of redactions that fired. Content is
+    /// redacted in place; `tool_call_id`, `role`, and `id` are
+    /// untouched so the transcript stays coherent.
     pub fn redact_messages_for_prompt(&self, messages: &mut [kod_types::ChatMessage]) -> usize {
         let cfg = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
             Err(_) => return 0,
         };
-        if !cfg.security.redact.in_prompt {
-            return 0;
-        }
-        let redactor = self.redactor.clone();
+
         let mut total = 0_usize;
-        for m in messages.iter_mut() {
-            let (redacted, events) = redactor.redact(&m.content);
-            if !events.is_empty() {
-                m.content = redacted;
-                total += events.iter().map(|e| e.count).sum::<usize>();
+
+        // (a) Argument-path redaction, independent of `in_prompt`.
+        total += redact_tool_call_arguments(
+            &cfg.security.redact.redact_argument_paths,
+            messages,
+            &self.working_dir,
+        );
+
+        // (b) Content redaction, gated on `in_prompt`.
+        if cfg.security.redact.in_prompt {
+            let redactor = self.redactor.clone();
+            for m in messages.iter_mut() {
+                let (redacted, events) = redactor.redact(&m.content);
+                if !events.is_empty() {
+                    m.content = redacted;
+                    total += events.iter().map(|e| e.count).sum::<usize>();
+                }
             }
         }
+
         total
     }
 

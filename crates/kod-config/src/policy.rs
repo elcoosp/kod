@@ -789,6 +789,33 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 /// Uses `globset` with `literal_separator(true)`, the default, so
 /// `*` does not cross `/` and `**` does — the same semantics git
 /// uses for `.gitignore`.
+/// Does the `ToolCall.arguments` for this call name a path that
+/// matches any pattern in `[security.redact] redact_argument_paths`?
+///
+/// Public so `kod-core`'s prompt-redaction pass can call the same
+/// matcher the policy engine uses; there must be exactly one
+/// implementation of the glob semantics (verbatim, relative to
+/// working_dir, `**/`-prefixed) or the two would drift.
+///
+/// `patterns` empty means "no argument redaction" and returns false
+/// without touching the args.
+pub fn arguments_path_matches_redact_list(
+    patterns: &[String],
+    args: &Value,
+    working_dir: &Path,
+) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let Some(raw) = extract_path_arg(args) else {
+        return false;
+    };
+    let resolved = resolve_path(working_dir, &raw);
+    patterns
+        .iter()
+        .any(|g| glob_matches(g, &resolved, working_dir))
+}
+
 fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
     // T5-C32: use the process-wide compiled-glob cache instead of
     // recompiling on every call.
@@ -1288,6 +1315,63 @@ mod coverage_glob_matching {
             Path::new("/tmp/proj/src/a.rs"),
             wd
         ));
+    }
+
+    // `redact_argument_paths` was parsed and never read; the wire-in
+    // uses `arguments_path_matches_redact_list` as the single matcher.
+    // These pin its contract.
+
+    #[test]
+    fn redact_list_matches_a_path_argument() {
+        let wd = Path::new("/tmp/proj");
+        let patterns = vec!["**/.env".to_string()];
+        let args = serde_json::json!({"path": ".env"});
+        assert!(arguments_path_matches_redact_list(&patterns, &args, wd));
+    }
+
+    #[test]
+    fn redact_list_matches_a_non_path_key() {
+        // `target` is one of `extract_path_arg`'s PATH_KEYS; a
+        // `write_file` naming its path `target` must still match.
+        let wd = Path::new("/tmp/proj");
+        let patterns = vec!["**/.env".to_string()];
+        let args = serde_json::json!({"target": "secrets/.env"});
+        assert!(arguments_path_matches_redact_list(&patterns, &args, wd));
+    }
+
+    #[test]
+    fn redact_list_ignores_a_non_matching_path() {
+        let wd = Path::new("/tmp/proj");
+        let patterns = vec!["**/.env".to_string()];
+        let args = serde_json::json!({"path": "src/main.rs"});
+        assert!(!arguments_path_matches_redact_list(&patterns, &args, wd));
+    }
+
+    #[test]
+    fn redact_list_with_no_path_arg_does_not_match() {
+        let wd = Path::new("/tmp/proj");
+        let patterns = vec!["**/.env".to_string()];
+        let args = serde_json::json!({"command": "ls"});
+        assert!(!arguments_path_matches_redact_list(&patterns, &args, wd));
+    }
+
+    #[test]
+    fn empty_redact_list_never_matches() {
+        let wd = Path::new("/tmp/proj");
+        let patterns: Vec<String> = Vec::new();
+        let args = serde_json::json!({"path": ".env"});
+        assert!(!arguments_path_matches_redact_list(&patterns, &args, wd));
+    }
+
+    #[test]
+    fn redact_list_resolves_relative_against_working_dir() {
+        // The `src/../secrets/x` lexical bypass H-S3 closed for the
+        // policy engine must be closed here too, or the two would
+        // disagree on which path a call touches.
+        let wd = Path::new("/tmp/proj");
+        let patterns = vec!["**/secrets/**".to_string()];
+        let args = serde_json::json!({"path": "src/../secrets/x"});
+        assert!(arguments_path_matches_redact_list(&patterns, &args, wd));
     }
 
     #[test]
