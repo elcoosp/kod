@@ -260,6 +260,14 @@ impl JevDecider for JevClient {
 }
 
 impl JevClient {
+    /// The state value as it goes on the wire: with absolute paths
+    /// hashed when `[jev] redact_paths = true`. Read on every
+    /// `evaluate_*` call so a config reload takes effect without a
+    /// rebuild.
+    fn wire_state(&self, state: &Value) -> Value {
+        redact_state_paths(state, self.config.redact_paths)
+    }
+
     /// Build a client from config, or `None` when `enabled = false`.
     ///
     /// The builder reads `TYPESAFE_API_KEY` from the environment when
@@ -376,8 +384,10 @@ impl JevClient {
             return Ok(Decision::jev(p_yes >= 0.5, (p_yes - 0.5).abs() * 2.0));
         }
 
-        let request =
-            SystemOneRequest::new(state.clone(), [("q", Question::from(Noul::new(question)))]);
+        let request = SystemOneRequest::new(
+            self.wire_state(state),
+            [("q", Question::from(Noul::new(question)))],
+        );
         let response = self
             .inner
             .system_one(request)
@@ -432,7 +442,7 @@ impl JevClient {
         for (k, q) in questions {
             pairs.push((k.clone(), Question::from(Noul::new(q.clone()))));
         }
-        let request = SystemOneRequest::new(state.clone(), pairs);
+        let request = SystemOneRequest::new(self.wire_state(state), pairs);
         let response = self
             .inner
             .system_one(request)
@@ -479,7 +489,7 @@ impl JevClient {
         }
 
         let q = Score::new(levels.iter().copied()).instructions(question);
-        let request = SystemOneRequest::new(state.clone(), [("q", Question::from(q))]);
+        let request = SystemOneRequest::new(self.wire_state(state), [("q", Question::from(q))]);
         let response = self
             .inner
             .system_one(request)
@@ -529,7 +539,7 @@ impl JevClient {
 
         let labelled: Vec<(&str, Value)> = options.iter().map(|o| (*o, Value::Null)).collect();
         let q = Choice::new(labelled).instructions(question);
-        let request = SystemOneRequest::new(state.clone(), [("q", Question::from(q))]);
+        let request = SystemOneRequest::new(self.wire_state(state), [("q", Question::from(q))]);
         let response = self
             .inner
             .system_one(request)
@@ -575,6 +585,69 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// Redact absolute filesystem paths in a state value when
+/// `[jev] redact_paths = true`: each path is replaced by a stable
+/// `path-<hash>` token (same path → same token, so Jev's judgment
+/// still sees distinct locations; the user keeps the real paths on
+/// their machine). A no-op when the config leaves the flag off.
+///
+/// A path is a whitespace-delimited token that starts with `/` (a
+/// POSIX absolute path) or a Windows drive (`C:\`). The scan is
+/// deliberately conservative: a token that is not path-shaped is
+/// left verbatim, so a Jev question about `/regex/` syntax is not
+/// mangled.
+fn redact_state_paths(value: &Value, enabled: bool) -> Value {
+    if !enabled {
+        return value.clone();
+    }
+    fn redact_token(tok: &str) -> String {
+        let is_abs = tok.starts_with('/')
+            || (tok.len() >= 2
+                && tok.as_bytes()[1] == b':'
+                && tok.as_bytes()[0].is_ascii_alphabetic());
+        if !is_abs {
+            return tok.to_string();
+        }
+        let hash = fnv1a_64(tok.as_bytes());
+        format!("path-{hash:016x}")
+    }
+    fn walk(v: &Value) -> Value {
+        match v {
+            Value::String(s) => {
+                // Rebuild the string, replacing path-shaped
+                // whitespace-delimited tokens.
+                let mut out = String::with_capacity(s.len());
+                let mut rest = s.as_str();
+                while !rest.is_empty() {
+                    match rest.find(|c: char| c.is_whitespace()) {
+                        Some(i) => {
+                            out.push_str(&redact_token(&rest[..i]));
+                            // Preserve the whitespace char(s).
+                            let ws_end = rest[i..]
+                                .find(|c: char| !c.is_whitespace())
+                                .map(|j| i + j)
+                                .unwrap_or(rest.len());
+                            out.push_str(&rest[i..ws_end]);
+                            rest = &rest[ws_end..];
+                        }
+                        None => {
+                            out.push_str(&redact_token(rest));
+                            rest = "";
+                        }
+                    }
+                }
+                Value::String(out)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(walk).collect()),
+            Value::Object(o) => {
+                Value::Object(o.iter().map(|(k, v)| (k.clone(), walk(v))).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    walk(value)
 }
 
 /// Cache key: the question kind, the serialized state, and the
@@ -629,6 +702,39 @@ pub fn build_state(text: &str, metadata: &[(&str, &str)]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redact_state_paths_hashes_absolute_paths() {
+        let state = serde_json::json!({
+            "text": "read /home/alice/.ssh/id_rsa and /etc/passwd please",
+        });
+        let out = redact_state_paths(&state, true);
+        let text = out["text"].as_str().unwrap();
+        assert!(!text.contains("/home/alice"), "path leaked: {text}");
+        assert!(!text.contains("/etc/passwd"), "path leaked: {text}");
+        assert!(text.contains("path-"), "expected a hashed token: {text}");
+        // Same path, same token (stable); different paths differ.
+        let a = redact_state_paths(&serde_json::json!({"t": "/a/b"}), true);
+        let b = redact_state_paths(&serde_json::json!({"t": "/a/b"}), true);
+        let c = redact_state_paths(&serde_json::json!({"t": "/a/c"}), true);
+        assert_eq!(a, b, "same path must hash the same");
+        assert_ne!(a, c, "different paths must differ");
+    }
+
+    #[test]
+    fn redact_state_paths_is_a_noop_when_disabled() {
+        let state = serde_json::json!({"text": "read /etc/passwd"});
+        let out = redact_state_paths(&state, false);
+        assert_eq!(out, state, "disabled must return the input unchanged");
+    }
+
+    #[test]
+    fn redact_state_paths_leaves_non_paths_alone() {
+        let state = serde_json::json!({"text": "is foo/bar a regex or a path?"});
+        let out = redact_state_paths(&state, true);
+        // `foo/bar` is relative, not absolute, so it is untouched.
+        assert!(out["text"].as_str().unwrap().contains("foo/bar"));
+    }
 
     #[test]
     fn fnv1a_is_deterministic() {
