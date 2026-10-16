@@ -1468,6 +1468,21 @@ impl KodEngine {
                     result.clone()
                 };
             let result = result_for_prompt;
+            // Delta §14.1: register any vendor-shaped secret or
+            // connection-URL password in the tool output before it
+            // enters the transcript, so the outbound obfuscation pass
+            // replaces it with a placeholder. The env scan at install
+            // only sees declared variables; a secret that first appears
+            // in a `read_file` / shell result would otherwise reach the
+            // provider in the clear.
+            {
+                let scan_text = match &result {
+                    ToolResult::Success(v) => v.to_string(),
+                    ToolResult::Error(e) => e.clone(),
+                    ToolResult::RequiresConfirmation { description, .. } => description.clone(),
+                };
+                let _ = self.register_secrets_in_text(&scan_text).await;
+            }
             let rendered = match &result {
                 // list_files raw JSON is one quoted path per entry; a repo
                 // with a target/ dir produces 40k+ entries and the model

@@ -487,3 +487,82 @@ async fn placeholder_is_preserved_in_the_transcript() {
         "the placeholder must survive in the transcript sent on the next round",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Inbound discovery: a vendor-shaped secret first seen in tool output is
+// registered and then obfuscated outbound.
+// ---------------------------------------------------------------------------
+
+/// A secret that appears only as a vendor-shaped literal in a file (not
+/// in the environment, not registered up front) must still be scrubbed
+/// before the provider sees it. Pre-fix the vault's env scan was the only
+/// source, so such a value reached the provider in the clear; the
+/// `scan_text` detector that covers it had no caller.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_vendor_secret_first_seen_in_tool_output_is_obfuscated_outbound() {
+    const SECRET: &str = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz";
+    let (provider, seen) = RecordingProvider::new();
+    let tmp = TempDir::new().unwrap();
+    let cfg = fixture_config(tmp.path());
+    let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("s.kod")).unwrap());
+    // Empty vault: nothing pre-registered.
+    engine
+        .set_secret_vault(Arc::new(
+            kod_types::secret_placeholder::SecretVault::with_key([3u8; 32]),
+        ))
+        .await;
+
+    // A file whose content carries the vendor secret.
+    std::fs::write(
+        tmp.path().join("creds.txt"),
+        format!("anthropic key: {SECRET}\n"),
+    )
+    .unwrap();
+
+    // Turn 1: model calls read_file on that file.
+    provider.script(GenerationResponse::ToolCalls {
+        calls: vec![ToolCall {
+            id: Some("c1".into()),
+            tool_name: "read_file".into(),
+            arguments: serde_json::json!({"path": "creds.txt"}),
+        }],
+        usage: None,
+    });
+    // Turn 2: plain reply, so the loop ends.
+    provider.script(GenerationResponse::Text {
+        content: "done".into(),
+        usage: None,
+    });
+
+    let provider = Arc::new(provider);
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        "default",
+        provider as Arc<dyn LlmProvider>,
+        ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(Arc::new(reg), ModelRef::new("default", ""), None)
+        .await;
+    engine.start().await.unwrap();
+
+    let _ = engine.process("read creds.txt").await;
+
+    let requests = seen.lock().unwrap();
+    for (ri, req) in requests.iter().enumerate() {
+        for m in &req.messages {
+            assert!(
+                !m.content.contains(SECRET),
+                "vendor secret leaked in request {ri} message content: {}",
+                m.content,
+            );
+        }
+        for seg in &req.system.segments {
+            assert!(
+                !seg.text.contains(SECRET),
+                "vendor secret leaked in request {ri} system segment",
+            );
+        }
+    }
+}

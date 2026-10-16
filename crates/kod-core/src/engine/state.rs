@@ -667,6 +667,36 @@ impl KodEngine {
         walk(value, &vault)
     }
 
+    /// Scan `text` for vendor-shaped secrets and connection-URL
+    /// passwords, registering each with the vault. Returns the count
+    /// of newly registered values.
+    ///
+    /// The vault's env scan (`install_default_secret_vault`) only sees
+    /// secrets declared in the environment. A vendor-shaped literal —
+    /// an `sk-ant-…`, a `ghp_…`, a `postgres://user:pw@host` password —
+    /// that appears in tool output was never registered, so the
+    /// outbound obfuscation pass had nothing to substitute and it
+    /// reached the provider in the clear. `scan_text` is the detector
+    /// for exactly that case; this wires it into the tool-result path.
+    ///
+    /// A no-op when no vault is installed (the whole mechanism is off)
+    /// or the scan finds nothing.
+    pub(crate) async fn register_secrets_in_text(&self, text: &str) -> usize {
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) => std::sync::Arc::clone(v),
+            None => return 0,
+        };
+        let discovered = kod_types::secret_sources::scan_text(text);
+        if discovered.is_empty() {
+            return 0;
+        }
+        let n = kod_types::secret_sources::register_discovered(&vault, discovered);
+        if n > 0 {
+            tracing::debug!(count = n, "registered vendor/URL secrets from tool output");
+        }
+        n
+    }
+
     /// The current redactor (shared handle).
     pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
         self.redactor.clone()
