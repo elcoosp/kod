@@ -525,6 +525,26 @@ fn encode_key(key: KeyCode, mods: Modifiers) -> Vec<u8> {
 /// is caught within a test-runner's patience.
 pub const WAIT: Duration = Duration::from_secs(10);
 
+/// Poll until `path` exists, or `timeout` elapses. Returns `true`
+/// when it appeared.
+///
+/// The alternative — a fixed `sleep` then `path.exists()` — is flaky
+/// under parallel load: the write is async (a command handler), and
+/// no sleep is long enough on a busy machine. A test that must not
+/// race the command's side effect polls.
+pub fn wait_for_file(path: &std::path::Path, timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if path.exists() {
+            return true;
+        }
+        if start.elapsed() > timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Wait for the TUI to reach its ready state and return the screen.
 ///
 /// Two markers:

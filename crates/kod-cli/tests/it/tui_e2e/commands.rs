@@ -931,9 +931,10 @@ fn save_and_load_round_trip_a_session() {
     std::thread::sleep(Duration::from_millis(80));
     session.send_text(&format!("/export --json {}", path.display()));
     session.send_key(KeyCode::Enter);
-    std::thread::sleep(Duration::from_millis(800));
+    // Poll rather than sleep a fixed 800ms: the write is async, and no
+    // fixed sleep is reliable under parallel load. This was the flake.
     assert!(
-        path.exists(),
+        harness::wait_for_file(&path, Duration::from_secs(20)),
         "/export --json must write the file ({} missing); screen:\n{}",
         path.display(),
         session.screen_text()
