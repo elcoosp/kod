@@ -162,8 +162,14 @@ const DESTRUCTIVE: &[&str] = &[
     "rm", "rmdir", "mv", "dd", "shred", "truncate", "unlink", "cp",
 ];
 
-/// Commands that write via a mechanism the path check cannot see
-/// (`dd` counts, `tee` writes wherever it is pointed).
+/// Commands that write to a raw device regardless of arg shape — the
+/// operand may be a bare device path the path classifier would miss
+/// inside a flag, so these are catastrophic outright.
+///
+/// `tee` also "writes wherever it is pointed", but it is not
+/// device-only (a `tee` to scratch is the normal temp-file pattern),
+/// so it is classified per-operand alongside the redirect handling
+/// rather than listed here.
 const DEVICE_CAPABLE: &[&str] = &["dd", "mkfs", "mkswap", "fdisk", "parted", "wipefs"];
 
 /// Tokenize a shell command, honoring single and double quotes and
@@ -684,6 +690,44 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             }
         }
 
+        // `tee` writes wherever it is pointed — the DEVICE_CAPABLE
+        // doc names it, but it is not a device-only command (a `tee`
+        // to scratch is the normal temp-file pattern), so it is not in
+        // that list. Instead classify each non-flag operand the way a
+        // redirect target is classified: a credential store or system
+        // path is Catastrophic, scratch is Safe, anything else is at
+        // least Confirm (the write destroys prior contents).
+        if prog_base == "tee" {
+            for arg in args.iter() {
+                let a = unquote(arg);
+                if a.starts_with('-') {
+                    continue;
+                }
+                if is_safe_sink(&a) {
+                    continue;
+                }
+                let (danger, why) = classify_path(&a, ctx);
+                let (expanded, _) = crate::paths::expand_lexical(&a, &ctx.home_dir);
+                let in_scratch = crate::paths::normalize(&expanded).starts_with(&ctx.scratch_dir);
+                let level = match danger {
+                    PathDanger::Catastrophic => RiskLevel::Catastrophic,
+                    _ if in_scratch => RiskLevel::Safe,
+                    _ => RiskLevel::Confirm,
+                };
+                if level != RiskLevel::Safe {
+                    findings.push(RiskFinding {
+                        level,
+                        reason: if why.is_empty() {
+                            format!("tee writes to {a}")
+                        } else {
+                            why
+                        },
+                        target: a,
+                    });
+                }
+            }
+        }
+
         // A pipe whose producer is a `find ~` and consumer a
         // destructive command: escalate — the set of affected files
         // is exactly what cannot be checked.
@@ -813,6 +857,35 @@ mod tests {
         let cmd = "cat > /tmp/note <<'EOF'\nrm -rf /\nEOF";
         let a = assess(cmd, &ctx());
         assert!(a.level.runs_immediately(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn tee_to_a_credential_store_is_catastrophic() {
+        // `tee` writes wherever it is pointed — the DEVICE_CAPABLE
+        // doc names it as covered, but the list omitted it, so
+        // `tee ~/.ssh/authorized_keys` classified Safe and wrote
+        // arbitrary content to a credential path.
+        let a = assess("tee /Users/dev/.ssh/authorized_keys", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn tee_to_a_system_file_is_catastrophic() {
+        let a = assess("echo x | tee /etc/sudoers", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn tee_to_scratch_stays_low() {
+        // The normal "write a temp file" pattern must not escalate.
+        let a = assess("echo x | tee /tmp/build.log", &ctx());
+        assert!(a.level.runs_immediately(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn tee_to_a_workdir_file_is_at_most_confirm() {
+        let a = assess("echo x | tee /work/proj/out.txt", &ctx());
+        assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
     }
 
     #[test]
