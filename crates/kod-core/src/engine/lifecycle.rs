@@ -653,6 +653,13 @@ impl KodEngine {
         if removed_plans > 0 {
             tracing::debug!(removed = removed_plans, "swept stale plan project dirs");
         }
+        // And the session-log files: one per invocation, never removed,
+        // plus a tail of empty files from sessions that opened a
+        // recorder and never wrote an entry. Best-effort.
+        let removed_logs = kod_core_state::session_log::sweep_old_session_logs();
+        if removed_logs > 0 {
+            tracing::debug!(removed = removed_logs, "swept stale session logs");
+        }
 
         // 7. Memory extraction (D2-B3b), opt-in.
         if let Ok(cfg) = kod_config::KodConfig::load_cached()

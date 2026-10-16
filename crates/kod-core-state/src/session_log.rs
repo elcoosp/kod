@@ -649,6 +649,78 @@ pub fn default_session_path() -> Option<PathBuf> {
     )
 }
 
+/// Default cap on session-log files under `~/.kod/sessions/`.
+/// `default_session_path` mints one file per invocation and nothing
+/// removes it; the same unbounded-growth shape as the checkpoint and
+/// plan project directories.
+pub const MAX_SESSION_FILES: usize = 1000;
+
+/// Drop stale session-log files, keeping the newest [`MAX_SESSION_FILES`]
+/// by mtime, and remove any *empty* file regardless of age.
+///
+/// An empty file is a recorder that opened but never recorded an
+/// entry — a session that produced nothing, or a crash before the
+/// first write. It carries no replay value, so it goes on the next
+/// sweep. A non-empty file past the cap is dropped oldest-first, same
+/// as the checkpoint and plan sweeps.
+///
+/// Best-effort and idempotent. Call from the shutdown path.
+pub fn sweep_old_session_logs() -> usize {
+    let Some(home) = dirs::home_dir() else {
+        return 0;
+    };
+    sweep_session_logs_at(&home.join(".kod").join("sessions"))
+}
+
+/// The body of [`sweep_old_session_logs`], over an explicit root so a
+/// test drives it against a temp directory.
+fn sweep_session_logs_at(root: &Path) -> usize {
+    if !root.is_dir() {
+        return 0;
+    }
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+                return None;
+            }
+            let md = e.metadata().ok()?;
+            if !md.is_file() {
+                return None;
+            }
+            let t = md.modified().ok()?;
+            Some((p, t, md.len()))
+        })
+        .collect();
+    let mut removed = 0;
+    // 1. Empty files go unconditionally — no replay value.
+    files.retain(|(p, _, len)| {
+        if *len == 0 {
+            if std::fs::remove_file(p).is_ok() {
+                removed += 1;
+            }
+            false
+        } else {
+            true
+        }
+    });
+    // 2. Cap the rest by mtime.
+    if files.len() > MAX_SESSION_FILES {
+        files.sort_by_key(|(_, t, _)| *t);
+        let to_drop = files.len().saturating_sub(MAX_SESSION_FILES);
+        for (p, _, _) in files.into_iter().take(to_drop) {
+            if std::fs::remove_file(&p).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
 /// Monotonic per-process counter used to break ties between two
 /// session-log paths minted in the same millisecond. Paired with
 /// `std::process::id()` and the wall clock, it guarantees a unique
@@ -1541,5 +1613,54 @@ mod rehydrate_tests {
             assert_eq!(x.content, y.content);
             assert_eq!(x.tool_calls.len(), y.tool_calls.len());
         }
+    }
+}
+
+#[cfg(test)]
+mod session_sweep_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_log(root: &Path, name: &str, bytes: usize) {
+        std::fs::write(root.join(name), vec![b'x'; bytes]).unwrap();
+    }
+
+    #[test]
+    fn sweep_removes_empty_files_unconditionally() {
+        let tmp = TempDir::new().unwrap();
+        write_log(tmp.path(), "a.jsonl", 0);
+        write_log(tmp.path(), "b.jsonl", 0);
+        write_log(tmp.path(), "c.jsonl", 10);
+        // Two empties go even though the file count is under the cap.
+        assert_eq!(sweep_session_logs_at(tmp.path()), 2);
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sweep_caps_nonempty_files_by_age() {
+        let tmp = TempDir::new().unwrap();
+        for n in 0..(MAX_SESSION_FILES + 4) {
+            write_log(tmp.path(), &format!("{n:05}.jsonl"), 10);
+        }
+        let removed = sweep_session_logs_at(tmp.path());
+        assert_eq!(removed, 4, "the four oldest must go");
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            MAX_SESSION_FILES
+        );
+    }
+
+    #[test]
+    fn sweep_missing_root_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(sweep_session_logs_at(&tmp.path().join("nope")), 0);
+    }
+
+    #[test]
+    fn sweep_ignores_non_jsonl_files() {
+        let tmp = TempDir::new().unwrap();
+        write_log(tmp.path(), "keep.txt", 0);
+        assert_eq!(sweep_session_logs_at(tmp.path()), 0);
+        assert!(tmp.path().join("keep.txt").exists());
     }
 }
