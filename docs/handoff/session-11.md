@@ -712,3 +712,50 @@ cover, read the levels. Worth repeating for any classifier/gate.
    for python/perl/ruby.
 2. **Cut a release** — five commits since v0.1.4 (three fixes, two
    docs).
+
+
+---
+
+## Addendum 9 — command-risk classifier, round 2 (8b7b230, a910a8f)
+
+Two more Catastrophic-gate bypasses, found with the same probe method.
+
+- **Interpreter code flags.** `python3 -c`, `perl -e`, `ruby -e`,
+  `node -e`, `php -r`, `lua -e` run a code string the classifier cannot
+  see — the same shape as `bash -c`, which already escalates. These did
+  not, so `python3 -c "open('~/.ssh/id_rsa','w')"` classified Safe.
+  Fix: an INTERPRETERS table; a match with the code flag escalates to
+  Confirm. `python3 script.py` (a readable file) is unaffected (8b7b230).
+
+- **In-place writers.** `sed -i`, `sort -o FILE`, `install` overwrite a
+  named file — same blast radius as `cp`/`truncate` (both in
+  DESTRUCTIVE), but unclassified, so `sed -i ... ~/.ssh/authorized_keys`
+  was Safe while `cp ... ~/.ssh/authorized_keys` was Catastrophic. Fix:
+  extract each writer's file operand and classify it (a910a8f).
+
+### Reviewed, by-design narrowness (NOT bugs)
+
+The probe also flagged `mv ~/a /dev/null`, `cp /dev/null ~/.bashrc`,
+`rsync --delete`, `chmod -R 000`, `git clean -fdx /`, `tar --overwrite`,
+`unzip -o`, `awk 'BEGIN{system(...)}'`, `vim -c ...` as Safe. These are
+deliberate: Catastrophic is reserved for the home dir *itself*,
+credential stores, system roots, and devices. A non-credential home
+file rewritten by an unclassified tool is Low; the sandbox and the
+policy engine are the defense-in-depth behind the blast-radius gate.
+Escalating every unknown writer would over-flag and make the agent
+useless. **Do not "fix" these** — the classifier's contract is "escalate
+on the unresolvable, classify on the resolvable", not "deny everything
+unlisted".
+
+### The line that matters
+
+A finding is a real bypass when a *classified* command's verdict differs
+from an *unclassified* one doing the identical operation on the identical
+target (`cp` vs `sed -i` on `~/.ssh/authorized_keys`). It is narrowness
+when no classified command covers the operation at all (`chmod`, `rsync`)
+— that is the sandbox's job, not the classifier's.
+
+### Cut a release
+
+Six commits since v0.1.4 (five fixes, one docs). The classifier fixes
+are security-relevant; v0.1.5 is due.
