@@ -593,3 +593,45 @@ below the banner.
 
 This was the last surviving item from earlier handoffs. Release history
 no longer advertises a vulnerable build without a warning.
+
+
+---
+
+## Addendum 6 — MinimizeConfig discarded (246e305)
+
+Another instance of the parsed-and-dropped class, this one a whole
+config struct: `Minimizer::with_builtins_and_config(config)` did
+`let _ = config`, and `Minimizer` held no config field. Both documented
+knobs were inert:
+
+- `enabled` ("whether the minimizer runs at all") — it ran regardless.
+- `strip_ansi_globally` ("strip ANSI escape sequences from every
+  capture, even when no def matches") — a command with no matching def
+  returned the raw bytes with escapes intact, the common case for a
+  command the def table does not know.
+
+This is audit finding **F2a-8**, unfixed since the audit. The fix makes
+`Minimizer` hold the config; `minimize()` returns the raw capture when
+`enabled = false` and pre-strips ANSI when `strip_ansi_globally` is on.
+`original_bytes` stays the true capture size (the naive pre-strip
+corrupted it; the existing `minimized_reports_both_sizes` test caught
+that). Two regression tests, each proven to fail pre-fix.
+
+### Still open (feature decision, not a bug)
+
+`MinimizeConfig` remains **embedder-only**: there is no `[minimize]`
+block in `KodConfig`, and the engine always calls `with_builtins()`. So
+no *user* can set `enabled`/`strip_ansi_globally` today. Wiring a
+user-facing `[minimize]` block is a feature choice — the design doc
+(`kod_borrow_from_oh_my_pi.md` §335) describes a much larger surface (76
+built-ins, user-authored TOML defs) — so it wants a decision, not a
+guess. The struct is now honest for an embedder that calls it directly.
+
+### Reviewed, not bugs
+
+- `kod-schema-dialect::recovery` (`classify_rejection`, `plan_retry`)
+  has no external caller, but the module doc is explicit: "This module
+  is layer 1 and the data types layers 2 and 3 need." Intentional
+  future-work hooks, not a lying doc.
+- F2a-13 (minimizer regex recompiled per call) is already fixed — a
+  process-wide compile cache exists in `pipeline.rs::compile`.
