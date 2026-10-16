@@ -258,7 +258,15 @@ fn parse(markdown: &str) -> Vec<Block> {
 
     for raw in markdown.split('\n') {
         if in_code {
-            let t = raw.trim_start();
+            // A closing fence is 3+ backticks, optionally indented
+            // and optionally followed by whitespace (CommonMark:
+            // "no more than three spaces of indentation, followed by
+            // no non-whitespace"). `trim()` on both ends; the
+            // pre-fix shape trimmed only the start, so a trailing
+            // space on the close line failed `all(c == '`')` and the
+            // fence never closed — the rest of the document rendered
+            // as code.
+            let t = raw.trim();
             let is_close = t.len() >= 3 && t.chars().all(|c| c == '`');
             if is_close {
                 blocks.push(Block::Code {
@@ -992,6 +1000,33 @@ mod tests {
         assert!(
             text.contains("**unterminated"),
             "unterminated marker should be visible: {text}"
+        );
+    }
+
+    #[test]
+    fn closing_fence_with_trailing_space_still_closes() {
+        // A closing fence is ` ``` ` possibly followed by whitespace.
+        // The close check trims leading whitespace but not trailing,
+        // so `"``` "` (a trailing space, common when an editor strips
+        // trailing whitespace oddly or a model emits it) failed to
+        // match `all(c == '`')` — the fence never closed and the rest
+        // of the document rendered as code.
+        let src = "```rust\nfn main() {}\n``` \nafter";
+        let blocks = parse(src);
+        let has_code = blocks.iter().any(|b| matches!(b, Block::Code { .. }));
+        let after_is_code = blocks
+            .iter()
+            .filter(|b| matches!(b, Block::Code { .. }))
+            .flat_map(|b| match b {
+                Block::Code { lines, .. } => lines.clone(),
+                _ => vec![],
+            })
+            .any(|l| l.contains("after"));
+        assert!(has_code, "the fence must open");
+        assert!(
+            !after_is_code,
+            "`after` must NOT be inside the code block — the fence \
+             with a trailing space did not close: {blocks:?}",
         );
     }
 
