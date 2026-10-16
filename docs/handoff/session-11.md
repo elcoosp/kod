@@ -667,3 +667,48 @@ HEAD moved da80630 → b4ff57d. Two fixes, both the same broad shape
   intentional hooks.
 - `StreamGuardConfig` fields read only inside their own module — my
   "zero external reads" scan false-positived on the defining file.
+
+
+---
+
+## Addendum 8 — command-risk classifier bypasses (0240eda, ae19734)
+
+Three ways past the **unoverridable Catastrophic gate** (the policy
+engine cannot widen it; only the user running the command themselves can
+proceed). Found by probing `kod-risk::assess` with adversarial commands.
+
+- **tee.** The `DEVICE_CAPABLE` doc named `tee` ("writes wherever it is
+  pointed"), but the list omitted it — so `tee ~/.ssh/authorized_keys`
+  and `echo x | tee /etc/sudoers` classified Safe. `tee` is not
+  device-only, so it is now classified per-operand like a redirect
+  target (0240eda).
+
+- **Substituted operands.** `rm -rf $(echo ~)` and `rm -rf \`echo ~\``
+  classified Safe. `classify_path` expands `~`/`$HOME`/`${HOME}` but
+  returns Low for a token it cannot resolve, so the substitution slipped
+  past the gate a literal `rm -rf ~` hits. Now an operand with `$` or a
+  backtick that `classify_path` cannot resolve escalates to Confirm; a
+  resolvable `$HOME` keeps Catastrophic (ae19734).
+
+- **Mutating find.** `find ~ -delete` / `find ~ -exec rm {} +`
+  classified Safe — `find` is not in DESTRUCTIVE and only the
+  `find | xargs` pipe form was caught. Now a find with
+  -delete/-exec/-execdir/-ok classifies its walk root (ae19734).
+
+### Method
+
+The probe was a throwaway `#[ignore]` test printing `assess()` for ~18
+adversarial commands, then removed. That is the cheapest way to find
+this class: enumerate the gate, feed it shapes the fix history did not
+cover, read the levels. Worth repeating for any classifier/gate.
+
+### Where the next agent should pick up
+
+1. **More classifier shapes may slip past.** Other untested forms:
+   `mv /Users/dev/a /dev/null`, `rsync --delete`, `python3 -c
+   "open(...,'w')"`, `perl -e unlink`, `vim -c ':wq'`. A language
+   interpreter running code the classifier cannot see is the same shape
+   as `bash -c` — the `-c`/`-e` escalation exists for shells but not
+   for python/perl/ruby.
+2. **Cut a release** — five commits since v0.1.4 (three fixes, two
+   docs).
