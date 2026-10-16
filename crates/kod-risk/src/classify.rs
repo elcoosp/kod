@@ -152,6 +152,20 @@ pub fn wrapper_table_for_tests() -> &'static [(&'static str, &'static [&'static 
 /// test can compare it against kod-config's list.
 pub const SHELLS_FOR_TESTS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
 
+/// Interpreters whose code-string flag runs a program the classifier
+/// cannot tokenize. `python3 -c "..."`, `perl -e "..."`, etc. — the
+/// same shape as `bash -c`, and escalated for the same reason. The
+/// tuple is `(program, code-flag)`.
+const INTERPRETERS: &[(&str, &str)] = &[
+    ("python", "-c"),
+    ("python3", "-c"),
+    ("perl", "-e"),
+    ("ruby", "-e"),
+    ("node", "-e"),
+    ("php", "-r"),
+    ("lua", "-e"),
+];
+
 #[doc(hidden)]
 pub fn command_string_wrappers_for_tests() -> &'static [&'static str] {
     SHELLS_FOR_TESTS
@@ -516,6 +530,32 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                     level: RiskLevel::Confirm,
                     reason: "shell runs a nested command string the classifier cannot inspect statically"
                         .to_string(),
+                    target: seg.join(" "),
+                });
+                continue;
+            }
+        }
+
+        // An interpreter with its code-string flag runs a program the
+        // classifier cannot see — the same shape as `bash -c`. Pre-fix
+        // `python3 -c "..."` / `perl -e "..."` classified Safe while
+        // doing arbitrary file mutation.
+        if let Some((_, code_flag)) = INTERPRETERS.iter().find(|(p, _)| *p == prog_base) {
+            let has_code_flag = args.iter().any(|t| {
+                let t = unquote(t);
+                t == *code_flag
+                    // Combined short flags: `-ce`, `-ec`.
+                    || (t.starts_with('-')
+                        && !t.starts_with("--")
+                        && t.len() > 1
+                        && t[1..].contains(code_flag.trim_start_matches('-')))
+            });
+            if has_code_flag {
+                findings.push(RiskFinding {
+                    level: RiskLevel::Confirm,
+                    reason: format!(
+                        "{prog_base} runs a code string the classifier cannot inspect statically"
+                    ),
                     target: seg.join(" "),
                 });
                 continue;
@@ -948,6 +988,37 @@ mod tests {
                 a.level,
             );
         }
+    }
+
+    #[test]
+    fn interpreter_code_flag_escalates() {
+        // An interpreter running a code string the classifier cannot
+        // see is the same shape as `bash -c`: the inner operation is
+        // unbounded. The shell case escalates; these did not, so
+        // `python3 -c "open(...,'w')"` and `perl -e "unlink ..."`
+        // classified Safe while doing arbitrary file mutation.
+        for c in [
+            "python3 -c \"open('/Users/dev/.ssh/id_rsa','w').close()\"",
+            "python -c \"import os; os.remove('/Users/dev/.bashrc')\"",
+            "perl -e \"unlink '/Users/dev/.ssh/id_rsa'\"",
+            "ruby -e \"File.delete('/Users/dev/.bashrc')\"",
+            "node -e \"require('fs').unlinkSync('/Users/dev/.bashrc')\"",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(
+                a.level != RiskLevel::Safe,
+                "{c:?} must not be Safe (got {:?})",
+                a.level,
+            );
+        }
+    }
+
+    #[test]
+    fn interpreter_script_file_is_not_escalated() {
+        // `python3 script.py` runs a file the classifier can read, so
+        // it is not the opaque code-string case.
+        let a = assess("python3 /work/proj/script.py", &ctx());
+        assert!(a.level.runs_immediately(), "got {:?}", a.level);
     }
 
     #[test]
