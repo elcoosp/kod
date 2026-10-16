@@ -456,7 +456,11 @@ pub struct KodEngine {
     /// replaced with the raw value. `None` disables the whole
     /// mechanism; `RwLock<Option<...>>` because a caller installs the
     /// vault after construction (same shape as `policy`).
-    secret_vault: RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>,
+    // Wrapped in `Arc` so a Jev-redaction decorator can share the
+    // same slot (see `RedactingJevDecider`) and see a vault installed
+    // after the client.
+    secret_vault:
+        std::sync::Arc<RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>>,
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: kod_core_state::cost::CostTracker,

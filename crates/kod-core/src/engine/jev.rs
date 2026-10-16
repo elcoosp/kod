@@ -170,7 +170,13 @@ impl KodEngine {
     /// fall through to their heuristic when it is `None`.
     pub fn set_jev_client(&self, client: crate::jev::JevClient) {
         if let Ok(mut slot) = self.jev_client.write() {
-            *slot = Some(std::sync::Arc::new(client));
+            // Wrap so the outbound state is scrubbed of registered
+            // secrets; the decorator shares the vault slot, so a vault
+            // installed later is still seen.
+            *slot = Some(std::sync::Arc::new(crate::jev::RedactingJevDecider::new(
+                std::sync::Arc::new(client),
+                std::sync::Arc::clone(&self.secret_vault),
+            )));
         }
     }
 
@@ -178,7 +184,13 @@ impl KodEngine {
     /// inject deterministic verdicts without a network round-trip.
     pub fn set_jev_decider(&self, decider: std::sync::Arc<dyn crate::jev::JevDecider>) {
         if let Ok(mut slot) = self.jev_client.write() {
-            *slot = Some(decider);
+            // Same wrapping as `set_jev_client`: a test-injected
+            // decider must also be scrubbed, or the class-level test
+            // below could pass while production leaks.
+            *slot = Some(std::sync::Arc::new(crate::jev::RedactingJevDecider::new(
+                decider,
+                std::sync::Arc::clone(&self.secret_vault),
+            )));
         }
     }
 
@@ -1295,4 +1307,121 @@ fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod redaction_wiring_tests {
+    //! Proves `set_jev_decider` / `set_jev_client` wrap the decider
+    //! in the redaction decorator, so a secret in an outbound Jev
+    //! state never reaches the installed decider (and, in production,
+    //! never reaches TypeSafe).
+
+    use super::*;
+    use kod_config::JevConfig;
+    use std::sync::Arc;
+
+    struct RecordingDecider {
+        cfg: JevConfig,
+        seen: parking_lot::Mutex<Vec<serde_json::Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::jev::JevDecider for RecordingDecider {
+        fn thresholds(&self) -> &kod_config::JevThresholds {
+            &self.cfg.thresholds
+        }
+        fn config(&self) -> &JevConfig {
+            &self.cfg
+        }
+        fn reasoning_timeout(&self) -> std::time::Duration {
+            std::time::Duration::from_secs(1)
+        }
+        fn clear_cache(&self) {}
+        fn cache_len(&self) -> usize {
+            0
+        }
+        fn cache_enabled(&self) -> bool {
+            false
+        }
+        async fn evaluate_yes_no(
+            &self,
+            state: &serde_json::Value,
+            _q: &str,
+        ) -> std::result::Result<crate::jev::Decision<bool>, crate::jev::JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(crate::jev::Decision::jev(true, 1.0))
+        }
+        async fn evaluate_yes_no_batch(
+            &self,
+            state: &serde_json::Value,
+            qs: &[(String, String)],
+        ) -> std::result::Result<Vec<(String, f32)>, crate::jev::JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(qs.iter().map(|(k, _)| (k.clone(), 1.0)).collect())
+        }
+        async fn evaluate_score(
+            &self,
+            state: &serde_json::Value,
+            _q: &str,
+            _levels: &[&str],
+        ) -> std::result::Result<crate::jev::Decision<String>, crate::jev::JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(crate::jev::Decision::jev("x".to_string(), 1.0))
+        }
+        async fn evaluate_choice(
+            &self,
+            state: &serde_json::Value,
+            _q: &str,
+            _opts: &[&str],
+        ) -> std::result::Result<crate::jev::Decision<String>, crate::jev::JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(crate::jev::Decision::jev("x".to_string(), 1.0))
+        }
+        fn with_thresholds(
+            &self,
+            _new: kod_config::JevThresholds,
+        ) -> std::result::Result<Arc<dyn crate::jev::JevDecider>, crate::jev::JevError> {
+            Err(crate::jev::JevError::Disabled)
+        }
+    }
+
+    #[tokio::test]
+    async fn installed_decider_receives_scrubbed_state() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let engine = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+
+        let vault = Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+            [9u8; 32],
+        ));
+        let placeholder = vault.register("super-secret-value-1234");
+        engine.set_secret_vault(vault).await;
+
+        let rec = Arc::new(RecordingDecider {
+            cfg: JevConfig::default(),
+            seen: parking_lot::Mutex::new(Vec::new()),
+        });
+        engine.set_jev_decider(rec.clone());
+
+        // Drive one call through the engine's own accessor — the path
+        // every advisor site uses.
+        let client = engine.jev_client().expect("decider installed");
+        let state = serde_json::json!({"text": "key super-secret-value-1234"});
+        client.evaluate_yes_no(&state, "q").await.unwrap();
+
+        let seen = rec.seen.lock();
+        let got = seen.last().unwrap().to_string();
+        assert!(
+            !got.contains("super-secret-value-1234"),
+            "engine-installed decider saw the raw secret: {got}"
+        );
+        assert!(
+            got.contains(&placeholder),
+            "expected the placeholder, got: {got}"
+        );
+    }
 }

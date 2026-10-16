@@ -699,6 +699,139 @@ pub fn build_state(text: &str, metadata: &[(&str, &str)]) -> Value {
     Value::Object(obj)
 }
 
+/// A [`JevDecider`] wrapper that obfuscates registered secrets in the
+/// state before delegating to the inner decider.
+///
+/// The Jev outbound path sends transcript previews to a remote
+/// judgment endpoint. The engine's provider path scrubs secrets with
+/// the vault (`agent_loop.rs`), but the Jev advisor built its state
+/// with raw text and passed it straight to the client — so a
+/// registered secret in a preview reached TypeSafe in the clear. The
+/// vault's `redact_paths` knob (see `JevClient::wire_state`) covers
+/// only paths; this covers the secret *values*.
+///
+/// Wrapping at the trait is the single choke point: every
+/// `evaluate_*` call on every one of the ~30 advisor sites passes
+/// through here. Installed by [`crate::engine`] when a Jev client is
+/// set; the vault slot is shared, so a vault installed after the
+/// client is still seen.
+pub struct RedactingJevDecider {
+    inner: std::sync::Arc<dyn JevDecider>,
+    vault: std::sync::Arc<
+        tokio::sync::RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>,
+    >,
+}
+
+impl RedactingJevDecider {
+    pub fn new(
+        inner: std::sync::Arc<dyn JevDecider>,
+        vault: std::sync::Arc<
+            tokio::sync::RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>,
+        >,
+    ) -> Self {
+        Self { inner, vault }
+    }
+
+    /// Obfuscate every string in `state` with the installed vault.
+    /// A no-op when no vault is installed. `obfuscate` is the same
+    /// reversible substitution the provider path uses, so the model
+    /// sees the placeholder and the engine can reverse it — the
+    /// judgment endpoint sees neither the raw secret nor a
+    /// one-way redaction it cannot reason about.
+    async fn scrub(&self, state: &Value) -> Value {
+        let vault = self.vault.read().await.clone();
+        let Some(vault) = vault else {
+            return state.clone();
+        };
+        if vault.is_empty() {
+            return state.clone();
+        }
+        fn walk(v: &Value, vault: &kod_types::secret_placeholder::SecretVault) -> Value {
+            match v {
+                Value::String(s) => Value::String(vault.obfuscate(s)),
+                Value::Array(a) => Value::Array(a.iter().map(|x| walk(x, vault)).collect()),
+                Value::Object(o) => {
+                    Value::Object(o.iter().map(|(k, x)| (k.clone(), walk(x, vault))).collect())
+                }
+                other => other.clone(),
+            }
+        }
+        walk(state, &vault)
+    }
+}
+
+#[async_trait::async_trait]
+impl JevDecider for RedactingJevDecider {
+    fn thresholds(&self) -> &kod_config::JevThresholds {
+        self.inner.thresholds()
+    }
+    fn config(&self) -> &kod_config::JevConfig {
+        self.inner.config()
+    }
+    fn reasoning_timeout(&self) -> std::time::Duration {
+        self.inner.reasoning_timeout()
+    }
+    fn clear_cache(&self) {
+        self.inner.clear_cache();
+    }
+    fn cache_len(&self) -> usize {
+        self.inner.cache_len()
+    }
+    fn cache_enabled(&self) -> bool {
+        self.inner.cache_enabled()
+    }
+
+    async fn evaluate_yes_no(
+        &self,
+        state: &Value,
+        question: &str,
+    ) -> Result<Decision<bool>, JevError> {
+        self.inner
+            .evaluate_yes_no(&self.scrub(state).await, question)
+            .await
+    }
+    async fn evaluate_yes_no_batch(
+        &self,
+        state: &Value,
+        questions: &[(String, String)],
+    ) -> Result<Vec<(String, f32)>, JevError> {
+        self.inner
+            .evaluate_yes_no_batch(&self.scrub(state).await, questions)
+            .await
+    }
+    async fn evaluate_score(
+        &self,
+        state: &Value,
+        question: &str,
+        levels: &[&str],
+    ) -> Result<Decision<String>, JevError> {
+        self.inner
+            .evaluate_score(&self.scrub(state).await, question, levels)
+            .await
+    }
+    async fn evaluate_choice(
+        &self,
+        state: &Value,
+        question: &str,
+        options: &[&str],
+    ) -> Result<Decision<String>, JevError> {
+        self.inner
+            .evaluate_choice(&self.scrub(state).await, question, options)
+            .await
+    }
+
+    fn with_thresholds(
+        &self,
+        new: kod_config::JevThresholds,
+    ) -> Result<std::sync::Arc<dyn JevDecider>, JevError> {
+        let inner = self.inner.with_thresholds(new)?;
+        Ok(std::sync::Arc::new(RedactingJevDecider {
+            inner,
+            vault: std::sync::Arc::clone(&self.vault),
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,6 +951,119 @@ mod tests {
         assert_eq!(d.confidence, 1.0);
         let d = Decision::jev(true, -0.5);
         assert_eq!(d.confidence, 0.0);
+    }
+
+    // --- RedactingJevDecider (the Jev outbound choke point) ---
+
+    /// Records the state it receives, so a test can assert what the
+    /// decorator forwarded.
+    struct RecordingDecider {
+        cfg: JevConfig,
+        seen: parking_lot::Mutex<Vec<Value>>,
+    }
+    #[async_trait::async_trait]
+    impl JevDecider for RecordingDecider {
+        fn thresholds(&self) -> &kod_config::JevThresholds {
+            &self.cfg.thresholds
+        }
+        fn config(&self) -> &kod_config::JevConfig {
+            &self.cfg
+        }
+        fn reasoning_timeout(&self) -> std::time::Duration {
+            std::time::Duration::from_secs(1)
+        }
+        fn clear_cache(&self) {}
+        fn cache_len(&self) -> usize {
+            0
+        }
+        fn cache_enabled(&self) -> bool {
+            false
+        }
+        async fn evaluate_yes_no(
+            &self,
+            state: &Value,
+            _q: &str,
+        ) -> std::result::Result<Decision<bool>, JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(Decision::jev(true, 1.0))
+        }
+        async fn evaluate_yes_no_batch(
+            &self,
+            state: &Value,
+            qs: &[(String, String)],
+        ) -> std::result::Result<Vec<(String, f32)>, JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(qs.iter().map(|(k, _)| (k.clone(), 1.0)).collect())
+        }
+        async fn evaluate_score(
+            &self,
+            state: &Value,
+            _q: &str,
+            _levels: &[&str],
+        ) -> std::result::Result<Decision<String>, JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(Decision::jev("x".to_string(), 1.0))
+        }
+        async fn evaluate_choice(
+            &self,
+            state: &Value,
+            _q: &str,
+            _opts: &[&str],
+        ) -> std::result::Result<Decision<String>, JevError> {
+            self.seen.lock().push(state.clone());
+            Ok(Decision::jev("x".to_string(), 1.0))
+        }
+        fn with_thresholds(
+            &self,
+            _new: kod_config::JevThresholds,
+        ) -> std::result::Result<std::sync::Arc<dyn JevDecider>, JevError> {
+            Err(JevError::Disabled)
+        }
+    }
+
+    #[tokio::test]
+    async fn redacting_decorator_scrubs_secrets_in_state() {
+        let vault = std::sync::Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+            [7u8; 32],
+        ));
+        let placeholder = vault.register("super-secret-value-1234");
+        let slot = std::sync::Arc::new(tokio::sync::RwLock::new(Some(vault)));
+        let inner = std::sync::Arc::new(RecordingDecider {
+            cfg: JevConfig::default(),
+            seen: parking_lot::Mutex::new(Vec::new()),
+        });
+        let dec = RedactingJevDecider::new(inner.clone(), slot);
+        let state = serde_json::json!({
+            "text": "the key super-secret-value-1234 is in /home/a/.env",
+        });
+        dec.evaluate_yes_no(&state, "q").await.unwrap();
+        let seen = inner.seen.lock();
+        let got = seen.last().unwrap().to_string();
+        assert!(
+            !got.contains("super-secret-value-1234"),
+            "raw secret reached the decider: {got}"
+        );
+        assert!(
+            got.contains(&placeholder),
+            "expected the placeholder in the forwarded state: {got}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redacting_decorator_is_a_noop_without_a_vault() {
+        let slot = std::sync::Arc::new(tokio::sync::RwLock::new(None));
+        let inner = std::sync::Arc::new(RecordingDecider {
+            cfg: JevConfig::default(),
+            seen: parking_lot::Mutex::new(Vec::new()),
+        });
+        let dec = RedactingJevDecider::new(inner.clone(), slot);
+        let state = serde_json::json!({"text": "nothing secret here"});
+        dec.evaluate_yes_no(&state, "q").await.unwrap();
+        let seen = inner.seen.lock();
+        assert_eq!(
+            &seen[0], &state,
+            "no vault must forward the state unchanged"
+        );
     }
 
     #[test]

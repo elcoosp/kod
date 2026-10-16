@@ -266,7 +266,7 @@ impl KodEngine {
             image_render_cache: RwLock::new(HashMap::new()),
             speculative_reads: RwLock::new(true),
             image_frames: RwLock::new(HashMap::new()),
-            secret_vault: RwLock::new(None),
+            secret_vault: std::sync::Arc::new(RwLock::new(None)),
             cost_tracker: kod_core_state::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
