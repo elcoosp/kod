@@ -566,3 +566,36 @@ async fn a_vendor_secret_first_seen_in_tool_output_is_obfuscated_outbound() {
         }
     }
 }
+
+/// A vendor-shaped secret in the *user's* message must be scrubbed even
+/// when nothing pre-registered it. The tool-result path calls
+/// `register_secrets_in_text`; the user-input path does not, so a key a
+/// user pastes into the prompt reaches the provider in the clear.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_vendor_secret_pasted_by_the_user_is_obfuscated() {
+    const SECRET: &str = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz";
+    let (provider, seen) = RecordingProvider::new();
+    let (engine, _tmp) = engine_with(Arc::new(provider)).await;
+    // Empty vault: nothing pre-registered.
+    engine
+        .set_secret_vault(Arc::new(
+            kod_types::secret_placeholder::SecretVault::with_key([5u8; 32]),
+        ))
+        .await;
+
+    let _ = engine
+        .process(&format!("here is my key {SECRET}, save it"))
+        .await;
+
+    let requests = seen.lock().unwrap();
+    assert!(!requests.is_empty(), "provider must have been called");
+    for (ri, req) in requests.iter().enumerate() {
+        for m in &req.messages {
+            assert!(
+                !m.content.contains(SECRET),
+                "user-pasted vendor secret leaked in request {ri}: {}",
+                m.content,
+            );
+        }
+    }
+}

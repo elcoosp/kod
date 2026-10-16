@@ -12,6 +12,14 @@ impl KodEngine {
         retrieval_log_turn_id: Option<u64>,
         create_plan: bool,
     ) -> Result<TurnPreparation> {
+        // Delta §14.1: register any vendor-shaped secret the user
+        // pasted directly into the prompt, so the outbound obfuscation
+        // pass replaces it. The env scan at install and the tool-result
+        // scan cover their sources; a key typed into the message was
+        // covered by neither, so it reached the provider in the clear.
+        // This runs before any prompt is composed, so the same turn's
+        // request already carries the placeholder.
+        let _ = self.register_secrets_in_text(input).await;
         // A real turn is starting: the prewarm's speculation is over,
         // and the next fresh turn should warm again.
         self.reset_prewarm(key).await;
