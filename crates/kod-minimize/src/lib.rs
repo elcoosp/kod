@@ -101,6 +101,7 @@ impl Minimized {
 /// construction beyond the defs themselves.
 pub struct Minimizer {
     defs: Vec<Def>,
+    config: MinimizeConfig,
 }
 
 /// The minimizer's configuration. Defaults to the built-in defs.
@@ -140,7 +141,6 @@ impl Minimizer {
     /// Build a minimizer with the built-in defs and a caller-supplied
     /// config.
     pub fn with_builtins_and_config(config: MinimizeConfig) -> Self {
-        let _ = config;
         let mut defs = Vec::new();
         for (name, text) in BUILTIN_DEFS {
             match Def::from_toml(text) {
@@ -152,13 +152,16 @@ impl Minimizer {
                 ),
             }
         }
-        Self { defs }
+        Self { defs, config }
     }
 
     /// An empty minimizer. Useful in tests and in a caller that wants
     /// to control the def set.
     pub fn empty() -> Self {
-        Self { defs: Vec::new() }
+        Self {
+            defs: Vec::new(),
+            config: MinimizeConfig::default(),
+        }
     }
 
     /// Register an additional def. Replaces an existing def with the
@@ -183,13 +186,37 @@ impl Minimizer {
     /// reflects the shape of the result — a caller that wants the
     /// raw bytes back can compare `filter` to `None`.
     pub fn minimize(&self, command: &str, raw: &str, exit_code: i32) -> Minimized {
+        // `enabled = false` is the master switch: the caller wants the
+        // raw capture back with no rewriting, so downstream code does
+        // not branch on whether the minimizer ran.
+        if !self.config.enabled {
+            return Minimized::raw(raw);
+        }
+        // `strip_ansi_globally` cleans every capture, even when no def
+        // matches — the common case for a command the def table does
+        // not know. The cleaned text is what the model sees, but
+        // `original_bytes` stays the true capture size.
+        let cleaned;
+        let input = if self.config.strip_ansi_globally {
+            cleaned = pipeline::strip_ansi(raw);
+            cleaned.as_str()
+        } else {
+            raw
+        };
+        let original_bytes = raw.len();
         match plan::classify(command) {
             plan::CommandPlan::Single { program, args } => {
-                self.minimize_single(&program, &args, raw, exit_code)
+                self.minimize_single(&program, &args, input, original_bytes, exit_code)
             }
             // Piped, chained, or unsupported: the pipe-opacity
-            // invariant. Return the raw capture.
-            _ => Minimized::raw(raw),
+            // invariant. Return the raw capture (ANSI-cleaned when the
+            // global strip is on).
+            _ => Minimized {
+                text: input.to_string(),
+                filter: None,
+                original_bytes,
+                output_bytes: input.len(),
+            },
         }
     }
 
@@ -198,6 +225,7 @@ impl Minimizer {
         program: &str,
         args: &[String],
         raw: &str,
+        original_bytes: usize,
         exit_code: i32,
     ) -> Minimized {
         // Find the first def that matches. The registry is small
@@ -227,11 +255,16 @@ impl Minimizer {
             return Minimized {
                 text: text.clone(),
                 filter: Some(def.id.clone()),
-                original_bytes: raw.len(),
+                original_bytes,
                 output_bytes: text.len(),
             };
         }
-        Minimized::raw(raw)
+        Minimized {
+            text: raw.to_string(),
+            filter: None,
+            original_bytes,
+            output_bytes: raw.len(),
+        }
     }
 }
 
@@ -274,6 +307,47 @@ mod tests {
         assert!(r.filter.is_none());
         assert_eq!(r.text, "on branch main\n");
         assert_eq!(r.original_bytes, r.output_bytes);
+    }
+
+    #[test]
+    fn strip_ansi_globally_strips_ansi_from_a_no_def_command() {
+        // The config promises "strip ANSI escape sequences from every
+        // capture, even when no def matches". Pre-fix the config was
+        // discarded (`let _ = config`), so a command with no matching
+        // def returned the raw bytes with the escapes intact.
+        let cfg = MinimizeConfig {
+            enabled: true,
+            strip_ansi_globally: true,
+        };
+        let m = Minimizer::with_builtins_and_config(cfg);
+        let r = m.minimize("some-unknown-tool --x", "\u{1b}[31mred\u{1b}[0m done\n", 0);
+        assert!(
+            !r.text.contains('\u{1b}'),
+            "ANSI escapes survived a no-def command: {:?}",
+            r.text,
+        );
+        assert!(r.filter.is_none(), "no def matched, so no filter id");
+    }
+
+    #[test]
+    fn enabled_false_returns_the_raw_capture() {
+        // The config promises "whether the minimizer runs at all".
+        // Pre-fix the flag was discarded and the minimizer ran anyway.
+        let cfg = MinimizeConfig {
+            enabled: false,
+            strip_ansi_globally: true,
+        };
+        let m = Minimizer::with_builtins_and_config(cfg);
+        // `git status` has a def; with the minimizer disabled the raw
+        // capture must come back untouched.
+        let raw = "\u{1b}[32mOn branch main\u{1b}[0m\n\tmodified:   a.rs\n";
+        let r = m.minimize("git status", raw, 0);
+        assert!(
+            r.text.contains('\u{1b}'),
+            "disabled minimizer must not strip/rewrite: {:?}",
+            r.text,
+        );
+        assert!(r.filter.is_none(), "disabled means no filter applied");
     }
 
     #[test]
