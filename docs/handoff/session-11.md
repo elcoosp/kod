@@ -824,3 +824,40 @@ a `wait_ci` on a terminal message that fires after the write — a new
 assertion without that gate needs `wait_for_file`. `wait_for_absent`
 was written for the negative case and removed when it turned out every
 negative assertion already had a terminal-message gate.
+
+
+---
+
+## Addendum 12 — inject_intent_field skipped no-arg tools (ae406f6)
+
+`Registry::get_definitions` documents "every schema gets an optional
+`intent` field", but `inject_intent_field` returned early when a schema
+had no `properties` object. A no-arg tool's schema is
+`{"type": "object"}` (mcp_adapters.rs:315) — such a tool advertised
+neither `intent` nor `accept_large_output`, so the model had no
+advertised escape to request an oversized result in full; the context
+guard withheld it silently.
+
+Fixed: create an empty `properties` object when absent, then inject. A
+`properties` present but non-object is left alone. Three tests; the
+first proven to fail pre-fix.
+
+### Reviewed, low-severity (not fixed)
+
+Two bytes-vs-chars leftovers in the same class as the fixed F2e-7:
+
+- `kod-stats::commit_mapreduce::cap_file_body` compares `body.len()`
+  (bytes) against a char budget and reports "N chars elided" with a
+  byte count.
+- `kod-tui`'s `streamed_chars_this_turn` adds `chunk.len()` (bytes)
+  to a field feeding a token estimate.
+
+Both are display-only estimates; neither corrupts data. Worth a sweep
+if the class recurs, but not urgent.
+
+### Also stale
+
+The `docs/brainstorms/kod-code-audit-report.md` findings list remains a
+historical document. Spot-checked this round: F2a-9 (telemetry POST
+timeout), F2h-13 (cleanse single-flight), F2e-7 (async_delivery
+bytes/chars) are all fixed. Do not mine it for open items.
