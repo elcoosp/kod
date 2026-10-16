@@ -322,6 +322,15 @@ fn unquote(t: &str) -> String {
 /// through, which escalates).
 fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
     let mut i = 0;
+    // A shell env-prefix: leading `NAME=value` tokens set the
+    // environment for the command that follows, they are not the
+    // program. `FOO=bar rm -rf /` runs `rm`; pre-fix `unwrap` returned
+    // `program = "FOO=bar"` (not in DESTRUCTIVE), so the real program
+    // was hidden and the command classified Safe. Same shape as the
+    // `env FOO=bar rm` case the wrapper loop already handles.
+    while i < tokens.len() && looks_like_env_assignment(&unquote(&tokens[i])) {
+        i += 1;
+    }
     loop {
         if i >= tokens.len() {
             return (None, Vec::new(), true);
@@ -855,6 +864,18 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                     .collect();
                 positional.last().cloned().into_iter().collect()
             }
+            // `ln TARGET LINK` (optionally -s/-f): the LAST positional
+            // is the link name, which is created or replaced. On a
+            // credential path that destroys the file's contents. Only
+            // the link operand is classified, not the target.
+            "ln" => {
+                let positional: Vec<String> = args
+                    .iter()
+                    .map(|t| unquote(t))
+                    .filter(|t| !t.starts_with('-'))
+                    .collect();
+                positional.last().cloned().into_iter().collect()
+            }
             _ => Vec::new(),
         };
         for target in &in_place_targets {
@@ -1101,6 +1122,53 @@ mod tests {
     fn in_place_writer_in_workdir_is_not_catastrophic() {
         let a = assess("sed -i 's/x/y/' /work/proj/src/a.rs", &ctx());
         assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn ln_into_credential_store_is_catastrophic() {
+        // `ln -sf TARGET LINK` replaces LINK with a symlink. On a
+        // credential path that destroys the file's contents (the link
+        // points elsewhere) — the same blast radius as the `cp`/
+        // `truncate`/`sed -i` writers already classified, but `ln` is
+        // unclassified, so it came back Safe.
+        for c in [
+            "ln -sf /dev/null /Users/dev/.ssh/authorized_keys",
+            "ln -sfn /tmp/x /Users/dev/.ssh/id_rsa",
+            "ln -s /tmp/x /etc/sudoers",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(a.level.is_absolute_deny(), "{c:?} got {:?}", a.level);
+        }
+    }
+
+    #[test]
+    fn ln_in_workdir_is_not_catastrophic() {
+        let a = assess("ln -s target /work/proj/link", &ctx());
+        assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn leading_env_assignment_does_not_hide_the_program() {
+        // `FOO=bar rm -rf /Users/dev` runs `rm` with `FOO=bar` in its
+        // environment (a standard shell env-prefix). `unwrap` returned
+        // `program = "FOO=bar"` — not in DESTRUCTIVE — because the
+        // env-assignment skip ran only *inside* a wrapper, so a bare
+        // leading assignment hid the real program and the command
+        // classified Safe. Same shape as the fixed `env FOO=bar rm`.
+        let a = assess("FOO=bar rm -rf /Users/dev", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn multiple_leading_env_assignments_unwrap() {
+        let a = assess("A=1 B=2 shred /Users/dev/.ssh/id_rsa", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn a_leading_assignment_then_a_safe_command_stays_safe() {
+        let a = assess("FOO=bar ls /work/proj", &ctx());
+        assert!(a.level.runs_immediately(), "got {:?}", a.level);
     }
 
     #[test]
