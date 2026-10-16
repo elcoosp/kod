@@ -796,3 +796,31 @@ the dead-code lint).
    named (indented-code blocks, setext headers, nested lists) are still
    absent. Whether they matter depends on how much markdown the model
    emits; low priority unless a real reply renders wrong.
+
+
+---
+
+## Addendum 11 — the flaky TUI e2e (f6c28e0)
+
+`tui_e2e::commands::save_and_load_round_trip_a_session` flaked three
+times across this session, always in the full parallel run and always
+passing in isolation.
+
+**Cause:** after `/export --json` the test slept a fixed 800ms, then
+asserted the output file exists. The write is an async command handler;
+800ms is not reliable on a loaded machine, so the file simply had not
+been written yet when the assert ran. Nothing to do with the markdown
+or classifier fixes it happened to coincide with.
+
+**Fix:** a `harness::wait_for_file(path, timeout)` poll helper (25ms
+cadence, 20s ceiling) replaces the sleep-then-assert. Verified: 5x in
+isolation, 3x72 TUI e2e under load, and the full workspace suite (4300
+passing).
+
+**The general rule for this suite:** a test that asserts on a command's
+side effect must poll for it, not sleep a guessed interval. The other
+file-exists assertions here are safe only because they are gated behind
+a `wait_ci` on a terminal message that fires after the write — a new
+assertion without that gate needs `wait_for_file`. `wait_for_absent`
+was written for the negative case and removed when it turned out every
+negative assertion already had a terminal-message gate.
