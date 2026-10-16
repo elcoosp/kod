@@ -789,6 +789,97 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             }
         }
 
+        // In-place writers: `sed -i`, `sort -o FILE`, and `install`
+        // overwrite a named file — the same blast radius as `cp` /
+        // `truncate` (both in DESTRUCTIVE), but they were not
+        // classified, so a write to a credential path came back Safe.
+        // Extract the file operand(s) each one writes and classify them.
+        let in_place_targets: Vec<String> = match prog_base.as_str() {
+            // `sed -i` writes each file operand; the script (`s/x/y/`)
+            // is the first positional and is not a path. Only the -i
+            // form writes.
+            "sed"
+                if args.iter().any(|t| {
+                    let t = unquote(t);
+                    t == "-i"
+                        || t.starts_with("-i")
+                        || t == "--in-place"
+                        || t.starts_with("--in-place")
+                }) =>
+            {
+                let rest = args.iter().map(|t| unquote(t));
+                let mut script_seen = false;
+                let mut out = Vec::new();
+                for a in rest {
+                    if a.starts_with('-') {
+                        // `-i` may take an optional suffix argument
+                        // (`-i.bak` carries it inline; a bare `-i`
+                        // followed by `''` consumes nothing here
+                        // because the script follows).
+                        continue;
+                    }
+                    if !script_seen {
+                        script_seen = true;
+                        continue;
+                    }
+                    out.push(a);
+                }
+                out
+            }
+            // `sort -o FILE`: the -o flag's value is the output.
+            "sort" => {
+                let mut out = Vec::new();
+                let mut iter = args.iter().map(|t| unquote(t));
+                while let Some(a) = iter.next() {
+                    if a == "-o" || a == "--output" {
+                        if let Some(v) = iter.next() {
+                            out.push(v);
+                        }
+                    } else if let Some(v) = a.strip_prefix("--output=") {
+                        out.push(v.to_string());
+                    } else if let Some(v) = a.strip_prefix("-o") {
+                        // `-oFILE` combined form.
+                        if !v.is_empty() {
+                            out.push(v.to_string());
+                        }
+                    }
+                }
+                out
+            }
+            // `install`: the last non-flag operand is the destination.
+            "install" => {
+                let positional: Vec<String> = args
+                    .iter()
+                    .map(|t| unquote(t))
+                    .filter(|t| !t.starts_with('-'))
+                    .collect();
+                positional.last().cloned().into_iter().collect()
+            }
+            _ => Vec::new(),
+        };
+        for target in &in_place_targets {
+            if is_safe_sink(target) {
+                continue;
+            }
+            let (danger, why) = classify_path(target, ctx);
+            let level = match danger {
+                PathDanger::Catastrophic => RiskLevel::Catastrophic,
+                PathDanger::Confirm => RiskLevel::Confirm,
+                _ => RiskLevel::Low,
+            };
+            if level != RiskLevel::Low {
+                findings.push(RiskFinding {
+                    level,
+                    reason: if why.is_empty() {
+                        format!("{prog_base} writes {target}")
+                    } else {
+                        why
+                    },
+                    target: target.clone(),
+                });
+            }
+        }
+
         // `find` with `-delete` or `-exec` mutates everything it
         // walks. The walk root decides the blast radius, so classify
         // it the same way a destructive command's operand is: a root
@@ -988,6 +1079,28 @@ mod tests {
                 a.level,
             );
         }
+    }
+
+    #[test]
+    fn in_place_writer_to_credential_store_is_catastrophic() {
+        // `sed -i`, `sort -o`, and `install` overwrite a named file —
+        // the same blast radius as `cp`/`truncate` (both in
+        // DESTRUCTIVE), but they were not classified, so a write to a
+        // credential path came back Safe.
+        for c in [
+            "sed -i 's/x/y/' /Users/dev/.ssh/authorized_keys",
+            "sort -o /Users/dev/.ssh/authorized_keys /dev/null",
+            "install -m 600 /tmp/x /Users/dev/.ssh/authorized_keys",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(a.level.is_absolute_deny(), "{c:?} got {:?}", a.level);
+        }
+    }
+
+    #[test]
+    fn in_place_writer_in_workdir_is_not_catastrophic() {
+        let a = assess("sed -i 's/x/y/' /work/proj/src/a.rs", &ctx());
+        assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
     }
 
     #[test]
