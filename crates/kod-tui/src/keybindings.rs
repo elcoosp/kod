@@ -1,7 +1,7 @@
 //! Configurable normal-mode keybindings.
 //!
 //! Single-char keys in normal mode map to actions. Defaults match the
-//! built-in help; `~/.kod/tui_keys.toml` (or `.kod-keys.toml` in the
+//! built-in help; `~/.config/kod/tui_keys.toml` (or `.kod-keys.toml` in the
 //! project) overrides individual keys:
 //!
 //! ```toml
@@ -69,18 +69,27 @@ struct KeysFile {
 /// Load user overrides over the defaults. Unknown action names and
 /// multi-char keys are ignored (first char wins for single-char values).
 pub fn load_bindings() -> HashMap<char, KeyAction> {
-    let mut bindings = default_bindings();
     let paths = [
         std::path::PathBuf::from(".kod-keys.toml"),
         dirs::config_dir()
             .map(|d| d.join("kod").join("tui_keys.toml"))
             .unwrap_or_default(),
     ];
+    load_bindings_from(&paths)
+}
+
+/// The body of [`load_bindings`], over an explicit path list (later
+/// paths override earlier ones). Extracted so a test can drive the
+/// file-parsing path against temp files — `load_bindings` itself reads
+/// a fixed project-local name and `dirs::config_dir()`, neither of
+/// which a test can redirect.
+fn load_bindings_from(paths: &[std::path::PathBuf]) -> HashMap<char, KeyAction> {
+    let mut bindings = default_bindings();
     for path in paths {
         if path.as_os_str().is_empty() {
             continue;
         }
-        let Ok(raw) = std::fs::read_to_string(&path) else {
+        let Ok(raw) = std::fs::read_to_string(path) else {
             continue;
         };
         let Ok(file) = toml::from_str::<KeysFile>(&raw) else {
@@ -149,6 +158,62 @@ pub fn cheat_sheet() -> &'static [(&'static str, &'static str)] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_keys(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[test]
+    fn load_bindings_from_reads_a_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // `q` default -> Quit; rebind Quit to `Q`.
+        let p = write_keys(tmp.path(), "tui_keys.toml", "[keys]\nquit = \"Q\"\n");
+        let b = load_bindings_from(&[p]);
+        assert_eq!(b.get(&'Q'), Some(&KeyAction::Quit), "Q must quit");
+        assert_eq!(b.get(&'q'), None, "the default q binding must be replaced");
+    }
+
+    #[test]
+    fn load_bindings_from_later_path_wins() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let global = write_keys(tmp.path(), "g.toml", "[keys]\nquit = \"Q\"\n");
+        let local = write_keys(tmp.path(), "l.toml", "[keys]\nquit = \"x\"\n");
+        // Later path (the project-local file) overrides the global.
+        let b = load_bindings_from(&[global, local]);
+        assert_eq!(b.get(&'x'), Some(&KeyAction::Quit));
+        assert_eq!(b.get(&'Q'), None, "the global key must be replaced");
+    }
+
+    #[test]
+    fn load_bindings_from_ignores_unknown_and_multichar() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let p = write_keys(
+            tmp.path(),
+            "bad.toml",
+            "[keys]\nnot_an_action = \"z\"\nquit = \"Ctrl+Q\"\n",
+        );
+        let b = load_bindings_from(&[p]);
+        // Unknown action ignored; multi-char value takes its first char.
+        assert_eq!(b.get(&'z'), None, "unknown action must not bind");
+        assert_eq!(
+            b.get(&'C'),
+            Some(&KeyAction::Quit),
+            "first char of a multi-char value"
+        );
+    }
+
+    #[test]
+    fn load_bindings_from_missing_file_keeps_defaults() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let b = load_bindings_from(&[tmp.path().join("nope.toml")]);
+        assert_eq!(
+            b.get(&'q'),
+            Some(&KeyAction::Quit),
+            "defaults survive a missing file"
+        );
+    }
 
     #[test]
     fn defaults_cover_core_actions() {
