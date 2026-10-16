@@ -635,3 +635,35 @@ guess. The struct is now honest for an embedder that calls it directly.
   future-work hooks, not a lying doc.
 - F2a-13 (minimizer regex recompiled per call) is already fixed — a
   process-wide compile cache exists in `pipeline.rs::compile`.
+
+
+---
+
+## Addendum 7 — MinimizeConfig + keybindings path doc
+
+HEAD moved da80630 → b4ff57d. Two fixes, both the same broad shape
+(documented behaviour the code does not have).
+
+- **246e305 — MinimizeConfig discarded.** `with_builtins_and_config`
+  did `let _ = config`; the struct had no config field. Both knobs
+  (`enabled`, `strip_ansi_globally`) were inert. Audit finding F2a-8.
+  Fixed; two regression tests.
+
+- **b4ff57d — keybindings module doc path wrong.** The module doc said
+  `~/.kod/tui_keys.toml`; the code reads
+  `dirs::config_dir()/kod/tui_keys.toml`. A user following the doc wrote
+  a file nothing reads. `docs/tui-commands.md` already had the right
+  path; the module doc was the outlier. The loader also had no test;
+  factored into `load_bindings_from(paths)` and added four.
+
+### Reviewed, not bugs
+
+- The `docs/brainstorms/kod-code-audit-report.md` findings list is a
+  **historical document**, not a live checklist. Spot-checks (F2a-11,
+  F2a-13, F2e-8, F2f-23, F2h-14) are all fixed in the tree; the report's
+  fix-status column is incomplete. Do not treat unmarked rows as open.
+- `kod-schema-dialect::recovery` has no external caller; the module doc
+  says it is "layer 1 and the data types layers 2 and 3 need" —
+  intentional hooks.
+- `StreamGuardConfig` fields read only inside their own module — my
+  "zero external reads" scan false-positived on the defining file.
