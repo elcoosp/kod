@@ -253,6 +253,10 @@ fn parse(markdown: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut para = String::new();
     let mut in_code = false;
+    // The opening fence's backtick count. A closing fence must be at
+    // least this long (CommonMark); a 3-backtick line inside a
+    // 4-backtick block is content, not a close.
+    let mut fence_len = 3usize;
     let mut code_lang: Option<String> = None;
     let mut code_lines: Vec<String> = Vec::new();
 
@@ -267,7 +271,7 @@ fn parse(markdown: &str) -> Vec<Block> {
             // fence never closed — the rest of the document rendered
             // as code.
             let t = raw.trim();
-            let is_close = t.len() >= 3 && t.chars().all(|c| c == '`');
+            let is_close = t.len() >= fence_len && t.chars().all(|c| c == '`');
             if is_close {
                 blocks.push(Block::Code {
                     lang: code_lang.take(),
@@ -285,7 +289,9 @@ fn parse(markdown: &str) -> Vec<Block> {
         if let Some(info) = trimmed.strip_prefix("```") {
             flush_para(&mut blocks, &mut para);
             in_code = true;
-            let info = info.trim();
+            // The run of backticks that opened the block (at least 3).
+            fence_len = 3 + info.chars().take_while(|c| *c == '`').count();
+            let info = info.trim_start_matches('`').trim();
             code_lang = if info.is_empty() {
                 None
             } else {
@@ -1027,6 +1033,35 @@ mod tests {
             !after_is_code,
             "`after` must NOT be inside the code block — the fence \
              with a trailing space did not close: {blocks:?}",
+        );
+    }
+
+    #[test]
+    fn longer_fence_is_not_closed_by_a_shorter() {
+        // CommonMark: the closing fence must be at least as long as
+        // the opening one. A 4-backtick block may contain a 3-backtick
+        // line (that is *why* you open with 4); the pre-fix close
+        // check accepted any 3+ run, so the inner ``` closed the
+        // outer block early.
+        let src = "````markdown\n```rust\ninner\n```\nafter\n````\noutside";
+        let blocks = parse(src);
+        let code_lines: Vec<String> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Code { lines, .. } => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(
+            code_lines.iter().any(|l| l.contains("after")),
+            "`after` must still be inside the 4-backtick block: {code_lines:?}",
+        );
+        // And the trailing `outside` must be a paragraph, not code.
+        let outside_is_code = code_lines.iter().any(|l| l.contains("outside"));
+        assert!(
+            !outside_is_code,
+            "`outside` must be outside the block: {code_lines:?}"
         );
     }
 
