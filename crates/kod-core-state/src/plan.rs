@@ -235,6 +235,68 @@ pub fn plan_dir_for_working_dir(working_dir: &std::path::Path) -> Option<std::pa
     Some(home.join(".kod").join("plans").join(hash))
 }
 
+/// Cap on the number of *project* directories under `~/.kod/plans/`.
+/// Mirrors `checkpoint::MAX_PROJECT_DIRS`: `MAX_AUTOSAVE_CANDIDATES`
+/// bounds the files within one project, this bounds how many projects
+/// accumulate before the oldest are swept.
+pub const MAX_PLAN_DIRS: usize = 1000;
+
+/// Drop stale *project* directories under `~/.kod/plans/`, keeping the
+/// newest [`MAX_PLAN_DIRS`] by mtime.
+///
+/// Every distinct canonical working dir — including a throwaway test
+/// `TempDir` — mints a `<fnv1a-of-working-dir>/` directory that nothing
+/// else removes. The same unbounded-growth shape the checkpoint sweep
+/// (see `CheckpointManager::sweep_old_projects`) fixes.
+///
+/// Best-effort and idempotent: a failed removal is logged, not
+/// propagated; a root that does not exist is a no-op. Call from the
+/// shutdown path, not per-autosave — the parent readdir is
+/// O(projects) and should not run on every plan write.
+pub fn sweep_old_plan_dirs() -> usize {
+    let Some(home) = dirs::home_dir() else {
+        return 0;
+    };
+    sweep_plan_dirs_at(&home.join(".kod").join("plans"))
+}
+
+/// The body of [`sweep_old_plan_dirs`], over an explicit root so a
+/// test can drive it against a temp directory.
+fn sweep_plan_dirs_at(root: &std::path::Path) -> usize {
+    if !root.is_dir() {
+        return 0;
+    }
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    let mut dirs: Vec<(std::path::PathBuf, std::time::SystemTime)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_dir() {
+                return None;
+            }
+            let t = e.metadata().ok()?.modified().ok()?;
+            Some((p, t))
+        })
+        .collect();
+    if dirs.len() <= MAX_PLAN_DIRS {
+        return 0;
+    }
+    dirs.sort_by_key(|(_, t)| *t);
+    let to_drop = dirs.len().saturating_sub(MAX_PLAN_DIRS);
+    let mut removed = 0;
+    for (p, _) in dirs.into_iter().take(to_drop) {
+        match std::fs::remove_dir_all(&p) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                tracing::warn!(path = %p.display(), error = %e, "could not drop old plan project dir");
+            }
+        }
+    }
+    removed
+}
+
 /// Turn arbitrary text into a filename-safe slug:
 /// lowercase ASCII alnum and `-`, everything else a `-`; collapsed
 /// runs of `-`; leading and trailing `-` stripped; capped at
@@ -676,5 +738,47 @@ mod tests {
             let back: PlanStatus = serde_json::from_str(&j).unwrap();
             assert_eq!(s, back);
         }
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn touch(root: &std::path::Path, name: &str) {
+        let d = root.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("plan-2026-01-01-x.md"), "body").unwrap();
+    }
+
+    #[test]
+    fn sweep_plan_dirs_below_the_cap_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        for n in 0..5 {
+            touch(tmp.path(), &format!("p{n}"));
+        }
+        assert_eq!(sweep_plan_dirs_at(tmp.path()), 0);
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 5);
+    }
+
+    #[test]
+    fn sweep_plan_dirs_drops_the_oldest() {
+        let tmp = TempDir::new().unwrap();
+        for n in 0..(MAX_PLAN_DIRS + 3) {
+            touch(tmp.path(), &format!("p{n:05}"));
+        }
+        let removed = sweep_plan_dirs_at(tmp.path());
+        assert_eq!(removed, 3, "the three oldest (created first) must go");
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            MAX_PLAN_DIRS
+        );
+    }
+
+    #[test]
+    fn sweep_plan_dirs_missing_root_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(sweep_plan_dirs_at(&tmp.path().join("nope")), 0);
     }
 }

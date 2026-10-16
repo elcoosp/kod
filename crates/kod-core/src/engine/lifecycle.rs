@@ -646,6 +646,13 @@ impl KodEngine {
                 }
             }
         }
+        // Same unbounded-growth shape for autosaved plans: one
+        // ~/.kod/plans/<hash>/ directory per distinct working dir,
+        // never removed. Best-effort.
+        let removed_plans = kod_core_state::plan::sweep_old_plan_dirs();
+        if removed_plans > 0 {
+            tracing::debug!(removed = removed_plans, "swept stale plan project dirs");
+        }
 
         // 7. Memory extraction (D2-B3b), opt-in.
         if let Ok(cfg) = kod_config::KodConfig::load_cached()
