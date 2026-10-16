@@ -173,6 +173,19 @@ impl ToolRegistry {
 /// `intent` is surfaced to the UI and to the swarm file-touch bus — a
 /// peer seeing "agent-1 edited lines 18-25" also sees *why*.
 pub fn inject_intent_field(schema: &mut serde_json::Value) {
+    // The doc says "every schema gets an optional `intent` field". A
+    // no-arg tool's schema is `{"type": "object"}` with no
+    // `properties` object; pre-fix the early return meant such a tool
+    // advertised neither `intent` nor `accept_large_output` — the
+    // model had no way to request an oversized result in full.
+    // Create the object when absent; a `properties` that is present
+    // but not an object is left alone (malformed, not ours to fix).
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+    if !obj.contains_key("properties") {
+        obj.insert("properties".to_string(), serde_json::json!({}));
+    }
     let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) else {
         return;
     };
@@ -193,4 +206,55 @@ pub fn inject_intent_field(schema: &mut serde_json::Value) {
                             its size; narrow the query or re-issue with this flag.",
         })
     });
+}
+
+#[cfg(test)]
+mod inject_intent_tests {
+    use super::inject_intent_field;
+
+    #[test]
+    fn inject_creates_properties_when_absent() {
+        // The doc says "every schema gets an optional `intent` field".
+        // A no-arg tool's schema is `{"type": "object"}` with no
+        // `properties` object; the pre-fix `inject_intent_field`
+        // returned early, so such a tool advertised neither `intent`
+        // nor `accept_large_output`.
+        let mut schema = serde_json::json!({ "type": "object" });
+        inject_intent_field(&mut schema);
+        let props = schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("properties must be created");
+        assert!(props.contains_key("intent"), "intent missing: {schema}");
+        assert!(
+            props.contains_key("accept_large_output"),
+            "accept_large_output missing: {schema}",
+        );
+    }
+
+    #[test]
+    fn inject_preserves_existing_properties() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+        });
+        inject_intent_field(&mut schema);
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("path"), "existing property lost");
+        assert!(props.contains_key("intent"));
+        assert!(props.contains_key("accept_large_output"));
+    }
+
+    #[test]
+    fn inject_does_not_overwrite_a_caller_intent() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": { "intent": { "type": "string", "description": "custom" } },
+        });
+        inject_intent_field(&mut schema);
+        assert_eq!(
+            schema["properties"]["intent"]["description"], "custom",
+            "a caller-supplied intent must not be replaced",
+        );
+    }
 }
