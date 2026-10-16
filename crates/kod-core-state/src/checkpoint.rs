@@ -53,6 +53,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// not grow without bound on a long-running project.
 pub const DEFAULT_MAX_SNAPSHOTS: usize = 200;
 
+/// Default cap on the number of *project* directories under
+/// `~/.kod/checkpoints/`. `DEFAULT_MAX_SNAPSHOTS` bounds each project;
+/// this bounds how many projects accumulate before the oldest are
+/// swept. Generous: a user who has worked in 1000 distinct trees keeps
+/// all of them, and each project's own 200-snapshot cap keeps the disk
+/// cost per project bounded.
+pub const MAX_PROJECT_DIRS: usize = 1000;
+
 /// Per-file snapshot ceiling. A file larger than this is not
 /// snapshotted — the checkpoint would dominate the directory, and a
 /// file that large is almost always generated output (a lockfile, a
@@ -114,6 +122,63 @@ impl CheckpointManager {
         let hash = fnv1a_hex(canonical.to_string_lossy().as_ref());
         let dir = home.join(".kod").join("checkpoints").join(hash);
         Some(Self::new(dir))
+    }
+
+    /// Drop stale *project* directories, keeping the newest
+    /// `MAX_PROJECT_DIRS` by mtime.
+    ///
+    /// `enforce_retention` bounds the snapshots *within* one project
+    /// (200), but the number of projects is otherwise unbounded: every
+    /// distinct canonical working directory — including a throwaway
+    /// test `TempDir` — mints a `<project-hash>/` directory that is
+    /// never removed. On a long-lived install that is tens of
+    /// thousands of directories and hundreds of MB.
+    ///
+    /// A project whose most recent snapshot is old is stale: the user
+    /// has not worked there recently, so its rollback history is the
+    /// least likely to be wanted. A `kod checkpoint restore` against a
+    /// swept project fails with the same "unknown id" it would for any
+    /// pruned snapshot.
+    ///
+    /// Best-effort and idempotent: a failed removal is logged, not
+    /// propagated, and a root that does not exist is a no-op. Call
+    /// from the shutdown path, not per-snapshot — the parent readdir
+    /// is O(projects) and should not run on every write.
+    pub fn sweep_old_projects(&self) -> Result<usize> {
+        let Some(root) = self.dir.parent() else {
+            return Ok(0);
+        };
+        if !root.is_dir() {
+            return Ok(0);
+        }
+        let mut dirs: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(root)
+            .map_err(KodError::Io)?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let p = e.path();
+                if !p.is_dir() {
+                    return None;
+                }
+                let t = e.metadata().ok()?.modified().ok()?;
+                Some((p, t))
+            })
+            .collect();
+        if dirs.len() <= MAX_PROJECT_DIRS {
+            return Ok(0);
+        }
+        // Oldest first; drop everything past the newest MAX.
+        dirs.sort_by_key(|(_, t)| *t);
+        let to_drop = dirs.len().saturating_sub(MAX_PROJECT_DIRS);
+        let mut removed = 0;
+        for (p, _) in dirs.into_iter().take(to_drop) {
+            match std::fs::remove_dir_all(&p) {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    tracing::warn!(path = %p.display(), error = %e, "could not drop old checkpoint project dir");
+                }
+            }
+        }
+        Ok(removed)
     }
 
     /// The directory snapshots are stored in.
@@ -890,5 +955,50 @@ mod coverage_manager_accessors {
         let id = cp.snapshot_before(&f, "write_file").unwrap().unwrap();
         assert!(cp.dir().is_dir(), "snapshot directory must be created");
         assert!(cp.find(&id).unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn touch_project(root: &Path, name: &str, snapshots: usize) {
+        let d = root.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..snapshots {
+            std::fs::write(d.join(format!("{i:013}-0000000000.json")), "{}").unwrap();
+        }
+    }
+
+    #[test]
+    fn sweep_below_the_cap_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        for n in 0..5 {
+            touch_project(root, &format!("proj{n}"), 2);
+        }
+        let cp = CheckpointManager::new(root.join("proj0"));
+        assert_eq!(cp.sweep_old_projects().unwrap(), 0);
+        assert_eq!(std::fs::read_dir(root).unwrap().count(), 5);
+    }
+
+    #[test]
+    fn sweep_drops_the_oldest_project_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // The manager's own dir is one project; the sweep operates on
+        // its parent, so build the tree there.
+        for n in 0..(MAX_PROJECT_DIRS + 3) {
+            touch_project(root, &format!("p{n:05}"), 1);
+        }
+        // The first three were created first, so their directory
+        // mtimes are the oldest; the sweep keeps the newest MAX.
+        let cp = CheckpointManager::new(root.join("p00000"));
+        let removed = cp.sweep_old_projects().unwrap();
+        assert_eq!(removed, 3, "the three oldest must go");
+        let remaining = std::fs::read_dir(root).unwrap().count();
+        assert_eq!(remaining, MAX_PROJECT_DIRS);
+        assert!(!root.join("p00000").exists(), "oldest removed");
     }
 }

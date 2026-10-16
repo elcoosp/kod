@@ -627,10 +627,24 @@ impl KodEngine {
         }
 
         // 6. Checkpoint retention — best-effort.
-        if let Some(cp) = self.checkpoints.as_ref()
-            && let Err(e) = cp.enforce_retention()
-        {
-            tracing::warn!(error = %e, "checkpoint retention failed during shutdown");
+        if let Some(cp) = self.checkpoints.as_ref() {
+            if let Err(e) = cp.enforce_retention() {
+                tracing::warn!(error = %e, "checkpoint retention failed during shutdown");
+            }
+            // Also bound the number of *project* directories. The
+            // per-project cap above bounds snapshots within one tree;
+            // this bounds how many trees accumulate. Every distinct
+            // working dir (including a throwaway test TempDir) mints a
+            // directory that nothing else removes.
+            match cp.sweep_old_projects() {
+                Ok(n) if n > 0 => {
+                    tracing::debug!(removed = n, "swept stale checkpoint project dirs");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "checkpoint project sweep failed during shutdown");
+                }
+            }
         }
 
         // 7. Memory extraction (D2-B3b), opt-in.
