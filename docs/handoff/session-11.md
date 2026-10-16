@@ -574,3 +574,22 @@ readdir is O(entries)). Each has its own tests.
    would need the same. Candidate: a small helper that lists the
    `~/.kod` subdirs and their cleanup owner.
 3. **v0.1.0** still carries the old PolicyEngine bug.
+
+
+---
+
+## Addendum 5 — v0.1.0 marked superseded
+
+The v0.1.0 GitHub release carried a security bug (the TUI installed no
+PolicyEngine, so the `standard` preset's write-approval and deny rules
+were inert on the interactive surface). It shipped no notes beyond
+GitHub's auto-line.
+
+Done (not a code change — a release edit): prepended a `[!WARNING]`
+banner to the v0.1.0 body pointing at v0.1.1 as the fix and the latest
+release as the recommendation. The release stays published so its tag
+and artifacts remain linkable. The original changelog line is kept
+below the banner.
+
+This was the last surviving item from earlier handoffs. Release history
+no longer advertises a vulnerable build without a warning.
