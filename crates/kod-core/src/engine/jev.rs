@@ -1322,7 +1322,7 @@ mod redaction_wiring_tests {
 
     struct RecordingDecider {
         cfg: JevConfig,
-        seen: parking_lot::Mutex<Vec<serde_json::Value>>,
+        seen: Arc<parking_lot::Mutex<Vec<serde_json::Value>>>,
     }
 
     #[async_trait::async_trait]
@@ -1379,10 +1379,63 @@ mod redaction_wiring_tests {
         }
         fn with_thresholds(
             &self,
-            _new: kod_config::JevThresholds,
+            new: kod_config::JevThresholds,
         ) -> std::result::Result<Arc<dyn crate::jev::JevDecider>, crate::jev::JevError> {
-            Err(crate::jev::JevError::Disabled)
+            // Succeed with a rebuilt decider sharing the same recorder,
+            // so the rebuild path (update_jev_threshold) is genuinely
+            // exercised and a post-rebuild state can be inspected.
+            let mut cfg = self.cfg.clone();
+            cfg.thresholds = new;
+            Ok(Arc::new(RecordingDecider {
+                cfg,
+                seen: Arc::clone(&self.seen),
+            }))
         }
+    }
+
+    /// `update_jev_threshold` rebuilds the client via
+    /// `with_thresholds` and writes it straight to the slot. The
+    /// decorator's `with_thresholds` must preserve the wrapping, or a
+    /// `/jev tune set` would silently disable scrubbing.
+    #[tokio::test]
+    async fn threshold_update_preserves_scrubbing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let engine = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+
+        let vault = Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+            [11u8; 32],
+        ));
+        let placeholder = vault.register("super-secret-value-1234");
+        engine.set_secret_vault(vault).await;
+
+        let rec = Arc::new(RecordingDecider {
+            cfg: JevConfig::default(),
+            seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        });
+        engine.set_jev_decider(rec.clone());
+
+        // Rebuild via the threshold path.
+        let _ = engine.update_jev_threshold("task_classify_min", 0.5).await;
+
+        let client = engine.jev_client().expect("decider still installed");
+        let state = serde_json::json!({"text": "key super-secret-value-1234"});
+        client.evaluate_yes_no(&state, "q").await.unwrap();
+
+        let seen = rec.seen.lock();
+        let got = seen.last().unwrap().to_string();
+        assert!(
+            !got.contains("super-secret-value-1234"),
+            "after a threshold update the decider saw the raw secret: {got}"
+        );
+        assert!(
+            got.contains(&placeholder),
+            "expected the placeholder: {got}"
+        );
     }
 
     #[tokio::test]
@@ -1403,7 +1456,7 @@ mod redaction_wiring_tests {
 
         let rec = Arc::new(RecordingDecider {
             cfg: JevConfig::default(),
-            seen: parking_lot::Mutex::new(Vec::new()),
+            seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
         });
         engine.set_jev_decider(rec.clone());
 
