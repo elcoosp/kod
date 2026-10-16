@@ -478,3 +478,53 @@ one path, absent at a sibling path. The two structural guards
 `content_reader_must_consult_read_protection` source lint) cover two
 families. The Jev fix is a third structural guard by construction — the
 decorator at the trait means no future advisor call site can bypass it.
+
+
+---
+
+## Addendum 3 — secret-vault coverage round
+
+HEAD moved c330298 → ceb9173. Two more leaks in the secret vault's
+coverage, both the same shape as the ones before: a source the vault
+did not scan.
+
+### The leaks
+
+- **371e7b0 — vendor secret first seen in tool output.**
+  `scan_text` (vendor regexes + connection-URL passwords) had no
+  caller; the vault's only source was the env scan at install. A key
+  that first appeared in a `read_file` result or shell output was never
+  registered, so the outbound pass had nothing to substitute. Fixed by
+  scanning every tool result before it enters the transcript
+  (`register_secrets_in_text`, called from the dispatch loop).
+
+- **df218b7 — vendor secret pasted by the user.** The tool-result scan
+  covered tool output; the user's own message was covered by neither it
+  nor the env scan. A key typed into the prompt reached the provider in
+  the clear. Fixed by scanning the input in `prepare_turn`, the one
+  choke point every entry point reaches.
+
+- **ceb9173 — compaction rungs bypass the vault.** `handoff`, `remote`,
+  and `snapcompact` build their own provider requests from the
+  transcript, bypassing the obfuscation in `build_grounded_request`. A
+  registered secret reached the summarizer raw, and the summary then
+  carried it forward. Fixed by `obfuscated_transcript` at the engine's
+  compaction ctx-construction site.
+
+### Reviewed, not a leak
+
+- `prewarm` sends only the cacheable system prefix (identity + repo
+  map: file paths, not content), so no secret source.
+
+### Where the next agent should pick up
+
+1. **Cut v0.1.4** — five security-relevant commits since v0.1.3
+   (`6260e02`, `a97cd0c`, `371e7b0`, `df218b7`, `ceb9173`).
+2. **The vault-coverage shape is now well-tested but not exhaustively
+   enumerated.** Every outbound provider path (`build_grounded_request`,
+   compaction, Jev, prewarm) has been audited once. A future provider
+   path — a new method that builds a `CompletionRequest` — must be
+   checked the same way. There is no structural guard for this family
+   yet; the candidate is a source lint that flags a `CompletionRequest`
+   built outside `build_grounded_request` without an obfuscation call.
+3. **v0.1.0** still carries the old PolicyEngine bug.
