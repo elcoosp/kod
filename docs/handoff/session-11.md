@@ -528,3 +528,49 @@ did not scan.
    yet; the candidate is a source lint that flags a `CompletionRequest`
    built outside `build_grounded_request` without an obfuscation call.
 3. **v0.1.0** still carries the old PolicyEngine bug.
+
+
+---
+
+## Addendum 4 — disk-hygiene sweeps
+
+HEAD moved ceb9173 → 601a670. One bug class, three instances: a
+per-project or per-invocation directory under `~/.kod/` that nothing
+ever pruned.
+
+- **f63ca17 — checkpoint project dirs.** `enforce_retention` capped
+  snapshots *within* a project (200), but the number of *projects* was
+  unbounded — one `~/.kod/checkpoints/<hash-of-working-dir>/` per
+  distinct working dir, including every test `TempDir`. A live install
+  had **12,133 dirs, 235 MB**. Fix: `sweep_old_projects`, cap 1000 by
+  mtime, called from shutdown.
+
+- **c357ef6 — plan project dirs.** Identical shape:
+  `~/.kod/plans/<hash>/` per working dir. 1,132 dirs live. Fix:
+  `plan::sweep_old_plan_dirs`, cap 1000.
+
+- **601a670 — session logs.** Flat `~/.kod/sessions/<ts>-<pid>-<seq>.jsonl`
+  per invocation, never removed. 454 files live, **140 of them empty**
+  (a recorder opened but never wrote). Fix: `sweep_old_session_logs`
+  removes every empty `.jsonl` unconditionally and caps the rest at
+  1000 by mtime.
+
+All three run from the engine shutdown path (not per-write — the parent
+readdir is O(entries)). Each has its own tests.
+
+### Reviewed, not a bug
+
+- `~/.kod/data/test.redb`: a stale Sep-4 artifact; `admin.rs` already
+  moved the test DB to a scratch dir, so no active path recreates it.
+
+### Where the next agent should pick up
+
+1. **Cut v0.1.4** — eight security/hygiene commits since v0.1.3
+   (`6260e02`, `a97cd0c`, `371e7b0`, `df218b7`, `ceb9173`, `f63ca17`,
+   `c357ef6`, `601a670`).
+2. **The unbounded-`~/.kod` shape may have more instances.** Audit any
+   `home.join(".kod")` site that mints a per-invocation or per-project
+   name. The three fixed here all went through shutdown now; a fourth
+   would need the same. Candidate: a small helper that lists the
+   `~/.kod` subdirs and their cleanup owner.
+3. **v0.1.0** still carries the old PolicyEngine bug.
