@@ -667,6 +667,55 @@ impl KodEngine {
         walk(value, &vault)
     }
 
+    /// A copy of `turns` with every registered secret obfuscated in
+    /// message content and tool-call arguments. Returns a clone
+    /// unchanged when no vault is installed.
+    ///
+    /// The compaction rungs (`handoff`, `remote`, `snapcompact`) build
+    /// their own provider requests from the transcript, bypassing the
+    /// outbound obfuscation in `build_grounded_request`. Without this,
+    /// a secret in the transcript reached the summarizer in the clear —
+    /// and the summary it produced then carried the raw value forward.
+    pub(crate) async fn obfuscated_transcript(
+        &self,
+        turns: &[kod_types::ChatMessage],
+    ) -> Vec<kod_types::ChatMessage> {
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) if !v.is_empty() => std::sync::Arc::clone(v),
+            _ => return turns.to_vec(),
+        };
+        turns
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                m.content = vault.obfuscate(&m.content);
+                for call in m.tool_calls.iter_mut() {
+                    fn walk(
+                        v: &mut serde_json::Value,
+                        vault: &kod_types::secret_placeholder::SecretVault,
+                    ) {
+                        match v {
+                            serde_json::Value::String(s) => *s = vault.obfuscate(s),
+                            serde_json::Value::Array(a) => {
+                                for item in a.iter_mut() {
+                                    walk(item, vault);
+                                }
+                            }
+                            serde_json::Value::Object(o) => {
+                                for (_, item) in o.iter_mut() {
+                                    walk(item, vault);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    walk(&mut call.arguments, &vault);
+                }
+                m
+            })
+            .collect()
+    }
+
     /// Scan `text` for vendor-shaped secrets and connection-URL
     /// passwords, registering each with the vault. Returns the count
     /// of newly registered values.

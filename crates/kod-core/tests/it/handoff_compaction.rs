@@ -179,3 +179,74 @@ async fn handoff_is_used_when_mechanical_rungs_cannot_reduce() {
             .collect::<Vec<_>>(),
     );
 }
+
+/// The compaction rungs build their own provider requests from the
+/// transcript, bypassing the outbound obfuscation in
+/// `build_grounded_request`. A registered secret in the transcript must
+/// reach the summarizer as a placeholder, not raw — or the summary it
+/// writes carries the secret forward.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handoff_prompt_does_not_carry_a_raw_registered_secret() {
+    const SECRET: &str = "super-secret-value-1234";
+    let tmp = TempDir::new().unwrap();
+    let cfg = fixture_config(tmp.path());
+    let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("h.redb")).unwrap());
+
+    let vault = Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+        [4u8; 32],
+    ));
+    let placeholder = vault.register(SECRET);
+    engine.set_secret_vault(vault).await;
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn LlmProvider> = Arc::new(HandoffProvider {
+        calls: Arc::clone(&calls),
+    });
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        "default",
+        provider,
+        ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(
+            Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
+        .await;
+    engine.start().await.unwrap();
+
+    // Seven prose turns carrying the registered secret, sized to clear
+    // the compaction threshold so the handoff rung fires.
+    let chunk = format!(
+        "the key is {SECRET} and the parser needs to handle trailing          commas and the lexer is not emitting them correctly, which          causes the type checker to fail on valid input; {}",
+        "x".repeat(300)
+    )
+    .repeat(12);
+    for _ in 0..7 {
+        engine.seed_turn(true, &chunk).await;
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+    let _ = engine.process_streaming("trigger", &tx).await;
+    drop(tx);
+    while rx.recv().await.is_some() {}
+
+    let seen = calls.lock().unwrap().clone();
+    for (i, p) in seen.iter().enumerate() {
+        assert!(
+            !p.contains(SECRET),
+            "raw secret reached a provider call {i}: {}",
+            &p[..200.min(p.len())],
+        );
+    }
+    // And the handoff ran (so this is not a trivial pass).
+    assert!(
+        seen.iter().any(|p| p.contains("briefing document")),
+        "handoff did not run; {} calls seen",
+        seen.len(),
+    );
+    let _ = placeholder;
+}

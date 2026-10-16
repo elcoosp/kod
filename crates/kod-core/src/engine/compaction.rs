@@ -164,10 +164,17 @@ impl KodEngine {
         window_tokens: u64,
     ) -> Option<crate::compaction_dispatcher::CompactionPlan> {
         let guard = self.history.read().await;
-        let turns = guard.get(key)?;
-        if turns.is_empty() {
+        let turns_ref = guard.get(key)?;
+        if turns_ref.is_empty() {
             return None;
         }
+        // Delta §14.1: the compaction rungs build their own provider
+        // requests from the transcript, bypassing the outbound
+        // obfuscation in `build_grounded_request`. Obfuscate a copy
+        // here so a registered secret reaches the summarizer as a
+        // placeholder, not raw. A no-op when no vault is installed.
+        let turns_owned = self.obfuscated_transcript(turns_ref).await;
+        let turns: &[kod_types::ChatMessage] = &turns_owned;
 
         // Precompute the suffix-token vector: `suffix[i]` is the
         // estimated token count of everything strictly after `turns[i]`.
