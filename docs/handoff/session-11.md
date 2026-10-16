@@ -360,3 +360,121 @@ for a bare `conflict://<id>`.
 
 ---
 
+
+---
+
+## Addendum 2 — Jev outbound path (after v0.1.3)
+
+HEAD moved 6f93df9 (v0.1.3) → a97cd0c. One security fix plus a
+regression test.
+
+### The leak
+
+The Jev advisor builds state from transcript previews and sends it to
+the TypeSafe judgment endpoint. The provider path scrubs those same
+previews with the secret vault (`agent_loop.rs`); the Jev path never
+consulted it. So a registered secret in a preview reached the endpoint
+in the clear. `[jev] redact_paths` (a6b49ad) covered only *paths*; the
+secret *values* were unhandled. Jev is opt-in (`enabled = false`),
+which made this a smaller exposure than the provider leak in 53e480e,
+not a different one.
+
+### The fix (6260e02, a97cd0c)
+
+A `RedactingJevDecider` decorator wraps whatever decider is installed
+(`set_jev_client` / `set_jev_decider`), obfuscating every string in the
+state before delegating. The `JevDecider` trait is the single choke
+point — ~30 advisor call sites funnel through its four `evaluate_*`
+methods, so one wrapper covers them all and no call site changed. The
+vault slot moved to a shared `Arc` so a vault installed after the
+client is still seen.
+
+Three tests, each proven to fire pre-fix:
+- `redacting_decorator_scrubs_secrets_in_state` (unit)
+- `redacting_decorator_is_a_noop_without_a_vault`
+- `installed_decider_receives_scrubbed_state` (engine wiring)
+- `threshold_update_preserves_scrubbing` (the `with_thresholds`
+  rebuild path must re-wrap, or `/jev tune set` silently disables it)
+
+### Where the next agent should pick up
+
+1. **Cut v0.1.4** — 6260e02 + a97cd0c are security-relevant and
+   unreleased (Jev is opt-in, so this is lower priority than the
+   v0.1.3 batch, but the rule stands: release when a security fix
+   lands).
+2. **`scan_text` / `scan_vendors` / `scan_connection_urls` still have
+   no caller.** The `secret_sources` module documents vendor-pattern
+   and connection-URL detection ("12 vendor regexes") and
+   `BORROWED_PRIMITIVES.md` lists it as wired, but only `scan_env`
+   runs. A vendor-shaped secret literal in a transcript is not
+   auto-registered, so it is not obfuscated. This is the last known
+   dead capability in the secret-handling area.
+3. **v0.1.0** still carries the old PolicyEngine bug.
+
+### The class, restated
+
+Every security bug this session was one shape: a control enforced at
+one path, absent at a sibling path. The two structural guards
+(`read_file_content_invariants_hold_across_paths`, the
+`content_reader_must_consult_read_protection` source lint) cover two
+families. The Jev fix is a third structural guard by construction — the
+decorator at the trait means no future advisor call site can bypass it.
+
+---
+
+## Addendum 2 — Jev outbound path (after v0.1.3)
+
+HEAD moved 6f93df9 (v0.1.3) → a97cd0c. One security fix plus a
+regression test.
+
+### The leak
+
+The Jev advisor builds state from transcript previews and sends it to
+the TypeSafe judgment endpoint. The provider path scrubs those same
+previews with the secret vault (`agent_loop.rs`); the Jev path never
+consulted it. So a registered secret in a preview reached the endpoint
+in the clear. `[jev] redact_paths` (a6b49ad) covered only *paths*; the
+secret *values* were unhandled. Jev is opt-in (`enabled = false`),
+which made this a smaller exposure than the provider leak in 53e480e,
+not a different one.
+
+### The fix (6260e02, a97cd0c)
+
+A `RedactingJevDecider` decorator wraps whatever decider is installed
+(`set_jev_client` / `set_jev_decider`), obfuscating every string in the
+state before delegating. The `JevDecider` trait is the single choke
+point — ~30 advisor call sites funnel through its four `evaluate_*`
+methods, so one wrapper covers them all and no call site changed. The
+vault slot moved to a shared `Arc` so a vault installed after the
+client is still seen.
+
+Three tests, each proven to fire pre-fix:
+- `redacting_decorator_scrubs_secrets_in_state` (unit)
+- `redacting_decorator_is_a_noop_without_a_vault`
+- `installed_decider_receives_scrubbed_state` (engine wiring)
+- `threshold_update_preserves_scrubbing` (the `with_thresholds`
+  rebuild path must re-wrap, or `/jev tune set` silently disables it)
+
+### Where the next agent should pick up
+
+1. **Cut v0.1.4** — 6260e02 + a97cd0c are security-relevant and
+   unreleased (Jev is opt-in, so this is lower priority than the
+   v0.1.3 batch, but the rule stands: release when a security fix
+   lands).
+2. **`scan_text` / `scan_vendors` / `scan_connection_urls` still have
+   no caller.** The `secret_sources` module documents vendor-pattern
+   and connection-URL detection ("12 vendor regexes") and
+   `BORROWED_PRIMITIVES.md` lists it as wired, but only `scan_env`
+   runs. A vendor-shaped secret literal in a transcript is not
+   auto-registered, so it is not obfuscated. This is the last known
+   dead capability in the secret-handling area.
+3. **v0.1.0** still carries the old PolicyEngine bug.
+
+### The class, restated
+
+Every security bug this session was one shape: a control enforced at
+one path, absent at a sibling path. The two structural guards
+(`read_file_content_invariants_hold_across_paths`, the
+`content_reader_must_consult_read_protection` source lint) cover two
+families. The Jev fix is a third structural guard by construction — the
+decorator at the trait means no future advisor call site can bypass it.
