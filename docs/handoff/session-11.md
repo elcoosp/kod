@@ -759,3 +759,40 @@ when no classified command covers the operation at all (`chmod`, `rsync`)
 
 Six commits since v0.1.4 (five fixes, one docs). The classifier fixes
 are security-relevant; v0.1.5 is due.
+
+
+---
+
+## Addendum 10 — markdown fence parsing (30c4916, c07b053)
+
+Two bugs in the TUI markdown code-block parser, both in the fence
+open/close logic (a fresh area; earlier rounds covered config, the
+vault, disk hygiene, keybindings, minimize, and the risk classifier).
+
+- **A closing fence with trailing space did not close.** The close
+  check trimmed only the *start* of the line, then required every
+  remaining char to be a backtick. A close line `"``` "` (trailing
+  space) failed that test, so the fence never closed and the rest of
+  the document rendered as code. CommonMark allows trailing whitespace;
+  fixed with `trim()` on both ends (30c4916).
+
+- **A longer fence was closed by a shorter one.** The parser tracked no
+  fence length: the open used `strip_prefix("```")` and the close
+  accepted any 3+ run. A 4-backtick block exists precisely so it can
+  contain a 3-backtick line; the inner ` ``` ` closed the outer block
+  early. Fixed by recording the opening run's length and requiring a
+  close of >= that length (c07b053).
+
+Both proven with failing tests first. The `#[test]` attribute on the
+anchor function was consumed by an insertion and restored (caught by
+the dead-code lint).
+
+### Where the next agent should pick up
+
+1. **Cut v0.1.5** — eight commits since v0.1.4 (six fixes, two docs).
+   The command-risk and markdown fixes are user-facing.
+2. **Untested-parser shapes remain.** The markdown parser now handles
+   fence length + trailing whitespace; other CommonMark gaps the review
+   named (indented-code blocks, setext headers, nested lists) are still
+   absent. Whether they matter depends on how much markdown the model
+   emits; low priority unless a real reply renders wrong.
