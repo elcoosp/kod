@@ -626,6 +626,27 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                 }
                 saw_path = true;
                 let (danger, why) = classify_path(&a, ctx);
+                // `classify_path` expands `~`, `$HOME`, and `${HOME}`
+                // lexically. What it cannot resolve — a command
+                // substitution (`$(...)`, backticks) or a variable it
+                // does not know — must not fall through as Safe: the
+                // module doc's contract is "never refuses to run
+                // something it does not understand; it escalates".
+                // Pre-fix `rm -rf $(echo ~)` classified Safe, defeating
+                // the unoverridable Catastrophic gate a literal
+                // `rm -rf ~` hits. Only escalate when `classify_path`
+                // found nothing, so a resolvable `$HOME` keeps its
+                // Catastrophic level.
+                let unresolved_operand = (a.contains('$') || a.contains('`'))
+                    && matches!(danger, PathDanger::Safe | PathDanger::Low);
+                if unresolved_operand {
+                    findings.push(RiskFinding {
+                        level: RiskLevel::Confirm,
+                        reason: format!("{prog_base} operand {a:?} cannot be resolved statically"),
+                        target: a.clone(),
+                    });
+                    continue;
+                }
                 let level = match danger {
                     PathDanger::Catastrophic => RiskLevel::Catastrophic,
                     PathDanger::Confirm => RiskLevel::Confirm,
@@ -728,9 +749,56 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             }
         }
 
-        // A pipe whose producer is a `find ~` and consumer a
-        // destructive command: escalate — the set of affected files
-        // is exactly what cannot be checked.
+        // `find` with `-delete` or `-exec` mutates everything it
+        // walks. The walk root decides the blast radius, so classify
+        // it the same way a destructive command's operand is: a root
+        // under home (or a system path) is Catastrophic. A read-only
+        // `find` stays Safe. Pre-fix `find ~ -delete` classified Safe:
+        // `find` is not in DESTRUCTIVE, and only the `find | xargs`
+        // pipe form was caught.
+        if prog_base == "find" {
+            let mutates = args.iter().any(|t| {
+                let t = unquote(t);
+                t == "-delete" || t == "-exec" || t == "-execdir" || t == "-ok"
+            });
+            if mutates {
+                // The first non-flag operand is the walk root; find
+                // defaults to `.` (the working dir, safe) when absent.
+                let root = args
+                    .iter()
+                    .map(|t| unquote(t))
+                    .find(|t| !t.starts_with('-'));
+                match root {
+                    Some(r) => {
+                        let (danger, why) = classify_path(&r, ctx);
+                        let level = match danger {
+                            PathDanger::Catastrophic => RiskLevel::Catastrophic,
+                            _ => RiskLevel::Confirm,
+                        };
+                        findings.push(RiskFinding {
+                            level,
+                            reason: if why.is_empty() {
+                                format!("find {r} mutates everything it walks")
+                            } else {
+                                why
+                            },
+                            target: r,
+                        });
+                    }
+                    None => {
+                        // No explicit root: `.` — the working dir. A
+                        // mutating find there still destroys files the
+                        // user may not expect, so Confirm.
+                        findings.push(RiskFinding {
+                            level: RiskLevel::Confirm,
+                            reason: "find with -delete/-exec over the working directory"
+                                .to_string(),
+                            target: ".".to_string(),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     let level = findings
@@ -856,6 +924,57 @@ mod tests {
         // command.
         let cmd = "cat > /tmp/note <<'EOF'\nrm -rf /\nEOF";
         let a = assess(cmd, &ctx());
+        assert!(a.level.runs_immediately(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn destructive_with_a_substituted_path_is_not_safe() {
+        // The module doc's contract: "never refuses to run something
+        // it does not understand; it escalates". A command substitution
+        // as the *program* already escalates; as the *argument* to a
+        // destructive command it did not, so `rm -rf $(echo ~)`
+        // classified Safe — defeating the unoverridable Catastrophic
+        // gate that a literal `rm -rf ~` hits.
+        for c in [
+            "rm -rf $(echo /Users/dev)",
+            "rm -rf `echo /Users/dev`",
+            "rm -rf ${TARGET}",
+            "rm -rf $HOME",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(
+                a.level != RiskLevel::Safe,
+                "{c:?} must not be Safe (got {:?})",
+                a.level,
+            );
+        }
+    }
+
+    #[test]
+    fn find_delete_over_home_is_catastrophic() {
+        // `find ~ -delete` deletes everything under home; `find` is not
+        // in DESTRUCTIVE, and only the `find | xargs` pipe form was
+        // caught, so the -delete/-exec forms classified Safe.
+        let a = assess("find /Users/dev -type f -delete", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn find_exec_rm_over_home_is_catastrophic() {
+        let a = assess("find /Users/dev -exec rm {} +", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn find_delete_in_workdir_is_not_catastrophic() {
+        let a = assess("find /work/proj -name '*.tmp' -delete", &ctx());
+        assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn plain_find_over_home_is_not_catastrophic() {
+        // A read-only find is harmless.
+        let a = assess("find /Users/dev -type f", &ctx());
         assert!(a.level.runs_immediately(), "got {:?}", a.level);
     }
 
