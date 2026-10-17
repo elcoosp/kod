@@ -5,7 +5,7 @@ VERSION=$(grep -E '^version' Cargo.toml 2>/dev/null | head -1 | cut -d'"' -f2 ||
 echo "Building KOD v${VERSION}..."
 
 # Build release
-cargo build --release
+cargo build --release --locked
 
 # Create distribution directory
 mkdir -p dist
