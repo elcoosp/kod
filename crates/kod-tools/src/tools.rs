@@ -1954,11 +1954,15 @@ impl Tool for GrepTool {
         // size limit exists to prevent.
         let mut skipped_large_files: Vec<String> = Vec::new();
         let mut skipped_large_total: usize = 0;
+        // BUG-D-15: `truncated` must mean "we stopped early because
+        // the cap fired", not "there are exactly 500 matches".
+        let mut hit_cap_fired = false;
 
         use std::io::BufRead as _;
 
         for file_path in gitaware_walk(&resolved, recursive) {
             if results.len() >= MAX_GREP_MATCHES {
+                hit_cap_fired = true;
                 break;
             }
             // BUG-D-01: a protected file is never searched under
@@ -2026,6 +2030,7 @@ impl Tool for GrepTool {
                         "text": shown,
                     }));
                     if results.len() >= MAX_GREP_MATCHES {
+                        hit_cap_fired = true;
                         break;
                     }
                 }
@@ -2103,7 +2108,7 @@ impl Tool for GrepTool {
             "pattern": pattern,
             "case_insensitive": case_insensitive,
             "results": results,
-            "truncated": results.len() >= MAX_GREP_MATCHES,
+            "truncated": hit_cap_fired,
             "skipped_large_files": skipped_large_files,
             "skipped_large_files_total": skipped_large_total,
         })))
