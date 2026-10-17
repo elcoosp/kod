@@ -880,10 +880,21 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             if !saw_path && (prog_base == "rm" || prog_base == "shred") {
                 // `rm` with no operand reads from... nothing; but a
                 // bare `rm` in a pipe context (`... | xargs rm`) does.
-                if pipe_fed {
+                // SEC-A-18: a stdin redirect (`xargs rm -rf < targets`)
+                // delivers operands the same way the pipe does — the
+                // pre-fix check only fired on `pipe_fed`, so the
+                // redirect variant classified Safe. Both shapes route
+                // unclassified arguments to `rm`.
+                let stdin_redirect = seg
+                    .iter()
+                    .map(|t| unquote(t))
+                    .any(|t| t == "<" || t == "<<" || t.starts_with("<<<"));
+                if pipe_fed || stdin_redirect {
                     findings.push(RiskFinding {
                         level: RiskLevel::Confirm,
-                        reason: format!("{prog_base} with no visible operands in a pipe"),
+                        reason: format!(
+                            "{prog_base} with no visible operands in a pipe or stdin redirect"
+                        ),
                         target: prog_base.clone(),
                     });
                 }
