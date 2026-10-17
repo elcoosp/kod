@@ -229,13 +229,19 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
     // H-11: a profile that claims `.git` read-only but grants a blanket
     // rw rule cannot honour it (Landlock is additive). Refuse rather
     // than silently ship an unprotected sandbox.
+    // SEC-A-08: Landlock's additive rules cannot honour a `.git`-only
+    // read-only restriction when the worktree is rw. Refusing made the
+    // whole backend dead on bwrap-less Linux: every `execute_command`
+    // returned this error, so the documented fallback was unusable.
+    // Degrade with a loud warning instead — a sandbox that misses one
+    // narrow ro rule is strictly better than no sandbox, and the
+    // caller (or `kod doctor`) can surface the warning.
     if profile.claims_git_readonly {
-        return Err(KodError::SandboxViolation(
+        tracing::warn!(
             "landlock: git_readonly requested but Landlock rules are additive; \
-             the backend cannot honour a `.git`-only read-only restriction. \
-             Use the bwrap backend, or set git_readonly = false."
-                .to_string(),
-        ));
+             `.git` will be writable inside the sandbox. Install bubblewrap \
+             to enforce a `.git` read-only policy.",
+        );
     }
     let abi = probe_abi().ok_or_else(|| {
         KodError::SandboxViolation(
