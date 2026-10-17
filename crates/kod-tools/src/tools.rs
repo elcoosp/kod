@@ -1524,8 +1524,9 @@ impl Tool for ListFilesTool {
         }
 
         // Directory branch: the pre-existing behavior.
-        let mut files: Vec<String> = gitaware_walk(&resolved, recursive)
-            .into_iter()
+        // PERF-04: iterate the shared Arc; no `Vec<PathBuf>` clone.
+        let mut files: Vec<String> = gitaware_walk_arc(&resolved, recursive)
+            .iter()
             .map(|p| truncate_entry(&p.to_string_lossy(), MAX_ENTRY_BYTES))
             .collect();
 
@@ -1612,11 +1613,21 @@ fn truncate_entry(s: &str, max: usize) -> String {
 /// Walk `root` honoring ignore files. Public so `jfind` (in
 /// `kod-core`) can feed the same file list the `grep` tool uses.
 pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
-    // Delta §7.7: a repeat walk of the same `(root, recursive)` in
-    // the same turn reuses the first result. Invalidation is on
-    // every write (see `atomic_write`) and on a short TTL inside
-    // the cache itself, so a change to the tree is observed within
-    // one turn without the caller re-walking.
+    // PERF-04: delegate to `gitaware_walk_arc` and clone only at
+    // this boundary. Internal hot callers (grep, list_files,
+    // search_files) call `gitaware_walk_arc` directly.
+    (*gitaware_walk_arc(root, recursive)).clone()
+}
+
+/// Walk `root` honoring ignore files, sharing the cached path list.
+///
+/// PERF-04: warm hits are a single refcount bump instead of a full
+/// `Vec<PathBuf>` deep clone. The walk-cache stores the `Arc` once
+/// and every hit pays one atomic increment.
+pub fn gitaware_walk_arc(
+    root: &std::path::Path,
+    recursive: bool,
+) -> std::sync::Arc<Vec<std::path::PathBuf>> {
     crate::walk_cache::global().get_or_walk(root, recursive, || {
         let mut builder = ignore::WalkBuilder::new(root);
         builder
@@ -1625,8 +1636,6 @@ pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::
             .ignore(true)
             .git_global(true)
             .git_exclude(true)
-            // Honor .gitignore files even outside a git checkout: the
-            // tool's contract is filesystem-based, not repo-based.
             .require_git(false)
             .filter_entry(|e| e.file_name().to_str().is_some_and(|n| n != ".git"));
         if !recursive {
@@ -1636,8 +1645,6 @@ pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::
             .build()
             .filter_map(|e| e.ok())
             .map(|e| e.into_path())
-            // The walker yields the root itself as its first entry —
-            // callers want the root's children, not the root.
             .filter(|p| p != root)
             .collect()
     })
@@ -1975,7 +1982,8 @@ impl Tool for GrepTool {
 
         use std::io::BufRead as _;
 
-        for file_path in gitaware_walk(&resolved, recursive) {
+        // PERF-04: iterate the shared Arc; no `Vec<PathBuf>` clone.
+        for file_path in gitaware_walk_arc(&resolved, recursive).iter() {
             if results.len() >= MAX_GREP_MATCHES {
                 hit_cap_fired = true;
                 break;
