@@ -434,3 +434,21 @@ jobs:
 
     - name: Run benchmarks
       run: cargo bench --workspace
+
+  fuzz-smoke:
+    name: Fuzz smoke (5 targets x 30s)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz --locked
+    - name: Build fuzz targets
+      run: cd fuzz && cargo +nightly fuzz build -s none
+    - name: Run each target for 30s
+      run: |
+        cd fuzz
+        for t in patch html sse policy embedding; do
+          cargo +nightly fuzz run "$t" -- -max_total_time=30 -rss_limit_mb=4096
+        done
