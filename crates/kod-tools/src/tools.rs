@@ -1070,6 +1070,26 @@ impl Tool for ExecuteCommandTool {
                 return Ok(ToolResult::Error(format!("sandbox invocation failed: {e}")));
             }
         };
+        // SEC-A-13: `Auto` + no backend returns `Ok(None)` — the command
+        // runs unsandboxed. The pre-fix path was silent: no warn, no
+        // tool-result annotation. On hosts without bwrap/landlock/
+        // seatbelt (including every Windows host) this meant the operator
+        // had no way to tell sandboxed commands from unsandboxed ones.
+        // Warn once per process so the transcript records it, and the
+        // `kod doctor` path can point at it.
+        if sandbox_inv.is_none()
+            && matches!(context.sandbox, crate::context::SandboxMode::Auto)
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    working_dir = %context.working_dir.display(),
+                    "sandbox: none (no backend available); execute_command will run unsandboxed. \
+                     Install bubblewrap (Linux) or ensure sandbox-exec is on PATH (macOS).",
+                );
+            }
+        }
 
         // Spawn with piped stdio so each stream is capped independently
         // and the child is killed the moment output runs away.
