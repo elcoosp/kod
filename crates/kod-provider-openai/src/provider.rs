@@ -583,9 +583,25 @@ impl LlmProvider for OpenAICompatProvider {
                 "list models failed: {url} returned {status}: {body_short}"
             )));
         }
-        let body: serde_json::Value = response
-            .json()
+        // SEC-B-04: stream the body with a byte cap. `resp.json()`
+        // buffers the whole body unbounded; a hostile `base_url`
+        // answering 200 with a multi-GB JSON grows RSS until OOM.
+        const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
+        let mut response = response;
+        let mut bytes: Vec<u8> = Vec::with_capacity(4096);
+        while let Some(chunk) = response
+            .chunk()
             .await
+            .map_err(|e| KodError::Provider(format!("invalid models response: {e}")))?
+        {
+            if bytes.len() + chunk.len() > MAX_JSON_BODY_BYTES {
+                return Err(KodError::Provider(format!(
+                    "list models response exceeded {MAX_JSON_BODY_BYTES} bytes"
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let body: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| KodError::Provider(format!("invalid models response: {e}")))?;
         Ok(body
             .get("data")
