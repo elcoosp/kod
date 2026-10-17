@@ -154,80 +154,84 @@ impl Tool for SearchFilesTool {
             )));
         };
 
-        let mut hits: Vec<Value> = Vec::new();
-        let mut truncated = false;
-
-        'outer: for file in files.iter() {
-            if !file.is_file() {
-                continue;
-            }
-            // A read-protected file is never searched under `Refuse`
-            // (the same posture `read_file` takes); under `Redact`
-            // its matched lines are masked below.
-            let file_mode = protected(&file);
-            if let Some(kod_config::ReadMode::Refuse) = file_mode {
-                continue;
-            }
-            // M-38: cap before reading (grep's limit) — a multi-GB log
-            // otherwise OOMs before the match loop.
-            if let Ok(md) = std::fs::metadata(&file)
-                && md.len() > 8 * 1024 * 1024
-            {
-                continue;
-            }
-            let text = match std::fs::read_to_string(&file) {
-                Ok(t) => t,
-                Err(_) => continue,
+        // PERF-05: run the search loop on a blocking thread. Same
+        // offload as grep — the loop does open/read/scan per file,
+        // synchronous filesystem work that parks a tokio worker.
+        let files_c = files.clone();
+        let regex_c = regex.clone();
+        let rp_owned = context.read_protection.clone();
+        let redactor_owned = context.redactor.clone();
+        let context_lines_c = context_lines;
+        let (hits, truncated) = tokio::task::spawn_blocking(move || {
+            let mut hits: Vec<Value> = Vec::new();
+            let mut truncated = false;
+            let protected = |p: &std::path::Path| -> Option<kod_config::ReadMode> {
+                let rp = rp_owned.as_ref()?;
+                if rp.matches(p) { Some(rp.mode) } else { None }
             };
-            // When the file is protected and the mode is `Redact`,
-            // mask each displayed line before it reaches the model.
-            // Matching itself runs on the raw text so line numbers
-            // and hit positions stay exact; only the shown content is
-            // sanitized.
-            let redact_line: Option<&kod_types::redact::Redactor> =
-                match (file_mode, context.redactor.as_ref()) {
-                    (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
-                    _ => None,
+            'outer: for file in files_c.iter() {
+                if !file.is_file() {
+                    continue;
+                }
+                let file_mode = protected(&file);
+                if let Some(kod_config::ReadMode::Refuse) = file_mode {
+                    continue;
+                }
+                if let Ok(md) = std::fs::metadata(&file)
+                    && md.len() > 8 * 1024 * 1024
+                {
+                    continue;
+                }
+                let text = match std::fs::read_to_string(&file) {
+                    Ok(t) => t,
+                    Err(_) => continue,
                 };
-            let lines: Vec<&str> = text.lines().collect();
-            for (idx, line) in lines.iter().enumerate() {
-                if regex.is_match(line) {
-                    let start = idx.saturating_sub(context_lines as usize);
-                    let end = (idx + context_lines as usize + 1).min(lines.len());
-                    let mut block = String::new();
-                    for (j, l) in lines[start..end].iter().enumerate() {
-                        let real_line = start + j + 1;
-                        let marker = if start + j == idx { '>' } else { ' ' };
-                        let truncated_line: String = if l.chars().count() > MAX_LINE_CHARS {
-                            let s: String = l.chars().take(MAX_LINE_CHARS).collect();
-                            format!("{}…", s)
-                        } else {
-                            l.to_string()
-                        };
-                        // Mask a protected file's shown line. The
-                        // redactor is the same one `read_file` uses,
-                        // so the two tools agree on what a secret is.
-                        let truncated_line = match redact_line {
-                            Some(r) => r.redact(&truncated_line).0,
-                            None => truncated_line,
-                        };
-                        block.push_str(&format!(
-                            "{} {:>5} | {}\n",
-                            marker, real_line, truncated_line
-                        ));
-                    }
-                    hits.push(serde_json::json!({
-                        "file": file.to_string_lossy(),
-                        "line": idx + 1,
-                        "context": block.trim_end(),
-                    }));
-                    if hits.len() >= MAX_MATCHES {
-                        truncated = true;
-                        break 'outer;
+                let redact_line: Option<&kod_types::redact::Redactor> =
+                    match (file_mode, redactor_owned.as_ref()) {
+                        (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
+                        _ => None,
+                    };
+                let lines: Vec<&str> = text.lines().collect();
+                for (idx, line) in lines.iter().enumerate() {
+                    if regex_c.is_match(line) {
+                        let start = idx.saturating_sub(context_lines_c as usize);
+                        let end = (idx + context_lines_c as usize + 1).min(lines.len());
+                        let mut block = String::new();
+                        for (j, l) in lines[start..end].iter().enumerate() {
+                            let real_line = start + j + 1;
+                            let marker = if start + j == idx { '>' } else { ' ' };
+                            let truncated_line: String = if l.chars().count() > MAX_LINE_CHARS {
+                                let s: String = l.chars().take(MAX_LINE_CHARS).collect();
+                                format!("{}…", s)
+                            } else {
+                                l.to_string()
+                            };
+                            let truncated_line = match redact_line {
+                                Some(r) => r.redact(&truncated_line).0,
+                                None => truncated_line,
+                            };
+                            block.push_str(&format!(
+                                "{} {:>5} | {}\n",
+                                marker, real_line, truncated_line
+                            ));
+                        }
+                        hits.push(serde_json::json!({
+                            "file": file.to_string_lossy(),
+                            "line": idx + 1,
+                            "context": block.trim_end(),
+                        }));
+                        if hits.len() >= MAX_MATCHES {
+                            truncated = true;
+                            break 'outer;
+                        }
                     }
                 }
             }
-        }
+            (hits, truncated)
+        })
+        .await
+        .map_err(|e| KodError::Internal(format!("search worker panicked: {e}")))?;
+
 
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,
