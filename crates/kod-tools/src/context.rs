@@ -244,6 +244,16 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
             PathBuf::from("/lib64"),
             PathBuf::from("/bin"),
             PathBuf::from("/etc"),
+            // SEC-A-21: /dev/null, /dev/zero, and /dev/urandom are
+            // the three device nodes a shell command legitimately
+            // reads. Without them in the ro-set, landlock denied
+            // every `> /dev/null` redirect the sandboxed command
+            // tried — a common idiom that broke silently (the
+            // redirect failed inside the sandbox while the tool
+            // reported success on the wrapped program).
+            PathBuf::from("/dev/null"),
+            PathBuf::from("/dev/zero"),
+            PathBuf::from("/dev/urandom"),
         ],
         rw_paths: vec![std::fs::canonicalize(wd).unwrap_or_else(|_| wd.to_path_buf())],
         net_deny: opts.net_deny,
