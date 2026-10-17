@@ -585,35 +585,36 @@ impl ChatWidget {
         // Begin a fresh render-cache frame. See render_cache.rs.
         crate::render_cache::with_cache(|c| c.begin_frame());
 
-        // First pass at the narrowed width decides whether the scrollbar
-        // column is needed; the second pass wraps to the real text width
-        // so the assistant border spans exactly the available space.
-        // Use Paragraph::line_count (unstable-rendered-line-info) so the
-        // count matches Ratatui's own WordWrapper instead of a hand-rolled
-        // div_ceil that drifts on wide graphemes/word boundaries.
         let full_width = area.width.max(1) as usize;
         let height = area.height as usize;
         let narrow_width = area.width.saturating_sub(1).max(1) as usize;
-        let show_bar = area.width >= 10 && {
-            let mut hidden = 0;
-            // Count hidden tools for the footer, same as final pass
+
+        // Hidden tool rows are counted once and shared by the probe,
+        // the total-rows computation and the footer.
+        let mut hidden_tools_total: usize = 0;
+        if app.search_query().is_none() && !app.show_tools() {
             for m in &ordered {
-                if app.search_query().is_none() && !app.show_tools() && m.role == MessageRole::Tool
-                {
+                if m.role == MessageRole::Tool {
                     let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
                     if !body.trim_start().starts_with("Error:") {
-                        hidden += 1;
+                        hidden_tools_total += 1;
                     }
                 }
             }
-            // Row-count-only probe: sum cached per-message visual
-            // row counts instead of building the full line vector
-            // and asking `Paragraph::line_count`. On a cache hit
-            // both the `message_lines()` call and the ratatui wrap
-            // pass are skipped. The streaming body is not a
-            // `Message` and is measured directly each frame — the
-            // only uncached cost here, and it is bounded by the
-            // size of the in-progress reply.
+        }
+
+        // PROBE: decide show_bar (needs the scrollbar column?) and collect
+        // per-message cumulative row spans for PERF-01 s2b windowing.
+        // `(msg_idx, start_row, end_row, has_separator)`:
+        //   - start_row: row at which the separator row would start
+        //     (equal to end of previous message, or 0 for the first)
+        //   - has_separator: whether a dim separator rule occupies the
+        //     row at start_row (true when the message starts a new turn
+        //     and the previous message did not end on a blank line)
+        //   - end_row: start_row + (separator? 1 : 0) + this message's
+        //     wrapped row count
+        let mut cumulative: Vec<(usize, usize, usize, bool)> = Vec::new();
+        let show_bar = area.width >= 10 && {
             let mut probe_rows: usize = 0;
             let mut prev_tail_blank = false;
             let mut probe_rendered = false;
@@ -621,15 +622,18 @@ impl ChatWidget {
                 if Self::tool_row_hidden(app, m) {
                     continue;
                 }
-                if Self::starts_new_turn(app, m, i == 0) && !prev_tail_blank {
+                let starts_new = Self::starts_new_turn(app, m, i == 0) && !prev_tail_blank;
+                let start_row = probe_rows;
+                if starts_new {
                     probe_rows += 1;
                 }
                 let (rows, tail_blank) = Self::message_measurement_cached(app, m, narrow_width);
                 probe_rows += rows;
                 prev_tail_blank = tail_blank;
                 probe_rendered = true;
+                cumulative.push((i, start_row, probe_rows, starts_new));
             }
-            if hidden > 0 {
+            if hidden_tools_total > 0 {
                 probe_rows += 1;
             }
             let stream_probe = crate::app::KodApp::trim_blank_lines(app.current_response());
@@ -653,92 +657,22 @@ impl ChatWidget {
             }
             probe_rows > height
         };
+
         let text_width = if show_bar { narrow_width } else { full_width };
         let theme = app.theme();
-
-        let mut lines: Vec<Line> = Vec::new();
-        // A dim rule between turns (never after the last one) so exchanges
-        // scan visually instead of piling up with one blank row.
-        let mut hidden_tools = 0;
-        // Maps each rendered message's id to the index of its first
-        // line in `lines`. Used by the search-active scroll override
-        // below to compute the target message's vertical position.
-        let mut message_line_offsets: std::collections::HashMap<kod_types::MessageId, usize> =
-            std::collections::HashMap::new();
-        for (i, message) in ordered.iter().enumerate() {
-            if Self::tool_row_hidden(app, message) {
-                hidden_tools += 1;
-                continue;
-            }
-            if Self::starts_new_turn(app, message, i == 0)
-                && lines.last().map(|l| l.width()).unwrap_or(1) > 0
-            {
-                lines.push(Line::from(vec![Span::styled(
-                    "─".repeat(text_width.min(120)),
-                    Style::default().fg(theme.dim),
-                )]));
-            }
-            message_line_offsets.insert(message.id.clone(), lines.len());
-            {
-                let cached = Self::message_lines_cached(app, message, text_width);
-                lines.extend(cached.iter().cloned());
-            }
-        }
-        if hidden_tools > 0 {
-            lines.push(Line::from(vec![Span::styled(
-                format!("⋯ {hidden_tools} tool output(s) hidden — t to show"),
-                Style::default()
-                    .fg(theme.dim)
-                    .add_modifier(Modifier::ITALIC),
-            )]));
-        }
-
-        // Same rounded frame as a finished reply: no color or layout pop
-        // when the response completes. Leading blank lines are trimmed, and
-        // a whitespace-only stream renders nothing — otherwise every reply
-        // opens as an empty bubble that fills in a frame later.
         let stream_body = crate::app::KodApp::trim_blank_lines(app.current_response());
-        if app.is_streaming() && !stream_body.is_empty() {
-            lines.extend(Self::assistant_block(
-                &stream_body,
-                text_width,
-                Style::default().fg(theme.assistant),
-                app,
-                // Still running: no final figure to show. The row appears
-                // when this body settles into a stamped message.
-                None,
-            ));
-        }
 
-        // No separate "running …" footer line here: `start_tool_execution`
-        // already streams a live tool row in position (header + running
-        // body), so a second indicator below the messages would duplicate
-        // the same call.
-
-        if lines.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
-                "No messages yet — type below and press Enter. /help lists commands.",
-                Style::default().fg(Color::DarkGray),
-            )]));
-        }
-
-        // M-44: sum cached per-message row counts at the paint width
-        // instead of cloning the whole line vector and asking
-        // Paragraph to re-wrap it every frame. This mirrors the
-        // scrollbar probe above (which the codebase already trusts
-        // for the same quantity); each message's count comes from
-        // `message_measurement_cached`, which is keyed by
-        // (id, content hash, width). The stream block is not a
-        // `Message` and is measured directly — it is bounded by the
-        // size of the in-progress reply.
+        // TOTAL rows at `text_width` — matches what the render pass
+        // will paint. When `show_bar` is true this equals the probe
+        // sum (probe ran at narrow_width == text_width); when false
+        // the whole transcript fits, so this number is only used for
+        // max_offset arithmetic.
         let total_rows: usize = {
             let mut rows: usize = 0;
             let mut prev_tail_blank = false;
             let mut rendered = false;
-            let mut hidden_count = 0usize;
             for (i, m) in ordered.iter().enumerate() {
                 if Self::tool_row_hidden(app, m) {
-                    hidden_count += 1;
                     continue;
                 }
                 if Self::starts_new_turn(app, m, i == 0) && !prev_tail_blank {
@@ -749,7 +683,7 @@ impl ChatWidget {
                 prev_tail_blank = tb;
                 rendered = true;
             }
-            if hidden_count > 0 {
+            if hidden_tools_total > 0 {
                 rows += 1;
             }
             if app.is_streaming() && !stream_body.is_empty() {
@@ -772,47 +706,33 @@ impl ChatWidget {
         };
         let max_offset = total_rows.saturating_sub(height);
         let offset = app.scroll_offset().min(max_offset);
-        // Skip-to-row for this frame. While a search is active, the
-        // targeted message is centered in the viewport — that is the
-        // user's focus, not wherever they had scrolled to before
-        // starting the search. The user's own scroll offset
-        // (`app.scroll_lines`) is never touched, so clearing the
-        // search (Escape) or the search finding no more matches
-        // restores the previous viewport immediately.
-        //
-        // The centering computation is a per-frame cost only while a
-        // search is active: measure the visual rows of the `lines`
-        // prefix before the target, then subtract half the viewport.
-        // `line_count` gives the true wrapped-row count, matching the
-        // scrollbar's own measurement a few lines down.
-        let skip_rows = if let Some(target_id) = app.search_target_message_id() {
-            if let Some(&line_idx) = message_line_offsets.get(target_id) {
-                let prefix = Text::from(lines[..line_idx].to_vec());
-                #[allow(unstable_name_collisions)]
-                let prefix_rows = Paragraph::new(prefix)
-                    .wrap(Wrap { trim: false })
-                    .line_count(text_width as u16);
-                let desired = prefix_rows.saturating_sub(height / 2);
-                desired.min(max_offset).min(u16::MAX as usize) as u16
+
+        // PERF-01 s2b: row-space offsets for search-jump. Populated
+        // from `cumulative` (probe) so an off-screen message can still
+        // be centered correctly. `content_start` is the row where the
+        // message's own lines begin (after any separator row).
+        let mut message_row_offsets: std::collections::HashMap<kod_types::MessageId, usize> =
+            std::collections::HashMap::new();
+        for &(msg_idx, start, _end, has_sep) in &cumulative {
+            let content_start = start + if has_sep { 1 } else { 0 };
+            message_row_offsets.insert(ordered[msg_idx].id.clone(), content_start);
+        }
+
+        // Skip-to-row for this frame. Search-active: center on target
+        // message's content row. Otherwise: the user's scroll offset
+        // (bottom-anchored).
+        let skip_rows_usize: usize = if let Some(target_id) = app.search_target_message_id() {
+            if let Some(&content_start) = message_row_offsets.get(target_id) {
+                content_start.saturating_sub(height / 2).min(max_offset)
             } else {
-                // Target message did not render in this frame (it was
-                // a tool row and `show_tools` is off, for example).
-                // Fall back to the user's own scroll.
-                total_rows
-                    .saturating_sub(height)
-                    .saturating_sub(offset)
-                    .min(u16::MAX as usize) as u16
+                total_rows.saturating_sub(height).saturating_sub(offset)
             }
         } else {
-            total_rows
-                .saturating_sub(height)
-                .saturating_sub(offset)
-                .min(u16::MAX as usize) as u16
+            total_rows.saturating_sub(height).saturating_sub(offset)
         };
-        // Bug-hunt: `area.width - 1` panics on a 0-width rect (a
-        // terminal still being resized, an embedded render). The
-        // sibling arithmetic above already uses saturating_sub; this
-        // matches that discipline. A width of 0 is a no-op render.
+        let skip_rows_u16 = skip_rows_usize.min(u16::MAX as usize) as u16;
+
+        // Bug-hunt: `area.width - 1` panics on a 0-width rect.
         let text_area = if show_bar {
             Rect {
                 width: area.width.saturating_sub(1),
@@ -821,9 +741,117 @@ impl ChatWidget {
         } else {
             area
         };
-        let paragraph = Paragraph::new(Text::from(lines))
+
+        // Window bounds. Engaged only when the probe produced
+        // cumulative (show_bar true) and the viewport is not at the
+        // very top (skip_rows == 0 means windower would materialize
+        // the whole transcript anyway).
+        let window = if show_bar && skip_rows_usize > 0 && !cumulative.is_empty() {
+            let viewport_end = skip_rows_usize.saturating_add(height);
+            let first_visible = cumulative
+                .iter()
+                .position(|&(_, _, end, _)| end > skip_rows_usize);
+            let last_visible = cumulative
+                .iter()
+                .rposition(|&(_, start, _, _)| start < viewport_end);
+            match (first_visible, last_visible) {
+                (Some(fv), Some(lv)) if fv <= lv => Some((fv, lv)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let (paint_lines, paint_scroll): (Vec<Line<'static>>, u16) =
+            if let Some((fv, lv)) = window {
+                let window_start_row = cumulative[fv].1;
+                let mut out: Vec<Line<'static>> = Vec::new();
+                for cum_idx in fv..=lv {
+                    let (msg_idx, msg_start, _end, has_sep) = cumulative[cum_idx];
+                    let message = ordered[msg_idx];
+                    let mut contribution: Vec<Line<'static>> = Vec::new();
+                    if has_sep {
+                        contribution.push(Line::from(vec![Span::styled(
+                            "─".repeat(text_width.min(120)),
+                            Style::default().fg(theme.dim),
+                        )]));
+                    }
+                    let cached = Self::message_lines_cached(app, message, text_width);
+                    contribution.extend(cached.iter().cloned());
+                    let front_skip = if cum_idx == fv {
+                        skip_rows_usize.saturating_sub(msg_start)
+                    } else {
+                        0
+                    };
+                    out.extend(contribution.into_iter().skip(front_skip));
+                }
+                let paint =
+                    skip_rows_usize.saturating_sub(window_start_row).min(u16::MAX as usize) as u16;
+                (out, paint)
+            } else {
+                // Full path (short transcript, top of transcript, or
+                // no cumulative). Same behavior as v0.1.7.
+                let mut lines: Vec<Line> = Vec::new();
+                for (i, message) in ordered.iter().enumerate() {
+                    if Self::tool_row_hidden(app, message) {
+                        continue;
+                    }
+                    if Self::starts_new_turn(app, message, i == 0)
+                        && lines.last().map(|l| l.width()).unwrap_or(1) > 0
+                    {
+                        lines.push(Line::from(vec![Span::styled(
+                            "─".repeat(text_width.min(120)),
+                            Style::default().fg(theme.dim),
+                        )]));
+                    }
+                    let cached = Self::message_lines_cached(app, message, text_width);
+                    lines.extend(cached.iter().cloned());
+                }
+                if hidden_tools_total > 0 {
+                    lines.push(Line::from(vec![Span::styled(
+                        format!("⋯ {hidden_tools_total} tool output(s) hidden — t to show"),
+                        Style::default()
+                            .fg(theme.dim)
+                            .add_modifier(Modifier::ITALIC),
+                    )]));
+                }
+                if app.is_streaming() && !stream_body.is_empty() {
+                    lines.extend(Self::assistant_block(
+                        &stream_body,
+                        text_width,
+                        Style::default().fg(theme.assistant),
+                        app,
+                        None,
+                    ));
+                }
+                if lines.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "No messages yet — type below and press Enter. /help lists commands.",
+                        Style::default().fg(Color::DarkGray),
+                    )]));
+                }
+                // Convert any borrowed-line lifetime to 'static so both
+                // branches agree on the outer type.
+                let owned: Vec<Line<'static>> = lines
+                    .into_iter()
+                    .map(|l| {
+                        let spans: Vec<Span<'static>> = l
+                            .spans
+                            .into_iter()
+                            .map(|s| Span::styled(s.content.into_owned(), s.style))
+                            .collect();
+                        let mut out = Line::from(spans);
+                        out.style = l.style;
+                        out.alignment = l.alignment;
+                        out
+                    })
+                    .collect();
+                (owned, skip_rows_u16)
+            };
+
+        let paragraph = Paragraph::new(Text::from(paint_lines))
             .wrap(Wrap { trim: false })
-            .scroll((skip_rows, 0));
+            .scroll((paint_scroll, 0));
         paragraph.render(text_area, buf);
         crate::render_cache::with_cache(|c| c.end_frame());
 
