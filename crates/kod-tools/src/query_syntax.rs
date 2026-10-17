@@ -53,6 +53,13 @@ pub struct ParsedQuery {
     /// The literal `OR` alternation groups, if the query used `OR`.
     /// Each group is a set of alternatives.
     pub or_groups: Vec<Vec<String>>,
+    /// BUG-D-08: constraint operators whose token carried a leading
+    /// `-` (`-site:docs.rs`). Pre-fix the negation was dropped and
+    /// the constraint was applied in the affirmative — the exact
+    /// opposite of what the user asked for. Kept separate from the
+    /// positive fields so a caller can distinguish "site set" from
+    /// "site excluded" without sentinel values.
+    pub excluded_constraints: Vec<(&'static str, String)>,
 }
 
 impl ParsedQuery {
@@ -144,33 +151,67 @@ pub fn parse(query: &str) -> ParsedQuery {
             && !body.starts_with("://")
         {
             let k = key.to_ascii_lowercase();
+            // BUG-D-08: a leading `-` on a constraint operator means
+            // "exclude this constraint". Pre-fix every arm set the
+            // positive field regardless of negation, so `-site:evil`
+            // was applied as `site = evil`. Route negated operands to
+            // `excluded_constraints` and leave the positive field
+            // untouched.
             match k.as_str() {
                 "site" => {
-                    q.site = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("site", value.to_string()));
+                    } else {
+                        q.site = Some(value.to_string());
+                    }
                     continue;
                 }
                 "filetype" | "ext" => {
-                    q.filetype = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("filetype", value.to_string()));
+                    } else {
+                        q.filetype = Some(value.to_string());
+                    }
                     continue;
                 }
                 "before" => {
-                    q.before = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("before", value.to_string()));
+                    } else {
+                        q.before = Some(value.to_string());
+                    }
                     continue;
                 }
                 "after" => {
-                    q.after = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("after", value.to_string()));
+                    } else {
+                        q.after = Some(value.to_string());
+                    }
                     continue;
                 }
                 "inurl" => {
-                    q.inurl = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("inurl", value.to_string()));
+                    } else {
+                        q.inurl = Some(value.to_string());
+                    }
                     continue;
                 }
                 "intitle" => {
-                    q.intitle = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("intitle", value.to_string()));
+                    } else {
+                        q.intitle = Some(value.to_string());
+                    }
                     continue;
                 }
                 "lang" => {
-                    q.lang = Some(value.to_string());
+                    if negated {
+                        q.excluded_constraints.push(("lang", value.to_string()));
+                    } else {
+                        q.lang = Some(value.to_string());
+                    }
                     continue;
                 }
                 _ => {
