@@ -80,6 +80,13 @@ impl KodEngine {
             }
         }
         if cutoff > 0 {
+            // BUG-C-01: never leave a surviving `Tool` row whose
+            // owning assistant (with the matching `tool_call_id`) was
+            // dropped — providers reject dangling tool results. Extend
+            // the drop through any orphaned Tool rows at the new front.
+            while cutoff < turns.len() && turns[cutoff].role == kod_types::MessageRole::Tool {
+                cutoff += 1;
+            }
             turns.drain(..cutoff);
         }
     }
