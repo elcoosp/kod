@@ -766,24 +766,63 @@ impl ChatWidget {
         {
             let window_start_row = cumulative[fv].1;
             let mut out: Vec<Line<'static>> = Vec::new();
+            // Bug-hunt: out[0] must correspond to virtual row
+            // `window_start_row`; the Paragraph scroll below handles
+            // the offset to `skip_rows_usize`. No per-message row
+            // skip is applied here — the earlier shape applied both
+            // a `skip(...)` on the first contribution AND the
+            // Paragraph scroll, double-skipping by one message's
+            // worth of rows.
             for cum_idx in fv..=lv {
-                let (msg_idx, msg_start, _end, has_sep) = cumulative[cum_idx];
+                let (msg_idx, _start, _end, has_sep) = cumulative[cum_idx];
                 let message = ordered[msg_idx];
-                let mut contribution: Vec<Line<'static>> = Vec::new();
                 if has_sep {
-                    contribution.push(Line::from(vec![Span::styled(
+                    out.push(Line::from(vec![Span::styled(
                         "─".repeat(text_width.min(120)),
                         Style::default().fg(theme.dim),
                     )]));
                 }
                 let cached = Self::message_lines_cached(app, message, text_width);
-                contribution.extend(cached.iter().cloned());
-                let front_skip = if cum_idx == fv {
-                    skip_rows_usize.saturating_sub(msg_start)
-                } else {
-                    0
-                };
-                out.extend(contribution.into_iter().skip(front_skip));
+                out.extend(cached.iter().cloned());
+            }
+            // Append the tail (hidden-tools footer + streaming body)
+            // when the viewport reaches it. `cumulative[lv].2` is the
+            // row after the last visible message's content; the tail
+            // occupies rows above the viewport end. The pre-fix code
+            // materialized only `cumulative[]` messages, so a user
+            // watching a reply stream in with a scrolled viewport saw
+            // blank rows in place of the in-progress text.
+            let after_msg_row = cumulative[lv].2;
+            let viewport_end = skip_rows_usize.saturating_add(height);
+            if after_msg_row < viewport_end {
+                if hidden_tools_total > 0 {
+                    out.push(Line::from(vec![Span::styled(
+                        format!("⋯ {hidden_tools_total} tool output(s) hidden — t to show"),
+                        Style::default()
+                            .fg(theme.dim)
+                            .add_modifier(Modifier::ITALIC),
+                    )]));
+                }
+                if app.is_streaming() && !stream_body.is_empty() {
+                    let block = Self::assistant_block(
+                        &stream_body,
+                        text_width,
+                        Style::default().fg(theme.assistant),
+                        app,
+                        None,
+                    );
+                    for l in block {
+                        let spans: Vec<Span<'static>> = l
+                            .spans
+                            .into_iter()
+                            .map(|s| Span::styled(s.content.into_owned(), s.style))
+                            .collect();
+                        let mut line = Line::from(spans);
+                        line.style = l.style;
+                        line.alignment = l.alignment;
+                        out.push(line);
+                    }
+                }
             }
             let paint = skip_rows_usize
                 .saturating_sub(window_start_row)
@@ -1509,5 +1548,48 @@ mod coverage_chat_widget {
         );
         // (The raw `─` count includes the assistant frame's borders;
         // positional checks above are the real assertions.)
+    }
+}
+
+#[cfg(test)]
+mod windowed_render_regression {
+    /// Bug-hunt (post-v0.1.8): the windowed render path must
+    /// materialize the streaming body when the viewport reaches the
+    /// tail, and must not front-skip rows (the Paragraph scroll
+    /// already offsets). Both were defects in the v0.1.8 release:
+    /// streaming text vanished from the bottom of the viewport, and
+    /// the first visible row was placed one message too far down.
+    ///
+    /// The check is scoped to the windowed branch region so that a
+    /// string literal in this test (e.g. the *needle* we are trying
+    /// to prove is *absent*) does not itself satisfy the search.
+    #[test]
+    fn windowed_branch_materializes_streaming_body() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/chat.rs"))
+            .expect("read chat.rs");
+        let start = src
+            .find("let (paint_lines, paint_scroll)")
+            .expect("windowed/paint binding present");
+        let end = src[start..]
+            .find("} else {")
+            .map(|i| start + i)
+            .expect("windowed branch closes with else");
+        let windowed = &src[start..end];
+
+        assert!(
+            windowed.contains("after_msg_row < viewport_end"),
+            "windowed branch must gate tail-append on viewport reach"
+        );
+        assert!(
+            windowed.contains("app.is_streaming()"),
+            "windowed branch must materialize streaming body when visible"
+        );
+        // front_skip must not appear anywhere in the windowed branch.
+        // (Scoped so this test's own needle literal — a string in the
+        // *test* source — does not falsely satisfy the absence check.)
+        assert!(
+            !windowed.contains("front_skip"),
+            "windowed loop must not front-skip; Paragraph scroll handles offset"
+        );
     }
 }
