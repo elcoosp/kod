@@ -251,12 +251,23 @@ impl KodEngine {
     }
 
     /// M-16: truncate a transcript's history back to `len` messages.
+    ///
+    /// If any messages were removed, the transcript's context gauge is
+    /// cleared — its anchor covered rounds that no longer exist.
     pub(crate) async fn truncate_history_to(&self, key: &str, len: usize) {
-        let mut hist = self.history.write().await;
-        if let Some(turns) = hist.get_mut(key)
-            && turns.len() > len
-        {
-            turns.truncate(len);
+        let truncated = {
+            let mut hist = self.history.write().await;
+            if let Some(turns) = hist.get_mut(key)
+                && turns.len() > len
+            {
+                turns.truncate(len);
+                true
+            } else {
+                false
+            }
+        };
+        if truncated {
+            self.context_gauges.write().await.remove(key);
         }
     }
 
@@ -898,6 +909,14 @@ impl KodEngine {
                                         );
                                     }
                                     stream = new_stream;
+                                    // The abandoned stream's assembly
+                                    // state is void: reuse of index 0
+                                    // would concatenate the old
+                                    // partial JSON with the new
+                                    // stream's JSON.
+                                    partials.clear();
+                                    speculation_handles.clear();
+                                    stop_reason_out = None;
                                     // Reset the counter so the new
                                     // stream gets a fresh window
                                     // before the next check.
