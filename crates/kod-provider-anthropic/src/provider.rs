@@ -399,7 +399,27 @@ impl LlmProvider for AnthropicProvider {
                     }
                     return Err(err);
                 }
-                let parsed: serde_json::Value = resp.json().await.map_err(|e| {
+                // SEC-B-04: bound the success-body read. `resp.json()`
+                // buffers the whole body; a hostile `base_url` can
+                // answer 200 with a multi-GB JSON and grow RSS until
+                // OOM. 16 MiB is far above any legitimate Messages
+                // reply.
+                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
+                let mut resp = resp;
+                let mut bytes: Vec<u8> = Vec::with_capacity(8192);
+                while let Some(chunk) = resp
+                    .chunk()
+                    .await
+                    .map_err(|e| KodError::Provider(format!("anthropic: read body: {e}")))?
+                {
+                    if bytes.len() + chunk.len() > MAX_JSON_BODY_BYTES {
+                        return Err(KodError::Provider(format!(
+                            "anthropic: response body exceeded {MAX_JSON_BODY_BYTES} bytes"
+                        )));
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
                     KodError::Provider(format!("anthropic: invalid JSON: {e}"))
                 })?;
                 parse_response(&parsed)
@@ -478,7 +498,25 @@ impl LlmProvider for AnthropicProvider {
                     let text = read_bounded_error_body(resp).await;
                     return Err(KodError::provider_status(status.as_u16(), &text));
                 }
-                resp.json::<serde_json::Value>().await.map_err(|e| {
+                // SEC-B-04: same bounded read as `complete`.
+                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
+                let mut resp = resp;
+                let mut bytes: Vec<u8> = Vec::with_capacity(8192);
+                while let Some(chunk) = resp
+                    .chunk()
+                    .await
+                    .map_err(|e| KodError::Provider(format!(
+                        "anthropic native_compact: read body: {e}"
+                    )))?
+                {
+                    if bytes.len() + chunk.len() > MAX_JSON_BODY_BYTES {
+                        return Err(KodError::Provider(format!(
+                            "anthropic native_compact: response body exceeded {MAX_JSON_BODY_BYTES} bytes"
+                        )));
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                serde_json::from_slice(&bytes).map_err(|e| {
                     KodError::Provider(format!("anthropic native_compact: invalid JSON: {e}"))
                 })
             }
