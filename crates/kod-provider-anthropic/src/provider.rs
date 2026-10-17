@@ -655,6 +655,18 @@ impl LlmProvider for AnthropicProvider {
                                 error = %err,
                                 "anthropic stream: pre-commit transport error; retrying"
                             );
+                            // TPD-09: back off before retrying. The
+                            // pre-fix branch retried immediately — the
+                            // exact hot-loop behaviour the retry
+                            // machinery exists to prevent, and the
+                            // audit's M-58 note describes the same
+                            // shape on the OpenAI sibling. Matches the
+                            // status-error branch's 250ms × attempt
+                            // schedule below.
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                250 * u64::from(attempt.max(1)),
+                            ))
+                            .await;
                             continue;
                         }
                         yield Err(err);
