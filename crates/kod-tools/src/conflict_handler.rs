@@ -412,9 +412,11 @@ impl ProtocolHandler for ConflictHandler {
         new_text.push_str(&text[..b.start]);
         new_text.push_str(&replacement);
         new_text.push_str(&text[b.end..]);
-        std::fs::write(&reg.path, new_text).map_err(|e| ProtocolError::Handler {
-            url: url.to_string(),
-            message: e.to_string(),
+        crate::tools::atomic_write(&reg.path, new_text.as_bytes()).map_err(|e| {
+            ProtocolError::Handler {
+                url: url.to_string(),
+                message: e.to_string(),
+            }
         })?;
         Ok(())
     }
