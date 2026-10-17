@@ -152,7 +152,10 @@ impl TodoTool {
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "update", "list", "clear"],
+                            // BUG-D-09: `unblock` is handled by execute()
+                            // and its own error text tells the model to
+                            // use it; it must be in the advertised enum.
+                            "enum": ["add", "update", "list", "clear", "unblock"],
                             "description": "What to do with the list."
                         },
                         "text": {
