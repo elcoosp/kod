@@ -136,3 +136,57 @@ fn migrate_is_idempotent_on_a_v2_config() {
         .count();
     assert_eq!(backups, 0, "an already-v2 file must not be re-migrated");
 }
+
+// ---------------------------------------------------------------------------
+// `kod config validate`
+// ---------------------------------------------------------------------------
+
+/// A config whose runtime load clamps an out-of-range value must not
+/// be reported as plain "valid": the runtime silently rewrites it, so
+/// "valid" is misleading. The test asserts the command surfaces the
+/// clamping (a warning or the effective value), not a bare "valid."
+#[test]
+fn config_validate_reports_out_of_range_values() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // `soft_warn_at = 2.0` is out of [0,1]; the runtime clamp rewrites
+    // it to 1.0.
+    std::fs::write(
+        tmp.path().join("config.toml"),
+        "[limits]\nsoft_warn_at = 2.0\n",
+    )
+    .unwrap();
+
+    let (stdout, stderr, _code) = run_kod_in(tmp.path(), &["config", "validate"]);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.to_lowercase().contains("soft_warn_at")
+            || combined.to_lowercase().contains("clamp")
+            || combined.to_lowercase().contains("out of range"),
+        "validate must surface the out-of-range soft_warn_at (runtime clamps it), \
+         got:\n{combined}",
+    );
+}
+
+/// A clean config still reports plain "valid." — the clamping report
+/// must not fire when nothing was clamped.
+#[test]
+fn config_validate_accepts_a_clean_config() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.toml"),
+        "[limits]\nsoft_warn_at = 0.5\nmax_cost_usd_per_session = 5.0\n",
+    )
+    .unwrap();
+
+    let (stdout, stderr, code) = run_kod_in(tmp.path(), &["config", "validate"]);
+    let combined = format!("{stdout}{stderr}");
+    assert_eq!(code, 0, "a clean config must exit 0; got:\n{combined}");
+    assert!(
+        combined.contains("valid."),
+        "a clean config must report 'valid.', got:\n{combined}",
+    );
+    assert!(
+        !combined.to_lowercase().contains("clamp"),
+        "a clean config must not mention clamping, got:\n{combined}",
+    );
+}

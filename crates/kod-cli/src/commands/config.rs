@@ -284,8 +284,83 @@ pub async fn run_config_validate() -> Result<()> {
     }
 
     match KodConfig::load_from(&path) {
-        Ok(cfg) => {
-            println!("{}: valid.", path.display());
+        Ok(mut cfg) => {
+            // `load_from` is parse-only; the runtime path
+            // (`load_default`) clamps out-of-range values after
+            // loading. Reporting a bare "valid." for a config the
+            // runtime will silently rewrite is misleading — `kod
+            // config validate` should tell the user what the runtime
+            // will actually do. Capture the pre-clamp values, apply
+            // the same clamps, and report every change.
+            let before_limits = cfg.limits.clone();
+            let before_skills = cfg.skills.clone();
+            let before_endpoints = cfg.llm.endpoints.clone();
+            cfg.llm.validate();
+            cfg.skills.validate();
+            cfg.limits.clamp();
+            cfg.jev.thresholds.clamp();
+
+            let mut changes: Vec<String> = Vec::new();
+            if cfg.limits.soft_warn_at != before_limits.soft_warn_at {
+                changes.push(format!(
+                    "limits.soft_warn_at {} -> {} (must be in [0, 1])",
+                    before_limits.soft_warn_at, cfg.limits.soft_warn_at,
+                ));
+            }
+            if cfg.limits.max_cost_usd_per_session != before_limits.max_cost_usd_per_session {
+                changes.push(format!(
+                    "limits.max_cost_usd_per_session {} -> {}",
+                    before_limits.max_cost_usd_per_session, cfg.limits.max_cost_usd_per_session,
+                ));
+            }
+            if cfg.limits.max_cost_usd_per_turn != before_limits.max_cost_usd_per_turn {
+                changes.push(format!(
+                    "limits.max_cost_usd_per_turn {} -> {}",
+                    before_limits.max_cost_usd_per_turn, cfg.limits.max_cost_usd_per_turn,
+                ));
+            }
+            if cfg.skills.match_threshold != before_skills.match_threshold {
+                changes.push(format!(
+                    "skills.match_threshold {} -> {} (must be in [0, 1])",
+                    before_skills.match_threshold, cfg.skills.match_threshold,
+                ));
+            }
+            for (i, (b, a)) in before_endpoints
+                .iter()
+                .zip(cfg.llm.endpoints.iter())
+                .enumerate()
+            {
+                if b.context_window != a.context_window {
+                    changes.push(format!(
+                        "llm.endpoints[{i}].context_window {} -> {}",
+                        b.context_window, a.context_window,
+                    ));
+                }
+                if b.max_tokens != a.max_tokens {
+                    changes.push(format!(
+                        "llm.endpoints[{i}].max_tokens {:?} -> {:?}",
+                        b.max_tokens, a.max_tokens,
+                    ));
+                }
+                if b.timeout_secs != a.timeout_secs {
+                    changes.push(format!(
+                        "llm.endpoints[{i}].timeout_secs {} -> {}",
+                        b.timeout_secs, a.timeout_secs,
+                    ));
+                }
+            }
+            if changes.is_empty() {
+                println!("{}: valid.", path.display());
+            } else {
+                println!(
+                    "{}: parseable, but the runtime will clamp {} value(s):",
+                    path.display(),
+                    changes.len(),
+                );
+                for c in &changes {
+                    println!("  {c}");
+                }
+            }
             println!(
                 "  model = {:?}, base_url = {:?}, context_window = {}",
                 cfg.llm.default_endpoint().model,
