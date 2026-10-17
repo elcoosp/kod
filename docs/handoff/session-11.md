@@ -910,3 +910,52 @@ principle for a filesystem side effect.
 
 Two fixes since v0.1.5 (the two gate bypasses) plus the test hardening.
 The classifier fixes are security-relevant; a release is due.
+
+
+---
+
+## Addendum 14 — config validate hid the runtime clamps (dc7ae1e)
+
+`kod config validate` loaded the file with `KodConfig::load_from`
+(parse-only) and printed a bare "valid." for any config that parsed.
+The runtime path (`load_default`) then clamps out-of-range values —
+`limits.soft_warn_at = 2.0` becomes 1.0, an unknown trust tier becomes
+`standard`, a sub-floor `context_window` is raised, `max_tokens = 0`
+falls back to the default. A user was told "valid" and then silently got
+different behavior than the file described.
+
+Fix: after parsing, apply the same clamps the runtime applies against a
+pre-clamp snapshot and report each change. A clean config still prints
+plain "valid."; a clamped one prints "parseable, but the runtime will
+clamp N value(s)" with the before -> after for each.
+
+Two e2e tests (via `KOD_CONFIG_DIR`): the out-of-range case surfaces the
+clamp (verified to fail pre-fix), and a clean config still reports
+"valid." with no clamp mention.
+
+### Method note
+
+`KOD_CONFIG_DIR` names the config directory itself, so `kod config
+<cmd>` is testable end-to-end without mutating `HOME`/`XDG_CONFIG_HOME`
+(both process-wide, both racing under a parallel runner, and
+`XDG_CONFIG_HOME` is ignored on macOS). Any future `kod config`
+subcommand test should drive the binary this way — `config_migrate.rs`
+has the `run_kod_in` helper.
+
+### Reviewed, not bugs
+
+- `ArtifactHandler` evicts an arbitrary key over `MAX_ARTIFACTS`; the
+  comment says "FIFO" but the inline note says "arbitrary" and the store
+  is a cache. Not a bug.
+- `SpendWindow` caps at 4096 entries (count-bounded, not time-bounded);
+  a run producing more than 4096 cost records in one window would
+  under-report. 4096 is far above any real run; documented as such.
+- `LimitsConfig` caps of `0` disable the cap, so a negative/NaN cap
+  already maps to "disabled" at runtime; the clamp's only real effect is
+  `soft_warn_at` and the endpoint clamps — which is exactly what the
+  validate fix now reports.
+
+### Cut v0.1.6
+
+`f115453` (two gate bypasses) and `dc7ae1e` (validate) are unreleased;
+the gate bypasses are security-relevant.
