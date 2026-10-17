@@ -181,3 +181,17 @@ deny = [
     { name = "openssl-sys" },
     { name = "fastembed" },
 ]
+
+# TPD-10 (audit 2026-10): reqwest 0.12 is pulled only via
+# `kod-provider-anthropic` -> `adk-model 2.3.0` -> `adk-anthropic 2.3.0`,
+# which predates the 0.13 API. kod's own crates are on 0.13.5.
+# Migration to kod's native wire (which already covers `complete`,
+# `stream_completion`, and compaction) is tracked in `docs/BACKLOG.md`.
+# Until that lands, skip the specific 0.12.28 version so a THIRD
+# reqwest major cannot sneak in unnoticed. If a `cargo update` bumps
+# 0.12.28 -> 0.12.29, this skip stops matching and the audit fails
+# loudly — that is intentional.
+[[bans.skip]]
+name = "reqwest"
+version = "=0.12.28"
+
