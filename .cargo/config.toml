@@ -15,3 +15,6 @@
 # changing. Known issue: doctests can fail with E0463;
 # workaround is RUSTC_WRAPPER= for the doctest run.
 # (previous note: measured 3.7x slower (43s vs 12s single-crate rebuild); kache serves stale rlibs and breaks rustdoc E0463)
+
+[build]
+rustc-wrapper = "kache"
