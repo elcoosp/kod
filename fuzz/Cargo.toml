@@ -59,3 +59,11 @@ doc = false
 # Prevent cargo from treating fuzz/ as a workspace member of the
 # parent — the parent excludes it; this table mirrors that.
 [workspace]
+
+[[bin]]
+name = "extract_json"
+path = "fuzz_targets/extract_json.rs"
+
+[[bin]]
+name = "schema"
+path = "fuzz_targets/schema.rs"
