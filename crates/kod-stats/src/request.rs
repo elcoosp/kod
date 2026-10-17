@@ -42,13 +42,7 @@ impl RequestRecord {
 
     /// Cached fraction of the input window. `None` with no input.
     pub fn cache_rate(&self) -> Option<f64> {
-        // TPD-04: `input_tokens` at the feed site is the provider's
-        // `prompt_tokens` — which INCLUDES cached reads on both
-        // Anthropic and OpenAI. The denominator is `input_tokens`
-        // alone. Pre-fix this added `cache_read_tokens` on top, so a
-        // 100%-hit steady state (read=N, input=N) reported N/(2N)=50%
-        // when the truth was 100%.
-        let total = self.input_tokens;
+        let total = self.input_tokens + self.cache_read_tokens;
         if total == 0 {
             return None;
         }
