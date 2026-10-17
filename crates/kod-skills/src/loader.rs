@@ -141,6 +141,9 @@ impl SkillLoader {
         let skill = self.parser.parse_file(path)?;
 
         let mut cache = self.cache.write().await;
+        // BUG-D-07: retire any prior entry for this path (a
+        // front-matter rename leaves a ghost otherwise).
+        cache.retain(|_, s| s.path != path);
         cache.insert(skill.metadata.name.clone(), skill.clone());
 
         Ok(Some(skill))
@@ -280,6 +283,10 @@ async fn handle_watch_event(
         WatchEvent::Created(path) | WatchEvent::Modified(path) => match parser.parse_file(&path) {
             Ok(skill) => {
                 let mut cache_guard = cache.write().await;
+                // BUG-D-07: retire any prior entry for this path.
+                // A front-matter rename would otherwise leave a
+                // ghost skill in the cache under the old name.
+                cache_guard.retain(|_, s| s.path != path);
                 cache_guard.insert(skill.metadata.name.clone(), skill);
                 tracing::info!(
                     path = %path.display(),
