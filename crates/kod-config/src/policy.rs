@@ -1861,6 +1861,18 @@ pub const PREFIX_WRAPPERS_FOR_TESTS: &[(&str, &[&str], usize)] = &[
         &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
         0,
     ),
+    // SEC-A-04b: mirror of the additions in `kod-risk::classify::WRAPPERS`.
+    // The cross-crate mirror test in `kod-core-tools` asserts
+    // element-for-element equality; the two tables must change in
+    // lockstep.
+    ("nohup", &[], 0),
+    ("watch", &["-n"], 0),
+    ("setsid", &[], 0),
+    ("strace", &["-o", "-p", "-s", "-e", "-u"], 0),
+    ("ltrace", &["-o", "-p", "-s", "-e", "-u"], 0),
+    ("taskset", &["-c", "-p"], 0),
+    ("nsenter", &["-t"], 0),
+    ("pkexec", &[], 0),
 ];
 
 /// Command-string wrappers, hoisted for the cross-crate mirror test.
