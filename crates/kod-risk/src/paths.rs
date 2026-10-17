@@ -250,6 +250,33 @@ pub fn classify(raw: &str, ctx: &RiskContext) -> (PathDanger, String) {
     // real user home is below them, and marking the parent catastrophic
     // would flag every read of `/home/user/project`.
 
+    // SEC-A-07: the working/scratch directory *itself* (not a path
+    // under it) is a whole-tree deletion — `rm -rf <wd>` must not
+    // classify Safe just because it equals the prefix. Check equality
+    // before the prefix shortcut.
+    if normalized == ctx.working_dir || normalized == ctx.scratch_dir {
+        return (
+            PathDanger::Confirm,
+            format!(
+                "the {} directory itself: {raw}",
+                if normalized == ctx.working_dir {
+                    "working"
+                } else {
+                    "scratch"
+                }
+            ),
+        );
+    }
+    // SEC-A-06: POSIX expands `~name`, `~+`, `~-`; the lexical
+    // expander only handles `~` and `~/`. An unexpanded tilde that is
+    // not the bare forms is a path we cannot resolve — escalate per
+    // the module contract ("never refuses; it escalates").
+    if raw.starts_with('~') && raw != "~" && !raw.starts_with("~/") {
+        return (
+            PathDanger::Confirm,
+            format!("unresolved tilde expansion: {raw}"),
+        );
+    }
     // Inside the scratch dir or the working dir: safe.
     if normalized.starts_with(&ctx.scratch_dir) || normalized.starts_with(&ctx.working_dir) {
         return (PathDanger::Safe, String::new());
