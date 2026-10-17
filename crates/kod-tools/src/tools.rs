@@ -133,12 +133,24 @@ pub fn is_secret_like_env(name: &str) -> bool {
         "AUTH",
         "BEARER",
         "PRIVATE",
+        // SEC-A-16: a passphrase is a secret.
+        "PASSPHRASE",
     ];
     let upper = name.to_ascii_uppercase();
     if TOKENS.iter().any(|t| upper.contains(t)) {
         return true;
     }
-    const PREFIXES: &[&str] = &["ANTHROPIC_", "OPENAI_", "AWS_", "GCP_", "GOOGLE_", "AZURE_"];
+    const PREFIXES: &[&str] = &[
+        "ANTHROPIC_",
+        "OPENAI_",
+        "AWS_",
+        "GCP_",
+        "GOOGLE_",
+        "AZURE_",
+        // SEC-A-16: MySQL reads a bare `MYSQL_PWD` as the password;
+        // no `*PASSWORD*` token matches that name.
+        "MYSQL_",
+    ];
     PREFIXES.iter().any(|p| upper.starts_with(p))
 }
 
@@ -3650,6 +3662,11 @@ mod coverage_execute_command_env {
 
     #[test]
     fn matching_is_case_insensitive() {
+        // SEC-A-16: `MYSQL_PWD` is a bare password var with no
+        // `*PASSWORD*` token; `*PASSPHRASE*` likewise.
+        assert!(is_secret_like_env("MYSQL_PWD"));
+        assert!(is_secret_like_env("GPG_PASSPHRASE"));
+        assert!(is_secret_like_env("SSH_KEY_PASSPHRASE"));
         assert!(is_secret_like_env("anthropic_api_key"));
         assert!(is_secret_like_env("Some_Token"));
     }
