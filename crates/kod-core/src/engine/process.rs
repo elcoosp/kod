@@ -1583,6 +1583,21 @@ impl KodEngine {
                             // accumulated conversation, not the
                             // pre-loop snapshot.
                             goal_messages = attempt_messages;
+                            // BUG-C-08: record this goal-turn's cost,
+                            // like the collected and streaming loops
+                            // do. Without it the context gauge stays
+                            // at pre-goal values, so `maybe_compact_for`
+                            // under-estimates and the transcript can
+                            // blow past the window before compaction
+                            // fires. /stats and the session-log cost
+                            // line miss every goal-turn dollar too.
+                            if let Some(u) = v.3.as_ref() {
+                                let head_fp =
+                                    Self::cache_head_fingerprint(&system_text, &definitions);
+                                let pricing = self.pricing_for(model_ref).await;
+                                self.record_cost_with_head(key, model_ref, u, pricing, head_fp)
+                                    .await;
+                            }
                             turn_outcome = Some(v);
                             break;
                         }
