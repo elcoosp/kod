@@ -221,7 +221,23 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
         // `landlock::apply` refuse, rather than silently ship a
         // sandbox that does not restrict `.git`. (The ro_paths push
         // below is a best-effort that `apply` will reject.)
-        claims_git_readonly: opts.git_readonly,
+        // SEC-A-08: Landlock rules are additive — the worktree rw
+        // grant already covers `.git`, so claiming `git_readonly`
+        // makes `apply` refuse *every* command. The resolver picks
+        // Landlock exactly when bwrap is absent, so the "fallback"
+        // backend never completed a single execution. Degrade the
+        // claim with a loud warning rather than silently ship a
+        // sandbox that does not restrict `.git` — and rather than
+        // refuse every command.
+        claims_git_readonly: {
+            if opts.git_readonly && wd.join(".git").is_dir() {
+                tracing::warn!(
+                    "landlock cannot honor git_readonly (additive rules); \
+                     .git will be writable inside the sandbox — install bubblewrap"
+                );
+            }
+            false
+        },
         ro_paths: vec![
             PathBuf::from("/usr"),
             PathBuf::from("/lib"),
@@ -278,11 +294,23 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
                 .unwrap_or(0);
             let pid = std::process::id();
             let candidate = std::env::temp_dir().join(format!("kod-sandbox-{pid}-{nanos:x}.json"));
-            match std::fs::OpenOptions::new()
+            // SEC-A-14: the doc claims 0600; `OpenOptions` defaults to
+            // 0666 & ~umask (world-readable in /tmp). Set the mode.
+            #[cfg(unix)]
+            let opened = {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .mode(0o600)
+                    .open(&candidate)
+            };
+            #[cfg(not(unix))]
+            let opened = std::fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
-                .open(&candidate)
-            {
+                .open(&candidate);
+            match opened {
                 Ok(mut f) => {
                     if let Err(e) = f.write_all(profile.to_json().as_bytes()) {
                         last_err = Some(e);
@@ -1043,16 +1071,42 @@ impl ToolContext {
         let canonical = match std::fs::canonicalize(&joined) {
             Ok(c) => c,
             Err(_) => {
-                let parent = joined.parent().ok_or_else(|| KodError::InvalidParameters {
-                    reason: format!("Path has no parent: {}", joined.display()),
-                })?;
-                let name = joined
-                    .file_name()
-                    .ok_or_else(|| KodError::InvalidParameters {
-                        reason: format!("Path has no file name: {}", joined.display()),
-                    })?;
-                let canon_parent = std::fs::canonicalize(parent).map_err(KodError::Io)?;
-                canon_parent.join(name)
+                // BUG-D-02: walk up to the nearest existing ancestor,
+                // then re-join the missing tail verbatim. The old
+                // one-level fallback failed whenever an ancestor above
+                // the immediate parent was also missing — which is the
+                // common `write_file src/new/dir/mod.rs` case.
+                let mut tail: Vec<std::ffi::OsString> = Vec::new();
+                let mut p = joined.clone();
+                let existing = loop {
+                    match std::fs::canonicalize(&p) {
+                        Ok(c) => break c,
+                        Err(_) => {
+                            let name =
+                                p.file_name().ok_or_else(|| KodError::InvalidParameters {
+                                    reason: format!(
+                                        "path has no existing ancestor: {}",
+                                        joined.display()
+                                    ),
+                                })?;
+                            tail.push(name.to_os_string());
+                            p = p
+                                .parent()
+                                .ok_or_else(|| KodError::InvalidParameters {
+                                    reason: format!(
+                                        "path has no existing ancestor: {}",
+                                        joined.display()
+                                    ),
+                                })?
+                                .to_path_buf();
+                        }
+                    }
+                };
+                let mut canonical = existing;
+                for part in tail.iter().rev() {
+                    canonical = canonical.join(part);
+                }
+                canonical
             }
         };
 

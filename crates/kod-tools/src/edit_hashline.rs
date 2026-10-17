@@ -222,6 +222,9 @@ impl EditStore {
             });
         }
         // Validate every op's anchors before applying any.
+        // PERF-07: the file length does not change during validation;
+        // count once instead of per op.
+        let len = snap.text.lines().count();
         for op in ops {
             if op.append {
                 continue;
@@ -235,7 +238,6 @@ impl EditStore {
                     e: op.end,
                 });
             }
-            let len = snap.text.lines().count();
             if op.end > len {
                 return Err(EditError::OutOfRange { line: op.end, len });
             }
@@ -388,7 +390,11 @@ pub fn parse(text: &str) -> Result<(String, Tag, Vec<Op>), EditError> {
             });
             continue;
         }
-        if let Some(payload) = line.strip_prefix('+') {
+        // BUG-D-04: use the RAW line for the payload. `trim_end()`
+        // above exists for op matching; applying it to the payload
+        // silently strips trailing whitespace the model wrote
+        // (markdown hard breaks, whitespace-significant literals).
+        if let Some(payload) = raw.strip_prefix('+') {
             let Some(op) = pending.as_mut() else {
                 return Err(EditError::Malformed("payload without a PUT".to_string()));
             };
