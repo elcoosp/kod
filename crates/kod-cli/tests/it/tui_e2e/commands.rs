@@ -65,16 +65,19 @@ fn wait_ci(session: &harness::TuiSession, needle: &str, timeout: Duration) -> St
 /// type a literal `i` before the next command (producing `i/whoami`).
 /// Normalising to normal mode first makes the helper idempotent.
 fn run_command(session: &harness::TuiSession, command: &str, expect: &str) -> String {
-    // Mode normalization needs a pause between keys. The PTY delivers
-    // bytes in order, but the TUI's event loop reads them as separate
-    // key events only when it gets a chance to run between them; sent
-    // back to back, the `Esc` and the `i` can land in the same poll and
-    // the `i` is typed as literal text (observed as `i/export ...`).
-    std::thread::sleep(Duration::from_millis(150));
+    // Mode normalization: the PTY delivers bytes in order, but the
+    // TUI's event loop reads them as separate key events only when it
+    // gets a chance to run between them. Back-to-back, the `Esc` and
+    // `i` can land in one poll and the `i` is typed as literal text
+    // (observed as `i/export ...`). Fixed sleeps here were the source
+    // of the recurring TUI e2e flake; wait for the rendered mode hint
+    // instead — normal mode shows "Press i to type", insert mode shows
+    // "Type a message" — so the next key is only sent once the TUI has
+    // actually switched modes.
     session.send_key(KeyCode::Esc);
-    std::thread::sleep(Duration::from_millis(80));
+    wait_ci(session, "Press i to type", Duration::from_secs(5));
     session.send_key(KeyCode::Char('i'));
-    std::thread::sleep(Duration::from_millis(80));
+    wait_ci(session, "Type a message", Duration::from_secs(5));
     session.send_text(command);
     session.send_key(KeyCode::Enter);
     wait_ci(session, expect, Duration::from_secs(10))
