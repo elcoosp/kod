@@ -163,11 +163,20 @@ impl RenderCache {
             theme: theme.name.clone(),
         };
 
-        // Fast path: cache hit.
+        // Fast path: cache hit. PERF-01: promote to back of the
+        // order deque so the FIFO becomes an LRU. Without promotion,
+        // a session with >capacity assistant messages full-thrashes
+        // the cache every frame — every insert evicts exactly the
+        // entry the next frame needs.
         if let Ok(entries) = self.entries.lock()
-            && let Some(hit) = entries.get(&key)
+            && let Some(hit) = entries.get(&key).cloned()
         {
-            return Arc::clone(hit);
+            drop(entries);
+            if let Ok(mut order) = self.order.lock() {
+                order.retain(|k| k != &key);
+                order.push_back(key.clone());
+            }
+            return hit;
         }
 
         // Miss: parse, insert, evict.
