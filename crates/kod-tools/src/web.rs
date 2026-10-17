@@ -403,10 +403,7 @@ impl Tool for WebFetchTool {
             let ua = ua.to_string();
             let allowed = allowed_domains_for_retry.clone();
             async move {
-                let resp = match self
-                    .fetch_with_safe_redirects(url, &ua, &allowed)
-                    .await
-                {
+                let resp = match self.fetch_with_safe_redirects(url, &ua, &allowed).await {
                     Ok(r) => r,
                     Err(msg) => return Err(msg),
                 };
@@ -932,9 +929,7 @@ mod tests {
     async fn safe_redirects_rejects_loopback() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://127.0.0.1:1/").unwrap();
-        let result = tool
-            .fetch_with_safe_redirects(url, "test-agent", &[])
-            .await;
+        let result = tool.fetch_with_safe_redirects(url, "test-agent", &[]).await;
         assert!(result.is_err(), "loopback URL must be refused");
         let msg = result.unwrap_err();
         assert!(
@@ -947,9 +942,7 @@ mod tests {
     async fn safe_redirects_rejects_metadata_host() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://metadata.google.internal/").unwrap();
-        let result = tool
-            .fetch_with_safe_redirects(url, "test-agent", &[])
-            .await;
+        let result = tool.fetch_with_safe_redirects(url, "test-agent", &[]).await;
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("metadata"), "got: {msg}");

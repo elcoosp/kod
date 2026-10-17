@@ -703,22 +703,30 @@ impl MemoryManager {
     }
     async fn lt_store(&self, entry: MemoryEntry) -> Result<()> {
         let r = self.long_term.store(entry).await;
-        if r.is_ok() { self.invalidate_entries_cache(); }
+        if r.is_ok() {
+            self.invalidate_entries_cache();
+        }
         r
     }
     async fn lt_store_batch(&self, entries: Vec<MemoryEntry>) -> Result<()> {
         let r = self.long_term.store_batch(entries).await;
-        if r.is_ok() { self.invalidate_entries_cache(); }
+        if r.is_ok() {
+            self.invalidate_entries_cache();
+        }
         r
     }
     async fn lt_remove(&self, id: &MemoryId) -> Result<()> {
         let r = self.long_term.remove(id).await;
-        if r.is_ok() { self.invalidate_entries_cache(); }
+        if r.is_ok() {
+            self.invalidate_entries_cache();
+        }
         r
     }
     async fn lt_remove_batch(&self, ids: &[MemoryId]) -> Result<usize> {
         let r = self.long_term.remove_batch(ids).await;
-        if r.is_ok() { self.invalidate_entries_cache(); }
+        if r.is_ok() {
+            self.invalidate_entries_cache();
+        }
         r
     }
 

@@ -1337,7 +1337,8 @@ impl KodEngine {
                         // for a cache.
                         const MAX_IMAGE_RENDER_CACHE: usize = 32;
                         let mut g = self.image_render_cache.write().await;
-                        if g.len() >= MAX_IMAGE_RENDER_CACHE && !g.contains_key(&cache_key)
+                        if g.len() >= MAX_IMAGE_RENDER_CACHE
+                            && !g.contains_key(&cache_key)
                             && let Some(evict) = g.keys().next().cloned()
                         {
                             g.remove(&evict);

@@ -741,9 +741,7 @@ async fn run_streaming(
             // — tools execute, files get written, tokens get billed.
             engine_for_cancel.request_cancel_for(&key_for_cancel);
             call.abort();
-            return Err(KodError::Internal(
-                "client disconnected mid-stream".into(),
-            ));
+            return Err(KodError::Internal("client disconnected mid-stream".into()));
         }
     }
     let outcome = call

@@ -173,16 +173,16 @@ impl Tool for SearchFilesTool {
                 if !file.is_file() {
                     continue;
                 }
-                let file_mode = protected(&file);
+                let file_mode = protected(file);
                 if let Some(kod_config::ReadMode::Refuse) = file_mode {
                     continue;
                 }
-                if let Ok(md) = std::fs::metadata(&file)
+                if let Ok(md) = std::fs::metadata(file)
                     && md.len() > 8 * 1024 * 1024
                 {
                     continue;
                 }
-                let text = match std::fs::read_to_string(&file) {
+                let text = match std::fs::read_to_string(file) {
                     Ok(t) => t,
                     Err(_) => continue,
                 };
@@ -231,7 +231,6 @@ impl Tool for SearchFilesTool {
         })
         .await
         .map_err(|e| KodError::Internal(format!("search worker panicked: {e}")))?;
-
 
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,

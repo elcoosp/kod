@@ -780,7 +780,7 @@ impl TuiLoop {
         #[cfg(unix)]
         {
             tokio::spawn(async move {
-                use tokio::signal::unix::{signal, SignalKind};
+                use tokio::signal::unix::{SignalKind, signal};
                 let Ok(mut term) = signal(SignalKind::terminate()) else {
                     return;
                 };

@@ -1876,11 +1876,7 @@ pub const PREFIX_WRAPPERS_FOR_TESTS: &[(&str, &[&str], usize)] = &[
     // SEC-A-04b: mirror of `kod-risk::classify::WRAPPERS`. The
     // cross-crate mirror test asserts element-for-element equality;
     // both tables must change in lockstep. `script` and `su` deferred.
-    (
-        "flock",
-        &["-e", "-s", "-x", "-n", "-w", "-E", "-o"],
-        1,
-    ),
+    ("flock", &["-e", "-s", "-x", "-n", "-w", "-E", "-o"], 1),
     ("chrt", &[], 1),
     ("unshare", &[], 0),
 ];

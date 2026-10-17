@@ -184,7 +184,11 @@ mod tests {
         let mut half = record();
         half.input_tokens = 50;
         half.cache_read_tokens = 50;
-        assert_eq!(half.cache_rate(), Some(0.5), "50 uncached + 50 cached => 50%");
+        assert_eq!(
+            half.cache_rate(),
+            Some(0.5),
+            "50 uncached + 50 cached => 50%"
+        );
 
         let mut full = record();
         full.input_tokens = 0;

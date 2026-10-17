@@ -1077,9 +1077,7 @@ impl Tool for ExecuteCommandTool {
         // had no way to tell sandboxed commands from unsandboxed ones.
         // Warn once per process so the transcript records it, and the
         // `kod doctor` path can point at it.
-        if sandbox_inv.is_none()
-            && matches!(context.sandbox, crate::context::SandboxMode::Auto)
-        {
+        if sandbox_inv.is_none() && matches!(context.sandbox, crate::context::SandboxMode::Auto) {
             use std::sync::atomic::{AtomicBool, Ordering};
             static WARNED: AtomicBool = AtomicBool::new(false);
             if !WARNED.swap(true, Ordering::Relaxed) {
@@ -1994,7 +1992,7 @@ impl Tool for GrepTool {
                         hit_cap_fired = true;
                         break;
                     }
-                    let file_mode = protected(&file_path);
+                    let file_mode = protected(file_path);
                     if let Some(kod_config::ReadMode::Refuse) = file_mode {
                         continue;
                     }
@@ -2003,11 +2001,11 @@ impl Tool for GrepTool {
                             (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
                             _ => None,
                         };
-                    match std::fs::symlink_metadata(&file_path) {
+                    match std::fs::symlink_metadata(file_path) {
                         Ok(md) if md.is_file() => {}
                         _ => continue,
                     }
-                    if let Ok(meta) = std::fs::metadata(&file_path)
+                    if let Ok(meta) = std::fs::metadata(file_path)
                         && meta.len() > MAX_GREP_FILE_BYTES
                     {
                         skipped_large_total += 1;
@@ -2016,7 +2014,7 @@ impl Tool for GrepTool {
                         }
                         continue;
                     }
-                    let file = match std::fs::File::open(&file_path) {
+                    let file = match std::fs::File::open(file_path) {
                         Ok(f) => f,
                         Err(_) => continue,
                     };
@@ -2044,7 +2042,12 @@ impl Tool for GrepTool {
                         }
                     }
                 }
-                (results, skipped_large_files, skipped_large_total, hit_cap_fired)
+                (
+                    results,
+                    skipped_large_files,
+                    skipped_large_total,
+                    hit_cap_fired,
+                )
             })
             .await
             .map_err(|e| KodError::Internal(format!("grep worker panicked: {e}")))?;

@@ -40,12 +40,7 @@ fn collect(node: tree_sitter::Node, source: &[u8], out: &mut Vec<AstSymbol>) {
     // produce a tree of arbitrary depth. Stack overflow on the main
     // thread is SIGSEGV.
     const MAX_TREE_DEPTH: usize = 1024;
-    fn walk(
-        node: tree_sitter::Node,
-        source: &[u8],
-        out: &mut Vec<AstSymbol>,
-        depth: usize,
-    ) {
+    fn walk(node: tree_sitter::Node, source: &[u8], out: &mut Vec<AstSymbol>, depth: usize) {
         if depth > MAX_TREE_DEPTH {
             return;
         }

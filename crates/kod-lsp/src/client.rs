@@ -564,11 +564,9 @@ impl LspClient {
         // feature set does not include `fs`) moves both off the
         // worker without a dependency change.
         let path_buf = path.to_path_buf();
-        let key = tokio::task::spawn_blocking(move || {
-            match std::fs::canonicalize(&path_buf) {
-                Ok(c) => c,
-                Err(_) => path_buf,
-            }
+        let key = tokio::task::spawn_blocking(move || match std::fs::canonicalize(&path_buf) {
+            Ok(c) => c,
+            Err(_) => path_buf,
         })
         .await
         .unwrap_or_else(|_| path.to_path_buf());

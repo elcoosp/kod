@@ -158,11 +158,7 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
     // false-positive warning applies.
     //
     // `flock [options] file command` — one positional (the lock file).
-    (
-        "flock",
-        &["-e", "-s", "-x", "-n", "-w", "-E", "-o"],
-        1,
-    ),
+    ("flock", &["-e", "-s", "-x", "-n", "-w", "-E", "-o"], 1),
     // `chrt [options] priority command` — one positional (numeric).
     ("chrt", &[], 1),
     // `unshare [options] program` — no positional prefix.
@@ -1764,5 +1760,4 @@ mod t5_regression {
             );
         }
     }
-
 }
