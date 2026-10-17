@@ -8,6 +8,8 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+kod-provider = { path = "../crates/kod-provider" }
+kod-schema-dialect = { path = "../crates/kod-schema-dialect" }
 libfuzzer-sys = "0.4"
 kod-types   = { path = "../crates/kod-types" }
 kod-error   = { path = "../crates/kod-error" }
