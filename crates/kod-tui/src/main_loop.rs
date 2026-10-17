@@ -769,6 +769,40 @@ impl TuiLoop {
         self.persist_history = true;
 
         self.init_terminal().await?;
+
+        // TPD-03: an external kill (session manager stopping the
+        // process, `pkill -TERM kod`, closing the terminal window)
+        // used to leave the tty in raw mode with the alternate
+        // screen active — every subsequent shell command rendered
+        // garbage until `reset`. Install SIGTERM and SIGHUP handlers
+        // that restore the terminal best-effort and exit with the
+        // conventional 128+signum code.
+        #[cfg(unix)]
+        {
+            tokio::spawn(async move {
+                use tokio::signal::unix::{signal, SignalKind};
+                let Ok(mut term) = signal(SignalKind::terminate()) else {
+                    return;
+                };
+                let Ok(mut hup) = signal(SignalKind::hangup()) else {
+                    return;
+                };
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = hup.recv() => {}
+                }
+                kod_types::term::set_tui_active(false);
+                let _ = crossterm::execute!(
+                    std::io::stdout(),
+                    crossterm::event::DisableBracketedPaste,
+                    crossterm::event::DisableMouseCapture,
+                    crossterm::terminal::LeaveAlternateScreen,
+                );
+                let _ = crossterm::terminal::disable_raw_mode();
+                std::process::exit(143);
+            });
+        }
+
         let result = self.main_loop().await;
 
         // TPD-02: every quit path (q, `/quit` confirm, and the
