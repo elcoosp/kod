@@ -839,7 +839,13 @@ impl KodEngine {
                     // TTSR write lock across `chunk_tx.send().await`
                     // parks the whole TTSR subsystem when a slow
                     // consumer fills the channel.
-                    let interrupt = {
+                    // PERF-11: short-circuit the lock when no rules
+                    // are installed (the default). The flag is set
+                    // only by `set_ttsr_rules`.
+                    let interrupt = if self
+                        .ttsr_has_rules
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         let mut engine = self.ttsr.write().await;
                         let fired = engine.observe_text(&t);
                         if !fired.is_empty() {
@@ -852,6 +858,8 @@ impl KodEngine {
                             }
                         }
                         fired.iter().find(|f| f.interrupt).cloned()
+                    } else {
+                        None
                     };
                     if let Some(f) = interrupt {
                         let _ = chunk_tx.send(t).await;
@@ -952,7 +960,11 @@ impl KodEngine {
                     // streamed arguments. This runs before the
                     // speculation block below, which may `continue` and
                     // skip the rest of the arm.
-                    if let Some(name) = entry.name.clone() {
+                    if let Some(name) = entry.name.clone()
+                        && self
+                            .ttsr_has_rules
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         let partial_path =
                             kod_core_tools::speculation::extract_path_from_partial(&entry.args);
                         let mut engine = self.ttsr.write().await;
