@@ -959,3 +959,38 @@ has the `run_kod_in` helper.
 
 `f115453` (two gate bypasses) and `dc7ae1e` (validate) are unreleased;
 the gate bypasses are security-relevant.
+
+
+---
+
+## Addendum 15 — LSP notification buffer drained LIFO (badfee6)
+
+`LspClient::pending_notifications` holds publishes that arrive while a
+`request_with_response` is awaiting a specific id. It is filled with
+`push_back`, and the field doc states FIFO intent twice ("the oldest
+entry is dropped" on overflow; "a newer diagnostic supersedes an older
+one"). But `collect_diagnostics` drained it with `pop_back` — LIFO.
+
+Two buffered publishes for the same file were therefore processed
+newest-first, and `latest` ended on the *older* one. If a cold-index
+server's empty publish preceded the real one, the false-clean the
+settle rule (H-R7c) exists to prevent could still be returned.
+
+Fixed with `pop_front`. No fake LSP server exists in the suite, so a
+source lint pins it: fail if any production line drains
+`pending_notifications` with `pop_back`. Verified to fire on the
+pre-fix line (client.rs:410).
+
+### The class, restated
+
+This is a **fill-at-one-end / drain-at-the-other** mismatch — a shape
+that silently reverses ordering and is invisible to a compiler and to
+any test that only pushes one item. When a queue is added, the fill and
+drain ends should be asserted together; the lint is the guard for this
+one.
+
+### Cut a release
+
+Four fixes since v0.1.5 (`f115453`, `dc7ae1e`, `badfee6`, plus the
+earlier round's `6b3d423` test hardening). Two are security-relevant
+(the Catastrophic-gate bypasses). v0.1.6 is due.
