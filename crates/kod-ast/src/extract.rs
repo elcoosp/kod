@@ -42,19 +42,37 @@ pub fn symbols(lang: Lang, source: &str) -> Option<Vec<AstSymbol>> {
 /// table names, descending everywhere so nested items are found (the
 /// regex scans are `^\s*`-anchored, so indented items count).
 fn collect(node: tree_sitter::Node, source: &[u8], lang: Lang, out: &mut Vec<AstSymbol>) {
-    if let Some(kind) = node_kind(lang, node)
-        && let Some(name) = node_name(node, source, lang)
-    {
-        out.push(AstSymbol {
-            kind,
-            name,
-            line: node.start_position().row + 1,
-        });
+    // SEC-B-05: recursive walkers need an explicit depth cap. Input
+    // is any file the repomap touches — including one a model just
+    // wrote — and a file with 200k nested tokens produces one tree
+    // node per token. Stack overflow on the main thread is SIGSEGV.
+    // 1024 is far beyond any human-written source tree.
+    const MAX_TREE_DEPTH: usize = 1024;
+    fn walk(
+        node: tree_sitter::Node,
+        source: &[u8],
+        lang: Lang,
+        out: &mut Vec<AstSymbol>,
+        depth: usize,
+    ) {
+        if depth > MAX_TREE_DEPTH {
+            return;
+        }
+        if let Some(kind) = node_kind(lang, node)
+            && let Some(name) = node_name(node, source, lang)
+        {
+            out.push(AstSymbol {
+                kind,
+                name,
+                line: node.start_position().row + 1,
+            });
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, source, lang, out, depth + 1);
+        }
     }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect(child, source, lang, out);
-    }
+    walk(node, source, lang, out, 0);
 }
 
 /// The repo-map kind string for `node`, or `None` if it is not a
