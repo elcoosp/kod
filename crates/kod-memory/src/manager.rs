@@ -763,7 +763,15 @@ impl MemoryManager {
             MemoryType::LongTerm | MemoryType::Episodic => {
                 if let Some(mut entry) = self.long_term.get(id).await? {
                     entry.content = content.to_string();
+                    // BUG-D-13: content changed; the stored embedding
+                    // is stale. Clear it so the entry visibly needs
+                    // re-embedding, then spawn the embed task the
+                    // store path uses. Without this, hybrid retrieval
+                    // scores by the *old* content's cosine until an
+                    // unrelated rebuild.
+                    entry.metadata.embedding = None;
                     self.long_term.store(entry).await?;
+                    self.spawn_embed(id.clone(), content.to_string());
                     Ok(())
                 } else {
                     Err(KodError::MemoryStorage("Entry not found".to_string()))
