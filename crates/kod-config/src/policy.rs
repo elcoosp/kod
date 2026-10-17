@@ -1932,7 +1932,14 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur: String = cmd.trim().to_string();
     for _ in 0..4 {
-        let raw: Vec<&str> = cur.split_whitespace().collect();
+        // SEC-A-12 (audit 2026-10): use the SAME tokenizer
+        // `kod-risk::classify` uses, so `forbidden_binaries = ["rm"]`
+        // matches `\rm`, `'r'm`, and every other shell de-quoting the
+        // risk gate already handles. Pre-fix this was `split_whitespace()`,
+        // which saw `\rm` as the program name and let `rm` slip past a
+        // policy that explicitly named it.
+        let owned = kod_risk::classify::tokenize(&cur);
+        let raw: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
         // Skip leading `NAME=value` env assignments.
         let mut start = 0;
         while start < raw.len() && looks_like_env_assignment(raw[start]) {
