@@ -102,6 +102,41 @@ impl Justification {
 /// `program = "30"`, `30` is not in `DESTRUCTIVE`, and the
 /// destructive half runs without risk classification. Same class as
 /// the env-assignment bypass fixed just above.
+
+/// SEC-A-04b: `script` / `su` share a shape — optional positional
+/// (file / user) before the program, plus `-c CMD` shell form.
+/// Returns `(None, [], false)` for the shell form (cannot de-compose
+/// the command string); `(Some(prog), args, true)` for positional;
+/// `(Some(wrapper), [], true)` for the interactive form (Safe).
+fn unwrap_optional_positional_wrapper(
+    tokens: &[String],
+    wrapper: &str,
+) -> (Option<String>, Vec<String>, bool) {
+    let dd = tokens.iter().position(|t| unquote(t) == "--");
+    let c_end = dd.unwrap_or(tokens.len());
+
+    for idx in 1..c_end {
+        if unquote(&tokens[idx]) == "-c" {
+            return (None, Vec::new(), false);
+        }
+    }
+
+    let pos_start = dd.map(|i| i + 1).unwrap_or(1);
+    let positionals: Vec<usize> = (pos_start..tokens.len())
+        .filter(|&i| {
+            let a = unquote(&tokens[i]);
+            a != "-" && !a.starts_with('-')
+        })
+        .collect();
+
+    if positionals.len() >= 2 {
+        let prog_idx = positionals[1];
+        let prog = strip_quotes(&unquote(&tokens[prog_idx]));
+        return (Some(prog), tokens[prog_idx + 1..].to_vec(), true);
+    }
+    (Some(wrapper.to_string()), tokens[1..].to_vec(), true)
+}
+
 const WRAPPERS: &[(&str, &[&str], usize)] = &[
     // Keep in sync with kod-config's PREFIX_WRAPPERS. `sudo -C` (the
     // `--close-from` fd-redirect flag, a number) consumes one token;
@@ -380,6 +415,9 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
         // removes quotes at word-splitting time, so `'r'm` runs `rm`;
         // the raw token `'r'm` matches neither DESTRUCTIVE nor WRAPPERS.
         let tok = strip_quotes(&tok);
+        if tok == "script" || tok == "su" {
+            return unwrap_optional_positional_wrapper(&tokens[i..], tok.as_str());
+        }
         let Some((_, flag_args, positional_skip)) = WRAPPERS.iter().find(|(w, _, _)| *w == tok)
         else {
             // Not a wrapper: this is the program.
@@ -1760,4 +1798,37 @@ mod t5_regression {
             );
         }
     }
+    #[test]
+    fn script_and_su_hide_their_inner_command() {
+        let ctx = ctx();
+        for cmd in ["script -c 'rm -rf /'", "su -c 'rm -rf /'"] {
+            let a = assess(cmd, &ctx);
+            assert!(
+                !matches!(a.level, RiskLevel::Safe),
+                "cmd-string form not escalated for {cmd:?}: {:?}",
+                a.level,
+            );
+        }
+        for cmd in [
+            "script /tmp/log rm -rf ~",
+            "su root rm -rf ~",
+            "su - root rm -rf ~",
+        ] {
+            let a = assess(cmd, &ctx);
+            assert!(
+                matches!(a.level, RiskLevel::Catastrophic),
+                "positional form not unwrapped for {cmd:?}: {:?}",
+                a.level,
+            );
+        }
+        for cmd in ["script /tmp/log", "su root", "su"] {
+            let a = assess(cmd, &ctx);
+            assert!(
+                matches!(a.level, RiskLevel::Safe),
+                "false positive for {cmd:?}: {:?}",
+                a.level,
+            );
+        }
+    }
+
 }
