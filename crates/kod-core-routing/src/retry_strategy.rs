@@ -88,6 +88,19 @@ impl TurnFailure {
                 retry_after_secs: kod_provider::retry::text_hint_secs(raw),
             };
         }
+        // BUG-C-10: auth is permanent and must be checked before the
+        // substring timeout test, or "401 unauthorized: request timed
+        // out" burns the retry chain on a non-recoverable failure.
+        if l.contains("401")
+            || l.contains("403")
+            || l.contains("unauthorized")
+            || l.contains("forbidden")
+            || l.contains("invalid api key")
+        {
+            return TurnFailure::ProviderAuthError {
+                detail: l.to_string(),
+            };
+        }
         if l.contains("timed out") || l.contains("timeout") {
             return TurnFailure::TransportTimeout;
         }
