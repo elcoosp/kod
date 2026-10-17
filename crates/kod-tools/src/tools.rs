@@ -109,7 +109,7 @@ where
 /// `GCP_*` / `GOOGLE_*` / `AZURE_*` prefixes. `PATH`, `HOME`, `LANG`,
 /// `TMPDIR`, `PWD`, `SHELL`, `TERM`, and the `LC_*` family are
 /// explicitly allowed.
-fn is_secret_like_env(name: &str) -> bool {
+pub fn is_secret_like_env(name: &str) -> bool {
     // Allow-list for the shell's own furniture, checked first so an
     // override below never strips them by accident.
     const ALLOW: &[&str] = &[
@@ -858,6 +858,12 @@ impl Tool for WriteFileTool {
             };
             use std::io::Write;
             if let Err(e) = write!(file, "{}", content) {
+                return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+            }
+            // BUG-D-12: every other write path persists durably; the
+            // append path must fsync too, or a crash right after a
+            // "successful" append loses the bytes.
+            if let Err(e) = file.sync_all() {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
             // Delta §7.7: a successful append changes the tree for
@@ -1870,6 +1876,27 @@ impl Tool for GrepTool {
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
+        // BUG-D-01: `search_files` honours `[policy.read_protection]`
+        // (redact/refuse on protected paths); `grep` did not, so the
+        // default-on Redact mode was bypassed — `.env`/`id_rsa`/`*.pem`
+        // contents reached the model in the clear. Mirror the check
+        // here: an explicitly-named protected file refuses under
+        // `Refuse`; a walk skips them. Mirrors `search.rs`.
+        let protection = context.read_protection.as_ref();
+        let protected = |p: &std::path::Path| -> Option<kod_config::ReadMode> {
+            let rp = protection?;
+            rp.enabled.then_some(())?;
+            rp.matches(p).then_some(rp.mode)
+        };
+        if resolved.is_file()
+            && let Some(kod_config::ReadMode::Refuse) = protected(&resolved)
+        {
+            return Ok(ToolResult::Error(format!(
+                "grep refused: {} matches a read-protection pattern.",
+                resolved.display(),
+            )));
+        }
+
         // Compile the caller's pattern as a regex. An invalid pattern
         // becomes a ToolResult::Error so the model sees its own mistake
         // instead of the whole tool loop stalling.
@@ -1922,6 +1949,18 @@ impl Tool for GrepTool {
             if results.len() >= MAX_GREP_MATCHES {
                 break;
             }
+            // BUG-D-01: a protected file is never searched under
+            // `Refuse`; under `Redact` its matched lines are masked
+            // below. Mirrors `search.rs`.
+            let file_mode = protected(&file_path);
+            if let Some(kod_config::ReadMode::Refuse) = file_mode {
+                continue;
+            }
+            let line_redactor: Option<&kod_types::redact::Redactor> =
+                match (file_mode, context.redactor.as_ref()) {
+                    (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
+                    _ => None,
+                };
             // symlink_metadata does NOT follow: a file symlink planted
             // in the tree must be skipped, or its target (outside the
             // workspace, past every gate) is read into the transcript.
@@ -1964,10 +2003,15 @@ impl Tool for GrepTool {
                     // for the whole call. The `file` field is left
                     // untouched — paths are already short, and the
                     // model needs the real path to open the file.
+                    let shown = truncate_entry(line.trim(), MAX_ENTRY_BYTES);
+                    let shown = match line_redactor {
+                        Some(r) => r.redact(&shown).0,
+                        None => shown,
+                    };
                     results.push(serde_json::json!({
                         "file": file_path.to_string_lossy().to_string(),
                         "line": line_num + 1,
-                        "text": truncate_entry(line.trim(), MAX_ENTRY_BYTES),
+                        "text": shown,
                     }));
                     if results.len() >= MAX_GREP_MATCHES {
                         break;
