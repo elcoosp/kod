@@ -70,7 +70,11 @@ struct Key {
 }
 
 struct Entry {
-    paths: Vec<PathBuf>,
+    // PERF-04: share the path list instead of cloning it per cache
+    // hit. A warm grep/list_files/search_files on a large repo used
+    // to deep-clone up to 100k `PathBuf`s on every tool call. The
+    // `Arc` makes a hit a single refcount bump.
+    paths: std::sync::Arc<Vec<PathBuf>>,
     at: Instant,
 }
 
@@ -118,7 +122,12 @@ impl WalkCache {
     /// is a rare race (a cold cache in two threads) and the cost of
     /// the alternative — a per-key lock, or a lock held across the
     /// walk — is worse than one redundant walk.
-    pub fn get_or_walk<F>(&self, root: &Path, recursive: bool, walk: F) -> Vec<PathBuf>
+    pub fn get_or_walk<F>(
+        &self,
+        root: &Path,
+        recursive: bool,
+        walk: F,
+    ) -> std::sync::Arc<Vec<PathBuf>>
     where
         F: FnOnce() -> Vec<PathBuf>,
     {
@@ -132,7 +141,9 @@ impl WalkCache {
                 && e.at.elapsed() < self.ttl
             {
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                return e.paths.clone();
+                // PERF-04: single refcount bump; pre-fix this was a
+                // full `Vec<PathBuf>` clone on every hit.
+                return std::sync::Arc::clone(&e.paths);
             }
         }
         self.misses.fetch_add(1, Ordering::Relaxed);
@@ -152,14 +163,15 @@ impl WalkCache {
                 g.remove(&oldest_key);
             }
         }
+        let arc = std::sync::Arc::new(paths);
         g.insert(
             key,
             Entry {
-                paths: paths.clone(),
+                paths: std::sync::Arc::clone(&arc),
                 at: Instant::now(),
             },
         );
-        paths
+        arc
     }
 
     /// Drop every entry. Called by every tool that writes to disk.
