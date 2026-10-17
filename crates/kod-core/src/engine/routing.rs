@@ -917,7 +917,16 @@ impl KodEngine {
                 duration_ms: 0,
                 ttft_ms: None,
                 stop_reason: None,
-                input_tokens: usage.prompt_tokens as u64,
+                // TPD-04: `usage.prompt_tokens` is the provider's total prompt
+                // (including cached). `RequestRecord::input_tokens` is
+                // documented as UNCACHED input (see `cache_rate`), so
+                // subtract the cached portions here. Both cache fields
+                // are `Option<u64>`; prompt_tokens is `usize`, so cast.
+                input_tokens: usage
+                    .prompt_tokens
+                    .saturating_sub(usage.cache_read_tokens.unwrap_or(0) as usize)
+                    .saturating_sub(usage.cache_creation_tokens.unwrap_or(0) as usize)
+                    as u64,
                 output_tokens: usage.completion_tokens as u64,
                 cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
                 cache_write_tokens: usage.cache_creation_tokens.unwrap_or(0),
