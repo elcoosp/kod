@@ -1053,7 +1053,15 @@ impl KodEngine {
             };
             calls.push(ToolCall {
                 id: p.id,
-                tool_name: name,
+                // SEC-A-01: canonicalize the model-supplied name now, so
+                // every downstream gate — risk assessment, per-tool
+                // policy, taint escalation, session deny — keys on the
+                // real tool. Aliases (`bash`, `exec`, `shell_exec`, …)
+                // resolve to `execute_command` only at dispatch time
+                // (registry.rs), so a raw alias skipped the risk gate
+                // entirely: `{"name":"bash","arguments":{"command":"rm
+                // -rf ~"}}` classified by the gate as an unknown tool.
+                tool_name: kod_tools::aliases::resolve_tool_name(&name).to_string(),
                 arguments,
             });
             let spec = match speculation_handles.remove(&index) {
