@@ -861,3 +861,52 @@ The `docs/brainstorms/kod-code-audit-report.md` findings list remains a
 historical document. Spot-checked this round: F2a-9 (telemetry POST
 timeout), F2h-13 (cleanse single-flight), F2e-7 (async_delivery
 bytes/chars) are all fixed. Do not mine it for open items.
+
+
+---
+
+## Addendum 13 — risk bypasses round 3 + the TUI e2e flake root cause
+
+HEAD moved b0a6b9c (v0.1.5) → 6b3d423.
+
+### Two more Catastrophic-gate bypasses (f115453)
+
+Found by probing the classifier with more shapes:
+
+- **Leading env-prefix.** `FOO=bar rm -rf /Users/dev` classified Safe.
+  A shell env-prefix sets the environment for the following command;
+  `unwrap` returned `program = "FOO=bar"` (not in DESTRUCTIVE) because
+  the env-assignment skip ran only *inside* a wrapper. Now leading
+  `NAME=value` tokens are skipped before the program is read.
+
+- **`ln`.** `ln -sf /dev/null ~/.ssh/authorized_keys` classified Safe.
+  `ln` replaces its link operand, destroying the file — the same blast
+  radius as the already-classified `cp`/`truncate`/`sed -i`. Added to
+  the in-place-writers match (last positional = the link).
+
+Both proven to fail pre-fix. Also confirmed by-design narrowness (not
+fixed): `rsync --delete`, `chmod`, `chown`, `git clean` — no classified
+command covers them; the sandbox is the defense there.
+
+### The TUI e2e flake, root cause (6b3d423)
+
+The flake seen three times this session (different tests each time,
+always under parallel load, always passing in isolation) was
+**`run_command`'s fixed sleeps**: it sent Esc, slept 150ms, sent `i`,
+slept 80ms, then typed. Under load the `i` landed in the same poll as
+the Esc and was typed as literal text, so the command never ran.
+
+Fix: wait for the rendered mode hint instead — normal mode shows
+"Press i to type", insert mode shows "Type a message". Those markers
+only appear once the mode has actually switched. The waits also make
+the suite *faster* than the fixed sleeps (12s vs 20s+ for 72 tests).
+
+**The lesson, now twice-learned:** a TUI e2e test must wait on a
+*rendered marker* the app emits only after a state change, never a
+guessed sleep. The earlier `wait_for_file` fix (f6c28e0) was the same
+principle for a filesystem side effect.
+
+### Cut v0.1.6
+
+Two fixes since v0.1.5 (the two gate bypasses) plus the test hardening.
+The classifier fixes are security-relevant; a release is due.
