@@ -1,3 +1,4 @@
+pub mod aliases;
 pub mod ids;
 pub mod memory;
 pub mod message;
