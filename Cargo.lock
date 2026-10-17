@@ -4543,7 +4543,7 @@ dependencies = [
 [[package]]
 name = "terminal-testlib"
 version = "0.6.0"
-source = "git+https://github.com/raibid-labs/ratatui-testlib?branch=main#9e85657724f6b5edaa7a87af057f7a59c4655bb5"
+source = "git+https://github.com/raibid-labs/ratatui-testlib?rev=9e85657724f6b5edaa7a87af057f7a59c4655bb5#9e85657724f6b5edaa7a87af057f7a59c4655bb5"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
