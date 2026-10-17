@@ -6,6 +6,9 @@ use super::*;
 
 impl KodEngine {
     pub fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
+        // SEC-A-02: the background spawn must apply the same sandbox
+        // and env-strip the foreground does.
+        let sandbox_mode = self.sandbox_setting();
         let steers = std::sync::Arc::clone(&self.steers);
         let runner = std::sync::Arc::clone(&self.background);
         let working_dir = self.working_dir.clone();
@@ -41,18 +44,51 @@ impl KodEngine {
                 );
 
                 let full = format!("{command} 2>&1");
-                let mut cmd = if cfg!(windows) {
-                    let mut c = tokio::process::Command::new("cmd");
-                    c.arg("/C").arg(&full);
-                    c
-                } else {
-                    let mut c = tokio::process::Command::new("sh");
-                    c.arg("-c").arg(&full);
-                    c
+                // SEC-A-02: the background path used to spawn a raw
+                // shell inheriting the *full* parent environment and no
+                // sandbox, while the foreground path strips secret vars
+                // and wraps in the sandbox. The spool's preview is fed
+                // back into the transcript, so an un-stripped `env` in
+                // the background printed the provider keys into the
+                // conversation. Apply the same shaping here.
+                let shell_program = if cfg!(windows) { "cmd" } else { "sh" };
+                let shell_flag = if cfg!(windows) { "/C" } else { "-c" };
+                let resolver = kod_tools::context::default_resolver();
+                let sandbox_inv = resolver
+                    .invocation(
+                        sandbox_mode,
+                        &working_dir,
+                        kod_tools::context::SandboxOpts::default(),
+                    )
+                    .ok()
+                    .flatten();
+                let mut cmd = match &sandbox_inv {
+                    Some(inv) => {
+                        let mut c = tokio::process::Command::new(&inv.program);
+                        c.args(&inv.args);
+                        c.arg(shell_program);
+                        c.arg(shell_flag);
+                        c.arg(&full);
+                        c
+                    }
+                    None => {
+                        let mut c = tokio::process::Command::new(shell_program);
+                        c.arg(shell_flag).arg(&full);
+                        c
+                    }
                 };
                 cmd.current_dir(&working_dir);
                 cmd.stdout(std::process::Stdio::piped());
                 cmd.stderr(std::process::Stdio::null());
+                for (k, v) in std::env::vars_os() {
+                    if let Some(name) = k.to_str()
+                        && kod_tools::is_secret_like_env(name)
+                    {
+                        continue;
+                    }
+                    cmd.env(&k, &v);
+                }
+                kod_tools::env_policy::apply(&mut cmd);
 
                 let mut child = match cmd.spawn() {
                     Ok(c) => c,
