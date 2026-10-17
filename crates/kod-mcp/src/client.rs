@@ -888,3 +888,14 @@ mod t2_c6_regression {
         );
     }
 }
+
+/// SEC-B-06: pure line-parse entry point. The async `read_loop` reads
+/// bytes until `\n` and then JSON-parses the trimmed line — the only
+/// thing that can panic on hostile input. This helper exposes the
+/// same parse call so the fuzz target exercises the exact code path
+/// without needing a runtime or a real child process.
+#[doc(hidden)]
+pub fn parse_line_for_fuzz(line: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(line.trim()).ok()
+}
+
