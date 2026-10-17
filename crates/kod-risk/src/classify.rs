@@ -150,6 +150,23 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
     ("taskset", &["-c", "-p"], 0),
     ("nsenter", &["-t"], 0),
     ("pkexec", &[], 0),
+    // SEC-A-04b: three more pass-through wrappers the audit named.
+    // `script` and `su` are deliberately absent: both have an OPTIONAL
+    // positional (filename / username), so a mechanical entry would
+    // misclassify `su rm -rf /` (`rm` is the target user, not the
+    // program). Those need per-wrapper custom parsers; the audit's
+    // false-positive warning applies.
+    //
+    // `flock [options] file command` — one positional (the lock file).
+    (
+        "flock",
+        &["-e", "-s", "-x", "-n", "-w", "-E", "-o"],
+        1,
+    ),
+    // `chrt [options] priority command` — one positional (numeric).
+    ("chrt", &[], 1),
+    // `unshare [options] program` — no positional prefix.
+    ("unshare", &[], 0),
 ];
 
 /// The wrapper table, for the cross-crate mirror test.
@@ -1723,4 +1740,29 @@ mod t5_regression {
         assert!(!Justification("\t\n   \t".to_string()).is_substantive());
         assert!(!Justification(String::new()).is_substantive());
     }
+    #[test]
+    fn flock_chrt_unshare_are_unwrapped() {
+        // SEC-A-04b: three wrappers a naive classifier treats as the
+        // program. Each takes a positional prefix before the command,
+        // so `prog_base` must be the INNER program (`rm`), not the
+        // wrapper. Target is `~` — always expands to the fixture's
+        // home_dir, which `classify` treats as Catastrophic. `/Users/
+        // dev` only qualifies when the fixture's home is that exact
+        // path (it is not); the audit's own `rm -rf ~` test uses `~`
+        // for the same reason.
+        let ctx = ctx();
+        for cmd in [
+            "flock /tmp/lock rm -rf ~",
+            "chrt 50 rm -rf ~",
+            "unshare rm -rf ~",
+        ] {
+            let a = assess(cmd, &ctx);
+            assert!(
+                matches!(a.level, RiskLevel::Catastrophic),
+                "wrapper not unwrapped for {cmd:?}: got {:?}",
+                a.level,
+            );
+        }
+    }
+
 }
