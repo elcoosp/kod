@@ -729,8 +729,22 @@ async fn run_streaming(
             .process_streaming_for(&key_owned, &input_owned, &chunk_tx)
             .await
     });
+    // BUG-C-05: fresh clones for the cancel-on-disconnect path. The
+    // spawn above moved `engine_clone`/`key_owned` into its async
+    // block; these are separate clones for the pump.
+    let engine_for_cancel = engine.clone();
+    let key_for_cancel = key.to_string();
     while let Some(chunk) = chunk_rx.recv().await {
-        write_chunk(out, req_id, &chunk).await?;
+        if write_chunk(out, req_id, &chunk).await.is_err() {
+            // The client is gone: cancel the turn. Without this, the
+            // spawned engine task runs to completion with no consumer
+            // — tools execute, files get written, tokens get billed.
+            engine_for_cancel.request_cancel_for(&key_for_cancel);
+            call.abort();
+            return Err(KodError::Internal(
+                "client disconnected mid-stream".into(),
+            ));
+        }
     }
     let outcome = call
         .await
