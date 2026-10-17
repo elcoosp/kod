@@ -1966,99 +1966,88 @@ impl Tool for GrepTool {
         // *user-supplied* `path` — which never matched the absolute
         // paths the walker returns, so grep silently returned nothing
         // for relative-path calls. Dropped.
-        let mut results = Vec::new();
-        // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
-        // the result so the model knows the search was not exhaustive
-        // and can decide whether to grep them specifically. Capped at
-        // MAX_SKIPPED_LARGE_FILES with the true count in
-        // `skipped_large_files_total` — an uncapped list would turn
-        // into the very "tool result dominated by paths" problem the
-        // size limit exists to prevent.
-        let mut skipped_large_files: Vec<String> = Vec::new();
-        let mut skipped_large_total: usize = 0;
-        // BUG-D-15: `truncated` must mean "we stopped early because
-        // the cap fired", not "there are exactly 500 matches".
-        let mut hit_cap_fired = false;
-
-        use std::io::BufRead as _;
-
-        // PERF-04: iterate the shared Arc; no `Vec<PathBuf>` clone.
-        for file_path in gitaware_walk_arc(&resolved, recursive).iter() {
-            if results.len() >= MAX_GREP_MATCHES {
-                hit_cap_fired = true;
-                break;
-            }
-            // BUG-D-01: a protected file is never searched under
-            // `Refuse`; under `Redact` its matched lines are masked
-            // below. Mirrors `search.rs`.
-            let file_mode = protected(&file_path);
-            if let Some(kod_config::ReadMode::Refuse) = file_mode {
-                continue;
-            }
-            let line_redactor: Option<&kod_types::redact::Redactor> =
-                match (file_mode, context.redactor.as_ref()) {
-                    (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
-                    _ => None,
+        // PERF-05: run the walk + per-file scan on a blocking thread.
+        // The loop does open/read/scan per file — synchronous
+        // filesystem work that parked a tokio worker for the whole
+        // call. A grep on a large repo now offloads it, leaving the
+        // runtime free for the TUI bridge, background jobs, and
+        // swarm peers.
+        let resolved_c = resolved.clone();
+        let recursive_c = recursive;
+        let regex_c = regex.clone();
+        let rp_owned = context.read_protection.clone();
+        let redactor_owned = context.redactor.clone();
+        let (mut results, skipped_large_files, skipped_large_total, hit_cap_fired) =
+            tokio::task::spawn_blocking(move || {
+                let mut results: Vec<serde_json::Value> = Vec::new();
+                let mut skipped_large_files: Vec<String> = Vec::new();
+                let mut skipped_large_total: usize = 0;
+                let mut hit_cap_fired = false;
+                let protected = |p: &std::path::Path| -> Option<kod_config::ReadMode> {
+                    let rp = rp_owned.as_ref()?;
+                    rp.enabled.then_some(())?;
+                    rp.matches(p).then_some(rp.mode)
                 };
-            // symlink_metadata does NOT follow: a file symlink planted
-            // in the tree must be skipped, or its target (outside the
-            // workspace, past every gate) is read into the transcript.
-            match std::fs::symlink_metadata(&file_path) {
-                Ok(md) if md.is_file() => {}
-                _ => continue,
-            }
-            // Size check before opening. `read_to_string` used to load
-            // the entire file into memory; a 2 GB log would OOM here.
-            if let Ok(meta) = std::fs::metadata(&file_path)
-                && meta.len() > MAX_GREP_FILE_BYTES
-            {
-                skipped_large_total += 1;
-                if skipped_large_files.len() < MAX_SKIPPED_LARGE_FILES {
-                    skipped_large_files.push(file_path.to_string_lossy().to_string());
-                }
-                continue;
-            }
-            let file = match std::fs::File::open(&file_path) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let reader = std::io::BufReader::new(file);
-            // `.lines()` yields Result<String>; a line containing
-            // invalid UTF-8 (a binary file, a log with raw bytes)
-            // produces Err and we stop scanning that file. The old
-            // `read_to_string` failed the whole file on any bad byte;
-            // the streaming form at least gets matches from the clean
-            // prefix.
-            for (line_num, line_result) in reader.lines().enumerate() {
-                let line = match line_result {
-                    Ok(l) => l,
-                    Err(_) => break,
-                };
-                if regex.is_match(&line) {
-                    // Cap the matched text per entry. A generated
-                    // bundler output file with 8 KB of inline JSON
-                    // on one line would otherwise produce a single
-                    // 8 KB match and blow the model's prompt budget
-                    // for the whole call. The `file` field is left
-                    // untouched — paths are already short, and the
-                    // model needs the real path to open the file.
-                    let shown = truncate_entry(line.trim(), MAX_ENTRY_BYTES);
-                    let shown = match line_redactor {
-                        Some(r) => r.redact(&shown).0,
-                        None => shown,
-                    };
-                    results.push(serde_json::json!({
-                        "file": file_path.to_string_lossy().to_string(),
-                        "line": line_num + 1,
-                        "text": shown,
-                    }));
+                use std::io::BufRead as _;
+                for file_path in gitaware_walk_arc(&resolved_c, recursive_c).iter() {
                     if results.len() >= MAX_GREP_MATCHES {
                         hit_cap_fired = true;
                         break;
                     }
+                    let file_mode = protected(&file_path);
+                    if let Some(kod_config::ReadMode::Refuse) = file_mode {
+                        continue;
+                    }
+                    let line_redactor: Option<&kod_types::redact::Redactor> =
+                        match (file_mode, redactor_owned.as_ref()) {
+                            (Some(kod_config::ReadMode::Redact), Some(r)) => Some(r.as_ref()),
+                            _ => None,
+                        };
+                    match std::fs::symlink_metadata(&file_path) {
+                        Ok(md) if md.is_file() => {}
+                        _ => continue,
+                    }
+                    if let Ok(meta) = std::fs::metadata(&file_path)
+                        && meta.len() > MAX_GREP_FILE_BYTES
+                    {
+                        skipped_large_total += 1;
+                        if skipped_large_files.len() < MAX_SKIPPED_LARGE_FILES {
+                            skipped_large_files.push(file_path.to_string_lossy().to_string());
+                        }
+                        continue;
+                    }
+                    let file = match std::fs::File::open(&file_path) {
+                        Ok(f) => f,
+                        Err(_) => continue,
+                    };
+                    let reader = std::io::BufReader::new(file);
+                    for (line_num, line_result) in reader.lines().enumerate() {
+                        let line = match line_result {
+                            Ok(l) => l,
+                            Err(_) => break,
+                        };
+                        if regex_c.is_match(&line) {
+                            let shown = truncate_entry(line.trim(), MAX_ENTRY_BYTES);
+                            let shown = match line_redactor {
+                                Some(r) => r.redact(&shown).0,
+                                None => shown,
+                            };
+                            results.push(serde_json::json!({
+                                "file": file_path.to_string_lossy().to_string(),
+                                "line": line_num + 1,
+                                "text": shown,
+                            }));
+                            if results.len() >= MAX_GREP_MATCHES {
+                                hit_cap_fired = true;
+                                break;
+                            }
+                        }
+                    }
                 }
-            }
-        }
+                (results, skipped_large_files, skipped_large_total, hit_cap_fired)
+            })
+            .await
+            .map_err(|e| KodError::Internal(format!("grep worker panicked: {e}")))?;
 
         // P8: relevance-rank the matches before capping the output.
         // The loop already capped the raw count at MAX_GREP_MATCHES;
