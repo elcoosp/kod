@@ -898,4 +898,3 @@ mod t2_c6_regression {
 pub fn parse_line_for_fuzz(line: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(line.trim()).ok()
 }
-

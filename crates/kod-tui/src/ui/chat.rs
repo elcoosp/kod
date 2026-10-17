@@ -547,9 +547,9 @@ impl ChatWidget {
     fn message_measurement_cached(app: &KodApp, m: &Message, width: usize) -> (usize, bool) {
         let content_hash = crate::render_cache::hash_content(&m.content);
         let width_u16 = width.min(u16::MAX as usize) as u16;
-        if let Some((rows, tail_blank, _)) = crate::render_cache::with_cache(|c| {
-            c.lookup_with_lines(&m.id, content_hash, width_u16)
-        }) {
+        if let Some((rows, tail_blank, _)) =
+            crate::render_cache::with_cache(|c| c.lookup_with_lines(&m.id, content_hash, width_u16))
+        {
             return (rows, tail_blank);
         }
         let (rows, tail_blank, _) = Self::materialize_and_cache(app, m, width);
@@ -566,9 +566,9 @@ impl ChatWidget {
     ) -> std::sync::Arc<Vec<Line<'static>>> {
         let content_hash = crate::render_cache::hash_content(&m.content);
         let width_u16 = width.min(u16::MAX as usize) as u16;
-        if let Some((_, _, lines)) = crate::render_cache::with_cache(|c| {
-            c.lookup_with_lines(&m.id, content_hash, width_u16)
-        }) {
+        if let Some((_, _, lines)) =
+            crate::render_cache::with_cache(|c| c.lookup_with_lines(&m.id, content_hash, width_u16))
+        {
             return lines;
         }
         let (_, _, lines) = Self::materialize_and_cache(app, m, width);
@@ -762,92 +762,93 @@ impl ChatWidget {
             None
         };
 
-        let (paint_lines, paint_scroll): (Vec<Line<'static>>, u16) =
-            if let Some((fv, lv)) = window {
-                let window_start_row = cumulative[fv].1;
-                let mut out: Vec<Line<'static>> = Vec::new();
-                for cum_idx in fv..=lv {
-                    let (msg_idx, msg_start, _end, has_sep) = cumulative[cum_idx];
-                    let message = ordered[msg_idx];
-                    let mut contribution: Vec<Line<'static>> = Vec::new();
-                    if has_sep {
-                        contribution.push(Line::from(vec![Span::styled(
-                            "─".repeat(text_width.min(120)),
-                            Style::default().fg(theme.dim),
-                        )]));
-                    }
-                    let cached = Self::message_lines_cached(app, message, text_width);
-                    contribution.extend(cached.iter().cloned());
-                    let front_skip = if cum_idx == fv {
-                        skip_rows_usize.saturating_sub(msg_start)
-                    } else {
-                        0
-                    };
-                    out.extend(contribution.into_iter().skip(front_skip));
-                }
-                let paint =
-                    skip_rows_usize.saturating_sub(window_start_row).min(u16::MAX as usize) as u16;
-                (out, paint)
-            } else {
-                // Full path (short transcript, top of transcript, or
-                // no cumulative). Same behavior as v0.1.7.
-                let mut lines: Vec<Line> = Vec::new();
-                for (i, message) in ordered.iter().enumerate() {
-                    if Self::tool_row_hidden(app, message) {
-                        continue;
-                    }
-                    if Self::starts_new_turn(app, message, i == 0)
-                        && lines.last().map(|l| l.width()).unwrap_or(1) > 0
-                    {
-                        lines.push(Line::from(vec![Span::styled(
-                            "─".repeat(text_width.min(120)),
-                            Style::default().fg(theme.dim),
-                        )]));
-                    }
-                    let cached = Self::message_lines_cached(app, message, text_width);
-                    lines.extend(cached.iter().cloned());
-                }
-                if hidden_tools_total > 0 {
-                    lines.push(Line::from(vec![Span::styled(
-                        format!("⋯ {hidden_tools_total} tool output(s) hidden — t to show"),
-                        Style::default()
-                            .fg(theme.dim)
-                            .add_modifier(Modifier::ITALIC),
+        let (paint_lines, paint_scroll): (Vec<Line<'static>>, u16) = if let Some((fv, lv)) = window
+        {
+            let window_start_row = cumulative[fv].1;
+            let mut out: Vec<Line<'static>> = Vec::new();
+            for cum_idx in fv..=lv {
+                let (msg_idx, msg_start, _end, has_sep) = cumulative[cum_idx];
+                let message = ordered[msg_idx];
+                let mut contribution: Vec<Line<'static>> = Vec::new();
+                if has_sep {
+                    contribution.push(Line::from(vec![Span::styled(
+                        "─".repeat(text_width.min(120)),
+                        Style::default().fg(theme.dim),
                     )]));
                 }
-                if app.is_streaming() && !stream_body.is_empty() {
-                    lines.extend(Self::assistant_block(
-                        &stream_body,
-                        text_width,
-                        Style::default().fg(theme.assistant),
-                        app,
-                        None,
-                    ));
+                let cached = Self::message_lines_cached(app, message, text_width);
+                contribution.extend(cached.iter().cloned());
+                let front_skip = if cum_idx == fv {
+                    skip_rows_usize.saturating_sub(msg_start)
+                } else {
+                    0
+                };
+                out.extend(contribution.into_iter().skip(front_skip));
+            }
+            let paint = skip_rows_usize
+                .saturating_sub(window_start_row)
+                .min(u16::MAX as usize) as u16;
+            (out, paint)
+        } else {
+            // Full path (short transcript, top of transcript, or
+            // no cumulative). Same behavior as v0.1.7.
+            let mut lines: Vec<Line> = Vec::new();
+            for (i, message) in ordered.iter().enumerate() {
+                if Self::tool_row_hidden(app, message) {
+                    continue;
                 }
-                if lines.is_empty() {
+                if Self::starts_new_turn(app, message, i == 0)
+                    && lines.last().map(|l| l.width()).unwrap_or(1) > 0
+                {
                     lines.push(Line::from(vec![Span::styled(
-                        "No messages yet — type below and press Enter. /help lists commands.",
-                        Style::default().fg(Color::DarkGray),
+                        "─".repeat(text_width.min(120)),
+                        Style::default().fg(theme.dim),
                     )]));
                 }
-                // Convert any borrowed-line lifetime to 'static so both
-                // branches agree on the outer type.
-                let owned: Vec<Line<'static>> = lines
-                    .into_iter()
-                    .map(|l| {
-                        let spans: Vec<Span<'static>> = l
-                            .spans
-                            .into_iter()
-                            .map(|s| Span::styled(s.content.into_owned(), s.style))
-                            .collect();
-                        let mut out = Line::from(spans);
-                        out.style = l.style;
-                        out.alignment = l.alignment;
-                        out
-                    })
-                    .collect();
-                (owned, skip_rows_u16)
-            };
+                let cached = Self::message_lines_cached(app, message, text_width);
+                lines.extend(cached.iter().cloned());
+            }
+            if hidden_tools_total > 0 {
+                lines.push(Line::from(vec![Span::styled(
+                    format!("⋯ {hidden_tools_total} tool output(s) hidden — t to show"),
+                    Style::default()
+                        .fg(theme.dim)
+                        .add_modifier(Modifier::ITALIC),
+                )]));
+            }
+            if app.is_streaming() && !stream_body.is_empty() {
+                lines.extend(Self::assistant_block(
+                    &stream_body,
+                    text_width,
+                    Style::default().fg(theme.assistant),
+                    app,
+                    None,
+                ));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "No messages yet — type below and press Enter. /help lists commands.",
+                    Style::default().fg(Color::DarkGray),
+                )]));
+            }
+            // Convert any borrowed-line lifetime to 'static so both
+            // branches agree on the outer type.
+            let owned: Vec<Line<'static>> = lines
+                .into_iter()
+                .map(|l| {
+                    let spans: Vec<Span<'static>> = l
+                        .spans
+                        .into_iter()
+                        .map(|s| Span::styled(s.content.into_owned(), s.style))
+                        .collect();
+                    let mut out = Line::from(spans);
+                    out.style = l.style;
+                    out.alignment = l.alignment;
+                    out
+                })
+                .collect();
+            (owned, skip_rows_u16)
+        };
 
         let paragraph = Paragraph::new(Text::from(paint_lines))
             .wrap(Wrap { trim: false })

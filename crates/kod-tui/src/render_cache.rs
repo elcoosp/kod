@@ -117,7 +117,11 @@ impl RenderCache {
         id: &MessageId,
         content_hash: u64,
         width: u16,
-    ) -> Option<(usize, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)> {
+    ) -> Option<(
+        usize,
+        bool,
+        std::sync::Arc<Vec<ratatui::text::Line<'static>>>,
+    )> {
         self.seen.insert(id.clone());
         let e = self.entries.get(id)?;
         if e.content_hash != content_hash || e.width != width {

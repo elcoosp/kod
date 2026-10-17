@@ -1972,8 +1972,12 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
             for check_idx in start + 1..c_end {
                 if unquote(raw[check_idx]) == "-c" {
                     let mut rest = check_idx + 1;
-                    if rest < raw.len() && unquote(raw[rest]) == "--" { rest += 1; }
-                    if rest < raw.len() { c_start = Some(rest); }
+                    if rest < raw.len() && unquote(raw[rest]) == "--" {
+                        rest += 1;
+                    }
+                    if rest < raw.len() {
+                        c_start = Some(rest);
+                    }
                     break;
                 }
             }
@@ -1994,7 +1998,6 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
             }
             break;
         }
-
 
         let is_command_string_wrapper = COMMAND_STRING_WRAPPERS.contains(&first.as_str());
         let prefix_entry = PREFIX_WRAPPERS
@@ -2322,5 +2325,4 @@ mod binary_candidates_tests {
         check("su root", "su");
         check("su", "su");
     }
-
 }
