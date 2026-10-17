@@ -216,6 +216,7 @@ impl QueryEmbedCache {
 pub struct MemoryManager {
     short_term: ShortTermMemory,
     long_term: LongTermMemory,
+    entries_cache: std::sync::Arc<parking_lot::RwLock<Option<std::sync::Arc<Vec<MemoryEntry>>>>>,
     context_window: usize,
     /// Optional embedding client (D2-B2). When `None` (or `dims()==0`),
     /// retrieval falls back to keyword + recency. Installed via
@@ -267,6 +268,7 @@ impl MemoryManager {
         Ok(Self {
             short_term: ShortTermMemory::new(short_term_capacity),
             long_term,
+            entries_cache: std::sync::Arc::new(parking_lot::RwLock::new(None)),
             context_window: 4096, // Default context window
             embedder: None,
             vector_index: std::sync::Arc::new(parking_lot::RwLock::new(None)),
@@ -402,7 +404,7 @@ impl MemoryManager {
                     // this call's index be built from the in-memory
                     // values.
                     let to_store: Vec<_> = need_embed.iter().map(|&i| updated[i].clone()).collect();
-                    if let Err(e) = self.long_term.store_batch(to_store).await {
+                    if let Err(e) = self.lt_store_batch(to_store).await {
                         tracing::warn!(error = %e, "failed to persist embeddings");
                     }
                 }
@@ -521,7 +523,7 @@ impl MemoryManager {
                     if raised > current + f32::EPSILON {
                         let mut bumped = e.clone();
                         bumped.metadata.confidence = Some(raised);
-                        if let Err(err) = self.long_term.store(bumped).await {
+                        if let Err(err) = self.lt_store(bumped).await {
                             tracing::warn!(error = %err, "re-mention confidence bump: persist failed");
                         }
                     }
@@ -581,7 +583,7 @@ impl MemoryManager {
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
-                self.long_term.store(entry).await?;
+                self.lt_store(entry).await?;
             }
             MemoryType::Episodic => {
                 let entry = MemoryEntry {
@@ -595,7 +597,7 @@ impl MemoryManager {
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
-                self.long_term.store(entry).await?;
+                self.lt_store(entry).await?;
             }
         }
 
@@ -688,6 +690,38 @@ impl MemoryManager {
         // forever at shutdown.
     }
 
+    async fn long_term_entries_cached(&self) -> Result<std::sync::Arc<Vec<MemoryEntry>>> {
+        if let Some(c) = self.entries_cache.read().as_ref() {
+            return Ok(std::sync::Arc::clone(c));
+        }
+        let all = std::sync::Arc::new(self.long_term.get_all().await?);
+        *self.entries_cache.write() = Some(std::sync::Arc::clone(&all));
+        Ok(all)
+    }
+    fn invalidate_entries_cache(&self) {
+        *self.entries_cache.write() = None;
+    }
+    async fn lt_store(&self, entry: MemoryEntry) -> Result<()> {
+        let r = self.long_term.store(entry).await;
+        if r.is_ok() { self.invalidate_entries_cache(); }
+        r
+    }
+    async fn lt_store_batch(&self, entries: Vec<MemoryEntry>) -> Result<()> {
+        let r = self.long_term.store_batch(entries).await;
+        if r.is_ok() { self.invalidate_entries_cache(); }
+        r
+    }
+    async fn lt_remove(&self, id: &MemoryId) -> Result<()> {
+        let r = self.long_term.remove(id).await;
+        if r.is_ok() { self.invalidate_entries_cache(); }
+        r
+    }
+    async fn lt_remove_batch(&self, ids: &[MemoryId]) -> Result<usize> {
+        let r = self.long_term.remove_batch(ids).await;
+        if r.is_ok() { self.invalidate_entries_cache(); }
+        r
+    }
+
     /// Delta §12.5: wait for every in-flight background embed.
     ///
     /// Called at shutdown, after the last store, so a fact written
@@ -770,7 +804,7 @@ impl MemoryManager {
                     // scores by the *old* content's cosine until an
                     // unrelated rebuild.
                     entry.metadata.embedding = None;
-                    self.long_term.store(entry).await?;
+                    self.lt_store(entry).await?;
                     self.spawn_embed(id.clone(), content.to_string());
                     Ok(())
                 } else {
@@ -787,7 +821,7 @@ impl MemoryManager {
                 self.short_term.remove(id);
                 Ok(())
             }
-            MemoryType::LongTerm | MemoryType::Episodic => self.long_term.remove(id).await,
+            MemoryType::LongTerm | MemoryType::Episodic => self.lt_remove(id).await,
         }
     }
 
@@ -836,10 +870,11 @@ impl MemoryManager {
     /// that wants the top-k list without wrapping it in a
     /// `MemoryContext`.
     pub async fn retrieve_long_term_hybrid(&self, query: &str) -> Result<Vec<MemoryEntry>> {
-        let all = self.long_term.get_all().await?;
-        if all.is_empty() {
+        let all_arc = self.long_term_entries_cached().await?;
+        if all_arc.is_empty() {
             return Ok(Vec::new());
         }
+        let all: Vec<MemoryEntry> = (*all_arc).clone();
         let query_terms = crate::retrieval::QueryTerms::build(query, &all);
 
         // P0-3: semantic availability is "an embedder is installed",
@@ -1128,7 +1163,7 @@ impl MemoryManager {
                 fresh.metadata.last_retrieved_at_ms = Some(now_ms);
                 updated.push(fresh);
             }
-            if let Err(err) = self.long_term.store_batch(updated).await {
+            if let Err(err) = self.lt_store_batch(updated).await {
                 tracing::debug!(
                     error = %err,
                     "could not persist last_retrieved_at_ms; consolidation                      will fall back to the entry timestamp",
@@ -1199,7 +1234,7 @@ impl MemoryManager {
             remaining.push(entry);
         }
         if !to_archive.is_empty() {
-            match self.long_term.remove_batch(&to_archive).await {
+            match self.lt_remove_batch(&to_archive).await {
                 Ok(n) => archived = n,
                 Err(e) => tracing::warn!(
                     error = %e,
@@ -1481,7 +1516,7 @@ impl MemoryManager {
                 updated.push(fresh);
             }
             if !updated.is_empty()
-                && let Err(err) = self.long_term.store_batch(updated).await
+                && let Err(err) = self.lt_store_batch(updated).await
             {
                 tracing::warn!(
                     error = %err,
@@ -1496,7 +1531,7 @@ impl MemoryManager {
         // one per id. A crash mid-loop no longer leaves the store with
         // a partially-fused cluster.
         if !to_delete.is_empty() {
-            match self.long_term.remove_batch(&to_delete).await {
+            match self.lt_remove_batch(&to_delete).await {
                 Ok(n) => actually_deleted = n,
                 Err(e) => tracing::warn!(
                     error = %e,
