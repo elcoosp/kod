@@ -77,7 +77,7 @@ pub use todo::{
 };
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
-    WriteFileTool,
+    WriteFileTool, is_secret_like_env,
 };
 pub use web::WebFetchTool;
 

@@ -44,7 +44,19 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
     // `GIT_PAGER` and `PAGER` off: the pager would consume the pipe and
     // the tool would see nothing. `git` also honors `-c core.pager=` but
     // the env var is what a user's shell sets.
+    // SEC-A-11: `git_commit` runs repo-controlled hooks; the child
+    // must not inherit the provider keys. Match the foreground
+    // execute_command shaping.
+    for (k, v) in std::env::vars_os() {
+        if let Some(name) = k.to_str()
+            && crate::tools::is_secret_like_env(name)
+        {
+            continue;
+        }
+        cmd.env(&k, &v);
+    }
     cmd.env("GIT_PAGER", "cat").env("PAGER", "cat");
+    crate::env_policy::apply(&mut cmd);
 
     // F2f-18: stream stdout with a hard cap instead of `Command::output()`
     // (which buffers the entire stdout before the 64 KB truncate ever
