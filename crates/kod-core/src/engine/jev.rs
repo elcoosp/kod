@@ -1276,11 +1276,18 @@ fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
     // A curated list of binaries that are read-only or trivially
     // auditable. `git` is on the list only with a read-only
     // subcommand (checked below).
+    // SEC-A-17: the Jev sandbox-downgrade path treats these as
+    // "safe to run without the OS sandbox". Build/test tools are not:
+    // `cargo build` runs `build.rs`, `make` runs Makefile recipes,
+    // `npm` runs package.json scripts, `pytest` imports conftest.py.
+    // The downgrade decision gates on the *command text*, not the
+    // repo content the command executes, so a build-tool allowlist
+    // entry is a repo-controlled-code sandbox bypass. Keep only
+    // tools that read/format but never execute repo content.
     const ALLOW: &[&str] = &[
         "ls", "cat", "head", "tail", "grep", "find", "pwd", "which", "echo", "true", "false", "wc",
         "sort", "uniq", "diff", "file", "stat", "tree", "du", "df", "date", "env", "printenv",
-        "id", "whoami", "cargo", "rustc", "rustup", "go", "gofmt", "python", "python3", "node",
-        "npm", "npx", "tsc", "ruff", "pytest", "make", "cmake",
+        "id", "whoami", "gofmt", "ruff",
     ];
     if !ALLOW.iter().any(|b| b == &first) {
         // `git` needs the subcommand check.
