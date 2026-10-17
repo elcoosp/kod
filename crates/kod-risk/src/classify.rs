@@ -132,6 +132,24 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
         &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
         0,
     ),
+    // SEC-A-04b: wrappers the audit found hidden. Each one is a
+    // pass-through that runs the token after it as the actual
+    // program. Flags listed are the ones that consume the following
+    // token; positional counts reflect the wrapper's own leading
+    // non-flag arguments (`timeout 30 rm` shape). Deliberately
+    // restricted to wrappers whose flag semantics are well-defined
+    // and documented; `flock`, `script`, `chrt`, `su`, `unshare` are
+    // omitted because their flag consumption is ambiguous or
+    // consumes a command-string (`-c CMD`) that the unwrap loop
+    // cannot descend into safely. Those need a follow-up pass.
+    ("nohup", &[], 0),
+    ("watch", &["-n"], 0),
+    ("setsid", &[], 0),
+    ("strace", &["-o", "-p", "-s", "-e", "-u"], 0),
+    ("ltrace", &["-o", "-p", "-s", "-e", "-u"], 0),
+    ("taskset", &["-c", "-p"], 0),
+    ("nsenter", &["-t"], 0),
+    ("pkexec", &[], 0),
 ];
 
 /// The wrapper table, for the cross-crate mirror test.
