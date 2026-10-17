@@ -998,11 +998,38 @@ impl KodEngine {
                         } else {
                             speculate_working_dir.join(&rel)
                         };
-                        if !abs.exists() {
+                        // SEC-A-19: gate the speculative read. A path
+                        // that `resolve_path` rejects (escapes the
+                        // root), `can_read` refuses (permission
+                        // bitmask), or `read_protection` matches
+                        // (secret patterns) must not be fetched
+                        // before the tool gate runs. Speculation has
+                        // no gate of its own — the payload is dropped
+                        // for denied calls, but the bytes enter
+                        // process memory before any consent decision.
+                        // `resolve_path` takes `&str`, so convert; the
+                        // canonical `gated` is what the read uses, so a
+                        // `.`/`..` in the raw input cannot sneak past.
+                        let abs_str = abs.to_string_lossy().to_string();
+                        let gated = match self.tool_context.resolve_path(&abs_str) {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        };
+                        if self.tool_context.can_read(&gated).is_err() {
+                            continue;
+                        }
+                        if let Some(rp) = self.tool_context.read_protection.as_ref()
+                            && rp.enabled
+                            && rp.matches(&gated)
+                        {
+                            continue;
+                        }
+                        if !gated.exists() {
                             // Not a candidate — the ordinary tool call
                             // will produce the "no such file" error.
                             continue;
                         }
+                        let abs = gated;
                         let handle = tokio::spawn(async move {
                             match kod_core_tools::speculation::read_with_evidence(&abs) {
                                 Ok((text, evidence)) => {
