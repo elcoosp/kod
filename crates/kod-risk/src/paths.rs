@@ -217,6 +217,21 @@ pub fn classify(raw: &str, ctx: &RiskContext) -> (PathDanger, String) {
         return (PathDanger::Catastrophic, format!("raw device node: {raw}"));
     }
 
+    // SEC-A-10: `.git` metadata is not a writable surface for shell
+    // commands. `write_file`/`patch_file` gate it at the tool layer,
+    // but a shell redirect into `.git/hooks/pre-commit` was
+    // classified Safe (inside working_dir) — a hook planted there
+    // runs on the next `git commit`, with full env.
+    if normalized
+        .components()
+        .any(|c| c.as_os_str() == std::ffi::OsStr::new(".git"))
+    {
+        return (
+            PathDanger::Catastrophic,
+            format!(".git metadata is not writable: {raw}"),
+        );
+    }
+
     // Credential stores, recursive.
     if in_credential_store(&normalized, &ctx.home_dir) {
         return (PathDanger::Catastrophic, format!("credential store: {raw}"));
