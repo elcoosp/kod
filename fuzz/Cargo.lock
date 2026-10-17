@@ -1010,7 +1010,9 @@ dependencies = [
  "kod-lsp",
  "kod-mcp",
  "kod-memory",
+ "kod-provider",
  "kod-provider-anthropic",
+ "kod-schema-dialect",
  "kod-tools",
  "kod-types",
  "libfuzzer-sys",
@@ -1114,6 +1116,13 @@ dependencies = [
 [[package]]
 name = "kod-risk"
 version = "0.1.6"
+
+[[package]]
+name = "kod-schema-dialect"
+version = "0.1.6"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "kod-tools"
