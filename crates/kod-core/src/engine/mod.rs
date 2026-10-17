@@ -198,6 +198,13 @@ pub struct KodEngine {
     /// it streams. A rule that fires with `interrupt` aborts the
     /// stream so the caller can inject the correction and retry.
     ttsr: RwLock<kod_provider::ttsr::TtsrEngine>,
+    /// PERF-11: cheap pre-check for the hot stream loop. The `ttsr`
+    /// lock below is only worth acquiring when at least one rule is
+    /// installed; the default engine holds zero rules and the lock is
+    /// pure overhead. This flag is set by `set_ttsr_rules` when the
+    /// engine is replaced — that is the only install path in the
+    /// codebase (see `KodEngineState::set_ttsr_rules`).
+    ttsr_has_rules: std::sync::atomic::AtomicBool,
     /// Delta §12.6: per-transcript retention cursors. A rolling hash
     /// over the retained prefix tells the continuous-extraction path
     /// what is new since the last pass; a rewind or in-place edit
