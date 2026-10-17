@@ -38,10 +38,10 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       with:
         toolchain: stable
         targets: ${{ matrix.target }}
@@ -168,7 +168,7 @@ jobs:
         rm -f "$KEY_FILE"
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       with:
         name: kod-${{ matrix.target }}
         # The glob includes the archive, the `.sha256`, and the
@@ -192,10 +192,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
     - name: Install cargo-bloat
       run: cargo install cargo-bloat --version "^0.12"
@@ -228,7 +228,7 @@ jobs:
     steps:
     # Full history: git-cliff walks the commits between the previous tag
     # and this one to build the notes.
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       with:
         fetch-depth: 0
         # git-cliff needs the previous tag to compute the range.
@@ -237,7 +237,7 @@ jobs:
         fetch-tags: true
 
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
       with:
         path: artifacts
         merge-multiple: true
@@ -245,7 +245,7 @@ jobs:
     # Release notes from conventional commits (cliff.toml). Generated for
     # this tag only, so nothing is committed and nothing can drift.
     - name: Generate release notes
-      uses: orhun/git-cliff-action@v4
+      uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff  # v4
       with:
         config: cliff.toml
         args: --latest --strip header
@@ -276,7 +276,7 @@ jobs:
         ls -la artifacts/
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
       with:
         files: artifacts/*
         # The git-cliff notes, not GitHub's auto-generated list: ours
