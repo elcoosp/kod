@@ -637,3 +637,58 @@ fn pending_notifications_fill_and_drain_match() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a model-supplied tool name reaches a gate un-canonicalized
+// ---------------------------------------------------------------------------
+//
+// SEC-A-01: every gate (risk assessment, per-tool policy, taint
+// escalation, session deny) keys on `call.tool_name` as the model wrote
+// it, while alias resolution happens only at dispatch. A raw alias
+// (`bash`, `exec`, `shell_exec`) therefore skipped every gate:
+// `{"name":"bash","arguments":{"command":"rm -rf ~"}}` never ran the
+// risk assessment because the gate compared against `execute_command`.
+//
+// The fix canonicalizes at parse time — every `ToolCall` constructed
+// from model output must pass its name through
+// `resolve_tool_name`. This lint flags a `tool_name:` assignment in a
+// provider-facing call construction that does not.
+
+#[test]
+fn tool_calls_are_canonicalized_at_parse() {
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    // Files that construct a ToolCall from model/provider output.
+    let sites = [
+        "crates/kod-core/src/engine/agent_loop.rs",
+        "crates/kod-provider/src/replay.rs",
+    ];
+    for rel in sites {
+        let path = workspace_root().join(rel);
+        let lines = production_lines(&path);
+        for (lineno, line) in &lines {
+            let t = line.trim();
+            if !t.starts_with("tool_name:") {
+                continue;
+            }
+            // Allowed: the canonicalizing form, or a re-export of an
+            // already-resolved value (a cloned call, a literal test
+            // fixture).
+            if t.contains("resolve_tool_name(") || t.contains(".tool_name.clone()") {
+                continue;
+            }
+            // A literal string is a hand-built call (tests, fixtures).
+            if t.contains('"') {
+                continue;
+            }
+            bad.push((path.clone(), *lineno, t.to_string()));
+        }
+    }
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "a ToolCall built from model output must canonicalize its \
+             tool_name via resolve_tool_name, or an alias (bash, exec) \
+             skips the risk/policy/taint gates that key on the real name:",
+        );
+    }
+}
