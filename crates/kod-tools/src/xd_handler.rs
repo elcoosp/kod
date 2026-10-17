@@ -125,6 +125,33 @@ impl ProtocolHandler for XdHandler {
                 url: url.to_string(),
             });
         }
+        // SEC-A-20: reject execute_command-shaped tools outright. The
+        // xd handler dispatches with the caller's own permissions, so
+        // a model that writes `xd://execute_command` reaches the
+        // shell without the risk gate the ordinary path applies — the
+        // approval dialog would say `write_file`, not `execute_command`.
+        // Until permissions are plumbed through to a proper re-gate,
+        // refuse outright. The alias list mirrors `kod-types::aliases`.
+        const EXEC_SHAPED: &[&str] = &[
+            "execute_command",
+            "bash",
+            "shell",
+            "shell_exec",
+            "run_command",
+            "run_shell",
+            "terminal",
+            "exec",
+        ];
+        if EXEC_SHAPED.contains(&name) {
+            return Err(ProtocolError::Malformed {
+                url: url.to_string(),
+                reason: "xd:// cannot dispatch execute_command-shaped tools: \
+                         the `write_file` name bypasses the risk gate the \
+                         ordinary tool path applies. Call `execute_command` \
+                         directly."
+                    .to_string(),
+            });
+        }
         let args: serde_json::Value =
             serde_json::from_str(content).map_err(|e| ProtocolError::Malformed {
                 url: url.to_string(),
