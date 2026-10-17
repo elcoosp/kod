@@ -1289,10 +1289,22 @@ impl KodEngine {
                             media_type: "image/png".to_string(),
                             source_lines: m.content.lines().count(),
                         };
-                        self.image_render_cache
-                            .write()
-                            .await
-                            .insert(cache_key, f.clone());
+                        // PERF-03: bound the cache. A long vision
+                        // session would otherwise keep every rasterized
+                        // frame (multi-hundred-KB PNGs) for the whole
+                        // process lifetime. 32 entries is far above
+                        // the number of images in any one compaction
+                        // plan; eviction is arbitrary, which is fine
+                        // for a cache.
+                        const MAX_IMAGE_RENDER_CACHE: usize = 32;
+                        let mut g = self.image_render_cache.write().await;
+                        if g.len() >= MAX_IMAGE_RENDER_CACHE && !g.contains_key(&cache_key)
+                            && let Some(evict) = g.keys().next().cloned()
+                        {
+                            g.remove(&evict);
+                        }
+                        g.insert(cache_key, f.clone());
+                        drop(g);
                         f
                     }
                     Err(_) => continue,
