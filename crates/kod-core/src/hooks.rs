@@ -176,7 +176,15 @@ fn cap_hook_output(raw: &[u8]) -> String {
         return s.to_string();
     }
     let tail = kod_types::strutil::truncate_chars(
-        &s[s.len() - MAX_HOOK_OUTPUT_BYTES..],
+        &s[{
+            // BUG-C-03: `s.len() - MAX_HOOK_OUTPUT_BYTES` can land mid
+            // char; round down to a boundary before slicing.
+            let mut start = s.len().saturating_sub(MAX_HOOK_OUTPUT_BYTES);
+            while start > 0 && !s.is_char_boundary(start) {
+                start -= 1;
+            }
+            start
+        }..],
         MAX_HOOK_OUTPUT_BYTES,
     );
     format!(
