@@ -83,8 +83,13 @@ impl AnthropicProvider {
         let api_key = api_key.into();
         let model = model.into();
         let inner = build_client(&api_key, &model, &base_url)?;
+        // SEC-B-01: refuse redirects. `x-api-key` is a custom header
+        // that reqwest re-sends verbatim on a redirect (including
+        // cross-origin), along with the full request body on 307/308.
+        // A Messages endpoint has no legitimate reason to redirect.
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| {
                 KodError::Provider(format!("anthropic: could not build http client: {e}"))
@@ -445,17 +450,29 @@ impl LlmProvider for AnthropicProvider {
             let api_key = api_key.clone();
             let body_json = body_ref.clone();
             async move {
-                let resp = client
-                    .post(&url)
-                    .header("x-api-key", &api_key)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("anthropic-beta", crate::wire::ANTHROPIC_COMPACTION_BETA)
-                    .json(&body_json)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        KodError::Provider(format!("anthropic native_compact: POST {url}: {e}"))
-                    })?;
+                // SEC-B-03: bound the whole request; the shared client
+                // has only a connect timeout, so a wedged proxy would
+                // park here forever and never consume the retry budget.
+                let resp = tokio::time::timeout(
+                    std::time::Duration::from_secs(self.timeout_secs.max(1)),
+                    client
+                        .post(&url)
+                        .header("x-api-key", &api_key)
+                        .header("anthropic-version", "2023-06-01")
+                        .header("anthropic-beta", crate::wire::ANTHROPIC_COMPACTION_BETA)
+                        .json(&body_json)
+                        .send(),
+                )
+                .await
+                .map_err(|_| {
+                    KodError::Provider(format!(
+                        "anthropic native_compact: POST {url} timed out after {}s",
+                        self.timeout_secs.max(1)
+                    ))
+                })?
+                .map_err(|e| {
+                    KodError::Provider(format!("anthropic native_compact: POST {url}: {e}"))
+                })?;
                 let status = resp.status();
                 if !status.is_success() {
                     let text = read_bounded_error_body(resp).await;
@@ -870,6 +887,13 @@ impl LlmProvider for AnthropicProvider {
                     continue;
                 }
 
+                // TPD-01: an in-band stream error means this attempt
+                // produced a partial turn. Surface it instead of
+                // delivering a truncated reply as success.
+                if let Some(err) = state.stream_error.take() {
+                    yield Err(KodError::Provider(err));
+                    return;
+                }
                 // No retry: deliver what this attempt produced.
                 for b in buffered.drain(..) {
                     yield Ok(b);
