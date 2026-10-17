@@ -122,7 +122,10 @@ impl LlmProvider for ReplayProvider {
                 .into_iter()
                 .map(|c| ToolCall {
                     id: c.id,
-                    tool_name: c.name,
+                    // SEC-A-01: same canonicalization the live path
+                    // applies, so a replayed call reaches the gates
+                    // under its real tool name.
+                    tool_name: kod_types::aliases::resolve_tool_name(&c.name).to_string(),
                     arguments: c.arguments,
                 })
                 .collect();
