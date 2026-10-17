@@ -8,6 +8,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+kod-core-serve = { path = "../crates/kod-core-serve" }
 kod-provider = { path = "../crates/kod-provider" }
 kod-schema-dialect = { path = "../crates/kod-schema-dialect" }
 libfuzzer-sys = "0.4"
@@ -69,3 +70,9 @@ path = "fuzz_targets/extract_json.rs"
 [[bin]]
 name = "schema"
 path = "fuzz_targets/schema.rs"
+[[bin]]
+name = "acp_frame"
+path = "fuzz_targets/acp_frame.rs"
+[[bin]]
+name = "mcp_line"
+path = "fuzz_targets/mcp_line.rs"
