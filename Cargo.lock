@@ -2140,6 +2140,7 @@ dependencies = [
  "dirs 6.0.0",
  "globset",
  "kod-error",
+ "kod-risk",
  "kod-types",
  "rstest",
  "serde",
