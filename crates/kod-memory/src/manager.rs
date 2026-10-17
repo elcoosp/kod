@@ -1466,13 +1466,19 @@ impl MemoryManager {
         // Persist the survivor tag unions first so a crash between
         // the two writes does not lose them.
         if !tags_to_merge.is_empty() {
+            // BUG-D-14: re-read each survivor rather than persist the
+            // `consolidate()` snapshot. A concurrent `store` landing
+            // on a survivor between `get_all` and this writeback would
+            // otherwise be reverted wholesale. Re-reading also makes
+            // an entry that was fused away since the snapshot a no-op
+            // rather than a resurrection.
             let mut updated: Vec<MemoryEntry> = Vec::new();
-            for e in entries {
-                if let Some(tags) = tags_to_merge.get(&e.id) {
-                    let mut e = e.clone();
-                    e.metadata.tags = tags.clone();
-                    updated.push(e);
-                }
+            for (id, tags) in &tags_to_merge {
+                let Some(mut fresh) = self.long_term.get(id).await? else {
+                    continue;
+                };
+                fresh.metadata.tags = tags.clone();
+                updated.push(fresh);
             }
             if !updated.is_empty()
                 && let Err(err) = self.long_term.store_batch(updated).await
