@@ -437,6 +437,14 @@ fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
             args.extend(["--ro-bind".into(), git.clone(), git.clone()]);
         }
     }
+    // SEC-A-21: honor `tmp_rw`. SandboxOpts::default() sets it true;
+    // the pre-fix bwrap builder never read it, so a build tool that
+    // stages through /tmp failed under the minimal-root pattern.
+    // `--tmpfs /tmp` satisfies the contract without exposing the
+    // host /tmp.
+    if opts.tmp_rw {
+        args.extend(["--tmpfs".into(), "/tmp".into()]);
+    }
     if opts.net_deny {
         args.push("--unshare-net".into());
     }
