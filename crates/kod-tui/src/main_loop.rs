@@ -717,10 +717,17 @@ impl TuiLoop {
                 // flag goes first so post-panic logging lands on the
                 // restored terminal, not in the session log.
                 kod_types::term::set_tui_active(false);
+                // TPD-08: `init_terminal` enabled bracketed paste but
+                // the panic hook only disabled mouse + alternate
+                // screen. After a panic the user's shell then showed
+                // literal `ESC[200~` sequences from any paste (older
+                // terminals/printers echoed them). Disable it here so
+                // the panic path is symmetric with the normal restore.
                 let _ = crossterm::execute!(
                     std::io::stdout(),
                     crossterm::terminal::LeaveAlternateScreen,
                     crossterm::event::DisableMouseCapture,
+                    crossterm::event::DisableBracketedPaste,
                 );
                 let _ = crossterm::terminal::disable_raw_mode();
                 (*default_hook)(info);
@@ -741,6 +748,21 @@ impl TuiLoop {
 
         self.init_terminal().await?;
         let result = self.main_loop().await;
+
+        // TPD-02: every quit path (q, `/quit` confirm, and the
+        // test-only `Event::Quit`) reaches here. The pre-fix cleanup
+        // was wired only to `Event::Quit`, which no production path
+        // emits — so a quit mid-generation dropped the engine task at
+        // an arbitrary await point, the session log had a turn with no
+        // terminal record, and background tasks (`/summarize`, Jev
+        // phase-check, prewarm) were killed at random. Cancel before
+        // the session save so a live turn can neither mutate the
+        // engine nor race the snapshot.
+        self.cancel_generation();
+        self.abort_bg_tasks();
+        if let Some(engine) = &self.engine {
+            engine.request_cancel();
+        }
 
         // Persist the chat for the next session. Save before restoring
         // the terminal so a crossterm error cannot lose the chat; the
