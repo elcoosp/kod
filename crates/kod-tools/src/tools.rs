@@ -2080,18 +2080,19 @@ impl Tool for GrepTool {
                 }
                 let ranked = crate::relevance::rank_hits(&sr, pattern);
                 let mut reordered: Vec<serde_json::Value> = Vec::with_capacity(results.len());
+                let mut used = vec![false; results.len()];
                 for (path, line) in ranked {
-                    if let Some(pos) = results.iter().position(|r| {
-                        r.get("file").and_then(|f| f.as_str()) == Some(path.as_str())
-                            && r.get("line").and_then(|n| n.as_u64()) == Some(line)
-                    }) {
+                    if let Some(&pos) = index.get(&(path, line))
+                        && !used[pos]
+                    {
+                        used[pos] = true;
                         reordered.push(results[pos].clone());
                     }
                 }
                 // Any that the ranker dropped are appended in order.
-                for r in &results {
-                    if !reordered.contains(r) {
-                        reordered.push(r.clone());
+                for (r, was_used) in results.into_iter().zip(used) {
+                    if !was_used {
+                        reordered.push(r);
                     }
                 }
                 results = reordered;
