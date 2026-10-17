@@ -601,10 +601,14 @@ impl KodEngine {
         let arr = v.as_array()?;
         let steps: Vec<String> = arr
             .iter()
-            .filter_map(|x| {
-                x.as_str()
-                    .map(String::from)
-                    .or_else(|| x.as_str().map(String::from))
+            // BUG-C-12: fall back to `to_string()` for non-string
+            // elements (numbers, objects). The pre-fix `or_else` arm
+            // was a verbatim copy of the success arm, so it always
+            // returned None there — non-string elements were silently
+            // dropped from the plan with no diagnostic.
+            .map(|x| match x {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
             })
             .filter(|s| !s.trim().is_empty())
             .collect();
