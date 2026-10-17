@@ -22,7 +22,7 @@ use kod_types::MessageId;
 /// A cache entry: the inputs that can change a message's wrapped row
 /// count, plus the row count itself and the tail-blank flag the
 /// separator logic in `chat::render` needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct Entry {
     /// Hash of the message content. A collision only costs one
     /// re-measure — the cache is never a correctness dependency.
@@ -36,6 +36,11 @@ struct Entry {
     /// message already ended on a blank line, so the probe's row total
     /// depends on this flag.
     tail_blank: bool,
+    /// PERF-01 s2a: materialized line vector. Populated only by
+    /// `insert_with_lines`; `None` when a caller stored just the
+    /// measurement (`insert` path). `Arc` so the render pass shares
+    /// it with no deep clone.
+    lines: Option<std::sync::Arc<Vec<ratatui::text::Line<'static>>>>,
 }
 
 /// Per-frame cache of message row counts.
@@ -99,6 +104,48 @@ impl RenderCache {
                 width,
                 rows,
                 tail_blank,
+                lines: None,
+            },
+        );
+    }
+
+    /// PERF-01 s2a: lookup that also returns the cached materialized
+    /// lines. Returns `None` on miss OR when only a measurement was
+    /// cached (caller should fall through to materialize).
+    pub fn lookup_with_lines(
+        &mut self,
+        id: &MessageId,
+        content_hash: u64,
+        width: u16,
+    ) -> Option<(usize, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)> {
+        self.seen.insert(id.clone());
+        let e = self.entries.get(id)?;
+        if e.content_hash != content_hash || e.width != width {
+            return None;
+        }
+        let lines = e.lines.as_ref()?;
+        Some((e.rows, e.tail_blank, std::sync::Arc::clone(lines)))
+    }
+
+    /// PERF-01 s2a: store measurement + materialized lines together.
+    pub fn insert_with_lines(
+        &mut self,
+        id: MessageId,
+        content_hash: u64,
+        width: u16,
+        rows: usize,
+        tail_blank: bool,
+        lines: std::sync::Arc<Vec<ratatui::text::Line<'static>>>,
+    ) {
+        self.seen.insert(id.clone());
+        self.entries.insert(
+            id,
+            Entry {
+                content_hash,
+                width,
+                rows,
+                tail_blank,
+                lines: Some(lines),
             },
         );
     }
