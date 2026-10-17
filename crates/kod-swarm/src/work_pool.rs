@@ -314,6 +314,11 @@ impl WorkPool {
     /// `record_yield` when it finishes.
     pub fn take_batch(&mut self, agent_id: &str) -> Option<BatchAssignment> {
         let slot = self.slots.get_mut(agent_id)?;
+        // A tombstoned slot cannot be reused: the tombstone exists
+        // precisely because the slot's schema is stale.
+        if slot.state == SlotState::Unavailable {
+            return None;
+        }
         if slot.queue.is_empty() {
             return None;
         }
