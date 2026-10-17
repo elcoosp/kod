@@ -556,14 +556,34 @@ impl LspClient {
     /// probably return null either way, and swallowing the request
     /// entirely would be worse than a likely-empty answer.
     async fn ensure_open(&mut self, path: &std::path::Path) -> Result<(), LspError> {
-        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        // PERF-10: offload the blocking IO. `canonicalize` and
+        // `read_to_string` are std::fs calls; running them on a
+        // tokio worker while the caller holds the per-language
+        // manager mutex parks the LSP loop on cold storage.
+        // `spawn_blocking` (not `tokio::fs` — the workspace tokio
+        // feature set does not include `fs`) moves both off the
+        // worker without a dependency change.
+        let path_buf = path.to_path_buf();
+        let key = tokio::task::spawn_blocking(move || {
+            match std::fs::canonicalize(&path_buf) {
+                Ok(c) => c,
+                Err(_) => path_buf,
+            }
+        })
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
         if self.opened.contains_key(&key) {
             return Ok(());
         }
         // M-10/L-2: open and record under the SAME spelling the
         // `opened` key uses, or a later did_change/diagnostics targets
         // a URI the server never saw (symlinks, relative paths).
-        let content = std::fs::read_to_string(&key).unwrap_or_default();
+        let key_for_read = key.clone();
+        let content = tokio::task::spawn_blocking(move || {
+            std::fs::read_to_string(&key_for_read).unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
         self.did_open(&key, &content).await?;
         self.opened.insert(key, 1);
         Ok(())
