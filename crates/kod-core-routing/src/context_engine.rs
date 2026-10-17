@@ -114,7 +114,8 @@ impl ChunkScorer for LexicalScorer {
         if chunk.message.content.contains("Error:") {
             return Fidelity::Stub;
         }
-        let overlap = term_overlap(&chunk.message.content, &query.terms);
+        let overlap = term_overlap(&chunk.message.content, &query.terms) as f32
+            / query.terms.len().max(1) as f32;
         let recency = (-(chunk.age_turns as f32) / self.half_life_turns).exp2();
         let combined = 0.7 * overlap as f32 + 0.3 * recency;
         match combined {
