@@ -171,6 +171,28 @@ mod tests {
     }
 
     #[test]
+    fn cache_rate_semantics_are_explicit() {
+        // TPD-04: input_tokens is UNCACHED input (the feed site
+        // subtracts cache_read at write time). Verify the three
+        // canonical rates so the contract is named in code, not just
+        // implied by one synthetic case.
+        let mut zero = record();
+        zero.input_tokens = 100;
+        zero.cache_read_tokens = 0;
+        assert_eq!(zero.cache_rate(), Some(0.0), "no cache hits => 0%");
+
+        let mut half = record();
+        half.input_tokens = 50;
+        half.cache_read_tokens = 50;
+        assert_eq!(half.cache_rate(), Some(0.5), "50 uncached + 50 cached => 50%");
+
+        let mut full = record();
+        full.input_tokens = 0;
+        full.cache_read_tokens = 100;
+        assert_eq!(full.cache_rate(), Some(1.0), "100% cache hit => 1.0");
+    }
+
+    #[test]
     fn tokens_per_second_is_computed() {
         assert_eq!(record().tokens_per_second(), Some(100.0));
     }
