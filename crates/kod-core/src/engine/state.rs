@@ -300,7 +300,13 @@ impl KodEngine {
     /// Delta §14.3: install the TTSR rules. Replaces any existing set.
     /// A rule's regex is compiled here; a bad pattern drops that rule.
     pub async fn set_ttsr_rules(&self, rules: Vec<kod_provider::ttsr::Rule>) {
+        // PERF-11: record whether any rules are installed so the hot
+        // stream loop can short-circuit the lock when the engine is
+        // empty (the default state).
+        let has = !rules.is_empty();
         *self.ttsr.write().await = kod_provider::ttsr::TtsrEngine::new(rules);
+        self.ttsr_has_rules
+            .store(has, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Delta §14.3: install the shipped rules (no-TODO-in-diff,
