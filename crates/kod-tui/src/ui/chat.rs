@@ -486,24 +486,93 @@ impl ChatWidget {
     /// On a hit this skips both the `message_lines()` call and the
     /// ratatui wrap pass — the two costs the probe and the real pass
     /// used to pay in full on every frame.
+    /// PERF-01 s2a: convert `Vec<Line<'a>>` (borrowing from the
+    /// Message) into `Vec<Line<'static>>` by owning each span's
+    /// content. `Cow::Borrowed` becomes `String` (one bounded copy);
+    /// `Cow::Owned` moves in place. Called once per (message, width,
+    /// content) — never per frame.
+    fn message_lines_owned(
+        app: &KodApp,
+        m: &Message,
+        width: usize,
+    ) -> std::sync::Arc<Vec<Line<'static>>> {
+        let raw = Self::message_lines(app, m, width);
+        let owned: Vec<Line<'static>> = raw
+            .into_iter()
+            .map(|l| {
+                let spans: Vec<Span<'static>> = l
+                    .spans
+                    .into_iter()
+                    .map(|s| Span::styled(s.content.into_owned(), s.style))
+                    .collect();
+                let mut out = Line::from(spans);
+                out.style = l.style;
+                out.alignment = l.alignment;
+                out
+            })
+            .collect();
+        std::sync::Arc::new(owned)
+    }
+
+    /// PERF-01 s2a: single materialization path. Measures the row
+    /// count, caches both the measurement and the lines. Callers on
+    /// the probe path use only `(rows, tail_blank)`; the render path
+    /// uses the `Arc` too.
+    fn materialize_and_cache(
+        app: &KodApp,
+        m: &Message,
+        width: usize,
+    ) -> (usize, bool, std::sync::Arc<Vec<Line<'static>>>) {
+        let lines = Self::message_lines_owned(app, m, width);
+        let tail_blank = lines.last().map(|l| l.width() == 0).unwrap_or(false);
+        let width_u16 = width.min(u16::MAX as usize) as u16;
+        #[allow(unstable_name_collisions)]
+        let rows = Paragraph::new(Text::from((*lines).clone()))
+            .wrap(Wrap { trim: false })
+            .line_count(width_u16);
+        let content_hash = crate::render_cache::hash_content(&m.content);
+        crate::render_cache::with_cache(|c| {
+            c.insert_with_lines(
+                m.id.clone(),
+                content_hash,
+                width_u16,
+                rows,
+                tail_blank,
+                std::sync::Arc::clone(&lines),
+            );
+        });
+        (rows, tail_blank, lines)
+    }
+
     fn message_measurement_cached(app: &KodApp, m: &Message, width: usize) -> (usize, bool) {
         let content_hash = crate::render_cache::hash_content(&m.content);
         let width_u16 = width.min(u16::MAX as usize) as u16;
-        if let Some(hit) =
-            crate::render_cache::with_cache(|c| c.lookup(&m.id, content_hash, width_u16))
-        {
-            return hit;
+        if let Some((rows, tail_blank, _)) = crate::render_cache::with_cache(|c| {
+            c.lookup_with_lines(&m.id, content_hash, width_u16)
+        }) {
+            return (rows, tail_blank);
         }
-        let lines = Self::message_lines(app, m, width);
-        let tail_blank = lines.last().map(|l| l.width() == 0).unwrap_or(false);
-        #[allow(unstable_name_collisions)]
-        let rows = Paragraph::new(Text::from(lines))
-            .wrap(Wrap { trim: false })
-            .line_count(width_u16);
-        crate::render_cache::with_cache(|c| {
-            c.insert(m.id.clone(), content_hash, width_u16, rows, tail_blank);
-        });
+        let (rows, tail_blank, _) = Self::materialize_and_cache(app, m, width);
         (rows, tail_blank)
+    }
+
+    /// PERF-01 s2a: return the materialized lines for `m` from the
+    /// cache, materializing + caching on miss. Warm frame = one
+    /// `Arc::clone` — no markdown parse.
+    fn message_lines_cached(
+        app: &KodApp,
+        m: &Message,
+        width: usize,
+    ) -> std::sync::Arc<Vec<Line<'static>>> {
+        let content_hash = crate::render_cache::hash_content(&m.content);
+        let width_u16 = width.min(u16::MAX as usize) as u16;
+        if let Some((_, _, lines)) = crate::render_cache::with_cache(|c| {
+            c.lookup_with_lines(&m.id, content_hash, width_u16)
+        }) {
+            return lines;
+        }
+        let (_, _, lines) = Self::materialize_and_cache(app, m, width);
+        lines
     }
 
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
@@ -610,7 +679,10 @@ impl ChatWidget {
                 )]));
             }
             message_line_offsets.insert(message.id.clone(), lines.len());
-            lines.extend(Self::message_lines(app, message, text_width));
+            {
+                let cached = Self::message_lines_cached(app, message, text_width);
+                lines.extend(cached.iter().cloned());
+            }
         }
         if hidden_tools > 0 {
             lines.push(Line::from(vec![Span::styled(
