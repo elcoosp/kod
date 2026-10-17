@@ -1959,6 +1959,42 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
             break;
         }
         out.push(first.clone());
+        // SEC-A-04b: script / su — optional positional before the
+        // program. `-c CMD` -> cur = CMD (walk in); positional ->
+        // cur = tokens[1..]; interactive -> break (no hidden command).
+        // The `.replace` on the join removes residual quote chars
+        // that tokenize leaves attached to each token; without it the
+        // next tokenize iteration treats `'rm` as the program name.
+        if first == "script" || first == "su" {
+            let dd = raw.iter().position(|t| unquote(t) == "--");
+            let c_end = dd.unwrap_or(raw.len());
+            let mut c_start: Option<usize> = None;
+            for check_idx in start + 1..c_end {
+                if unquote(raw[check_idx]) == "-c" {
+                    let mut rest = check_idx + 1;
+                    if rest < raw.len() && unquote(raw[rest]) == "--" { rest += 1; }
+                    if rest < raw.len() { c_start = Some(rest); }
+                    break;
+                }
+            }
+            if let Some(rest) = c_start {
+                cur = raw[rest..].join(" ").replace(['\'', '"'], "");
+                continue;
+            }
+            let pos_start = dd.map(|i| i + 1).unwrap_or(start + 1);
+            let positionals: Vec<usize> = (pos_start..raw.len())
+                .filter(|&pos_idx| {
+                    let a = unquote(raw[pos_idx]);
+                    a != "-" && !a.starts_with('-')
+                })
+                .collect();
+            if positionals.len() >= 2 {
+                cur = raw[positionals[1]..].join(" ").replace(['\'', '"'], "");
+                continue;
+            }
+            break;
+        }
+
 
         let is_command_string_wrapper = COMMAND_STRING_WRAPPERS.contains(&first.as_str());
         let prefix_entry = PREFIX_WRAPPERS
@@ -2270,4 +2306,21 @@ mod binary_candidates_tests {
             );
         }
     }
+    #[test]
+    fn script_and_su_are_unwrapped_for_policy() {
+        use crate::policy::binary_candidates_for_tests as bc;
+        let check = |cmd: &str, expect: &str| {
+            let got = bc(cmd).join(",");
+            assert_eq!(got, expect, "cmd: {cmd:?}, got: {got:?}");
+        };
+        check("script -c 'rm -rf /'", "script,rm");
+        check("su -c 'rm -rf /'", "su,rm");
+        check("script log.txt rm -rf /", "script,rm");
+        check("su root rm -rf /", "su,rm");
+        check("su - root rm -rf /", "su,rm");
+        check("script log.txt", "script");
+        check("su root", "su");
+        check("su", "su");
+    }
+
 }
