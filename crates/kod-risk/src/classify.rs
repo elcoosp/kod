@@ -286,6 +286,15 @@ pub fn tokenize(command: &str) -> Vec<String> {
                     tokens.push(c.to_string());
                 }
             }
+            // SEC-A-03: a backslash outside quotes escapes the next
+            // character. The shell strips it before word-splitting, so
+            // `\rm` runs `rm`. Preserving the next char literally is
+            // exactly what the shell does.
+            '\\' if !in_single && !in_double && i + 1 < chars.len() => {
+                current.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
             _ => current.push(c),
         }
         i += 1;
@@ -336,6 +345,10 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
             return (None, Vec::new(), true);
         }
         let tok = unquote(&tokens[i]);
+        // SEC-A-03: strip quote characters before matching. The shell
+        // removes quotes at word-splitting time, so `'r'm` runs `rm`;
+        // the raw token `'r'm` matches neither DESTRUCTIVE nor WRAPPERS.
+        let tok = strip_quotes(&tok);
         let Some((_, flag_args, positional_skip)) = WRAPPERS.iter().find(|(w, _, _)| *w == tok)
         else {
             // Not a wrapper: this is the program.
@@ -408,6 +421,52 @@ fn looks_like_env_assignment(t: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Remove every character from `s` that appears between single quotes
+/// (quotes included). Used by the raw-command scan so `echo '$(x)'`
+/// (a literal, never executed) is not mistaken for a substitution.
+fn strip_single_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_single = false;
+    for c in s.chars() {
+        match c {
+            '\'' => in_single = !in_single,
+            _ if in_single => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Strip every quote character from a token, matching the shell's
+/// quote removal at word-splitting time. `'r'm` → `rm`.
+fn strip_quotes(s: &str) -> String {
+    s.chars().filter(|c| *c != '"' && *c != '\'').collect()
+}
+
+/// True when `s` contains a lone `&` (a background operator): not `&&`,
+/// not `&>`, not `>&`.
+fn has_background_ampersand(s: &str) -> bool {
+    let b: Vec<char> = s.chars().collect();
+    for i in 0..b.len() {
+        if b[i] != '&' {
+            continue;
+        }
+        let prev = i.checked_sub(1).map(|j| b[j]);
+        let next = b.get(i + 1).copied();
+        // `&&`: the second `&` of the pair is skipped by the earlier
+        // index; the first is not a background op.
+        if next == Some('&') || prev == Some('&') {
+            continue;
+        }
+        // `&>` / `>&`: redirect, not background.
+        if next == Some('>') || prev == Some('>') {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 /// Split a command on pipes and semicolons into independent segments.
 fn split_segments(tokens: &[String]) -> Vec<Vec<String>> {
     let mut out = vec![Vec::new()];
@@ -443,8 +502,61 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         };
     }
 
-    let tokens = tokenize(command);
+    // SEC-A-03/A-04/A-05: the shell runs several constructs that the
+    // tokenizer cannot faithfully model — command substitution
+    // (`$(...)`, backticks), process substitution (`<(...)`,
+    // `>(...)`), a leading subshell `(`, and a lone `&` that starts
+    // a new command. Rather than chase each one through tokenization
+    // (where `$(` splits into `$` + `(`, and `&>` must not split),
+    // scan the raw command once and escalate. The module contract is
+    // "never refuses; escalates", so a false positive costs a prompt,
+    // not a blocked legitimate command.
     let mut findings: Vec<RiskFinding> = Vec::new();
+    {
+        let exec_constructs: &[(&str, &str)] = &[
+            ("$(", "command substitution"),
+            ("`", "backtick substitution"),
+            ("<(", "process substitution"),
+            (">(", "process substitution"),
+        ];
+        let unquoted = strip_single_quoted(command);
+        for (needle, label) in exec_constructs {
+            if unquoted.contains(needle) {
+                findings.push(RiskFinding {
+                    level: RiskLevel::Confirm,
+                    reason: format!(
+                        "{label} executes at expansion time and cannot be \
+                         inspected statically"
+                    ),
+                    target: command.to_string(),
+                });
+                break;
+            }
+        }
+        // A command that begins with a subshell `(` runs in a child
+        // shell; the tokenizer glues `(rm` into one token, so the
+        // program check sees an unknown program and returns Safe.
+        if unquoted.trim_start().starts_with('(') {
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: "a subshell `(` starts a command the classifier \
+                         cannot inspect statically"
+                    .to_string(),
+                target: command.to_string(),
+            });
+        }
+        // A lone `&` (not `&>`, not `&&`) starts a new command.
+        if has_background_ampersand(&unquoted) {
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: "a backgrounded `&` starts a command the classifier \
+                         does not inspect in this segment"
+                    .to_string(),
+                target: command.to_string(),
+            });
+        }
+    }
+    let tokens = tokenize(command);
 
     if tokens.is_empty() {
         return RiskAssessment {
@@ -767,6 +879,25 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         // redirect target is classified: a credential store or system
         // path is Catastrophic, scratch is Safe, anything else is at
         // least Confirm (the write destroys prior contents).
+        // SEC-A-05: `$(...)`, backticks, and `<(...)`/`>(...)`
+        // execute at expansion time regardless of the wrapping program.
+        // `echo $(rm -rf ~)` runs `rm` first. Escalate any argument
+        // carrying one; the classifier cannot see inside.
+        if args
+            .iter()
+            .map(|t| unquote(t))
+            .any(|a| a.contains("$(") || a.contains('`') || a.contains("<(") || a.contains(">("))
+        {
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: "argument contains a shell expansion that executes \
+                         at expansion time and cannot be inspected statically"
+                    .to_string(),
+                target: seg.join(" "),
+            });
+            continue;
+        }
+
         if prog_base == "tee" {
             for arg in args.iter() {
                 let a = unquote(arg);
@@ -868,14 +999,14 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             // is the link name, which is created or replaced. On a
             // credential path that destroys the file's contents. Only
             // the link operand is classified, not the target.
-            "ln" => {
-                let positional: Vec<String> = args
-                    .iter()
-                    .map(|t| unquote(t))
-                    .filter(|t| !t.starts_with('-'))
-                    .collect();
-                positional.last().cloned().into_iter().collect()
-            }
+            // SEC-A-09: classify ALL positionals, not just the link.
+            // `ln ~/.ssh/id_rsa ./notes.txt` (a hardlink) makes the key
+            // readable at a workdir path.
+            "ln" => args
+                .iter()
+                .map(|t| unquote(t))
+                .filter(|t| !t.starts_with('-'))
+                .collect(),
             _ => Vec::new(),
         };
         for target in &in_place_targets {
@@ -1169,6 +1300,69 @@ mod tests {
     fn a_leading_assignment_then_a_safe_command_stays_safe() {
         let a = assess("FOO=bar ls /work/proj", &ctx());
         assert!(a.level.runs_immediately(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn backslash_escaped_program_does_not_hide_rm() {
+        for c in [
+            "\\rm -rf /Users/dev",
+            "r\\m -rf /Users/dev",
+            "'r'm -rf /Users/dev",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(a.level != RiskLevel::Safe, "{c:?} got {:?}", a.level);
+        }
+    }
+
+    #[test]
+    fn subshell_program_does_not_hide_rm() {
+        // The raw scan escalates a subshell to Confirm (the module
+        // contract: "escalates, never Safe") rather than running the
+        // inner command unclassified.
+        let a = assess("(rm -rf /Users/dev)", &ctx());
+        assert!(a.level != RiskLevel::Safe, "got {:?}", a.level);
+    }
+
+    #[test]
+    fn lone_amp_splits_and_classifies_the_second_command() {
+        // A lone `&` is escalated to Confirm (the second command is not
+        // classified in this segment), never Safe.
+        let a = assess("sleep 1 & rm -rf /Users/dev", &ctx());
+        assert!(a.level != RiskLevel::Safe, "got {:?}", a.level);
+    }
+
+    #[test]
+    fn substitution_as_an_argument_escalates() {
+        for c in [
+            "echo $(rm -rf /Users/dev)",
+            "ls `rm -rf /Users/dev`",
+            "cat <(rm -rf /Users/dev)",
+        ] {
+            let a = assess(c, &ctx());
+            assert!(a.level != RiskLevel::Safe, "{c:?} got {:?}", a.level);
+        }
+    }
+
+    #[test]
+    fn tilde_user_form_escalates() {
+        for c in ["rm -rf ~dev", "rm -rf ~+", "rm -rf ~root/.ssh"] {
+            let a = assess(c, &ctx());
+            assert!(a.level != RiskLevel::Safe, "{c:?} got {:?}", a.level);
+        }
+    }
+
+    #[test]
+    fn working_dir_itself_is_not_safe() {
+        let a = assess("rm -rf /work/proj", &ctx());
+        assert!(!a.level.runs_immediately(), "got {:?}", a.level);
+    }
+
+    #[test]
+    fn ln_target_is_classified() {
+        // `ln` with a hardlink target under a credential store: the
+        // target is a read operand the blast radius depends on.
+        let a = assess("ln /Users/dev/.ssh/id_rsa ./notes.txt", &ctx());
+        assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
     }
 
     #[test]
