@@ -816,6 +816,25 @@ fn kind_for_tool(name: &str) -> &'static str {
 }
 
 /// Read one `Content-Length`-framed JSON-RPC message.
+/// SEC-B-06: fuzz entry point. Drives the async `read_frame` over an
+/// in-memory byte slice so the header + body state machine can be
+/// fuzzed synchronously from `libfuzzer-sys`. `&[u8]` implements
+/// `tokio::io::AsyncRead` (the pointer advances as bytes are read),
+/// so `BufReader<&[u8]>` gives the parser exactly the shape it
+/// expects with no adapter. A single-thread runtime is cheap enough
+/// for the fuzz loop and has no scheduling noise.
+#[doc(hidden)]
+pub fn read_frame_for_fuzz(data: &[u8]) -> Option<serde_json::Value> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .ok()?;
+    rt.block_on(async {
+        let mut reader = tokio::io::BufReader::new(data);
+        read_frame(&mut reader).await.ok().flatten()
+    })
+}
+
 async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut BufReader<R>,
 ) -> Result<Option<Value>> {
