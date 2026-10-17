@@ -386,7 +386,16 @@ impl ProtocolHandler for ConflictHandler {
         // since the scan shifts every registered offset onto unrelated
         // text. Compare the bytes now at [start, end) against the body
         // recorded at scan time.
-        let current_body = &text[b.start..b.end];
+        // BUG-D-03: `&text[b.start..b.end]` panics if a changed file
+        // shifted the offsets mid-char. `get` cannot panic; a `None`
+        // is the same "block changed" signal as a body mismatch.
+        let Some(current_body) = text.get(b.start..b.end) else {
+            return Err(ProtocolError::Malformed {
+                url: url.to_string(),
+                reason: "registered conflict block no longer fits the file (it changed)"
+                    .to_string(),
+            });
+        };
         if current_body != reg.body {
             return Err(ProtocolError::Malformed {
                 url: url.to_string(),
