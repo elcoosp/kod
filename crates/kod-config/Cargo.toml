@@ -6,6 +6,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# SEC-A-12 (audit 2026-10): share the risk-tokenizer so
+# `forbidden_binaries` / `binaries` see the same de-quoted program the
+# risk gate does. kod-risk depends on nothing in kod-config, so this
+# direction is safe (no cycle).
+kod-risk = { path = "../kod-risk" }
 kod-types = { path = "../kod-types" }
 serde = { workspace = true }
 globset = { workspace = true }
