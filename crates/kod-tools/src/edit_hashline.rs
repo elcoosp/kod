@@ -338,10 +338,6 @@ pub fn parse(text: &str) -> Result<(String, Tag, Vec<Op>), EditError> {
 
     for raw in text.lines() {
         let line = raw.trim_end();
-        // BUG-D-04: trim_end is for header/op matching; the payload
-        // keeps its trailing whitespace (markdown hard breaks, string
-        // literals, .gitignore). patch_text::extract already does this.
-        let payload_source = raw;
         if line.starts_with('[') && line.ends_with(']') {
             // W5: a second header is a malformed edit. Pre-fix it fell
             // through to the junk-ignore branch and every op after it
