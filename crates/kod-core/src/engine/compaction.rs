@@ -421,15 +421,21 @@ impl KodEngine {
                     );
                     return 0;
                 }
-                self.image_frames
-                    .write()
-                    .await
-                    .entry(key.to_string())
-                    .or_default()
-                    .push(kod_provider::request::ImageFrame {
-                        png_base64,
-                        media_type: "image/png".to_string(),
-                    });
+                // PERF-03: bound the frames per transcript. Pre-fix
+                // every image-compaction event pushed a frame with no
+                // trim; a long session grew this map unbounded.
+                const MAX_IMAGE_FRAMES_PER_KEY: usize = 4;
+                let mut g = self.image_frames.write().await;
+                let frames = g.entry(key.to_string()).or_default();
+                frames.push(kod_provider::request::ImageFrame {
+                    png_base64,
+                    media_type: "image/png".to_string(),
+                });
+                let over = frames.len().saturating_sub(MAX_IMAGE_FRAMES_PER_KEY);
+                if over > 0 {
+                    frames.drain(..over);
+                }
+                drop(g);
                 let dropped: Vec<kod_types::ChatMessage> = turns.drain(..end).collect();
                 let mut marker_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
