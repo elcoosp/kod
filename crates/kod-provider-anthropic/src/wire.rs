@@ -451,6 +451,10 @@ pub struct AnthropicStreamState {
     /// emits a final `StreamChunk::Done` when this is set and the byte
     /// stream ends, even if no further lines arrive.
     pub finished: bool,
+    /// TPD-01: set when the server sent an in-band SSE `error` event
+    /// (e.g. a mid-stream `overloaded_error`). The parser used to drop
+    /// these; the provider then reported a truncated turn as success.
+    pub stream_error: Option<String>,
     /// Accumulated input tokens from `message_start`. Includes the
     /// cache fields; the two separate fields below carry the split.
     pub input_tokens: usize,
@@ -668,6 +672,21 @@ pub fn parse_sse_line(
         Some("message_stop") => {
             state.finished = true;
             vec![StreamChunk::Done]
+        }
+        // TPD-01: an in-band error event (`event: error` /
+        // `{"type":"error",...}`) is a mid-stream failure. Record it on
+        // the state; the provider decides whether to retry or surface.
+        Some("error") => {
+            let kind = v
+                .pointer("/error/type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+            let msg = v
+                .pointer("/error/message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("");
+            state.stream_error = Some(format!("anthropic stream error ({kind}): {msg}"));
+            Vec::new()
         }
         _ => Vec::new(),
     }
