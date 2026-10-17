@@ -35,20 +35,36 @@ pub fn rust_symbols(source: &str) -> Option<Vec<AstSymbol>> {
 /// a name. Descends everywhere, so a nested `fn` inside a `mod` body
 /// is found — matching the regex extractor's `^\s*`-anchored scan.
 fn collect(node: tree_sitter::Node, source: &[u8], out: &mut Vec<AstSymbol>) {
-    if let Some(kind) = item_kind(node.kind())
-        && let Some(name_node) = node.child_by_field_name("name")
-        && let Ok(name) = name_node.utf8_text(source)
-    {
-        out.push(AstSymbol {
-            kind,
-            name: name.to_string(),
-            line: node.start_position().row + 1,
-        });
+    // SEC-B-05: same depth cap as `extract.rs::collect`. Recursion
+    // depth equals parse-tree depth; a file a model just wrote can
+    // produce a tree of arbitrary depth. Stack overflow on the main
+    // thread is SIGSEGV.
+    const MAX_TREE_DEPTH: usize = 1024;
+    fn walk(
+        node: tree_sitter::Node,
+        source: &[u8],
+        out: &mut Vec<AstSymbol>,
+        depth: usize,
+    ) {
+        if depth > MAX_TREE_DEPTH {
+            return;
+        }
+        if let Some(kind) = item_kind(node.kind())
+            && let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(name) = name_node.utf8_text(source)
+        {
+            out.push(AstSymbol {
+                kind,
+                name: name.to_string(),
+                line: node.start_position().row + 1,
+            });
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, source, out, depth + 1);
+        }
     }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect(child, source, out);
-    }
+    walk(node, source, out, 0);
 }
 
 /// Map a tree-sitter node kind to the repo map's kind string, or
