@@ -1510,6 +1510,14 @@ impl KodEngine {
                     bool,
                 )> = None;
                 let mut turn_err: Option<KodError> = None;
+                // BUG-C-02: capture the history length before the
+                // attempt loop, so a re-driven or fallen-through goal
+                // turn can drop the rounds a dead attempt appended.
+                // The other two loops already do this (M-16); the goal
+                // loop was the third caller and had no such guard, so a
+                // retry/fallback duplicated every tool round into the
+                // shared transcript.
+                let attempt_history_base = self.history_len_for(key).await;
                 for (i, model_ref) in goal_chain.iter().enumerate() {
                     let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
                         Ok(p) => p,
@@ -1523,6 +1531,11 @@ impl KodEngine {
                             continue;
                         }
                     };
+                    // BUG-C-02: drop any rounds a prior attempt
+                    // appended to the shared history before this one
+                    // runs (the goal-loop parity with the other two
+                    // attempt loops).
+                    self.truncate_history_to(key, attempt_history_base).await;
                     let mut attempt_pending = pending.clone();
                     let mut attempt_messages = goal_messages.clone();
                     let round = RoundContext {
