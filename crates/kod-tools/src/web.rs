@@ -190,6 +190,7 @@ impl WebFetchTool {
         &self,
         start: reqwest::Url,
         user_agent: &str,
+        allowed_domains: &[String],
     ) -> std::result::Result<reqwest::Response, String> {
         let mut current = start.clone();
         for hop in 0..=MAX_REDIRECTS {
@@ -199,6 +200,16 @@ impl WebFetchTool {
                 .to_string();
             if let Some(reason) = block_private_host(&host) {
                 return Err(format!("refusing to fetch {}: {}", current, reason));
+            }
+            // SEC-B-02: re-check the operator's allow-list on EVERY
+            // hop. The initial check in `execute` runs once on the
+            // literal start URL; without this, a redirect to any
+            // public host bypasses `allowed_domains` entirely.
+            if !allowed_domains.is_empty() && !domain_allowed(&host, allowed_domains) {
+                return Err(format!(
+                    "redirect target {} is outside the policy allow-list {:?}",
+                    current, allowed_domains
+                ));
             }
             let port = current
                 .port_or_known_default()
@@ -383,11 +394,19 @@ impl Tool for WebFetchTool {
         // next user agent, bounded at `MAX_UA_ROTATIONS` — never
         // executed. `run_retry_loop` is that caller.
         let url_for_retry = url.clone();
+        // SEC-B-02: thread the operator's domain allow-list into the
+        // per-hop revalidation. Cloned once and re-cloned per retry
+        // attempt (small Vec<String>, cheap).
+        let allowed_domains_for_retry = context.allowed_domains.clone();
         let response = match run_retry_loop(|_attempt, ua| {
             let url = url_for_retry.clone();
             let ua = ua.to_string();
+            let allowed = allowed_domains_for_retry.clone();
             async move {
-                let resp = match self.fetch_with_safe_redirects(url, &ua).await {
+                let resp = match self
+                    .fetch_with_safe_redirects(url, &ua, &allowed)
+                    .await
+                {
                     Ok(r) => r,
                     Err(msg) => return Err(msg),
                 };
@@ -913,7 +932,9 @@ mod tests {
     async fn safe_redirects_rejects_loopback() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://127.0.0.1:1/").unwrap();
-        let result = tool.fetch_with_safe_redirects(url, "test-agent").await;
+        let result = tool
+            .fetch_with_safe_redirects(url, "test-agent", &[])
+            .await;
         assert!(result.is_err(), "loopback URL must be refused");
         let msg = result.unwrap_err();
         assert!(
@@ -926,7 +947,9 @@ mod tests {
     async fn safe_redirects_rejects_metadata_host() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://metadata.google.internal/").unwrap();
-        let result = tool.fetch_with_safe_redirects(url, "test-agent").await;
+        let result = tool
+            .fetch_with_safe_redirects(url, "test-agent", &[])
+            .await;
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("metadata"), "got: {msg}");
