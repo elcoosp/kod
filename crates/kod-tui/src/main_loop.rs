@@ -624,8 +624,30 @@ impl TuiLoop {
         Ok(())
     }
 
-    /// Initialize terminal
+    /// Initialize terminal.
+    ///
+    /// TPD-07: any failure after `enable_raw_mode()` returns must
+    /// restore the previous state. The pre-fix shape returned via
+    /// `?` with raw mode still on, so the shell rendered garbage
+    /// until the user typed `reset`. The wrapper does best-effort
+    /// teardown on every error path.
     pub async fn init_terminal(&mut self) -> Result<()> {
+        let result = self.init_terminal_inner().await;
+        if result.is_err() {
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::event::DisableBracketedPaste,
+                crossterm::event::DisableMouseCapture,
+                crossterm::terminal::LeaveAlternateScreen,
+            );
+            let _ = crossterm::terminal::disable_raw_mode();
+            self.terminal = None;
+            kod_types::term::set_tui_active(false);
+        }
+        result
+    }
+
+    async fn init_terminal_inner(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()
             .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {}", e)))?;
 
