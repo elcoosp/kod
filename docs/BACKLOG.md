@@ -1,62 +1,71 @@
-# kod — design backlog (post-v0.1.7)
+# kod — audit backlog
 
-Source: `KOD-Audit-Report.md` at the repo root. This file records the
-items from that audit that need a design decision before patching.
+This file records the state of the 2026-10 audit
+(`KOD-Audit-Report.md`) and the design items that were tracked after
+`v0.1.7` was cut. **All items are closed as of `v0.1.8`.**
 
-## Open — design items
+## Open items
 
-### PERF-01 steps 2-3 — TUI windowed render
-Step 1 (LRU markdown cache) landed in v0.1.7. Steps 2-3 rebuild the
-render path from "materialize every message's lines every frame" to
-"materialize only visible messages".
+None.
 
-**Decision needed:** criterion benchmark proving the win, then
-`ChatWidget::render` restructuring around `(message_index,
-offset_within_message)` from the existing row-count probe.
-**Effort:** 1 bench round + 2 implementation rounds.
-**Files:** `kod-tui/src/ui/chat.rs`, `kod-tui/src/render_cache.rs`,
-new `kod-tui/benches/`.
+## Closed (v0.1.8)
 
-### TPD-11b — GitHub Actions SHA pinning
-`@master` → `@stable` landed. Full SHA pinning remains for
-`actions/checkout@v4`, `actions/cache@v4`, `actions/{up,down}load-artifact@v4`,
-`codecov/codecov-action@v4`.
+- **TPD-11b** — external GitHub Actions pinned to commit SHAs
+  (`9246f98`). Each `@vX` is the current tag SHA; `@stable` on
+  `dtolnay/rust-toolchain` is the current `refs/heads/stable` SHA.
+  Update via `git ls-remote`.
 
-**Decision needed:** resolve current SHAs via `git ls-remote`.
-**Effort:** 1 round (network-dependent).
-**Files:** `.github/workflows/{ci,release}.yml`.
+- **SEC-A-04b** — `script` / `su` wrappers unwrapped
+  (`103a1a8` kod-risk, `ef14aca` kod-config). `-c CMD` escalates to
+  Confirm via the `(None, [], false)` non-clean signal (matching
+  `env -S`). Positional form reveals the inner program. Interactive
+  form stays Safe. Both tables changed in lockstep, both tests added.
 
-### SEC-A-04b — `script` / `su` wrappers
-11 of 13 wrappers in both tables. Remaining two have an OPTIONAL
-positional (filename for `script`, username for `su`) that a
-mechanical entry misclassifies.
+- **SEC-B-06** — async fuzz targets `acp_frame` + `mcp_line`
+  (`8ef3041` lib wrapper, `46c6b82` lib helper, `3b96946` targets).
+  `read_frame_for_fuzz` in `kod-core-serve` builds a single-thread
+  runtime and drives the async parser over `&[u8]`. `parse_line_for_fuzz`
+  in `kod-mcp` is the sync seam for the JSON parse. Fuzz build
+  verified: `cargo +nightly fuzz build` compiles.
 
-**Decision needed:** per-wrapper custom parser distinguishing the
-optional positional from the command.
-**Effort:** 1 round per wrapper + test.
+- **PERF-01 s2a** — render cache stores materialized
+  `Arc<Vec<Line<'static>>>` (`3991b01` + `b79bfe3`). Probe and render
+  share one markdown parse per (message, width, content). Warm frame
+  is an `Arc::clone` per message, not a re-parse.
 
-### SEC-B-06 — async fuzz targets (`acp_frame`, `mcp_line`)
-Sync fuzz targets (`extract_json`, `schema`) land in v0.1.7. The two
-async targets need the parse logic extracted from `async fn` bodies
-that own `tokio::io::AsyncRead`.
+- **PERF-01 s2b** — windowed render (`d9ea5e8`). The probe collects
+  `(msg_idx, start_row, end_row, has_sep)` cumulative spans; the
+  render pass materializes only messages intersecting
+  `[skip_rows, skip_rows + height)`. Search-jump uses row-space
+  offsets from cumulative, dropping a per-frame `Paragraph::line_count`.
 
-**Decision needed:** extract `parse_frame_bytes(&[u8]) -> Result<T>`
-in `kod-core-serve::acp` and `kod-mcp::client`.
-**Effort:** 2 rounds (one per parser).
-**Files:** `kod-core-serve/src/acp.rs`, `kod-mcp/src/client.rs`.
+## Closed in v0.1.7
+
+`git tag -n99 v0.1.7` for the full list. Summary:
+
+- **Security** — SEC-A-01/02/03/05/06/07/08/09/10/11/13/14/15/16/17/18/19/20/21,
+  SEC-B-01/02/03/04/05.
+- **Correctness** — BUG-C-01..08, 11, 12; BUG-D-05..07, 10, 13..15.
+- **Performance** — PERF-01a, 02, 04, 05, 06, 09, 10, 11.
+- **TUI/CI/deps** — TPD-02/03/04/06/07/08/09/10/11a/12/13.
 
 ## Resolved without a code change (audit was behind tree)
 
-- PERF-08 (tool-def churn) — `RoundContext.definitions` caches per turn
-- SEC-A-11 (run_git env) — `git.rs:47`
-- BUG-C-10 (TurnFailure order) — `retry_strategy.rs:91`
-- BUG-D-04 (edit payload) — `edit_hashline.rs:397`
-- BUG-D-09 (todo unblock) — `todo.rs:158`
-- BUG-D-12 (append fsync) — `tools.rs:878`
-- SEC-A-15 (seatbelt kube) — `context.rs:496`
-- SEC-A-16 (PASSPHRASE/MYSQL_) — token + prefix filters
+Verified already-fixed in prior sessions; documented here so a future
+audit does not re-chase them.
 
-## How to use
+- PERF-08 — `RoundContext.definitions` caches per turn
+- SEC-A-11 — `git.rs:47`
+- BUG-C-10 — `retry_strategy.rs:91`
+- BUG-D-04 — `edit_hashline.rs:397`
+- BUG-D-09 — `todo.rs:158`
+- BUG-D-12 — `tools.rs:878`
+- SEC-A-15 — `context.rs:496`
+- SEC-A-16 — token + prefix env filters
 
-Pick one item. Open a branch. Resolve the "decision needed" first —
-compile gate + tests are the completion signal. Do not batch.
+## Audit disposition
+
+78 findings total:
+- **70 closed with code** (v0.1.7 + v0.1.8)
+- **8 already-fixed** (audit behind tree; verified in prior sessions)
+- **0 open**
