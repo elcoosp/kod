@@ -156,6 +156,7 @@ impl KodEngine {
             telemetry: RwLock::new(kod_telemetry::Telemetry::disabled()),
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
+            ttsr_has_rules: std::sync::atomic::AtomicBool::new(false),
             retention_cursors: RwLock::new(HashMap::new()),
             deferred_diagnostics: std::sync::Arc::new(
                 kod_core_state::deferred_diagnostics::DeferredDiagnostics::new(),
