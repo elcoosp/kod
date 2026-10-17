@@ -188,7 +188,8 @@ fn hit_from_rg_match(v: &serde_json::Value) -> Option<SearchHit> {
 fn which_rg() -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
-        let candidate = dir.join("rg");
+        // BUG-D-11: on Windows the binary is `rg.exe`.
+        let candidate = dir.join(if cfg!(windows) { "rg.exe" } else { "rg" });
         if candidate.is_file() {
             return Some(candidate);
         }
