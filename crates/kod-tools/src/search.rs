@@ -137,13 +137,16 @@ impl Tool for SearchFilesTool {
 
         // Collect the files to search. A single file searches just
         // itself; a directory walks (respecting .gitignore).
-        let files: Vec<std::path::PathBuf> = if resolved.is_file() {
-            vec![resolved.clone()]
+        // PERF-04: search_files is the third hot walk caller. The
+        // pre-fix code deep-cloned the cached `Vec<PathBuf>` on every
+        // call; `Arc` makes a hit cheap. The `is_file()` filter moves
+        // into the loop body below (inline `continue`) because we
+        // cannot filter an `Arc<Vec<PathBuf>>` without re-collecting
+        // — which would defeat the point.
+        let files: std::sync::Arc<Vec<std::path::PathBuf>> = if resolved.is_file() {
+            std::sync::Arc::new(vec![resolved.clone()])
         } else if resolved.is_dir() {
-            crate::tools::gitaware_walk(&resolved, true)
-                .into_iter()
-                .filter(|p| p.is_file())
-                .collect()
+            crate::tools::gitaware_walk_arc(&resolved, true)
         } else {
             return Ok(ToolResult::Error(format!(
                 "not found: {}",
@@ -154,7 +157,10 @@ impl Tool for SearchFilesTool {
         let mut hits: Vec<Value> = Vec::new();
         let mut truncated = false;
 
-        'outer: for file in files {
+        'outer: for file in files.iter() {
+            if !file.is_file() {
+                continue;
+            }
             // A read-protected file is never searched under `Refuse`
             // (the same posture `read_file` takes); under `Redact`
             // its matched lines are masked below.
