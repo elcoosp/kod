@@ -475,7 +475,9 @@ fn is_valid_id(id: &str) -> bool {
     }
     match rest.split_once('-') {
         Some((pid, n)) => {
-            pid.len() == 7
+            // BUG-C-09: `{pid:07}` is a minimum width; a Windows pid
+            // can exceed 7 digits, so accept 1..=10.
+            (1..=10).contains(&pid.len())
                 && n.len() == 10
                 && pid.bytes().all(|b| b.is_ascii_digit())
                 && n.bytes().all(|b| b.is_ascii_digit())
