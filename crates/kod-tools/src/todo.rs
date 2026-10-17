@@ -272,9 +272,17 @@ impl Tool for TodoTool {
                 if text.is_empty() {
                     return Ok(ToolResult::Error("todo text must not be empty".to_string()));
                 }
-                let id = self
+                // BUG-D-10: two tools sharing one list must not mint
+                // duplicate ids. Compute the id under the list lock so
+                // a concurrent add sees the id that was already written;
+                // `max(tool_next, list_max + 1)` keeps the
+                // monotonic-after-clear invariant.
+                let tool_next = self
                     .next_id
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut list = self.list.write().await;
+                let list_max = list.iter().map(|t| t.id).max().unwrap_or(0);
+                let id = tool_next.max(list_max + 1);
                 // Optional `blocked_by`: ids this item waits on. Ids
                 // that do not exist yet are accepted — the model may
                 // add the prerequisite next; the item is simply never
@@ -295,7 +303,8 @@ impl Tool for TodoTool {
                     confidence: ConfidenceState::Speculative,
                     evidence: Vec::new(),
                 };
-                self.list.write().await.push(item.clone());
+                list.push(item.clone());
+                drop(list);
                 Ok(ToolResult::Success(serde_json::json!({
                     "id": id,
                     "text": item.text,
