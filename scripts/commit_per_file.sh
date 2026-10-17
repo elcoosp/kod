@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-cd /Users/adm/Documents/Repos/kod
+cd "$(git rev-parse --show-toplevel)"
 
 # Modified files (M)
 modified=$(git diff --name-only --diff-filter=M)
