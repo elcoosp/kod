@@ -490,6 +490,10 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         // a later allow could re-open a subtree, so these come after
         // any allow we add below.
         let secrets = [
+            // SEC-A-15: kube config carries client certs + cluster
+            // tokens; kod-risk's PROTECTED_DIRS already covers
+            // ~/.kube, the sandbox did not.
+            format!("{h}/.kube"),
             format!("{h}/.ssh"),
             format!("{h}/.aws"),
             format!("{h}/.gnupg"),
