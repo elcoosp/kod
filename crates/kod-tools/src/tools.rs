@@ -1912,7 +1912,18 @@ impl Tool for GrepTool {
         // Compile the caller's pattern as a regex. An invalid pattern
         // becomes a ToolResult::Error so the model sees its own mistake
         // instead of the whole tool loop stalling.
-        let regex = match Regex::new(pattern) {
+        //
+        // PERF-09: only compile ONCE. The pre-fix path compiled the
+        // bare pattern and, when case-insensitive, compiled it a
+        // second time as `(?i){pattern}` and threw the first away.
+        // This site runs per tool call (up to dozens per turn on a
+        // grep-heavy session).
+        let pattern_to_compile = if case_insensitive {
+            format!("(?i){}", pattern)
+        } else {
+            pattern.to_string()
+        };
+        let regex = match Regex::new(&pattern_to_compile) {
             Ok(r) => r,
             Err(e) => {
                 return Ok(ToolResult::Error(format!(
@@ -1920,22 +1931,6 @@ impl Tool for GrepTool {
                     pattern, e
                 )));
             }
-        };
-        // `regex` has no inline (?i) rebuild helper, so recompile with
-        // the case-insensitive flag when requested.
-        let regex = if case_insensitive {
-            let folded = format!("(?i){}", pattern);
-            match Regex::new(&folded) {
-                Ok(r) => r,
-                Err(e) => {
-                    return Ok(ToolResult::Error(format!(
-                        "invalid regex {:?}: {}",
-                        pattern, e
-                    )));
-                }
-            }
-        } else {
-            regex
         };
 
         // `gitaware_walk` already roots at `resolved` and depth-limits
