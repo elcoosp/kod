@@ -400,7 +400,14 @@ impl LspClient {
             // before reading the wire. A `publishDiagnostics` that
             // landed while the caller awaited a specific id is now in
             // this queue, not on the socket.
-            let msg = if let Some(buffered) = self.pending_notifications.pop_back() {
+            // Drain FIFO (`pop_front`), matching how the buffer is
+            // filled (`push_back`). Pre-fix this used `pop_back`, so
+            // two buffered publishes for the same file were processed
+            // newest-first and `latest` ended on the *older* one — a
+            // false-clean if a cold-index server's empty publish
+            // preceded the real one. FIFO preserves arrival order, so
+            // the newest publish is processed last and wins.
+            let msg = if let Some(buffered) = self.pending_notifications.pop_front() {
                 buffered
             } else {
                 let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;

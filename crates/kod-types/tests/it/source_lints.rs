@@ -584,3 +584,56 @@ fn content_reader_must_consult_read_protection() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a queue filled at one end and drained at the other
+// ---------------------------------------------------------------------------
+//
+// `LspClient::pending_notifications` is filled with `push_back` and must
+// be drained FIFO (`pop_front`) so buffered publishes are processed in
+// arrival order — the newest last, so it wins. Pre-fix it drained with
+// `pop_back` (LIFO): two buffered diagnostics for the same file left the
+// *older* one as `latest`, a false-clean the settle rule exists to
+// prevent. A one-token mismatch with no functional test reaching it.
+
+#[test]
+fn pending_notifications_fill_and_drain_match() {
+    let path = workspace_root().join("crates/kod-lsp/src/client.rs");
+    let lines = production_lines(&path);
+
+    let fills: Vec<(usize, String)> = lines
+        .iter()
+        .filter(|(_, l)| l.contains("pending_notifications.push_back("))
+        .cloned()
+        .collect();
+    let drains: Vec<(usize, String)> = lines
+        .iter()
+        .filter(|(_, l)| {
+            l.contains("pending_notifications.pop_front(")
+                || l.contains("pending_notifications.pop_back(")
+        })
+        .cloned()
+        .collect();
+
+    if fills.is_empty() {
+        panic!("no pending_notifications.push_back found; the lint's anchor moved");
+    }
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    for (line, text) in &drains {
+        if text.contains("pending_notifications.pop_back(") {
+            bad.push((path.clone(), *line, text.trim().to_string()));
+        }
+    }
+    // The overflow-eviction site legitimately pops the front; a
+    // `pop_back` there would drop the newest, which is also wrong, so
+    // flagging any `pop_back` is correct.
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "pending_notifications is filled with `push_back`; it must be \
+             drained with `pop_front` (FIFO) so buffered publishes are \
+             processed in arrival order. A `pop_back` makes the newest \
+             arrive first and leaves the oldest as the latest answer:",
+        );
+    }
+}
