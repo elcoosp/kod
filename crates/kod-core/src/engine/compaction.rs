@@ -565,9 +565,17 @@ impl KodEngine {
                 if messages.len() < 4 {
                     return false;
                 }
+                // BUG-C-04: an arbitrary drain cuts tool pairs and the
+                // retried request 400s again. Use the pair-safe cutter
+                // the compaction ladder already uses.
                 let keep = messages.len() / 2;
-                let drop = messages.len() - keep;
-                messages.drain(0..drop);
+                let Some(cut) = crate::compaction::safe_cutoff(messages, keep) else {
+                    return false;
+                };
+                if cut == 0 {
+                    return false;
+                }
+                messages.drain(0..cut);
                 true
             }
             _ => false,
