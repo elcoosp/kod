@@ -37,6 +37,23 @@ pub fn truncate_chars(s: &str, max: usize) -> &str {
     &s[..floor_char_boundary(s, max)]
 }
 
+/// The longest prefix of `s` that is at most `max` bytes and ends
+/// on a UTF-8 char boundary.
+///
+/// Byte-cap counterpart to [`truncate_chars`]. Use this at sites
+/// whose budget is expressed in **bytes** (prompt assembly, hook
+/// output, memory-content caps, embedder-input caps). Passing a
+/// byte budget to a char cap would allow up to four times the
+/// intended bytes for CJK content — this function exists so the
+/// two contracts do not collide under a single name.
+///
+/// Never panics. Same boundary behavior as the pre-split
+/// `truncate_chars`.
+#[inline]
+pub fn truncate_bytes(s: &str, max: usize) -> &str {
+    &s[..floor_char_boundary(s, max)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +127,67 @@ mod tests {
         // cut between them.
         let s = "e\u{0301}x";
         let out = truncate_chars(s, 2); // byte 2 is between 'e' and the combining mark
+        assert!(out.is_char_boundary(out.len()));
+    }
+}
+
+#[cfg(test)]
+mod truncate_bytes_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_under_cap_is_unchanged() {
+        assert_eq!(truncate_bytes("hello", 10), "hello");
+    }
+
+    #[test]
+    fn ascii_over_cap_is_cut_at_max() {
+        assert_eq!(truncate_bytes("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn empty_string_returns_empty() {
+        assert_eq!(truncate_bytes("", 5), "");
+    }
+
+    #[test]
+    fn zero_cap_returns_empty() {
+        assert_eq!(truncate_bytes("hello", 0), "");
+        assert_eq!(truncate_bytes("héllo", 0), "");
+    }
+
+    #[test]
+    fn multibyte_is_not_split() {
+        let s = "café";
+        let out = truncate_bytes(s, 4);
+        assert_eq!(out, "caf");
+        assert!(out.is_char_boundary(out.len()));
+    }
+
+    #[test]
+    fn cjk_cut_in_the_middle_does_not_panic() {
+        let s = "你好世界";
+        for n in 0..=s.len() + 2 {
+            let out = truncate_bytes(s, n);
+            assert!(out.is_char_boundary(out.len()), "cut {n} not on a boundary");
+            assert!(s.starts_with(out), "cut {n} not a prefix");
+        }
+    }
+
+    #[test]
+    fn emoji_is_not_split() {
+        let s = "deploy 🚀 now";
+        for n in 0..=s.len() {
+            let out = truncate_bytes(s, n);
+            assert!(out.is_char_boundary(out.len()));
+        }
+        assert_eq!(truncate_bytes(s, 9), "deploy ");
+    }
+
+    #[test]
+    fn combining_marks_are_preserved_or_dropped_whole() {
+        let s = "e\u{0301}x";
+        let out = truncate_bytes(s, 2);
         assert!(out.is_char_boundary(out.len()));
     }
 }
