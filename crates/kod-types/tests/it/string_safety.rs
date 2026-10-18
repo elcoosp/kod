@@ -10,7 +10,7 @@
 //! invariants on every input.
 
 use kod_types::redact::{RedactRule, Redactor};
-use kod_types::strutil::{floor_char_boundary, truncate_bytes};
+use kod_types::strutil::{floor_char_boundary, truncate_bytes, truncate_chars};
 use proptest::prelude::*;
 
 /// A strategy producing arbitrary `String` values. The proptest
@@ -46,6 +46,32 @@ proptest! {
         let out = truncate_bytes(&s, n);
         prop_assert!(out.len() <= n.min(s.len()));
         prop_assert!(s.starts_with(out));
+    }
+
+    /// `truncate_chars(s, n)` never panics and returns a slice whose
+    /// **character count** is at most `n`. The session-15 P2 was that
+    /// the old implementation capped by bytes: `truncate_chars("¡", 1)`
+    /// returned `""` because `"¡"` is 2 bytes and byte 1 lands mid-char.
+    /// This is the property that would have caught it — the byte
+    /// property above never could, because it never asserted anything
+    /// about char counts.
+    #[test]
+    fn truncate_chars_never_panics_and_is_char_bounded(s in any_string(), n in 0usize..256) {
+        let out = truncate_chars(&s, n);
+        prop_assert!(out.chars().count() <= n);
+        prop_assert!(out.chars().count() <= s.chars().count());
+        prop_assert!(s.starts_with(out));
+        prop_assert!(out.is_char_boundary(out.len()));
+    }
+
+    /// The full-length identity: asking for exactly `s.chars().count()`
+    /// characters always returns the whole string. This is the
+    /// 256-case property from the handoff that failed on the first
+    /// non-ASCII input pre-fix.
+    #[test]
+    fn truncate_chars_at_char_count_is_identity(s in any_string()) {
+        let out = truncate_chars(&s, s.chars().count());
+        prop_assert_eq!(out, s.as_str());
     }
 
     /// A redactor with a custom rule whose pattern matches any
