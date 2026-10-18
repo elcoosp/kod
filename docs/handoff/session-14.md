@@ -79,3 +79,80 @@ See `docs/handoff/session-13.md` "New environment quirks":
 - Tests: pass (exact count from round 73's test run)
 - `cargo deny check bans`: ok (TPD-10 skip documented)
 - Fuzz build: both sync + async targets compile
+
+## Post-v0.1.8 bug hunt
+
+After `v0.1.8` was cut, a targeted bug-hunt pass on recently-changed
+code (the TUI windowed render and provider streaming retry) found
+three bugs. All fixed; `v0.1.9` ships the fixes.
+
+### Confirmed bugs
+
+- **P1: windowed render omitted streaming body** (`d7f699a`,
+  `crates/kod-tui/src/ui/chat.rs`). The windowed branch of
+  `ChatWidget::render` materialized only `cumulative[]` messages.
+  The streaming body is not a `Message`, so a user watching a reply
+  stream in with a scrolled viewport saw blank rows where the
+  in-progress text should appear. Fix: append the tail (hidden
+  footer + streaming body) when the viewport reaches it
+  (`after_msg_row < skip_rows + height`).
+
+- **P1: windowed render double-skip** (`d7f699a`, same file). The
+  windowed loop front-skipped `skip_rows_usize - msg_start` rows of
+  the first visible message, then used the same value as the
+  Paragraph scroll offset. Content placed one message's worth too
+  far down. Fix: drop the front-skip; the Paragraph scroll alone
+  handles the offset.
+
+- **P2: no per-attempt deadline on streaming** (`3b56e43` anthropic,
+  `81d998d` openai). Both providers' streaming read loops wrapped
+  `.next()` in a bare `while let Some(...)` with no wall-clock
+  bound. A wedged or hostile endpoint trickling unique chunks
+  never surfaced an error — `tracker.is_safe_to_retry` never fired
+  because there was nothing to retry. `MAX_SSE_LINE_BYTES` bounds
+  ONE line, not the attempt DURATION. Fix: 300s per-attempt
+  deadline; timeout surfaces as a retryable transport error.
+
+### Cleared hypotheses (no fix needed)
+
+Verified correct by diagnostic; recorded so a future audit does not
+re-chase them:
+
+- **`drop(permit)` symmetry** — both providers have two drop sites
+  matching the two retry branches (lines 819/1029 OpenAI,
+  719/933 Anthropic).
+- **Per-attempt buffer / tracker** — `tracker`, `buffered`,
+  `attempt_deadline` all declared inside the attempt scope; no
+  stale state between retries.
+- **Anthropic SSE line cap is correct for `bytes_stream()`** —
+  chunk-wise accumulation with a post-chunk check is bounded to
+  `MAX + one_chunk`, never unbounded. The `.take()` pattern from
+  ACP/MCP applies to `AsyncRead::read_line`, not chunked streams.
+- **OpenAI SSE line cap: not needed at this layer** — the stream
+  is decoded inside `adk-model`, yielding parsed `Part::*` variants,
+  not raw bytes. Nothing to bound at the kod layer.
+- **`su -- -c foo`** — nonsensical at runtime; the classifier's
+  behavior matches reality.
+- **`resolve_path(&absolute)`** — accepts absolute correctly
+  (`context.rs:1086-1091`).
+- **PERF-06 `spawn_embed` cache invalidation gap** —
+  `metadata.embedding` is not part of the cached retrieval view;
+  cosine comes from `vector_index`.
+- **`as u16` casts** — every site bounded via `.min(u16::MAX)` or
+  source already `u16`.
+
+### TPD-01 disposition note
+
+The round-36 commit (`9fbb46f`) claimed "retrying" in the message
+but delivered only the "surface" half — the audit's actual goal
+(surfacing the in-band error rather than reporting the truncated
+turn as success). The retry optimization the sketch implied
+(provider-level retry on in-band error when the attempt hasn't
+committed) is not present. Downstream chain-fallback handles
+recovery. Not a bug; documentation mismatch noted for the record.
+
+### Release notes
+
+`v0.1.9` is a bug-fix release on top of `v0.1.8`. Same gates:
+tests, clippy `-D warnings`, fmt --check. See the `v0.1.9` tag
+message for the full narrative.
