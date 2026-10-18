@@ -1085,17 +1085,25 @@ fn test_append_round_text_separates_rounds() {
 
 #[test]
 fn test_truncate_chars_respects_boundaries() {
-    // "café": the é is two UTF-8 bytes. Asking for a byte offset
-    // mid-codepoint must round down to the previous boundary.
+    // truncate_chars caps by CHARACTER count, not bytes (session-16
+    // fix). "café au lait" is 12 chars / 13 bytes; a cap of 3 keeps
+    // "caf", a cap of 4 keeps "café", a cap of 5 keeps "café ".
     let s = "café au lait";
+    assert_eq!(s.chars().count(), 12);
+    assert_eq!(s.len(), 13);
     assert_eq!(truncate_chars(s, 100), s);
     assert_eq!(truncate_chars(s, 3), "caf");
-    // 4 bytes lands between 0xc3 and 0xa9 — mid-é. Round down to 3.
-    assert_eq!(truncate_chars(s, 4), "caf");
-    // 5 bytes ends exactly after the é.
-    assert_eq!(truncate_chars(s, 5), "café");
+    assert_eq!(truncate_chars(s, 4), "café");
+    assert_eq!(truncate_chars(s, 5), "café ");
+    assert_eq!(truncate_chars(s, 12), s);
     // Degenerate: max 0 returns the empty string.
     assert_eq!(truncate_chars(s, 0), "");
+    // Every cap is a boundary-respecting prefix of the input.
+    for n in 0..=s.chars().count() + 2 {
+        let out = truncate_chars(s, n);
+        assert!(out.is_char_boundary(out.len()));
+        assert!(s.starts_with(out));
+    }
 }
 
 /// last_prompt() must return the grounded prompt after a
@@ -1320,17 +1328,28 @@ async fn test_record_turn_does_not_panic_mid_multibyte() {
 
 #[test]
 fn test_truncate_does_not_panic_mid_multibyte() {
-    // Reproduce the exact panic the old `&rendered[..4000]` could
-    // hit: 3999 ASCII bytes, then a 2-byte 'é' so that byte offset
-    // 4000 is the middle of the codepoint.
+    // 3999 ASCII + é (1 char, 2 bytes) + 4 ASCII = 4004 chars /
+    // 4005 bytes. truncate_chars caps by CHARACTER count (session-16
+    // fix), so a cap of 4000 keeps 3999 a's + é = 4000 chars ending
+    // at 4001 bytes. The char-cap cannot land mid-codepoint by
+    // construction; the old byte-cap could, which was the original
+    // panic this test was written for.
     let mut s = "a".repeat(3999);
     s.push('é');
     s.push_str("tail");
-    assert_eq!(s.len(), 3999 + 2 + 4);
+    assert_eq!(s.chars().count(), 4004);
+    assert_eq!(s.len(), 4005);
     // Must not panic.
     let cut = truncate_chars(&s, 4000);
-    assert_eq!(cut.len(), 3999, "rounded down to the boundary before é");
+    assert_eq!(cut.chars().count(), 4000);
+    assert_eq!(cut.len(), 4001, "3999 a's + the 2-byte é");
     assert!(cut.is_char_boundary(cut.len()));
+    // Boundary sweeps: every cap yields a prefix ending on a boundary.
+    for n in [0usize, 1, 3999, 4000, 4004, 5000] {
+        let out = truncate_chars(&s, n);
+        assert!(out.is_char_boundary(out.len()));
+        assert!(s.starts_with(out));
+    }
 }
 
 /// list_files routes through summarize_tool_result so the model

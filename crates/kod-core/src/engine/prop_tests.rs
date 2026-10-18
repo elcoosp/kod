@@ -107,15 +107,18 @@ proptest! {
     }
 
     /// truncate_chars(&s, max) is always a char-boundary prefix of s
-    /// no longer than max bytes. The whole reason the helper exists
-    /// is that &s[..max] panics on multibyte input.
+    /// no longer than max CHARACTERS. The whole reason the helper
+    /// exists is that &s[..max] panics on multibyte input; post-fix
+    /// (session 16), it caps by chars, not bytes — the old byte
+    /// assertion belonged to truncate_bytes and moved with it.
     #[test]
     fn prop_truncate_chars_is_a_safe_prefix(
         s in ".{0,2000}",
         max in 0usize..2000,
     ) {
         let out = truncate_chars(&s, max);
-        prop_assert!(out.len() <= max);
+        prop_assert!(out.chars().count() <= max);
+        prop_assert!(out.chars().count() <= s.chars().count());
         prop_assert!(s.is_char_boundary(out.len()));
         prop_assert!(s.starts_with(out));
     }
