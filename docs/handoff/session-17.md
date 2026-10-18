@@ -239,3 +239,41 @@ newly done. Options ranked by cost:
    lint + bug report (`v0.1.11`), five ACP/MCP seam tests, ACP cancel,
    and a real MCP server integration. Everything that needed code
    has code. Everything else is CI-policy.
+
+## Correction (session 18) — LSP live is covered; the earlier claim was wrong
+
+The "Session 18 progress" section above says, under "What A1 does
+NOT do", that the LSP live-test surface was "partially explored" and
+that reading `kod-lsp`'s live test was "the next A1 candidate." That
+is **factually wrong**, and reading the file settled it:
+
+`crates/kod-lsp/src/client.rs` has a full live integration test,
+`test_rust_analyzer_did_change_clears_error`, that:
+
+- spawns a real `rust-analyzer` via `LspClient::start`;
+- writes a fixture crate with a type error (`didOpen`);
+- asserts the error is reported;
+- rewrites the file with the fix (`didChange`);
+- asserts the error clears — which specifically catches the
+  "second `didOpen` returns stale diagnostics" bug.
+
+It is **not** `#[ignore]`'d. It uses the runtime-skip pattern:
+`binary_on_path("rust-analyzer")` returns early with an `eprintln!`
+if absent, and a **handshake probe** (`client.initialize()`) then
+returns early if the binary is a rustup shim with no toolchain. That
+is strictly better than `#[ignore]`: the test runs wherever a real
+`rust-analyzer` exists, and skips gracefully everywhere else, with no
+`--run-ignored` flag needed.
+
+This is the same over-claim pattern the session-16 handoff recorded:
+a gap was named from memory, and reading the code showed it covered.
+The lesson stands — **read the test file before writing a gap into a
+handoff, not after.** The LSP entry in "What to do next" (item 1) is
+void; there is no LSP gap to close.
+
+What is still genuinely untested: **two concurrent clients on the
+`kod serve` unix socket.** `serve_roundtrip.rs` covers one client
+(`shutdown`, `unknown method`, second-daemon-refuses) but never two
+at once. The accept loop spawns per-connection, so the contract
+"each client's request is answered independently" is the thing to
+pin. That is the one remaining gap, and it is being tested next.
