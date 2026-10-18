@@ -637,6 +637,7 @@ impl MemoryManager {
         let vector_index = std::sync::Arc::clone(&self.vector_index);
         let inflight = std::sync::Arc::clone(&self.inflight_embeddings);
         let notify = std::sync::Arc::clone(&self.embedding_complete);
+        let entries_cache = std::sync::Arc::clone(&self.entries_cache);
         inflight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         tokio::spawn(async move {
             // T1-H1: guard the inflight counter. Drop runs on both
@@ -665,6 +666,19 @@ impl MemoryManager {
                         e.metadata.embedding = Some(vec.clone());
                         if let Err(err) = long_term.update(e).await {
                             tracing::warn!(error = %err, "background embed: persist failed");
+                        } else {
+                            // Bug-hunt H2: the cached view of the
+                            // long-term table was populated by a read
+                            // between the original store and this
+                            // background update. `long_term.update`
+                            // bypasses the `lt_store` wrapper (the
+                            // spawned task owns the raw handle), so
+                            // without this the cache holds the entry
+                            // with `metadata.embedding = None` while the
+                            // store has the vector. Any future reader
+                            // that inspects the cached entry's
+                            // `embedding` field sees stale data.
+                            *entries_cache.write() = None;
                         }
                     }
                     // Insert into the in-memory index.
@@ -719,6 +733,16 @@ impl MemoryManager {
         let r = self.long_term.remove(id).await;
         if r.is_ok() {
             self.invalidate_entries_cache();
+            // Bug-hunt H3: the vector index is a parallel store to the
+            // long-term table. Deleting the entry without removing its
+            // vector leaves a ghost in the index: `search` returns the
+            // id, then `long_term.get(id)` returns None and the reader
+            // filters it — but the entry is silently slow, and the
+            // index grows by one per removed memory for the process
+            // lifetime. Remove the vector on every successful delete.
+            if let Some(idx) = self.vector_index.write().as_mut() {
+                idx.remove(id);
+            }
         }
         r
     }
@@ -726,6 +750,13 @@ impl MemoryManager {
         let r = self.long_term.remove_batch(ids).await;
         if r.is_ok() {
             self.invalidate_entries_cache();
+            // Bug-hunt H3: same ghost-index issue as lt_remove — drop
+            // the vectors for every deleted id.
+            if let Some(idx) = self.vector_index.write().as_mut() {
+                for id in ids {
+                    idx.remove(id);
+                }
+            }
         }
         r
     }
@@ -2594,5 +2625,78 @@ mod contradiction_resolution_tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), flush)
             .await
             .expect("flush_embeddings must not hang on a panicked embed task");
+    }
+}
+
+#[cfg(test)]
+mod memory_cache_and_index_invalidation {
+    // Bug-hunt post-v0.1.9. Two invariants the memory manager's
+    // cache + index must maintain:
+    //
+    //   H2: after the background-embed task persists a vector onto an
+    //       entry, the cached `Vec<MemoryEntry>` must not continue
+    //       holding the pre-embedding snapshot. `long_term.update`
+    //       bypasses the `lt_store` wrapper (spawn_embed owns the raw
+    //       handle), so the invalidation must be explicit inside the
+    //       closure.
+    //
+    //   H3: `vector_index` is a parallel store to the long-term table.
+    //       Removing a memory from the table without removing its
+    //       vector leaves a ghost — `search` returns the id, readers
+    //       filter the None that `long_term.get` produces, and the
+    //       index grows by one per removal for the process lifetime.
+    //
+    // Both are asserted at the source level (the exact call sites are
+    // a single line each; a source-lint catches removal on refactor).
+    #[test]
+    fn memory_cache_and_index_invalidation() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/manager.rs"))
+            .expect("read manager.rs");
+
+        // H3a: lt_remove calls vector_index.remove
+        let lt_remove = src.find("async fn lt_remove(").expect("lt_remove present");
+        let lt_remove_tail = &src[lt_remove..];
+        let lt_remove_end = lt_remove_tail
+            .find("\n    }")
+            .map(|i| lt_remove + i)
+            .unwrap_or(src.len());
+        let lt_remove_body = &src[lt_remove..lt_remove_end];
+        assert!(
+            lt_remove_body.contains("vector_index.write()")
+                && lt_remove_body.contains(".remove(id)"),
+            "lt_remove must drop the vector from vector_index"
+        );
+
+        // H3b: lt_remove_batch drops every deleted id's vector
+        let batch = src
+            .find("async fn lt_remove_batch(")
+            .expect("lt_remove_batch present");
+        let batch_tail = &src[batch..];
+        let batch_end = batch_tail
+            .find("\n    }")
+            .map(|i| batch + i)
+            .unwrap_or(src.len());
+        let batch_body = &src[batch..batch_end];
+        assert!(
+            batch_body.contains("vector_index.write()") && batch_body.contains("idx.remove(id)"),
+            "lt_remove_batch must drop every deleted id's vector"
+        );
+
+        // H2: spawn_embed's closure invalidates the cache after update
+        let spawn = src.find("fn spawn_embed(").expect("spawn_embed present");
+        let spawn_tail = &src[spawn..];
+        let spawn_end = spawn_tail
+            .find("\n    }\n")
+            .map(|i| spawn + i)
+            .unwrap_or(src.len());
+        let spawn_body = &src[spawn..spawn_end];
+        assert!(
+            spawn_body.contains("entries_cache"),
+            "spawn_embed's closure must capture the entries cache"
+        );
+        assert!(
+            spawn_body.contains("*entries_cache.write() = None"),
+            "spawn_embed must invalidate the cache after a successful update"
+        );
     }
 }
