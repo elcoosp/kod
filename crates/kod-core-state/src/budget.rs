@@ -368,3 +368,77 @@ mod coverage_allocation_math {
         assert!(trace.total_tokens_estimate().is_none());
     }
 }
+
+#[cfg(test)]
+mod budget_property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Realistic-range bounds: 1M context window × 4 chars/token =
+    // 4M chars, far above any real context window and well within
+    // `usize / 100` so the arithmetic cannot overflow during the test.
+    const CW_MAX: usize = 1_000_000;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// `allocate_with_overhead` must never panic for any input
+        /// inside the realistic envelope. A panic here crashes the
+        /// prompt-building path with no recovery.
+        #[test]
+        fn allocate_never_panics(
+            cw in 0usize..=CW_MAX,
+            reserve in 0usize..=CW_MAX,
+            request in 0usize..=4 * CW_MAX,
+            overhead in 0usize..=4 * CW_MAX,
+        ) {
+            let b = PromptBudget::from_tokens(cw, reserve);
+            let _ = b.allocate_with_overhead(request, overhead);
+        }
+
+        /// Share sum invariant: on `Ok`, the four sections together
+        /// equal `effective_total - request`. The `repomap` share
+        /// uses `saturating_sub(history + skills + memory)` to
+        /// recover the truncation remainder — this test proves the
+        /// recovery is exact, not merely non-panicking.
+        #[test]
+        fn ok_shares_sum_to_remaining(
+            cw in 0usize..=CW_MAX,
+            reserve in 0usize..=CW_MAX,
+            request in 0usize..=4 * CW_MAX,
+            overhead in 0usize..=4 * CW_MAX,
+        ) {
+            let b = PromptBudget::from_tokens(cw, reserve);
+            let effective = b.total_chars.saturating_sub(overhead);
+            if let Ok(a) = b.allocate_with_overhead(request, overhead) {
+                prop_assert!(request <= effective);
+                let shares = a.history + a.skills + a.memory + a.repomap;
+                prop_assert_eq!(shares, effective - request,
+                    "shares must sum to effective_total - request");
+                prop_assert_eq!(a.request, request);
+            }
+        }
+
+        /// Excess invariant: on `Err`, both error fields must echo
+        /// what was actually rejected. A caller that tries to explain
+        /// the failure to a user reads these fields verbatim; a
+        /// wrong value tells the model "the window is 0" when it is
+        /// just full.
+        #[test]
+        fn err_reports_the_excess(
+            cw in 0usize..1_000,
+            reserve in 0usize..1_000,
+            overhead in 0usize..1_000,
+            extra in 1usize..10_000,
+        ) {
+            let b = PromptBudget::from_tokens(cw, reserve);
+            let effective = b.total_chars.saturating_sub(overhead);
+            let request = effective.saturating_add(extra);
+            let err = b.allocate_with_overhead(request, overhead).unwrap_err();
+            prop_assert_eq!(err.request_chars, request,
+                "error must echo the rejected request_chars");
+            prop_assert_eq!(err.total_chars, effective,
+                "error must echo the effective_total (total minus overhead)");
+        }
+    }
+}
