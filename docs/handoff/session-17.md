@@ -379,3 +379,90 @@ Distinguishing the two: read past the surface "could not compile"
 line — if it is followed by an `os error 35` from `cc`, the fix was
 never the code. Re-verify the affected crate at `--jobs 1`, which
 bypasses the fork. Do not treat that compile failure as a regression.
+
+## Session 18 — fault-injection arc
+
+Continues the same session, after the behavioral-integration arc was
+declared complete. The previous claim ("nothing left in the testable
+surface") was about *feature* coverage. A different axis — *what
+happens when a component misbehaves* — had barely been exercised.
+This arc starts there.
+
+A pre-arc audit found: `catch_unwind` appears **exactly once** in
+production code (`swarm_runner.rs:1630`, wrapping agent bodies); **no
+chaos/fault-injection tests existed** in the repo.
+
+### What landed
+
+| Commit | What | Outcome |
+|---|---|---|
+| `1dbf8cc` | tool-registry panic isolation | **real bug fixed** |
+| `530ef01` | openai malformed-SSE e2e | regression guard |
+| `a33b58c` | anthropic malformed-SSE e2e (parity) | regression guard |
+
+### The real bug: a panicking tool killed the turn
+
+`ToolRegistry::execute_tool` awaited `Tool::execute` directly. The
+engine collects a parallel round's tool futures with
+`futures::future::join_all(...).await` **in its own task** — no spawn
+boundary between the registry and the engine. A panic inside any one
+tool therefore unwound through the registry and out of the engine,
+killing the whole turn. A model invokes dozens of tools per round and
+the tool surface is open (MCP servers, plugins); one bad tool was
+enough.
+
+Written failing-first: three tests in
+`crates/kod-tools/tests/it/panic_isolation.rs` failed **3/3 by
+panic** on the pre-fix tree, then passed after the fix. The fix wraps
+each `Tool::execute` future in `AssertUnwindSafe::catch_unwind` and
+converts the payload into `ToolResult::Error` naming the tool.
+
+The three tests:
+- `panicking_tool_returns_an_error_not_an_unwind`
+- `panicking_tool_in_a_parallel_batch_does_not_kill_siblings`
+  (mirrors the engine's `join_all`; sibling tools survive)
+- `panicking_tool_error_names_the_tool` (the model must see its own
+  call to correct it)
+
+### The guards: malformed SSE mid-stream, both adapters
+
+Same shape a truncated TCP write or a frame-mangling proxy produces:
+one bad frame in the middle of an otherwise-valid SSE body.
+`wire.rs` unit tests pin the parser on a single frame; nothing pinned
+the caller-observable behavior. Both adapters **already drop the bad
+frame** — the guards are the value, not a bugfix. Proven at the
+caller level for both, so a future divergence between them (one
+drops, one errors-after-commit) fails the tests.
+
+### What this arc did NOT close (candidates for next)
+
+From the pre-arc audit, still uncovered:
+
+1. **MCP malformed JSON-RPC from a real server.** `client.rs:507`
+   parses every line a server emits. There is a `fuzz` target
+   (`mcp_line`) but **no deterministic test** that a garbage line
+   mid-conversation leaves the request/response correlation intact.
+   Same class as the SSE tests, different subsystem. Highest-value
+   remaining fault-injection test.
+2. **`DecisionWait::RecvClosed`** — the branch exists
+   (`tool_dispatch.rs:838`, handled at `:516` and `:711`) but no test
+   drops the oneshot sender mid-wait. Small concurrency fault.
+3. **Per-tool timeout** — `execute_command` has its own; no general
+   per-tool timeout exists at the registry. That is a feature, not a
+   test.
+4. **Memory embedder panic** — partially covered by
+   `flush_returns_after_panicking_embed_task`; other paths (retrieval
+   mid-turn) not audited.
+
+### Lesson
+
+**L22 — grep in `crates/` misses `fuzz/`.** The `fuzz` directory is
+`exclude`d from the workspace (`Cargo.toml`: `exclude = ["fuzz"]`).
+A call from `fuzz/fuzz_targets/` is invisible to a
+`grep -rn ... crates/` search. `kod_mcp::parse_line_for_fuzz` looked
+dead in this session's first audit — its only caller is
+`fuzz/fuzz_targets/mcp_line.rs`. When a `pub fn` looks uncalled,
+grep the **whole repo** (minus `target/`), and look inside `fuzz/`
+explicitly. This is the same over-claim shape as the earlier
+sessions' "read the tests before naming a gap," with a specific new
+cause: an out-of-workspace call site.
