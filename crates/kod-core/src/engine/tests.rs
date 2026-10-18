@@ -1940,3 +1940,148 @@ async fn test_render_history_drops_unpinned_turn_again() {
         "unpinned turn should be dropped under a tight budget"
     );
 }
+
+// --- Session 18 fault-injection: compaction summary in_flight mark ---
+
+use async_trait::async_trait;
+use kod_provider::{
+    GenerationOptions, GenerationResponse, LlmProvider, ModelInfo, ModelRef,
+    ProviderCapabilities, ProviderRegistry, StreamChunk,
+};
+
+/// A provider whose `generate` panics. Reaching the summary task's
+/// post-`generate` cleanup requires surviving this.
+struct PanicOnGenerate;
+
+#[async_trait]
+impl LlmProvider for PanicOnGenerate {
+    fn name(&self) -> &str {
+        "panic-on-generate"
+    }
+    async fn list_models(&self) -> kod_error::Result<Vec<ModelInfo>> {
+        Ok(Vec::new())
+    }
+    async fn generate(
+        &self,
+        _prompt: &str,
+        _options: &GenerationOptions,
+    ) -> kod_error::Result<String> {
+        panic!("compaction summary: deliberate generate panic for the isolation test");
+    }
+    async fn generate_with_tools(
+        &self,
+        _prompt: &str,
+        _tools: &[kod_types::ToolDefinition],
+        _options: &GenerationOptions,
+    ) -> kod_error::Result<GenerationResponse> {
+        panic!("compaction summary: deliberate generate_with_tools panic");
+    }
+    fn stream(
+        &self,
+        _prompt: &str,
+        _options: &GenerationOptions,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
+/// A provider that always returns a fixed text. Used to prove a
+/// *second* summary attempt ran after the first panicked.
+struct OkText(&'static str);
+
+#[async_trait]
+impl LlmProvider for OkText {
+    fn name(&self) -> &str {
+        "ok-text"
+    }
+    async fn list_models(&self) -> kod_error::Result<Vec<ModelInfo>> {
+        Ok(Vec::new())
+    }
+    async fn generate(
+        &self,
+        _prompt: &str,
+        _options: &GenerationOptions,
+    ) -> kod_error::Result<String> {
+        Ok(self.0.to_string())
+    }
+    async fn generate_with_tools(
+        &self,
+        _prompt: &str,
+        _tools: &[kod_types::ToolDefinition],
+        _options: &GenerationOptions,
+    ) -> kod_error::Result<GenerationResponse> {
+        Ok(GenerationResponse::Text {
+            content: self.0.to_string(),
+            usage: None,
+        })
+    }
+    fn stream(
+        &self,
+        _prompt: &str,
+        _options: &GenerationOptions,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
+async fn install_provider(engine: &KodEngine, provider: Arc<dyn LlmProvider>, name: &str) {
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        name,
+        provider,
+        ProviderCapabilities::conservative(),
+        "m-test",
+    );
+    engine
+        .set_registry(Arc::new(reg), ModelRef::new(name, "m-test"), None)
+        .await;
+}
+
+/// A panicking summary task must clear the in-flight mark, or every
+/// future summary for that transcript is a silent no-op forever.
+///
+/// Observable: after a panicking first attempt, install a working
+/// provider and call `spawn_compaction_summary` again. If the mark
+/// leaked, the second call early-returns (insert returns false) and
+/// `pending_summaries` never receives the key. If the mark cleared,
+/// the second task runs and populates `pending_summaries`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn panicking_compaction_summary_clears_the_in_flight_mark() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db = tmp.path().join("compaction.redb");
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        working_dir: tmp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+        context_window: 8192,
+        short_term_capacity: 100,
+    };
+    let engine = KodEngine::new(cfg, db).unwrap();
+
+    // First attempt: panicking provider.
+    install_provider(&engine, Arc::new(PanicOnGenerate), "panic").await;
+    engine.spawn_compaction_summary("t", Vec::new()).await;
+    // Give the spawned task time to run, panic, and (pre-fix) fail to
+    // remove the mark. Post-fix it runs to the cleanup.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    // Second attempt: working provider. Pre-fix this early-returns
+    // because the mark leaked. Post-fix it runs to completion and the
+    // summary lands in `pending_summaries`.
+    install_provider(&engine, Arc::new(OkText("recovered summary")), "ok").await;
+    engine.spawn_compaction_summary("t", Vec::new()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    assert!(
+        engine.pending_summaries.read().await.contains_key("t"),
+        "after a panicking summary task, the in_flight mark must be \
+         cleared so the next summary runs; the mark leaked and the \
+         second task was a silent no-op (pending_summaries has no 't')",
+    );
+}

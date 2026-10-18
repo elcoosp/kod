@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 
 impl KodEngine {
     /// Tier 3.3 — apply a same-endpoint retry strategy to a fresh
@@ -669,21 +670,40 @@ impl KodEngine {
         let engine_key = key.to_string();
 
         tokio::spawn(async move {
-            let result = provider.generate(&prompt, &options).await;
+            // A panic in the provider must not skip the in_flight
+            // cleanup below. Without the barrier, a panicking summary
+            // task unwinds before `in_flight.remove`, and every future
+            // summary for this transcript is a silent no-op forever —
+            // the same shape as the ACP in_flight P1 fixed in a
+            // bug-hunt (see kod-core-serve/src/acp.rs:459). The doc
+            // comment above says "A failure clears the in-flight mark":
+            // true for Err, false for panic, until now.
+            let result = std::panic::AssertUnwindSafe(provider.generate(&prompt, &options))
+                .catch_unwind()
+                .await;
             match result {
-                Ok(text) if !text.trim().is_empty() => {
+                Ok(Ok(text)) if !text.trim().is_empty() => {
                     pending
                         .write()
                         .await
                         .insert(engine_key.clone(), text.trim().to_string());
                 }
-                Ok(_) => {
+                Ok(Ok(_)) => {
                     tracing::warn!(key = %engine_key,
                         "compaction summary returned empty; emergency path will be used");
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::warn!(key = %engine_key, error = %e,
                         "compaction summary failed; emergency path will be used");
+                }
+                Err(payload) => {
+                    let what = payload
+                        .downcast_ref::<&'static str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                        .unwrap_or("non-string panic payload");
+                    tracing::error!(key = %engine_key, panic = what,
+                        "compaction summary provider panicked; emergency path will be used");
                 }
             }
             in_flight.write().await.remove(&engine_key);
