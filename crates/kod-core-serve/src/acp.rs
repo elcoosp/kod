@@ -86,9 +86,12 @@ struct Server {
     /// Outstanding agent→client requests, keyed by id. A response
     /// arriving on the read loop is routed to the matching oneshot.
     pending: Mutex<HashMap<i64, oneshot::Sender<Value>>>,
-    /// ACP session id → engine transcript key. The engine keys its
-    /// own transcripts by a string; the ACP session id is one.
-    sessions: Mutex<HashMap<String, String>>,
+    // Bug-hunt post-v0.1.9 (P2): a `sessions: Mutex<HashMap<String, String>>`
+    // field used to live here. It was written by session/new and never
+    // read anywhere -- a pure in-memory leak, growing by one entry per
+    // session for the process lifetime, with no functional use.
+    // Removed. If session/resume is ever implemented, the map will
+    // come back with real readers attached.
     /// ACP `toolCallId` per (session, engine call id). The engine's
     /// chunk stream tags its tool-start/args/done markers with the
     /// provider's call id (`cid`); the ACP `toolCallId` is a UUID the
@@ -223,7 +226,6 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
         out: out_tx.clone(),
         next_request_id: AtomicI64::new(-1),
         pending: Mutex::new(HashMap::new()),
-        sessions: Mutex::new(HashMap::new()),
         in_flight: Mutex::new(std::collections::HashSet::new()),
         last_tool_call_id: Mutex::new(HashMap::new()),
     });
@@ -397,12 +399,6 @@ async fn dispatch_request(server: Arc<Server>, id: Value, method: &str, params: 
         }
         "session/new" => {
             let session_id = format!("kod-{}", uuid::Uuid::new_v4());
-            let transcript_key = engine_key(&session_id);
-            server
-                .sessions
-                .lock()
-                .await
-                .insert(session_id.clone(), transcript_key);
             server
                 .respond(
                     id,
