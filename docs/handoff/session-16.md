@@ -2,7 +2,7 @@
 
 **Continues:** session 15 (`docs/handoff/session-15.md`).
 **Last stable release:** `v0.1.11` (`98bbd1c`).
-**Last verified commit:** `0effff4 test(serve): ACP session/request_permission approval round-trip`.
+**Last verified commit:** `a88e582 test(serve): ACP session/cancel dispatch + stop-reason mapping`.
 **Working tree state at handoff:** clean.
 
 Session 16 did two things: it executed the P2 fix that session 15
@@ -95,17 +95,25 @@ Each entry below was confirmed by reading the test files, not by
 assuming. The format is: what is uncovered, where the code is, what
 a test would need.
 
-### 1. ACP `session/cancel` (narrow)
+### 1. ACP `session/cancel` — CLOSED (session 17, `a88e582`)
 
-The dispatch arm at `crates/kod-core-serve/src/acp.rs:289` handles a
-`session/cancel` notification by calling `engine.request_cancel_for`.
-No test drives it. A test needs a `MockProvider` script that emits a
-long-running turn (a tool call that blocks, or a text stream with
-delays), a `session/cancel` sent mid-turn, and an assertion that the
-final `{stopReason}` is `cancelled` (the bridge maps a cancel to that
-reason at `acp.rs:571`). Deterministic version: a scripted provider
-whose second round never returns, plus cancel, plus a timeout
-assertion. Medium effort.
+`acp_cancel.rs` now covers the bridge path end to end. Reading the
+engine tests first showed the engine side was already covered
+(`tool_loop::test_cancel_stops_process` pre-cancel,
+`policy_gate::cancel_while_pending_approval_does_not_wait_the_timeout`
+mid-approval); the gap was the ACP bridge's dispatch
+(`acp.rs:303-309`) and the stop-reason mapping (`acp.rs:571`). Two
+tests: `session_cancel_reaches_the_engine_and_maps_to_cancelled_stop_reason`
+(pre-cancel shape so the flag check fires deterministically) and
+`non_cancel_provider_error_maps_to_refusal_stop_reason` (the other
+arm: a non-cancel error must map to `refusal`, not `cancelled`).
+
+Deliberately not tested: the true mid-turn ACP cancel (cancel arriving
+while the approval gate is held). That shape needs a blocking provider,
+and the engine-level half of it is already covered by `policy_gate.rs`.
+If a future change to `run_prompt` introduces a mid-turn-only bridge
+bug, that is the next test to add — the current bridge path is
+identical for pre- and mid-turn cancels.
 
 ### 2. ACP corrupt-batch deny-all path (narrow)
 
