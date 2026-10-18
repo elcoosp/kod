@@ -8,6 +8,7 @@ use kod_error::{KodError, Result};
 use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType};
 use std::path::PathBuf;
 use time::OffsetDateTime;
+use futures::FutureExt;
 
 /// Episodic entries whose last touch (write or retrieval) is older
 /// than this many days are archived by [`MemoryManager::consolidate`].
@@ -261,6 +262,39 @@ pub struct MemoryManager {
 }
 
 impl MemoryManager {
+    /// Call the installed embedder, isolating a panic as an `Err` so
+    /// the caller's turn survives. A third-party embedding client
+    /// (reqwest, a plugin) that panics on a malformed response must
+    /// not take down the retrieval path — the `Err` arm already
+    /// falls through to keyword+recency scoring, and a panic must do
+    /// the same. Mirrors the tool-registry isolation in
+    /// kod-tools::registry (commit 1dbf8cc).
+    async fn embed_safe(
+        embedder: &dyn crate::embedding::EmbeddingClient,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        match std::panic::AssertUnwindSafe(embedder.embed(texts))
+            .catch_unwind()
+            .await
+        {
+            Ok(r) => r,
+            Err(payload) => {
+                let what = payload
+                    .downcast_ref::<&'static str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                    .unwrap_or("non-string panic payload");
+                tracing::error!(
+                    panic = what,
+                    "embedder panicked; falling through to keyword+recency",
+                );
+                Err(kod_error::KodError::EmbeddingGeneration(format!(
+                    "embedder panicked: {what}",
+                )))
+            }
+        }
+    }
+
     /// Create a new memory manager
     pub fn new(db_path: PathBuf, short_term_capacity: usize) -> Result<Self> {
         let long_term = LongTermMemory::new(&db_path)?;
@@ -394,7 +428,7 @@ impl MemoryManager {
                 .iter()
                 .map(|&i| updated[i].content.clone())
                 .collect();
-            match embedder.embed(&texts).await {
+            match Self::embed_safe(embedder.as_ref(), &texts).await {
                 Ok(vectors) if vectors.len() == need_embed.len() => {
                     for (idx, vec) in need_embed.iter().zip(vectors) {
                         updated[*idx].metadata.embedding = Some(vec);
@@ -958,7 +992,7 @@ impl MemoryManager {
             let cached = self.query_embed_cache.lock().get(&query_for_embed);
             let q_vec: Option<Vec<f32>> = match cached {
                 Some(v) => Some(v),
-                None => match embedder.embed(std::slice::from_ref(&query_for_embed)).await {
+                None => match Self::embed_safe(embedder.as_ref(), std::slice::from_ref(&query_for_embed)).await {
                     Ok(mut v) if !v.is_empty() => {
                         let vec = v.remove(0);
                         self.query_embed_cache

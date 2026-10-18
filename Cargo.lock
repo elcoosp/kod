@@ -2390,6 +2390,7 @@ name = "kod-memory"
 version = "0.1.11"
 dependencies = [
  "async-trait",
+ "futures",
  "kod-config",
  "kod-error",
  "kod-provider",
