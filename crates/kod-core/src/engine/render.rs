@@ -206,6 +206,12 @@ pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {
     kod_types::strutil::truncate_chars(s, max)
 }
 
+/// Byte-cap counterpart to [`truncate_chars`]. Use at sites whose
+/// budget is expressed in bytes; same char-boundary behavior.
+pub(crate) fn truncate_bytes(s: &str, max: usize) -> &str {
+    kod_types::strutil::truncate_bytes(s, max)
+}
+
 /// Append a round's text to the accumulated final text, inserting a
 /// blank-line separator when this is not the first non-empty round.
 ///

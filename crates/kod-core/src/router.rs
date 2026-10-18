@@ -1151,11 +1151,11 @@ impl TaskRouter {
         // truncating here is a belt-and-braces guard so a
         // non-engine caller cannot ship an oversized prompt.
         let input = match budget {
-            Some(a) if input.len() > a.request => crate::engine::truncate_chars(input, a.request),
+            Some(a) if input.len() > a.request => crate::engine::truncate_bytes(input, a.request),
             _ => input,
         };
         let history = match budget {
-            Some(a) => crate::engine::truncate_chars(history, a.history),
+            Some(a) => crate::engine::truncate_bytes(history, a.history),
             None => history,
         };
         let mut prompt = String::from(
@@ -1183,7 +1183,7 @@ impl TaskRouter {
         if let Some(map) = self.repo_map_text_async().await {
             let map_str = map.as_str();
             let shown = match budget {
-                Some(a) => crate::engine::truncate_chars(map_str, a.repomap),
+                Some(a) => crate::engine::truncate_bytes(map_str, a.repomap),
                 None => map_str,
             };
             prompt.push_str("## Repository map\n\n");
