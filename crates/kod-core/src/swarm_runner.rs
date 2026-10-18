@@ -704,11 +704,22 @@ impl SwarmRunner {
             let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
             let agent = AgentBuilder::new(&slug).with_capability(*cap).build();
             let id = agent.id().clone();
+            // P2 bug-hunt post-v0.1.9: an early return after
+            // `swarm.add_agent` has already registered at least one
+            // agent in the shared hub must shut the swarm down first.
+            // Without this, a failure on agent N leaves agents
+            // 1..N-1 registered with unbounded mpsc inboxes and
+            // 100-message histories for the rest of the daemon's
+            // life — the exact leak `swarm.shutdown()` at the end of
+            // `run()` was designed to prevent, bypassed on the error
+            // path.
             if let Err(e) = swarm.add_agent(agent).await {
+                let _ = swarm.shutdown().await;
                 self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
             if let Err(e) = swarm.start_agent(&id).await {
+                let _ = swarm.shutdown().await;
                 self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
@@ -808,10 +819,12 @@ impl SwarmRunner {
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
             if let Err(e) = swarm.coordinator().register_task(task).await {
+                let _ = swarm.shutdown().await;
                 self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
             if let Err(e) = swarm.coordinator().assign_task(&task_id, &chosen).await {
+                let _ = swarm.shutdown().await;
                 self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
@@ -3097,5 +3110,45 @@ mod coverage_glob_overlap {
             },
         ];
         assert!(detect_overlap(&subtasks).is_none());
+    }
+}
+
+#[cfg(test)]
+mod swarm_runner_error_path_leak {
+    /// P2 bug-hunt post-v0.1.9: every `return Err(...)` between the
+    /// pool setup (`pool_handles` construction) and the wave loop
+    /// must be preceded by `swarm.shutdown().await`. Without it, an
+    /// early return after `swarm.add_agent` registered N agents in
+    /// the shared hub leaves those agents holding unbounded mpsc
+    /// inboxes for the process lifetime — the exact leak the
+    /// end-of-run `swarm.shutdown()` prevents, bypassed on the
+    /// error path.
+    #[test]
+    fn early_return_after_pool_setup_shuts_down_swarm() {
+        let src =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/swarm_runner.rs"))
+                .expect("read swarm_runner.rs");
+        let start = src
+            .find("let mut pool_handles: Vec<AgentHandle>")
+            .expect("pool setup marker present");
+        let tail = &src[start..];
+        let end_rel = tail
+            .find("for (idx, res) in ready.iter().zip(wave_results)")
+            .expect("wave loop close present");
+        let window = &tail[..end_rel];
+
+        let returns = window.matches("return Err(").count();
+        let shutdowns = window.matches("swarm.shutdown().await").count();
+        assert!(
+            returns > 0,
+            "expected at least one early return in the pool-setup window"
+        );
+        assert_eq!(
+            shutdowns, returns,
+            "every early `return Err` in the pool-setup window must be \
+             preceded by `swarm.shutdown().await` to unregister agents \
+             from the shared hub (found {shutdowns} shutdowns for \
+             {returns} returns)"
+        );
     }
 }
