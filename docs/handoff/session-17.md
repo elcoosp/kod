@@ -368,3 +368,14 @@ not spawn the test process. Before treating exit 100 as a regression,
 read the failure list: `execfail` + `os error 35` is host pressure;
 an assertion or panic is a real failure. Re-run the execfailed names
 at `--test-threads 1` to distinguish.
+
+L21 extension (session 18, panic-isolation commit): **the same fork
+pressure also kills the *compile* step**, not just test execution.
+A `cargo nextest run --workspace --test-threads 1` under load can
+abort with `could not compile <crate> (lib test) due to 1 previous
+error` where the "previous error" is `Resource temporarily
+unavailable (os error 35)` emitted by the **linker** (`cc`).
+Distinguishing the two: read past the surface "could not compile"
+line — if it is followed by an `os error 35` from `cc`, the fix was
+never the code. Re-verify the affected crate at `--jobs 1`, which
+bypasses the fork. Do not treat that compile failure as a regression.
