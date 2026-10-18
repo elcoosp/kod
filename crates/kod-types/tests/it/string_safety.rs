@@ -10,7 +10,7 @@
 //! invariants on every input.
 
 use kod_types::redact::{RedactRule, Redactor};
-use kod_types::strutil::{floor_char_boundary, truncate_chars};
+use kod_types::strutil::{floor_char_boundary, truncate_bytes};
 use proptest::prelude::*;
 
 /// A strategy producing arbitrary `String` values. The proptest
@@ -31,13 +31,19 @@ proptest! {
         prop_assert!(s.is_char_boundary(i));
     }
 
-    /// `truncate_chars(s, n)` never panics and returns a slice of the
+    /// `truncate_bytes(s, n)` never panics and returns a slice of the
     /// input that is a valid UTF-8 string (it is a `&str` by type, so
     /// this is the compiler's guarantee — the property is that the
     /// call does not panic and the slice is at most `n` bytes long).
+    ///
+    /// Session-16 Round A: this was the byte-semantics property test
+    /// under the old name `truncate_chars_...`. It is retargeted to
+    /// the byte-cap helper. Round B adds a companion
+    /// `truncate_chars_never_panics_and_is_char_bounded` that asserts
+    /// the char contract once `truncate_chars` flips to char-cap.
     #[test]
-    fn truncate_chars_never_panics_and_is_bounded(s in any_string(), n in 0usize..256) {
-        let out = truncate_chars(&s, n);
+    fn truncate_bytes_never_panics_and_is_bounded(s in any_string(), n in 0usize..256) {
+        let out = truncate_bytes(&s, n);
         prop_assert!(out.len() <= n.min(s.len()));
         prop_assert!(s.starts_with(out));
     }
