@@ -71,7 +71,12 @@ impl SkillParser {
 
     /// Split content into front matter and body
     fn split_front_matter(&self, content: &str, source: &str) -> Result<(SkillMetadata, String)> {
-        let content = content.trim();
+        // Bug-hunt post-v0.1.9 (P3): U+FEFF is not whitespace in
+        // current Unicode (removed from White_Space in 3.2), so
+        // str::trim does not strip it. A BOM-emitting editor's
+        // SKILL.md then fails starts_with("---") with a misleading
+        // "Missing YAML front matter". Strip the BOM first.
+        let content = content.trim_start_matches('\u{feff}').trim();
 
         if !content.starts_with("---") {
             return Err(KodError::SkillParseError {
@@ -430,5 +435,30 @@ mod coverage_front_matter {
         let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
         assert!(skill.instructions.contains("## Notes"));
         assert!(skill.instructions.contains("something"));
+    }
+}
+
+#[cfg(test)]
+mod bom_tests {
+    use super::*;
+
+    #[test]
+    fn bom_prefixed_front_matter_is_accepted() {
+        let content = concat!(
+            "\u{feff}",
+            "---\n",
+            "name: bom-skill\n",
+            "description: Test BOM handling\n",
+            "version: 1.0.0\n",
+            "category: testing\n",
+            "---\n",
+            "\n",
+            "Body.\n",
+        );
+        let parser = SkillParser::new();
+        let skill = parser
+            .parse_content(content, "bom-test")
+            .expect("BOM-prefixed front matter must parse");
+        assert_eq!(skill.metadata.name, "bom-skill");
     }
 }
