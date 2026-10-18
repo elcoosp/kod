@@ -269,11 +269,7 @@ pub(crate) fn tool_intent(args: &serde_json::Value) -> Option<String> {
         return None;
     }
     const CAP: usize = 80;
-    if one_line.len() > CAP {
-        Some(format!("{}…", truncate_chars(&one_line, CAP)))
-    } else {
-        Some(one_line)
-    }
+    Some(truncate_with_ellipsis(&one_line, CAP, "…"))
 }
 
 /// Suffix a formatted tool display with the model's intent, when it
