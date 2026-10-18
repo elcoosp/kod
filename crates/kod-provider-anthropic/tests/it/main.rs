@@ -9,3 +9,4 @@ mod contracts;
 mod live;
 mod prompt_cache_stability;
 mod stream_retry;
+mod malformed_sse;
