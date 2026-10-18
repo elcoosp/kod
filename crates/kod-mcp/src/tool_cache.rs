@@ -45,6 +45,18 @@ use crate::types::McpToolDef;
 /// forgotten stale entry cleans itself up within a month.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
+/// Bug-hunt post-v0.1.9 (P3): tolerance for an entry whose
+/// `cached_at_unix_nanos` is in the future. Real cache writes stamp
+/// `SystemTime::now()` and are read by the same process (or a
+/// sibling on the same machine), so a legitimately-written entry
+/// never lands meaningfully in the future. A timestamp outside this
+/// window means corruption (bit flip, hand-edited file, tamper) and
+/// must not be trusted — otherwise `saturating_sub` returns 0 and
+/// the entry looks fresh forever. 60s is generous for any realistic
+/// wall-clock discontinuity across same-host processes; anything
+/// beyond is corruption by definition.
+const CLOCK_SKEW_TOLERANCE_NANOS: u128 = 60 * 1_000_000_000;
+
 /// On-disk cache entry.
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheEntry {
@@ -113,6 +125,17 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
+    // Bug-hunt post-v0.1.9 (P3): `saturating_sub` on a future
+    // `cached_at_unix_nanos` yields 0 and the entry is treated as
+    // fresh forever — the TTL never fires. Reject a timestamp that
+    // is meaningfully ahead of `now` (corruption / tamper) before
+    // the TTL comparison runs.
+    let future_nanos = entry.cached_at_unix_nanos.saturating_sub(now_nanos);
+    if future_nanos > CLOCK_SKEW_TOLERANCE_NANOS {
+        // Corrupt timestamp: delete and fall back to the wire.
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
     let age_nanos = now_nanos.saturating_sub(entry.cached_at_unix_nanos);
     if Duration::from_nanos(age_nanos.min(u64::MAX as u128) as u64) > ttl {
         let _ = std::fs::remove_file(&path);
@@ -330,4 +353,42 @@ mod tests {
         clear_from(dir.path(), "k").unwrap();
         assert!(read_from(dir.path(), "k", DEFAULT_TTL).is_none());
     }
+}
+
+/// Bug-hunt post-v0.1.9 (P3): `read_from` computes
+/// `age = now.saturating_sub(cached_at)`. If `cached_at` is in the
+/// future (corrupted JSON, hand-edited file, disk bit-flip),
+/// `saturating_sub` yields 0 and the entry is treated as fresh
+/// forever — the TTL never fires, and the stale tool list is
+/// served for the lifetime of the cache. A defensible cache must
+/// reject any timestamp meaningfully ahead of `now`.
+///
+/// On HEAD this test fails: the future-dated entry is returned
+/// as fresh. After the fix (reject timestamps more than
+/// CLOCK_SKEW_TOLERANCE_NANOS in the future, delete the file,
+/// return None) it passes.
+#[test]
+fn future_timestamped_entry_is_rejected() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let key = "future";
+    // Build an entry with `cached_at_unix_nanos` one hour in the
+    // future — clearly outside any legitimate clock-skew window.
+    let one_hour_ahead_nanos: u128 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+        + 3_600u128 * 1_000_000_000u128;
+    let json = format!(r#"{{"cached_at_unix_nanos":{one_hour_ahead_nanos},"tools":[]}}"#);
+    let path = dir.path().join(format!("{key}.json"));
+    std::fs::write(&path, json).unwrap();
+    let got = read_from(dir.path(), key, DEFAULT_TTL);
+    assert!(
+        got.is_none(),
+        "a future-timestamped entry must be treated as stale, got {:?}",
+        got.as_ref().map(|v| v.len())
+    );
+    assert!(
+        !path.exists(),
+        "a rejected entry must be deleted, not left on disk"
+    );
 }
