@@ -161,6 +161,17 @@ pub fn extract(text: &str) -> Option<Vec<FilePatch>> {
     if !saw_end {
         return None;
     }
+    // Bug-hunt post-v0.1.9 (P2): a `FilePatch::Update` whose hunks are
+    // all empty (a section marker with no body) has nothing to apply.
+    // Dropping it here means `to_unified_diff` never sees an all-empty
+    // case; a stray `@@` inside a real patch is handled by the
+    // `hunks.iter().filter(...)` in `to_unified_diff`. The caller
+    // treats `Some(vec![])` as "nothing to do", matching the
+    // documented contract for a patch with no files.
+    out.retain(|p| match p {
+        FilePatch::Update { hunks, .. } => !hunks.iter().all(|h| h.lines.is_empty()),
+        _ => true,
+    });
     Some(out)
 }
 
