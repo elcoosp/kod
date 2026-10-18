@@ -275,6 +275,56 @@ impl LspClient {
         .await
     }
 
+    /// Close a document on the server.
+    ///
+    /// Bug-hunt post-v0.1.9: `LspClient` had no `did_close` at all.
+    /// `opened` never shrank, and every server (rust-analyzer,
+    /// pyright, tsserver) held a per-document AST and diagnostic
+    /// task for every file `diagnostics()` had ever been called on.
+    /// In a long-running daemon session the server's document map
+    /// grew monotonically with distinct files touched, and only a
+    /// full process restart could free it.
+    pub async fn did_close(&mut self, path: &Path) -> Result<(), LspError> {
+        let uri = path_to_uri(path);
+        self.notify(
+            "textDocument/didClose",
+            serde_json::json!({
+                "textDocument": { "uri": uri },
+            }),
+        )
+        .await?;
+        let key = {
+            let p = path.to_path_buf();
+            tokio::task::spawn_blocking(move || std::fs::canonicalize(&p).unwrap_or(p))
+                .await
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        self.opened.remove(&key);
+        Ok(())
+    }
+
+    /// Cap on `opened`. Once the map reaches this size, opening a
+    /// new document first closes (and forgets) an arbitrary existing
+    /// entry — `opened.keys().next()` is not LRU, but the goal is
+    /// *bound*, not optimality: the leak this cap prevents (per-
+    /// document server state growing across a long session) does
+    /// not benefit from precise recency.
+    const MAX_OPENED_DOCUMENTS: usize = 256;
+
+    /// Ensure a slot is available for `keep` before opening it. No-op
+    /// if `keep` is already open (no state to evict) or if there is
+    /// room. Evicts at most one entry — the caller is about to insert
+    /// exactly one.
+    async fn evict_if_full_preserving(&mut self, keep: &Path) -> Result<(), LspError> {
+        if self.opened.len() < Self::MAX_OPENED_DOCUMENTS || self.opened.contains_key(keep) {
+            return Ok(());
+        }
+        if let Some(victim) = self.opened.keys().next().cloned() {
+            self.did_close(victim.as_path()).await?;
+        }
+        Ok(())
+    }
+
     /// Get diagnostics for `path`, opening the file on the first call
     /// and sending an incremental change on the rest.
     ///
@@ -305,6 +355,7 @@ impl LspClient {
                 Some(v)
             }
             None => {
+                self.evict_if_full_preserving(&key).await?;
                 self.did_open(&key, content).await?;
                 self.opened.insert(key.clone(), 1);
                 Some(1)
@@ -1567,5 +1618,68 @@ mod cancellation_safe_framing {
         let err = try_parse_frame(buf, MAX_HDR, MAX_MSG).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("missing Content-Length"), "got: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod lsp_document_cap_regression {
+    // Bug-hunt post-v0.1.9. The LSP client had no path to close a
+    // document: `did_open`/`did_change` sent the open/change
+    // notifications but nothing sent `textDocument/didClose`, and
+    // `opened` grew without bound. Every server holds per-document
+    // state (AST, diagnostic task) for every file in the client's
+    // open set, so the leak is on both sides of the pipe.
+    //
+    // Two invariants pin the fix at source level (the test surface is
+    // too narrow to spin up a real LSP server in a unit test):
+    //
+    //   1. `did_close` exists, sends `textDocument/didClose`, and
+    //      removes the key from `opened`.
+    //   2. `evict_if_full_preserving` is called before the `opened`
+    //      insert in `diagnostics` — the primary open site.
+    #[test]
+    fn lsp_client_has_a_document_cap() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/client.rs"))
+            .expect("read client.rs");
+
+        // did_close must exist.
+        let close_start = src
+            .find("pub async fn did_close")
+            .expect("LspClient::did_close must exist");
+        let close_tail = &src[close_start..];
+        let close_end = close_tail
+            .find("\n    }")
+            .map(|i| close_start + i)
+            .unwrap_or(src.len());
+        let close_body = &src[close_start..close_end];
+        assert!(
+            close_body.contains("textDocument/didClose"),
+            "did_close must send the textDocument/didClose notification"
+        );
+        assert!(
+            close_body.contains("self.opened.remove"),
+            "did_close must remove the path from the opened map"
+        );
+
+        // Cap must exist.
+        assert!(
+            src.contains("MAX_OPENED_DOCUMENTS"),
+            "opened map must have a size cap"
+        );
+
+        // Eviction must run before the open in diagnostics.
+        let diag = src
+            .find("pub async fn diagnostics(")
+            .expect("diagnostics present");
+        let diag_tail = &src[diag..];
+        let diag_end = diag_tail
+            .find("\n    }\n")
+            .map(|i| diag + i)
+            .unwrap_or(src.len());
+        let diag_body = &src[diag..diag_end];
+        assert!(
+            diag_body.contains("evict_if_full_preserving"),
+            "diagnostics must call evict_if_full_preserving before inserting"
+        );
     }
 }
