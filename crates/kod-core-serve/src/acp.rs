@@ -211,8 +211,22 @@ impl Server {
 
 /// Run the ACP bridge until the client closes stdin.
 pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
+    serve_io(engine, tokio::io::stdin(), tokio::io::stdout()).await
+}
+
+/// The parameterized form of [`serve`]: reads ACP frames from
+/// `reader` and writes them to `writer`. `serve` is the production
+/// wrapper over `tokio::io::stdin`/`stdout`; integration tests drive
+/// `serve_io` against a `tokio::io::duplex` pair so the full
+/// `initialize` -> `session/new` -> `session/prompt` ->
+/// `session/update` turn is exercised in-process, without spawning
+/// the binary and without needing a model.
+pub async fn serve_io<R, W>(engine: Arc<KodEngine>, reader: R, mut writer: W) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let (out_tx, mut out_rx) = mpsc::channel::<Value>(256);
-    let mut writer = tokio::io::stdout();
     let writer_task = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
             if write_frame(&mut writer, &msg).await.is_err() {
@@ -230,7 +244,7 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
         last_tool_call_id: Mutex::new(HashMap::new()),
     });
 
-    let mut reader = BufReader::new(tokio::io::stdin());
+    let mut reader = BufReader::new(reader);
     loop {
         let frame = match read_frame(&mut reader).await {
             Ok(Some(f)) => f,
