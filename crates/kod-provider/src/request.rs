@@ -433,9 +433,17 @@ impl ModelPricing {
         // whole write prices at the base rate.
         let write_1h = usage.cache_creation_1h_tokens.unwrap_or(0).min(write);
         let write_5m = write.saturating_sub(write_1h);
+        // Bug-hunt post-v0.1.9 (P3): the doc above promises the 1h
+        // rate "defaulting to 2x input when the field is absent", but
+        // the code was using the 5-minute rate
+        // (`cache_write_per_mtok_usd`) as the fallback. On Anthropic
+        // the 5m rate is ~1.25x input and the 1h rate is 2x input, so
+        // every 1h cache write was under-priced by ~37.5% whenever
+        // the operator left `cache_write_1h_per_mtok_usd` unset. Use
+        // the documented default.
         let write_1h_rate = self
             .cache_write_1h_per_mtok_usd
-            .unwrap_or(self.cache_write_per_mtok_usd);
+            .unwrap_or(2.0 * self.input_per_mtok_usd);
         (fresh as f64 / m) * self.input_per_mtok_usd
             + (read as f64 / m) * self.cache_read_per_mtok_usd
             + (write_5m as f64 / m) * self.cache_write_per_mtok_usd
@@ -689,5 +697,36 @@ mod cache_convention_tests {
         //        + 100k * 12.5 / 1M = 1.25 → total 11.25
         assert!((split_cost - 10.25).abs() < 1e-6, "split = {split_cost}");
         assert!((subset_cost - 11.25).abs() < 1e-6, "subset = {subset_cost}");
+    }
+}
+
+#[cfg(test)]
+mod one_hour_tier_regression {
+    /// Bug-hunt post-v0.1.9 (P3): cost_for_usage's 1h cache tier
+    /// must fall back to 2x input when `cache_write_1h_per_mtok_usd`
+    /// is None (matching the doc comment), not to the 5-minute rate.
+    /// On Anthropic the 5m rate is ~1.25x input and the 1h rate is
+    /// 2x input, so the wrong fallback under-prices every 1h write
+    /// by ~37.5%.
+    ///
+    /// Source-level pin scoped to the `write_1h_rate` statement.
+    #[test]
+    fn one_hour_tier_falls_back_to_two_times_input() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/request.rs"))
+            .expect("read request.rs");
+        let start = src
+            .find("let write_1h_rate")
+            .expect("write_1h_rate present");
+        let tail = &src[start..];
+        let end = tail.find(';').map(|i| start + i).unwrap_or(src.len());
+        let region = &src[start..end];
+        assert!(
+            region.contains("unwrap_or(2.0 * self.input_per_mtok_usd)"),
+            "1h tier must fall back to 2x input, not the 5m rate"
+        );
+        assert!(
+            !region.contains("unwrap_or(self.cache_write_per_mtok_usd)"),
+            "1h tier must not fall back to the 5m rate"
+        );
     }
 }
