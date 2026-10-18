@@ -438,3 +438,110 @@ async fn release_all_preserves_mutual_exclusion() {
         .await
         .expect("acquire after release must succeed");
 }
+
+#[cfg(test)]
+mod path_lock_concurrency {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mutual exclusion under real contention: 8 concurrent tasks
+    /// serialize on one path. The atomic counter `inside` records how
+    /// many tasks believe they hold the lock at any moment; if the
+    /// per-path mutex works, `fetch_add` always returns 0 (no other
+    /// task already inside).
+    ///
+    /// Existing tests cover pairwise acquire/timeout, but none
+    /// observes the invariant "no two tasks hold simultaneously"
+    /// across N>2 tasks. This is the shape a regression in the
+    /// cells map (e.g. release_all clearing while a holder is live —
+    /// v0.1.10's bug) would violate.
+    #[tokio::test]
+    async fn concurrent_acquires_never_overlap() {
+        let table = Arc::new(PathLockTable::new());
+        let path = Arc::new(PathBuf::from("/tmp/pl-concurrent-no-overlap"));
+        let inside = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let t = table.clone();
+            let p = path.clone();
+            let c = inside.clone();
+            handles.push(tokio::spawn(async move {
+                let g = t
+                    .acquire(&p, &format!("w{i}"), Duration::from_secs(5))
+                    .await
+                    .unwrap();
+                let prev = c.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(
+                    prev, 0,
+                    "another task held the lock when we acquired —                      mutual exclusion broken"
+                );
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                c.fetch_sub(1, Ordering::SeqCst);
+                drop(g);
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(inside.load(Ordering::SeqCst), 0);
+    }
+
+    /// A timed-out acquire must not poison the cell. After the holder
+    /// drops, the next acquirer succeeds — the timeout is a fact about
+    /// the *waiter's* budget, not the cell's state.
+    ///
+    /// Untested pre-fix: the code path where `tokio::time::timeout`
+    /// fires on `cell.lock_owned()` could, in a buggy implementation,
+    /// leave an internal queue entry or a "poisoned" flag behind.
+    #[tokio::test]
+    async fn acquire_timeout_does_not_poison_cell() {
+        let table = PathLockTable::new();
+        let path = Path::new("/tmp/pl-timeout-no-poison");
+        let g1 = table
+            .acquire(path, "holder", Duration::from_secs(1))
+            .await
+            .unwrap();
+        // Second acquire with a tiny timeout must fail while held.
+        let second = table
+            .acquire(path, "waiter", Duration::from_millis(50))
+            .await;
+        assert!(
+            second.is_err(),
+            "second acquire must time out while holder is live"
+        );
+        // Drop the holder; the cell must not be poisoned.
+        drop(g1);
+        let third = table
+            .acquire(path, "after", Duration::from_millis(100))
+            .await;
+        assert!(third.is_ok(), "acquire after timeout+drop must succeed");
+    }
+
+    /// A zero-timeout acquire against a *contended* path fails
+    /// immediately. The companion test `zero_timeout_still_acquires_
+    /// when_uncontended` covers the uncontended case (must succeed);
+    /// this covers the contended case (must fail fast, no busy-wait).
+    ///
+    /// `tokio::time::timeout(Duration::ZERO, fut)` polls `fut` once
+    /// before checking the deadline, so uncontended → Ok, contended →
+    /// Err. Anything else (blocking, sleeping) would violate the
+    /// zero-timeout contract.
+    #[tokio::test]
+    async fn zero_timeout_fails_immediately_when_contended() {
+        let table = PathLockTable::new();
+        let path = Path::new("/tmp/pl-zero-timeout-contended");
+        let _holder = table
+            .acquire(path, "holder", Duration::from_secs(1))
+            .await
+            .unwrap();
+        let start = std::time::Instant::now();
+        let r = table.acquire(path, "waiter", Duration::ZERO).await;
+        let elapsed = start.elapsed();
+        assert!(r.is_err(), "zero-timeout acquire must fail while contended");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "zero-timeout acquire must return immediately; took {elapsed:?}"
+        );
+    }
+}
