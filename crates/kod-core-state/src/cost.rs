@@ -11,6 +11,7 @@
 use kod_config::limits::OnExhausted;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 /// A snapshot of the current spend state. `Copy` so a UI can hold it.
 #[derive(Debug, Clone, Copy, Default)]
@@ -353,7 +354,7 @@ mod tests {
 /// window sum an *under*-estimate — the safe direction, because an
 /// under-estimate warns later, never earlier.
 pub struct SpendWindow {
-    entries: parking_lot::RwLock<std::collections::VecDeque<(u64, u64)>>,
+    entries: parking_lot::RwLock<std::collections::VecDeque<(Instant, u64)>>,
     cap: usize,
 }
 
@@ -368,10 +369,10 @@ impl SpendWindow {
 
     /// Append `micro` USD spent now.
     pub fn record(&self, micro: u64) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        // Bug-hunt post-v0.1.9 (P2): the rolling window used a
+        // wall-clock read, so an NTP correction or resume-from-sleep
+        // silently corrupted it. `Instant` is monotonic.
+        let now = Instant::now();
         let mut g = self.entries.write();
         g.push_back((now, micro));
         while g.len() > self.cap {
@@ -384,13 +385,12 @@ impl SpendWindow {
     /// Prunes entries older than the window on read, so a long-running
     /// process does not accumulate history it will never query.
     pub fn spend_in(&self, window: std::time::Duration) -> f64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let cutoff = now.saturating_sub(window.as_millis() as u64);
+        // Bug-hunt post-v0.1.9 (P2): age entries with
+        // `Instant::elapsed()` -- monotonic, immune to wall-clock
+        // jumps. On a fresh entry elapsed() is microseconds so the
+        // existing record-then-spend_in tests still pass.
         let mut g = self.entries.write();
-        while g.front().is_some_and(|(at, _)| *at < cutoff) {
+        while g.front().is_some_and(|(at, _)| at.elapsed() > window) {
             g.pop_front();
         }
         let micro: u64 = g.iter().map(|(_, m)| *m).fold(0u64, u64::saturating_add);
@@ -446,6 +446,43 @@ mod window_tests {
         assert!(
             (total - expected).abs() < 1.0,
             "saturating sum must equal u64::MAX/1e6 = {expected}, got {total}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod spend_window_uses_monotonic_clock {
+    // Bug-hunt post-v0.1.9 (P2): SpendWindow must use a monotonic
+    // time source. Two subtleties the earlier attempts missed:
+    //   - The scope is `impl SpendWindow`, not "before the first
+    //     #[cfg(test)]" (round 101) which cut before the impl.
+    //   - The absence check targets the CALL `SystemTime::now`, not
+    //     the word `SystemTime` (round 102), which appears in the
+    //     fix's own explanatory comments.
+    #[test]
+    fn spend_window_uses_monotonic_clock() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cost.rs"))
+            .expect("read cost.rs");
+
+        let start = src
+            .find("impl SpendWindow")
+            .expect("impl SpendWindow present");
+        let tail = &src[start..];
+        let end = tail.find("\n}\n").map(|i| start + i).unwrap_or(src.len());
+        let body = &src[start..end];
+
+        assert!(
+            body.contains("Instant::now"),
+            "SpendWindow::record must use std::time::Instant"
+        );
+        assert!(
+            body.contains("at.elapsed()"),
+            "SpendWindow::spend_in must age entries with Instant::elapsed()"
+        );
+        assert!(
+            !body.contains("SystemTime::now"),
+            "SpendWindow must not call SystemTime::now — a wall-clock \
+             jump would silently corrupt the rolling spend window"
         );
     }
 }
