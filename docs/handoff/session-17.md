@@ -340,3 +340,31 @@ If the answer is "no CI change," the codebase is in a clean,
 well-tested, documented state and the arc is done. If the answer is
 "nightly job," the work is a `.github/workflows/` file, not a
 `src/` or `tests/` change.
+
+### Full-workspace verification (post-arc)
+
+The last all-workspace gate was at `v0.1.11` release. Eight commits
+landed after it (provider seam, serve_io, ACP session/approval/cancel,
+MCP dispatch, real MCP server, multi-client serve, docs), each gated
+per-crate only.
+
+A final all-workspace run at HEAD `9171666` reported:
+`4378 tests run: 4370 passed, 8 exec failed, 5 skipped`.
+
+The 8 failures were **not test failures**. Each reported
+`error spawning child process / Resource temporarily unavailable
+(os error 35)` — **EAGAIN on fork**, the host pressure quirk the
+session-16 environment notes record ("fork pressure produces 9+
+false exec_failed"). The tests never executed.
+
+Re-running the 8 at `--test-threads 1` (minimal fork pressure)
+passed; the full `kod-core` suite at `--test-threads 1` also passed.
+Interpretation: **no regression**, only host fork pressure under a
+full-workspace run.
+
+Lesson for the environment notes (**L21**): a full-workspace gate on
+this host can end with exit 100 purely from `execfail` — nextest could
+not spawn the test process. Before treating exit 100 as a regression,
+read the failure list: `execfail` + `os error 35` is host pressure;
+an assertion or panic is a real failure. Re-run the execfailed names
+at `--test-threads 1` to distinguish.
