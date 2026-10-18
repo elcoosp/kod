@@ -753,6 +753,15 @@ impl OpenAICompatProvider {
         Box::pin(async_stream::stream! {
             // §9.2: attempt loop.
             const MAX_STREAM_ATTEMPTS: u32 = 3;
+            // P8 (bug-hunt post-v0.1.8): see the Anthropic sibling.
+            // The stream is decoded by `adk-model` (yields parsed
+            // `Part::*`, not raw bytes), so there is no line to bound
+            // here. What is missing is a wall-clock bound on the
+            // attempt: a wedged server trickling events hangs
+            // `responses.next()` forever, `transport_error` never
+            // fires, the retry path never runs. 300s per attempt is
+            // generous for any real reply.
+            const STREAM_ATTEMPT_TIMEOUT_SECS: u64 = 300;
             // H-RL1: the engine reads this stream under a 120 s idle
             // timeout, so a provider-side wait must stay under
             // `STREAM_RATE_LIMIT_WAIT_CAP`; longer windows surface as a
@@ -836,7 +845,26 @@ impl OpenAICompatProvider {
                 let mut stall_detector: Option<&'static str> = None;
                 let mut next_tool_index: usize = 0;
 
-                'read: while let Some(item) = responses.next().await {
+                let attempt_deadline = tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(STREAM_ATTEMPT_TIMEOUT_SECS);
+                'read: while tokio::time::Instant::now() < attempt_deadline {
+                    let item = match tokio::time::timeout(
+                        attempt_deadline
+                            .saturating_duration_since(tokio::time::Instant::now()),
+                        responses.next(),
+                    )
+                    .await
+                    {
+                        Ok(Some(i)) => i,
+                        Ok(None) => break 'read,
+                        Err(_elapsed) => {
+                            transport_retryable = true;
+                            transport_error = Some(KodError::Provider(format!(
+                                "openai-compat stream: attempt exceeded {STREAM_ATTEMPT_TIMEOUT_SECS}s without completing"
+                            )));
+                            break 'read;
+                        }
+                    };
                     match item {
                         Ok(response) => {
                             if let Some(usage) = response.usage_metadata {
@@ -1769,5 +1797,30 @@ mod tests {
         // completion = 500 → 0.0075
         // total ≈ 0.0159
         assert!((cost - 0.0159).abs() < 1e-6, "cost = {cost}");
+    }
+}
+
+#[cfg(test)]
+mod provider_stream_deadline {
+    /// P8 (bug-hunt post-v0.1.8): the streaming read loop must have a
+    /// per-attempt wall-clock deadline. Without one, a wedged or
+    /// hostile endpoint trickling events hangs the attempt forever
+    /// and bypasses the retry mechanism.
+    #[test]
+    fn openai_stream_has_attempt_deadline() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/provider.rs"))
+            .expect("read provider.rs");
+        assert!(
+            src.contains("STREAM_ATTEMPT_TIMEOUT_SECS"),
+            "streaming attempt must have a wall-clock timeout constant"
+        );
+        assert!(
+            src.contains("attempt_deadline"),
+            "streaming loop must compute a per-attempt deadline"
+        );
+        assert!(
+            src.contains("tokio::time::timeout("),
+            "streaming loop must wrap `.next()` in a timeout"
+        );
     }
 }
