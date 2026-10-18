@@ -444,8 +444,23 @@ async fn dispatch_request(server: Arc<Server>, id: Value, method: &str, params: 
             let id_clone = id.clone();
             let session_id_clone = session_id.clone();
             tokio::spawn(async move {
-                run_prompt(server_clone.clone(), id_clone, session_id.clone(), prompt).await;
-                // Always release the busy flag, even on early return.
+                // Bug-hunt post-v0.1.9 (P1): run_prompt used to be
+                // awaited directly. A panic inside it aborted the task
+                // before in_flight.remove, wedging the session on
+                // -32002 forever. Wrap it in an inner tokio::spawn:
+                // JoinHandle::await returns Err on panic, so the
+                // cleanup below runs on normal, error, and panic paths.
+                let server_for_run = server_clone.clone();
+                let run_handle = tokio::spawn(async move {
+                    run_prompt(server_for_run, id_clone, session_id.clone(), prompt).await;
+                });
+                if run_handle.await.is_err() {
+                    tracing::error!(
+                        session = %session_id_clone,
+                        "ACP prompt task panicked; releasing in_flight and continuing"
+                    );
+                }
+                // Always release the busy flag.
                 server_clone
                     .in_flight
                     .lock()
