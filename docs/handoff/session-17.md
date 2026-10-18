@@ -137,3 +137,33 @@ Closed the highest-value remaining behavioral gap (ACP
 was already covered, then building two tests — the bridge dispatch
 and both arms of the stop-reason mapping — that together pin the
 whole path.
+
+## L20 — never overwrite `wr1.sh` in place; write `tmp` + `mv`
+
+Session 17 ended with a hung terminal. Diagnosis: `wr1.sh` was
+overwritten non-atomically while a `watchexec` instance was
+mid-execution of the previous script. Bash reads scripts
+incrementally; replacing the file mid-read makes bash execute a mix
+of old and new content, which can block on a half-read heredoc
+forever.
+
+The hang is indistinguishable from a slow test run until you check
+`ps` — the screen shows test-binary output (`acp: loaded 76 skill
+file(s)`) that came from the *previous* script still executing.
+
+Discipline: whenever writing `wr1.sh` (or any watched script),
+always:
+
+    cat > wr1.sh.tmp << 'SCRIPT_EOF'
+    ...content...
+    SCRIPT_EOF
+    chmod +x wr1.sh.tmp && mv wr1.sh.tmp wr1.sh
+
+A `mv` is atomic on the same filesystem; the watcher sees one
+complete file and executes it once. A direct `cat > wr1.sh` is not
+atomic and races any mid-execution reader.
+
+Recovery if it hangs: `Ctrl-C` the terminal, then
+`pkill -TERM -f 'cargo nextest|cargo check|cargo build'`, `sleep 2`,
+`pkill -KILL` anything left. Nothing is lost — the hang is a read
+failure, not a write corruption; `git status` will show clean.
