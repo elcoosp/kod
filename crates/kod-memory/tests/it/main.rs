@@ -9,3 +9,4 @@ mod long_term;
 mod short_term;
 mod embedder_panic;
 mod consolidate_panic;
+mod embed_safe_lint;
