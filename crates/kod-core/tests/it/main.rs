@@ -45,3 +45,4 @@ mod swarm_runner;
 mod tool_loop;
 mod tool_loop_guard_integration;
 mod transcript_working_dir;
+mod provider_seam;

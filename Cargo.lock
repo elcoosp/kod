@@ -2161,6 +2161,7 @@ dependencies = [
  "dashmap",
  "dirs 6.0.0",
  "futures",
+ "httpmock",
  "ignore",
  "kod-ast",
  "kod-config",
