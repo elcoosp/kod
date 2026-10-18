@@ -466,3 +466,115 @@ grep the **whole repo** (minus `target/`), and look inside `fuzz/`
 explicitly. This is the same over-claim shape as the earlier
 sessions' "read the tests before naming a gap," with a specific new
 cause: an out-of-workspace call site.
+
+## Session 18 — fault-injection arc, completed
+
+Extends the earlier session-18 fault-injection notes. Total for the
+arc: **three real bug fixes with failing-first tests, three
+regression guards, one class-level source lint with a positive
+control.** All committed under session 18; tree clean at `60b5f83`.
+
+### The full commit list
+
+| Commit | Kind | Outcome |
+|---|---|---|
+| `1dbf8cc` | fix | tool-registry panic killed the turn — **fixed** |
+| `530ef01` | guard | openai malformed SSE mid-stream |
+| `a33b58c` | guard | anthropic malformed SSE mid-stream (parity) |
+| `31e962a` | guard | MCP garbage line + timeout recovery |
+| `69c94aa` | fix | embedder panic on retrieval path — **fixed** |
+| `fd84489` | fix | embedder panic in fuse_duplicates — **fixed** |
+| `60b5f83` | guard | source lint: every foreground embed goes through `embed_safe` |
+
+### The three real fixes
+
+All three had the same shape: an `.await` on a fallible operation
+(third-party code, plugin, MCP server) in the caller's task, with no
+spawn boundary — so a panic unwound through the caller and killed
+the turn or the maintenance pass. Each was **written failing-first**
+(the pre-fix run panicked with the fixture's exact panic string), and
+each fixed at the *invariant* level rather than the instance.
+
+1. **Tool panic** (`1dbf8cc`): `ToolRegistry::execute_tool` awaited
+   `Tool::execute` directly; the engine's parallel round is a
+   `join_all` in the engine's own task. One bad tool took the whole
+   turn down. Fix: `AssertUnwindSafe::catch_unwind` at the registry,
+   converting the payload into `ToolResult::Error` naming the tool.
+2. **Embedder panic on retrieval** (`69c94aa`): `retrieve_context` ->
+   `retrieve_long_term_hybrid` -> `rebuild_index` -> `embed()` on
+   every prompt. Fix: `embed_safe` helper; two call sites wrapped.
+3. **Embedder panic in fuse_duplicates** (`fd84489`): the
+   consolidation pass from `router.rs:527`. Same helper, third call
+   site, plus the Arc-deref the other sites already used.
+
+The background embed path was **already** isolated — the existing
+`flush_returns_after_panicking_embed_task` guarded it. The asymmetry
+(background guarded, foreground not) is what made the fix necessary.
+
+### The class-level guard
+
+`crates/kod-memory/tests/it/embed_safe_lint.rs` scans
+`src/manager.rs` and fails if any `.embed(` call appears outside
+`embed_safe` and outside `spawn_embed`. It also asserts each barrier
+still contains its intended call site, so a refactor that moved the
+call out of `embed_safe` fails the lint too. Shape mirrors
+`kod-types::source_lints::truncate_helpers_name_matches_contract`
+(session 16).
+
+**Positive control:** the test script injects a bad `.embed(` call
+outside both barriers, confirms the lint *fails with the intended
+message*, restores, and confirms green. A source lint that only ever
+passes is untested; this one is proven to have teeth. Recorded in the
+commit message so a future reader knows the guard was validated
+against a positive control, not just observed passing.
+
+### The vacuous-pass traps (both cost a round)
+
+**The retrieval-panic test passed on first write without exercising
+the embed path.** `retrieve_long_term_hybrid` returns early when the
+long-term store is empty (`if all_arc.is_empty() { return
+Ok(Vec::new()); }`). The test passed by never reaching the code it
+was meant to exercise. Fix: store one entry first.
+
+**The fuse-panic test passed on first write too.** Two traps stacked:
+1. `fuse_duplicates` skips any project group with fewer than two
+   entries; two *identical* contents dedupe to one at the store
+   layer, so the group had one and the embed never fired. Contents
+   must differ.
+2. The fuse sort falls back to a 1-second wall-clock when
+   `last_retrieved_at_ms` is unset. Explicit timestamps remove that.
+
+**Discipline that caught both:** the pre-fix script fails **closed**
+— if the fixture's exact panic string is not in the pre-run output,
+the script refuses to apply the fix. A guard that says "did the
+failing-first actually fail first?" is what distinguishes a real fix
+from a test that never ran.
+
+### What this arc did NOT close (from the earlier list)
+
+- **`DecisionWait::RecvClosed`** — ruled out. Both drain paths
+  (`respond_to_approval`, `deny_all_pending_approvals`) send before
+  removing, so the sender is never dropped without a send. The branch
+  is defensive and unreachable in current code; a test would be
+  synthetic.
+- **Per-tool timeout** — not a test. `execute_command` has one; a
+  general per-tool timeout is a feature, not a bug.
+- **MCP malformed JSON-RPC** — closed as a guard (`31e962a`). Both
+  the garbage-line-mid-conversation and the timeout-does-not-poison
+  shapes were already correct; the guard pins them.
+
+### When to look here again
+
+If a future change adds a fourth `.embed(` call in `manager.rs`, the
+source lint fails immediately — that is the invariant holding. If it
+adds a fourth fallible-`.await` in the caller's task elsewhere (a
+tool path, an MCP path, a retry path), the same class of bug can
+reappear there. The search shape:
+
+    grep -rn '\.await' crates/<crate>/src \
+      | grep -vE 'spawn|join_all|buffer_unordered|spawn_blocking'
+
+An `.await` that is not behind a spawn boundary and calls into
+third-party code (a provider, an MCP server, a plugin, a database)
+is a candidate for panic-isolation review. This arc fixed three of
+those; the fourth is not yet known.
