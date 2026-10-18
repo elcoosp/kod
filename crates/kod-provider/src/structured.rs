@@ -197,3 +197,49 @@ mod tests {
         assert_eq!(extract_json(r#"{"a": 1"#), None);
     }
 }
+
+#[cfg(test)]
+mod json_extract_property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::string::string_regex;
+
+    // KNOWN GAP (documented, not tested here): a JSON string value
+    // containing ``` inside a fenced block confuses the fence-
+    // terminator search. The round-trip tests below constrain `name`
+    // to [a-z]{0,10} so the value never contains backticks; the
+    // ambiguity is tracked as a separate finding.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn whole_text_object_round_trips(
+            name in "[a-z]{0,10}",
+            value in any::<i64>(),
+        ) {
+            let v = serde_json::json!({"name": name, "value": value});
+            let s = serde_json::to_string(&v).expect("serialize");
+            prop_assert_eq!(extract_json(&s), Some(v));
+        }
+
+        #[test]
+        fn fenced_object_round_trips(
+            name in "[a-z]{0,10}",
+            value in any::<i64>(),
+        ) {
+            let v = serde_json::json!({"name": name, "value": value});
+            let s = serde_json::to_string(&v).expect("serialize");
+            // Plain backticks — no backslash. Rust's string-literal
+            // escapes do not include backtick.
+            let wrapped = format!("```json\n{s}\n```");
+            prop_assert_eq!(extract_json(&wrapped), Some(v));
+        }
+
+        #[test]
+        fn never_panics_on_arbitrary_utf8(
+            s in string_regex("(?s).{0,80}").unwrap(),
+        ) {
+            let _ = extract_json(&s);
+        }
+    }
+}

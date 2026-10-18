@@ -2428,6 +2428,7 @@ dependencies = [
  "httpmock",
  "kod-error",
  "kod-types",
+ "proptest",
  "regex",
  "serde",
  "serde_json",
