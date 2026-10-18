@@ -238,3 +238,152 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
     let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
     drop(tmp2);
 }
+
+/// Two concurrent clients on one `serve` socket.
+///
+/// `shutdown_request_terminates_the_daemon` and
+/// `unknown_method_reports_an_error_line` each drive a single
+/// `UnixStream`. The accept loop spawns a handler per connection
+/// (`serve.rs`, the `tokio::spawn` inside the `accept` arm), but
+/// nothing proves that two connected clients are actually served
+/// independently: a regression that serialised handlers, or shared a
+/// read buffer, or answered the second client's request on the first
+/// client's stream, would pass every existing test.
+///
+/// This test connects two clients, has each send an unknown-method
+/// request with its own id, and asserts each receives *its own*
+/// well-formed response. Then one client shuts the daemon down and
+/// the socket file is removed.
+///
+/// The second client's post-shutdown EOF is deliberately NOT
+/// asserted: the handler task for the second connection is detached
+/// from the accept loop, and its stream close semantics are not part
+/// of the documented contract (the daemon exits; the process that
+/// owned the socket is gone). Pinning "client B sees EOF within Ns"
+/// would codify behaviour that is currently incidental to tokio's
+/// task-drop order, which is exactly the kind of assertion that goes
+/// flaky. What matters — and what is asserted — is that both clients
+/// were served independently *before* shutdown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_clients_are_served_independently_then_shutdown_stops_the_daemon() {
+    use tokio::io::AsyncReadExt;
+
+    let (tmp, engine) = start_engine().await;
+    let sock = socket_path(tmp.path());
+
+    let server_engine = engine.clone();
+    let server_sock = sock.clone();
+    let server = tokio::spawn(async move {
+        kod_core_serve::serve::serve(server_engine, server_sock).await
+    });
+
+    // Wait for the accept loop to bind.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !sock.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        sock.exists(),
+        "serve must bind the socket within 10s; path={}",
+        sock.display(),
+    );
+
+    let mut a = UnixStream::connect(&sock).await.expect("connect client A");
+    let mut b = UnixStream::connect(&sock).await.expect("connect client B");
+
+    // One request/response round-trip on a borrowed stream. `split()`
+    // lets the read half own a BufReader while the write half stays
+    // available; both halves drop before the stream is reused.
+    async fn one_rpc<R, W>(
+        r: R,
+        mut w: W,
+        id: &str,
+        method: &str,
+    ) -> serde_json::Value
+    where
+        R: AsyncReadExt + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
+        let req = serde_json::json!({ "id": id, "method": method });
+        let mut buf = serde_json::to_vec(&req).expect("serialize request");
+        buf.push(b'\n');
+        w.write_all(&buf).await.expect("write request");
+        w.flush().await.expect("flush request");
+
+        let mut br = BufReader::new(r);
+        let mut line = String::new();
+        let n = br.read_line(&mut line).await.expect("read response line");
+        assert!(n > 0, "server closed without a response to id={id}");
+        serde_json::from_str(line.trim()).expect("response is JSON")
+    }
+
+    // Client A: its own id, its own response.
+    let resp_a = {
+        let (ra, wa) = a.split();
+        one_rpc(ra, wa, "11", "no_such_method").await
+    };
+    assert_eq!(
+        resp_a.get("id").and_then(|v| v.as_str()),
+        Some("11"),
+        "client A must receive the response to its own id; got {resp_a}",
+    );
+    assert_eq!(
+        resp_a.get("type").and_then(|v| v.as_str()),
+        Some("error"),
+        "an unknown method must produce a type=error line; got {resp_a}",
+    );
+
+    // Client B: still connected, its own id, its own response. If the
+    // server serialised handlers or shared a buffer, this would either
+    // hang, return A's id, or fail to parse.
+    let resp_b = {
+        let (rb, wb) = b.split();
+        one_rpc(rb, wb, "22", "no_such_method").await
+    };
+    assert_eq!(
+        resp_b.get("id").and_then(|v| v.as_str()),
+        Some("22"),
+        "client B must receive the response to its own id, not A's; got {resp_b}",
+    );
+    assert_eq!(
+        resp_b.get("type").and_then(|v| v.as_str()),
+        Some("error"),
+        "an unknown method must produce a type=error line on B too; got {resp_b}",
+    );
+
+    // One client shuts the daemon down. The reply is the documented
+    // `{type:"done"}` line; the accept loop then breaks and the
+    // socket file is removed.
+    let shutdown_reply = {
+        let (ra, wa) = a.split();
+        one_rpc(ra, wa, "33", "shutdown").await
+    };
+    assert_eq!(
+        shutdown_reply.get("type").and_then(|v| v.as_str()),
+        Some("done"),
+        "shutdown must reply with a type=done line; got {shutdown_reply}",
+    );
+
+    // The serve task must return (not hang) after shutdown.
+    let joined = tokio::time::timeout(Duration::from_secs(10), server).await;
+    assert!(
+        joined.is_ok(),
+        "serve must return within 10s of a shutdown request",
+    );
+    let serve_result = joined.expect("serve returned inside the budget");
+    assert!(
+        serve_result.expect("serve task must not panic").is_ok(),
+        "serve returned an error on clean shutdown",
+    );
+
+    // And the socket file is gone.
+    assert!(
+        !sock.exists(),
+        "serve must remove the socket file on shutdown; path={}",
+        sock.display(),
+    );
+
+    // `b` drops here. Its stream close is not asserted — see the
+    // module-doc note on why.
+}
