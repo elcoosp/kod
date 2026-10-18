@@ -31,7 +31,6 @@ use kod_core::KodEngine;
 use kod_core::router::RouterConfig;
 use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};
 use kod_provider::testkit::{MockProvider, Script};
-use kod_types::ToolCall;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
@@ -198,13 +197,6 @@ async fn engine_with(
     engine
 }
 
-fn write_call(path: &str) -> Vec<ToolCall> {
-    vec![ToolCall {
-        id: Some("call-cancel-1".into()),
-        tool_name: "write_file".into(),
-        arguments: json!({ "path": path, "content": "fn main() {}\n" }),
-    }]
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_cancel_reaches_the_engine_and_maps_to_cancelled_stop_reason() {
