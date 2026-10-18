@@ -1474,7 +1474,7 @@ impl MemoryManager {
                 }
             }
             if !missing_texts.is_empty() {
-                match embedder.embed(&missing_texts).await {
+                match Self::embed_safe(embedder.as_ref(), &missing_texts).await {
                     Ok(fresh) => {
                         if fresh.len() != missing_texts.len() {
                             tracing::warn!(

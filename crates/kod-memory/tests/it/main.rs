@@ -8,3 +8,4 @@ mod consolidation;
 mod long_term;
 mod short_term;
 mod embedder_panic;
+mod consolidate_panic;
