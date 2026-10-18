@@ -597,3 +597,138 @@ mod empty_hunk_handling {
         }
     }
 }
+
+#[cfg(test)]
+mod round_trip_properties {
+    use super::*;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
+    // Property: single-line replacement
+    // Original -> patch replaces line i -> diff -> apply -> mutated
+    // Invariant: mutated[i] == replacement, everything else preserved.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn single_line_replacement_round_trips(
+            lines in vec("[a-zA-Z0-9]{1,20}", 3..10),
+            i in 0usize..10,
+            replacement in "[a-zA-Z0-9]{1,20}",
+        ) {
+            // Unique lines so find_unique_block's strict contract matches.
+            let unique: std::collections::HashSet<_> = lines.iter().collect();
+            prop_assume!(unique.len() == lines.len());
+            prop_assume!(i < lines.len());
+            prop_assume!(lines[i] != replacement);
+
+            let original = format!("{}\n", lines.join("\n"));
+            let mut mutated = lines.clone();
+            mutated[i] = replacement.clone();
+            let expected = format!("{}\n", mutated.join("\n"));
+
+            let mut hunk_lines: Vec<String> = Vec::new();
+            if i > 0 {
+                hunk_lines.push(format!(" {}", lines[i - 1]));
+            }
+            hunk_lines.push(format!("-{}", lines[i]));
+            hunk_lines.push(format!("+{}", replacement));
+            if i + 1 < lines.len() {
+                hunk_lines.push(format!(" {}", lines[i + 1]));
+            }
+
+            let patch = FilePatch::Update {
+                path: "f.rs".to_string(),
+                hunks: vec![Hunk {
+                    section: String::new(),
+                    lines: hunk_lines,
+                }],
+            };
+
+            let diff = to_unified_diff(&patch, &original)
+                .expect("valid replacement patch must convert");
+            let result = crate::patch::apply_unified_diff(&original, &diff)
+                .expect("generated diff must apply");
+            prop_assert_eq!(result, expected);
+        }
+
+        // Property: single-line deletion
+        #[test]
+        fn single_line_deletion_round_trips(
+            lines in vec("[a-zA-Z0-9]{1,20}", 3..10),
+            i in 0usize..10,
+        ) {
+            let unique: std::collections::HashSet<_> = lines.iter().collect();
+            prop_assume!(unique.len() == lines.len());
+            prop_assume!(i < lines.len());
+
+            let original = format!("{}\n", lines.join("\n"));
+            let mut mutated = lines.clone();
+            mutated.remove(i);
+            let expected = format!("{}\n", mutated.join("\n"));
+
+            let mut hunk_lines: Vec<String> = Vec::new();
+            if i > 0 {
+                hunk_lines.push(format!(" {}", lines[i - 1]));
+            }
+            hunk_lines.push(format!("-{}", lines[i]));
+            if i + 1 < lines.len() {
+                hunk_lines.push(format!(" {}", lines[i + 1]));
+            }
+
+            let patch = FilePatch::Update {
+                path: "f.rs".to_string(),
+                hunks: vec![Hunk {
+                    section: String::new(),
+                    lines: hunk_lines,
+                }],
+            };
+
+            let diff = to_unified_diff(&patch, &original)
+                .expect("valid deletion patch must convert");
+            let result = crate::patch::apply_unified_diff(&original, &diff)
+                .expect("generated diff must apply");
+            prop_assert_eq!(result, expected);
+        }
+
+        // Property: single-line insertion after index i
+        #[test]
+        fn single_line_addition_round_trips(
+            lines in vec("[a-zA-Z0-9]{1,20}", 3..10),
+            i in 0usize..10,
+            new_line in "[a-zA-Z0-9]{1,20}",
+        ) {
+            let unique: std::collections::HashSet<_> = lines.iter().collect();
+            prop_assume!(unique.len() == lines.len());
+            prop_assume!(i < lines.len());
+            prop_assume!(!lines.contains(&new_line));
+
+            let original = format!("{}\n", lines.join("\n"));
+            let mut mutated = lines.clone();
+            mutated.insert(i + 1, new_line.clone());
+            let expected = format!("{}\n", mutated.join("\n"));
+
+            // Hunk: context lines[i], addition new_line.
+            // Application replaces [lines[i]] with [lines[i], new_line],
+            // i.e. inserts after i.
+            let hunk_lines: Vec<String> = vec![
+                format!(" {}", lines[i]),
+                format!("+{}", new_line),
+            ];
+
+            let patch = FilePatch::Update {
+                path: "f.rs".to_string(),
+                hunks: vec![Hunk {
+                    section: String::new(),
+                    lines: hunk_lines,
+                }],
+            };
+
+            let diff = to_unified_diff(&patch, &original)
+                .expect("valid addition patch must convert");
+            let result = crate::patch::apply_unified_diff(&original, &diff)
+                .expect("generated diff must apply");
+            prop_assert_eq!(result, expected);
+        }
+    }
+}

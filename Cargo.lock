@@ -2571,6 +2571,7 @@ dependencies = [
  "kod-minimize",
  "kod-types",
  "libc",
+ "proptest",
  "regex",
  "reqwest 0.13.5",
  "rstest",
