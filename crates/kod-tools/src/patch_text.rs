@@ -228,7 +228,12 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
             // first. kod's own applier ignores `new_start`, which is
             // why this went unnoticed internally.
             let mut new_side_offset: isize = 0;
-            for hunk in hunks {
+            // Bug-hunt post-v0.1.9 (P2): drop empty hunks before
+            // find_unique_block. An empty hunk has nothing to search
+            // for; find_unique_block's empty-needle -> None rejection
+            // is misleading (the real hunks match fine) and blocks an
+            // otherwise-valid patch.
+            for hunk in hunks.iter().filter(|h| !h.lines.is_empty()) {
                 let (old_lines, new_lines) = split_hunk(&hunk.lines);
                 let (start, count) =
                     find_unique_block(&file_lines, &old_lines).ok_or_else(|| {
@@ -526,5 +531,69 @@ mod tests {
         };
         let diff = to_unified_diff(&patch, original).expect("a diff");
         assert!(diff.contains("@@ -1,2 +1,2 @@"));
+    }
+}
+
+#[cfg(test)]
+mod empty_hunk_handling {
+    use super::*;
+
+    /// Real hunk + stray trailing empty `@@` must apply cleanly.
+    #[test]
+    fn empty_hunk_is_ignored_not_an_error() {
+        let original = "line1\nline2\nline3\n";
+        let patch = FilePatch::Update {
+            path: "foo.rs".to_string(),
+            hunks: vec![
+                Hunk {
+                    section: String::new(),
+                    lines: vec![
+                        " line2".to_string(),
+                        "-line3".to_string(),
+                        "+line4".to_string(),
+                    ],
+                },
+                Hunk {
+                    section: "trailing".to_string(),
+                    lines: vec![],
+                },
+            ],
+        };
+        let diff =
+            to_unified_diff(&patch, original).expect("empty hunk must not fail to_unified_diff");
+        assert_eq!(
+            diff.matches("@@ -").count(),
+            1,
+            "exactly one hunk header emitted; got diff={diff:?}"
+        );
+        let result = crate::patch::apply_unified_diff(original, &diff).expect("diff must apply");
+        assert_eq!(result, "line1\nline2\nline4\n");
+    }
+
+    /// Extract drops an Update whose only content is a section marker.
+    #[test]
+    fn all_empty_update_is_dropped_by_extract() {
+        let text =
+            "*** Begin Patch\n*** Update File: foo.rs\n@@ some section marker\n*** End Patch\n";
+        let patches = extract(text).expect("envelope parses");
+        assert!(
+            patches.is_empty(),
+            "an Update with only empty hunks must be dropped; got {patches:?}"
+        );
+    }
+
+    /// A normal Update survives the retain filter.
+    #[test]
+    fn real_update_survives_the_empty_filter() {
+        let text = "*** Begin Patch\n*** Update File: foo.rs\n@@\n a\n-b\n+c\n*** End Patch\n";
+        let patches = extract(text).expect("envelope parses");
+        assert_eq!(patches.len(), 1);
+        match &patches[0] {
+            FilePatch::Update { hunks, .. } => {
+                assert_eq!(hunks.len(), 1);
+                assert_eq!(hunks[0].lines.len(), 3);
+            }
+            other => panic!("expected Update, got {other:?}"),
+        }
     }
 }
