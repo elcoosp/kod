@@ -206,6 +206,24 @@ pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {
     kod_types::strutil::truncate_chars(s, max)
 }
 
+/// Truncate `s` to `max` chars, appending `ellipsis` only when the
+/// truncation actually shortened the string.
+///
+/// `truncate_chars` returns the whole string when it fits; a
+/// byte-length guard on the caller side (`s.len() > N`) can fire on
+/// CJK input whose char count is at the cap (3 bytes per char), and
+/// then a bare `format!("{shown}{ellipsis}")` appends an ellipsis to
+/// an untruncated string. This helper makes the decision exact by
+/// comparing the returned prefix to the input in the same units.
+fn truncate_with_ellipsis(s: &str, max: usize, ellipsis: &str) -> String {
+    let shown = truncate_chars(s, max);
+    if shown.len() < s.len() {
+        format!("{shown}{ellipsis}")
+    } else {
+        s.to_string()
+    }
+}
+
 /// Byte-cap counterpart to [`truncate_chars`]. Use at sites whose
 /// budget is expressed in bytes; same char-boundary behavior.
 pub(crate) fn truncate_bytes(s: &str, max: usize) -> &str {
@@ -274,11 +292,7 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
         if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
             // Multi-line shell snippets read as their first line only.
             let first = cmd.lines().next().unwrap_or(cmd).trim();
-            let short = if first.len() > 100 {
-                format!("{}…", truncate_chars(first, 100))
-            } else {
-                first.to_string()
-            };
+            let short = truncate_with_ellipsis(first, 100, "…");
             if short.is_empty() {
                 return name.to_string();
             }
@@ -296,11 +310,7 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
                     serde_json::Value::Number(n) => n.to_string(),
                     _ => continue,
                 };
-                let short = if s.len() > 80 {
-                    format!("{}…", truncate_chars(&s, 80))
-                } else {
-                    s
-                };
+                let short = truncate_with_ellipsis(&s, 80, "…");
                 return format!("{name} {key}={short}");
             }
         }
@@ -311,11 +321,7 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
     if raw.is_empty() || raw == "null" || raw == "{}" || raw == "[]" {
         return name.to_string();
     }
-    let short = if raw.len() > 80 {
-        format!("{}...", truncate_chars(&raw, 80))
-    } else {
-        raw
-    };
+    let short = truncate_with_ellipsis(&raw, 80, "...");
     format!("{name} {short}")
 }
 
@@ -343,11 +349,7 @@ pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
                     serde_json::Value::Number(n) => n.to_string(),
                     _ => continue,
                 };
-                let short = if s.len() > 60 {
-                    format!("{}…", truncate_chars(&s, 60))
-                } else {
-                    s
-                };
+                let short = truncate_with_ellipsis(&s, 60, "…");
                 // Long paths read better as their last two segments.
                 let shown = if key == "path" || key == "file" {
                     shorten_path(&short)

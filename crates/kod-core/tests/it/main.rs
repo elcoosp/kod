@@ -47,3 +47,4 @@ mod tool_loop_guard_integration;
 mod transcript_working_dir;
 mod provider_seam;
 mod mcp_roundtrip;
+mod format_call_brief_cjk;
