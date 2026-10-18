@@ -282,13 +282,14 @@ impl HybridScorer {
         let recency_component =
             self.w_recency * decay_at(entry.timestamp, now, shape) * weights.temporal as f32;
         // `weights.importance` is not applied: the score has three
-        // components (semantic, keyword, recency) whose weights sum to
-        // 1, and an added fourth term both breaks the bounded-by-one
-        // invariant and gives every entry a floor score — so an
-        // unrelated query matches everything. Folding `entry.relevance`
-        // into the sum as a genuine fourth component (normalising the
-        // four weights) is a separate change; until then the intent
-        // weights bias vector / keyword / temporal only.
+        // components (semantic, keyword, recency) whose BASE weights
+        // sum to 1. Intent weights can scale a component above 1
+        // (Procedural: vector=1.3), so the composite is clamped at
+        // the boundary to preserve the [0, 1] contract downstream
+        // fusion relies on. Adding `weights.importance` as a fourth
+        // term would also break the bounded-by-one invariant
+        // regardless — a caller folding it in must normalise all
+        // four weights first.
         let _ = weights.importance;
         // Delta §12.8: episodic tier degradation. The tier's weight is
         // a step function on age (< 30 d: 1.0, >= 30 d: 0.5,
@@ -297,7 +298,16 @@ impl HybridScorer {
         // design keeps both, and the tier is a coarse policy on top.
         // The weight is <= 1.0, so the bounded-by-one invariant holds.
         let tier_weight = crate::tier::tier_at(entry.timestamp, now).weight();
-        (semantic_component + keyword_component + recency_component) * tier_weight
+        // Bug-hunt post-v0.1.9 (P2): the "bounded-by-one" invariant
+        // above only holds for the *base* weights (0.6 + 0.3 + 0.1).
+        // Intent weights from `fusion::intent_weights` can push the
+        // effective sum above 1 (Procedural: vector=1.3 -> effective
+        // 0.78 + 0.3 + 0.1 = 1.18), and `manager.rs:1089` does call
+        // this with non-General intent. Without a final clamp the
+        // composite score can exceed 1, breaking the contract the
+        // omitted-`importance` decision rests on. Clamp at the
+        // boundary — monotone, ranking-preserving.
+        ((semantic_component + keyword_component + recency_component) * tier_weight).clamp(0.0, 1.0)
     }
 
     /// Term-frequency-saturated keyword score for one entry. Value in
@@ -755,5 +765,51 @@ mod coverage_scoring_composition {
         let now = OffsetDateTime::now_utc();
         let e = entry_at("x", 1);
         assert_eq!(recency(e.timestamp, now, 0.0), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod score_with_weights_is_bounded {
+    /// Bug-hunt post-v0.1.9 (P2): `score_with_weights`'s
+    /// "bounded-by-one" invariant only holds for the base weights.
+    /// `fusion::intent_weights` can push the effective sum above 1
+    /// (Procedural: vector=1.3 -> 0.78 + 0.3 + 0.1 = 1.18), and
+    /// manager.rs:1089 calls this with non-General intent. A
+    /// downstream fusion that trusts the [0, 1] contract sees
+    /// out-of-range scores. Source-level pin, scoped to the
+    /// `score_with_weights` body.
+    #[test]
+    fn score_with_weights_is_bounded_by_one() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/retrieval.rs"))
+            .expect("read retrieval.rs");
+        let start = src.find("pub fn score_with_weights").expect("fn present");
+        let mut end = src.len();
+        let bytes = src.as_bytes();
+        let mut depth = 0i32;
+        let mut found_brace = false;
+        let mut i = start;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => {
+                    depth += 1;
+                    found_brace = true;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if found_brace && depth == 0 {
+                        end = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let body = &src[start..end];
+        assert!(
+            body.contains(".clamp(0.0, 1.0)"),
+            "score_with_weights must clamp its return to [0, 1] so the \
+             bounded-by-one invariant survives non-General intent weights"
+        );
     }
 }
