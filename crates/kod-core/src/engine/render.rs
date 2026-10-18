@@ -78,7 +78,7 @@ pub(crate) fn cap_rendered_result(
                 let removed = s.len() - per_field;
                 *s = format!(
                     "{}… [truncated {} of {} bytes]",
-                    truncate_chars(s, per_field),
+                    truncate_bytes(s, per_field),
                     removed,
                     s.len(),
                 );
@@ -91,14 +91,14 @@ pub(crate) fn cap_rendered_result(
             }
             return format!(
                 "{}… [truncated {} bytes]",
-                truncate_chars(&reserialized, cap),
+                truncate_bytes(&reserialized, cap),
                 reserialized.len().saturating_sub(cap),
             );
         }
     }
     format!(
         "{}… [truncated {} bytes]",
-        truncate_chars(&raw, cap),
+        truncate_bytes(&raw, cap),
         raw.len().saturating_sub(cap),
     )
 }

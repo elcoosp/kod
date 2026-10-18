@@ -207,7 +207,7 @@ impl KodEngine {
                                 "{}…[truncated at the {} byte wire cap; the \
                                  full result was {} bytes — narrow the query \
                                  to see the rest]",
-                                truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
+                                truncate_bytes(&raw, STRUCTURED_TOOL_MSG_CAP),
                                 STRUCTURED_TOOL_MSG_CAP,
                                 raw.len(),
                             )
