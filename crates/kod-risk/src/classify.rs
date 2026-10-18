@@ -1831,3 +1831,73 @@ mod t5_regression {
         }
     }
 }
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::paths::RiskContext;
+    use proptest::prelude::*;
+    use proptest::string::string_regex;
+    use std::path::PathBuf;
+
+    // Local fixture — avoids sibling-module visibility trap
+    // (session-15 handoff lesson #3).
+    fn prop_ctx() -> RiskContext {
+        RiskContext {
+            working_dir: PathBuf::from("/work/proj"),
+            home_dir: PathBuf::from("/Users/dev"),
+            scratch_dir: PathBuf::from("/tmp"),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// Gate must never panic on arbitrary input — any panic here
+        /// crashes the engine (no recovery in the gate's caller).
+        #[test]
+        fn classify_never_panics(s in string_regex("(?s).{0,80}").unwrap()) {
+            let _ = assess(&s, &prop_ctx());
+        }
+
+        /// `$(...)`, backticks, `<(...)` in an argument execute at
+        /// expansion time regardless of the wrapping program. SEC-A-05.
+        #[test]
+        fn expansion_in_argument_is_not_safe(
+            wrapper in "[a-z]{1,10}",
+            inner in "[a-z0-9 /-]{1,20}",
+        ) {
+            prop_assume!(!matches!(wrapper.as_str(), "eval" | "exec" | "source"));
+            for form in [
+                format!("{wrapper} $({inner})"),
+                format!("{wrapper} `{inner}`"),
+                format!("{wrapper} <({inner})"),
+            ] {
+                let a = assess(&form, &prop_ctx());
+                prop_assert!(
+                    !matches!(a.level, RiskLevel::Safe),
+                    "classify({:?}) returned Safe — expansion must escalate",
+                    form
+                );
+            }
+        }
+
+        /// Bare `&` is a shell separator: `cmd1 & rm -rf /` runs both.
+        /// If classify treats `&` as an ordinary argument the destructive
+        /// half is invisible. SEC-A-04a.
+        #[test]
+        fn bare_ampersand_splits_segments(
+            cmd1 in "[a-z]{1,10}",
+            args in "[a-z0-9 ]{0,15}",
+        ) {
+            let form = format!("{cmd1} {args} & rm -rf /");
+            let a = assess(&form, &prop_ctx());
+            prop_assert!(
+                !matches!(a.level, RiskLevel::Safe),
+                "classify({:?}) returned Safe — bare `&` must split \
+                 segments so the destructive half is visible",
+                form
+            );
+        }
+    }
+}

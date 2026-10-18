@@ -2486,6 +2486,7 @@ dependencies = [
 name = "kod-risk"
 version = "0.1.10"
 dependencies = [
+ "proptest",
  "rstest",
 ]
 
