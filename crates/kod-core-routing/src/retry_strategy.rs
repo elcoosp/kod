@@ -91,19 +91,14 @@ impl TurnFailure {
         // BUG-C-10: auth is permanent and must be checked before the
         // substring timeout test, or "401 unauthorized: request timed
         // out" burns the retry chain on a non-recoverable failure.
-        if l.contains("401")
-            || l.contains("403")
-            || l.contains("unauthorized")
-            || l.contains("forbidden")
-            || l.contains("invalid api key")
-        {
-            return TurnFailure::ProviderAuthError {
-                detail: l.to_string(),
-            };
-        }
-        if l.contains("timed out") || l.contains("timeout") {
-            return TurnFailure::TransportTimeout;
-        }
+        //
+        // P3 bug-hunt post-v0.1.9: this block used to be duplicated
+        // below the timeout test (the BUG-C-10 fix added the moved
+        // copy but left the original in place). The duplicate also
+        // preserved `raw.to_string()` as `detail` (un-lowercased)
+        // while the moved copy used `l.to_string()`, so which `detail`
+        // a caller saw depended on which branch fired. Merged into
+        // one block, kept the lowercase form.
         if l.contains("401")
             || l.contains("403")
             || l.contains("unauthorized")
@@ -112,8 +107,11 @@ impl TurnFailure {
             || l.contains("authentication")
         {
             return TurnFailure::ProviderAuthError {
-                detail: raw.to_string(),
+                detail: l.to_string(),
             };
+        }
+        if l.contains("timed out") || l.contains("timeout") {
+            return TurnFailure::TransportTimeout;
         }
         if l.contains("connection") || l.contains("dns") || l.contains("tls") {
             return TurnFailure::TransportNetwork;
