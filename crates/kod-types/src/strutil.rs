@@ -6,9 +6,18 @@
 //! character. For a coding agent that edits source in any language
 //! that is not an edge case: it is a matter of when, not if.
 //!
-//! [`truncate_chars`] is the single replacement. It never panics
-//! and never produces a partial character; the returned slice ends
-//! on a UTF-8 boundary at or before `max` bytes.
+//! Two helpers replace it, distinguished by what the budget means:
+//!
+//! * [`truncate_chars`] caps by **character count** — for display
+//!   sites whose constants are named `MAX_*_CHARS` or whose literal
+//!   budgets are expressed in characters.
+//! * [`truncate_bytes`] caps by **byte count** — for prompt
+//!   assembly, hook output, and content caps whose constants are
+//!   named `MAX_*_BYTES` or whose values are computed from a byte
+//!   budget.
+//!
+//! Both never panic and never produce a partial character; the
+//! returned slice always ends on a UTF-8 boundary.
 
 /// The largest byte index `≤ max` that is a UTF-8 char boundary.
 ///
@@ -26,15 +35,25 @@ pub fn floor_char_boundary(s: &str, max: usize) -> usize {
     i
 }
 
-/// The longest prefix of `s` that is at most `max` bytes and ends
-/// on a UTF-8 char boundary.
+/// The longest prefix of `s` that is at most `max` **characters**
+/// and ends on a UTF-8 char boundary.
 ///
 /// Never panics. `truncate_chars("", n)` is `""`;
-/// `truncate_chars(&s, 0)` is `""`; `truncate_chars(&s, s.len() + 1)`
+/// `truncate_chars(&s, 0)` is `""`; `truncate_chars(&s, s.chars().count() + 1)`
 /// is `s` unchanged.
+///
+/// Historical note: before session 16 this function capped by
+/// **bytes**, not characters, despite its name. On CJK/accented
+/// content it silently returned roughly 1/2 to 1/3 the requested
+/// count. Callers whose budget was in bytes have been migrated to
+/// [`truncate_bytes`]; the fix is the one named in
+/// `docs/BUG_REPORT_TRUNCATE_CHARS.md`.
 #[inline]
 pub fn truncate_chars(s: &str, max: usize) -> &str {
-    &s[..floor_char_boundary(s, max)]
+    match s.char_indices().nth(max) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
 }
 
 /// The longest prefix of `s` that is at most `max` bytes and ends
@@ -55,7 +74,7 @@ pub fn truncate_bytes(s: &str, max: usize) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+mod truncate_chars_tests {
     use super::*;
 
     #[test]
@@ -80,53 +99,59 @@ mod tests {
     }
 
     #[test]
-    fn multibyte_is_not_split() {
-        // "café" is 5 bytes (c=1,a=1,f=1,é=2). Cutting at byte 4
-        // would land mid-'é'; the helper must retreat to byte 3.
-        let s = "café";
-        let out = truncate_chars(s, 4);
-        assert_eq!(out, "caf");
-        assert!(out.is_char_boundary(out.len()));
+    fn one_char_nonascii_is_kept_whole() {
+        // The P2 bug from session 15: "¡" is 1 char, 2 bytes. The
+        // pre-fix byte-cap truncated to floor_char_boundary(s, 1) = 0,
+        // so the whole 1-char input was discarded when asked to keep
+        // 1 char. The char cap must keep it.
+        assert_eq!(truncate_chars("¡", 1), "¡");
+        assert_eq!(truncate_chars("🚀", 1), "🚀");
     }
 
     #[test]
-    fn cjk_cut_in_the_middle_does_not_panic() {
-        // 你好世界 = 12 bytes, 3 per char. Sweep every byte index
-        // and prove no cut panics. This is the exact regression the
-        // production-readiness review names.
+    fn multibyte_is_counted_by_char_not_byte() {
+        // "café" is 4 chars, 5 bytes. A char cap of 3 must keep "caf";
+        // a char cap of 4 must keep the whole string.
+        let s = "café";
+        assert_eq!(truncate_chars(s, 3), "caf");
+        assert_eq!(truncate_chars(s, 4), "café");
+        assert!(s.starts_with(truncate_chars(s, 3)));
+        assert!(s.starts_with(truncate_chars(s, 4)));
+    }
+
+    #[test]
+    fn cjk_count_matches_char_count() {
+        // 你好世界 = 4 chars, 12 bytes. A char cap of n must yield
+        // exactly min(n, 4) chars, not min(n / 3, 4) chars.
         let s = "你好世界";
-        for n in 0..=s.len() + 2 {
+        let total = s.chars().count();
+        for n in 0..=total + 2 {
             let out = truncate_chars(s, n);
-            assert!(out.is_char_boundary(out.len()), "cut {n} not on a boundary");
-            assert!(s.starts_with(out), "cut {n} not a prefix");
+            assert_eq!(out.chars().count(), n.min(total));
+            assert!(s.starts_with(out));
         }
     }
 
     #[test]
     fn emoji_is_not_split() {
-        // 🚀 is 4 bytes.
+        // 🚀 is 1 char, 4 bytes. A char cap must yield whole chars.
         let s = "deploy 🚀 now";
-        for n in 0..=s.len() {
+        for n in 0..=s.chars().count() {
             let out = truncate_chars(s, n);
             assert!(out.is_char_boundary(out.len()));
         }
-        // Cutting at byte 8 (deploy + space + first byte of emoji)
-        // must give "deploy " not "deploy \xF0".
-        assert_eq!(truncate_chars(s, 9), "deploy ");
+        assert_eq!(truncate_chars(s, 9), "deploy 🚀 ");
+        assert_eq!(truncate_chars(s, 8), "deploy 🚀");
     }
 
     #[test]
-    fn floor_of_full_length_is_length() {
-        assert_eq!(floor_char_boundary("hi", 100), 2);
-        assert_eq!(floor_char_boundary("", 100), 0);
-    }
-
-    #[test]
-    fn combining_marks_are_preserved_or_dropped_whole() {
-        // "e\u{0301}" is 'e' + combining acute. The helper must not
-        // cut between them.
+    fn combining_marks_are_counted_separately() {
+        // "e\u{0301}x" is 3 chars (e, combining acute, x). A char
+        // cap of 2 keeps "e\u{0301}"; a cap of 3 keeps the whole.
         let s = "e\u{0301}x";
-        let out = truncate_chars(s, 2); // byte 2 is between 'e' and the combining mark
+        assert_eq!(truncate_chars(s, 2), "e\u{0301}");
+        assert_eq!(truncate_chars(s, 3), s);
+        let out = truncate_chars(s, 2);
         assert!(out.is_char_boundary(out.len()));
     }
 }
@@ -158,6 +183,8 @@ mod truncate_bytes_tests {
 
     #[test]
     fn multibyte_is_not_split() {
+        // "café" is 5 bytes. Cutting at byte 4 lands mid-'é'; the
+        // helper must retreat to byte 3.
         let s = "café";
         let out = truncate_bytes(s, 4);
         assert_eq!(out, "caf");
@@ -165,12 +192,22 @@ mod truncate_bytes_tests {
     }
 
     #[test]
+    fn one_char_nonascii_byte_cap_drops_whole_char() {
+        // Byte-contract pin: "¡" is 2 bytes. A byte cap of 1 must
+        // produce "". This is the documented byte behavior; the
+        // char-cap counterpart keeps the char (see
+        // truncate_chars_tests::one_char_nonascii_is_kept_whole).
+        assert_eq!(truncate_bytes("¡", 1), "");
+        assert_eq!(truncate_bytes("¡", 2), "¡");
+    }
+
+    #[test]
     fn cjk_cut_in_the_middle_does_not_panic() {
         let s = "你好世界";
         for n in 0..=s.len() + 2 {
             let out = truncate_bytes(s, n);
-            assert!(out.is_char_boundary(out.len()), "cut {n} not on a boundary");
-            assert!(s.starts_with(out), "cut {n} not a prefix");
+            assert!(out.is_char_boundary(out.len()));
+            assert!(s.starts_with(out));
         }
     }
 
@@ -182,12 +219,5 @@ mod truncate_bytes_tests {
             assert!(out.is_char_boundary(out.len()));
         }
         assert_eq!(truncate_bytes(s, 9), "deploy ");
-    }
-
-    #[test]
-    fn combining_marks_are_preserved_or_dropped_whole() {
-        let s = "e\u{0301}x";
-        let out = truncate_bytes(s, 2);
-        assert!(out.is_char_boundary(out.len()));
     }
 }
