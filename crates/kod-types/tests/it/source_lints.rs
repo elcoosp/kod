@@ -692,3 +692,167 @@ fn tool_calls_are_canonicalized_at_parse() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a truncate helper's name and its contract diverge
+// ---------------------------------------------------------------------------
+//
+// P2 (session 15-16): `truncate_chars` performed a byte cap under a
+// char name; `truncate("¡", 1)` returned "" because byte 1 is inside
+// "¡". Roughly 15 display callers passed `MAX_*_CHARS` constants to the
+// byte cap and silently received 1/2 to 1/3 the requested character
+// count on CJK/accented content. The fix split the helper into
+// `truncate_chars` (char cap) and `truncate_bytes` (byte cap), migrated
+// byte-intent callers, and added two property tests for the name's
+// contract.
+//
+// The property tests prove today's code. This lint prevents tomorrow's
+// regression: a new `fn truncate_chars` that caps by bytes, or a new
+// `truncate_chars(x, MAX_FOO_BYTES)` call, fails here before it can
+// ship.
+//
+// Two scans:
+//   1. Definitions: each `fn truncate_chars` body must use
+//      `.char_indices().nth(` / `.chars().nth(` / delegate to
+//      `strutil::truncate_chars`; each `fn truncate_bytes` body must
+//      use `floor_char_boundary(` / delegate to `strutil::truncate_bytes`.
+//   2. Call sites: no `truncate_chars(_, <_BYTES> | _.len())`; no
+//      `truncate_bytes(_, <_CHARS> | _.chars().count())`.
+
+fn is_test_flavored_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    name == "tests.rs"
+        || name == "prop_tests.rs"
+        || stem.ends_with("_tests")
+        || stem.starts_with("coverage_")
+}
+
+fn truncate_lint_scan() -> Vec<(PathBuf, usize, String)> {
+    let mut bad = Vec::new();
+    for path in all_production_sources() {
+        if is_test_flavored_file(&path) {
+            continue;
+        }
+        let lines = production_lines(&path);
+
+        // --- Scan 1: definition bodies ---
+        for (i, (lineno, line)) in lines.iter().enumerate() {
+            let t = line.trim();
+            // Match the signature; tolerate `pub`, `pub(crate)`, `#[inline]`.
+            let is_chars_def = t.contains("fn truncate_chars(");
+            let is_bytes_def = t.contains("fn truncate_bytes(");
+            if !is_chars_def && !is_bytes_def {
+                continue;
+            }
+            // Collect the next ~10 lines — enough for any realistic body.
+            let window: String = lines
+                .iter()
+                .skip(i)
+                .take(10)
+                .map(|(_, l)| l.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if is_chars_def {
+                let ok = window.contains("char_indices().nth(")
+                    || window.contains("chars().nth(")
+                    || window.contains("strutil::truncate_chars(")
+                    || window.contains("super::truncate_chars(");
+                if !ok {
+                    bad.push((
+                        path.clone(),
+                        *lineno,
+                        format!("fn truncate_chars body lacks char-cap: {t}"),
+                    ));
+                }
+            } else if is_bytes_def {
+                let ok = window.contains("floor_char_boundary(")
+                    || window.contains("strutil::truncate_bytes(")
+                    || window.contains("super::truncate_bytes(");
+                if !ok {
+                    bad.push((
+                        path.clone(),
+                        *lineno,
+                        format!("fn truncate_bytes body lacks byte-cap: {t}"),
+                    ));
+                }
+            }
+        }
+
+        // --- Scan 2: call-site budgets ---
+        // Budget tokens that indicate a byte budget (mismatched with chars).
+        let byte_budget_tokens: &[&str] =
+            &["_BYTES", "_BYTE", "STRUCTURED_TOOL_MSG_CAP"];
+        // Budget tokens that indicate a char budget (mismatched with bytes).
+        let char_budget_tokens: &[&str] = &["_CHARS", "_CHAR"];
+        for (lineno, line) in &lines {
+            let t = line.trim_start();
+            // Skip comments and definitions.
+            if t.starts_with("//") || t.starts_with('*') {
+                continue;
+            }
+            if t.contains("fn truncate_chars(") || t.contains("fn truncate_bytes(") {
+                continue;
+            }
+            // Only look at actual calls.
+            let has_chars_call = t.contains("truncate_chars(");
+            let has_bytes_call = t.contains("truncate_bytes(");
+            if has_chars_call {
+                for tok in byte_budget_tokens {
+                    if t.contains(tok) {
+                        bad.push((
+                            path.clone(),
+                            *lineno,
+                            format!("truncate_chars with byte budget `{tok}`: {t}"),
+                        ));
+                        break;
+                    }
+                }
+                if t.contains(".len()") {
+                    bad.push((
+                        path.clone(),
+                        *lineno,
+                        format!("truncate_chars with .len() budget: {t}"),
+                    ));
+                }
+            }
+            if has_bytes_call {
+                for tok in char_budget_tokens {
+                    if t.contains(tok) {
+                        bad.push((
+                            path.clone(),
+                            *lineno,
+                            format!("truncate_bytes with char budget `{tok}`: {t}"),
+                        ));
+                        break;
+                    }
+                }
+                if t.contains(".chars().count()") {
+                    bad.push((
+                        path.clone(),
+                        *lineno,
+                        format!("truncate_bytes with .chars().count() budget: {t}"),
+                    ));
+                }
+            }
+        }
+    }
+    bad
+}
+
+#[test]
+fn truncate_helpers_name_matches_contract() {
+    let bad = truncate_lint_scan();
+    if !bad.is_empty() {
+        let header = "a truncate helper whose name and contract diverge \
+            silently truncates the wrong unit on non-ASCII input. \
+            `fn truncate_chars` must cap by chars; `fn truncate_bytes` \
+            by bytes. A caller must pass a budget of the kind the name \
+            advertises (chars-named call -> chars-named budget; \
+            bytes-named call -> bytes-named budget):";
+        report(&bad, header);
+    }
+}
