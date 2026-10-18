@@ -61,7 +61,24 @@ impl PathLockTable {
     /// Not a force-unlock: a writer mid-critical-section is not interrupted.
     /// The contract is "no new acquires see these cells", not "kill holders".
     pub async fn release_all(&self) {
-        self.cells.write().await.clear();
+        // Bug-hunt post-v0.1.9 (P2): the pre-fix body called
+        // `cells.clear()`, dropping every `Arc<Mutex<()>>` — including
+        // one that an outstanding `PathLockGuard` still holds a
+        // reference to. The next acquire on that path then created a
+        // fresh `Arc<Mutex<()>>`, so the outstanding holder and the new
+        // acquirer guarded two different mutexes and both proceeded
+        // concurrently on the same file — the exact mutual exclusion
+        // the table exists to preserve.
+        //
+        // Retain a cell if its Arc strong count exceeds 1: the map
+        // contributes one reference and every live guard (via its
+        // OwnedMutexGuard) contributes one more. A cell at count > 1
+        // therefore has an active holder or an acquire in flight and
+        // must not be dropped. Only fully-quiescent cells are removed,
+        // which is what the docstring's "no new acquires see these
+        // cells" contract already promised.
+        let mut cells = self.cells.write().await;
+        cells.retain(|_, cell| std::sync::Arc::strong_count(cell) > 1);
     }
 
     /// Acquire the lock for `path`, waiting up to `timeout` for a
@@ -376,4 +393,48 @@ mod coverage_lock_errors {
             .unwrap();
         assert_eq!(g.holder(), "h");
     }
+}
+
+/// Bug-hunt post-v0.1.9 (P2): `release_all` used to call
+/// `cells.clear()`, dropping the `Arc<Mutex<()>>` for a path
+/// even while an outstanding `PathLockGuard` still held a
+/// reference to it. The *next* acquire on that path then created
+/// a fresh `Arc<Mutex<()>>`, so the outstanding holder and the
+/// new acquirer guarded two different mutexes and both proceeded
+/// — the exact mutual-exclusion break the table exists to
+/// prevent.
+///
+/// This test acquires a path, calls `release_all` while the guard
+/// is still alive, and asserts a second acquire on the same path
+/// still blocks. On HEAD (cells.clear) it fails immediately; with
+/// the retain-by-strong-count fix it passes.
+#[tokio::test]
+async fn release_all_preserves_mutual_exclusion() {
+    let table = PathLockTable::new();
+    let path = Path::new("/tmp/release-all-mutex-test");
+    let g1 = table
+        .acquire(path, "h1", Duration::from_secs(1))
+        .await
+        .unwrap();
+    // release_all while the guard is held — must NOT clear the
+    // cell, or mutual exclusion is lost.
+    table.release_all().await;
+    // Second acquire on the same path must block while g1 held.
+    let second = tokio::time::timeout(
+        Duration::from_millis(200),
+        table.acquire(path, "h2", Duration::from_secs(1)),
+    )
+    .await;
+    assert!(
+        second.is_err(),
+        "second acquire must block while the first holder is live; \
+             got {:?}",
+        second.map(|r| r.is_ok())
+    );
+    // Release g1; now the second acquire should succeed.
+    drop(g1);
+    table
+        .acquire(path, "h3", Duration::from_secs(1))
+        .await
+        .expect("acquire after release must succeed");
 }
