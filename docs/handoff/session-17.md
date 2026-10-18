@@ -2,7 +2,7 @@
 
 **Continues:** session 16 (`docs/handoff/session-16.md`).
 **Last stable release:** `v0.1.11` (`98bbd1c`) — no release cut this session.
-**Last verified commit:** `cf5a529 test(mcp): real filesystem server integration (#[ignore]d, availability-gated)`.
+**Last verified commit:** `9b66120 test(core): two concurrent clients on the serve unix socket`.
 **Working tree state at handoff:** clean.
 
 Session 17 was a short continuation of the behavioral-integration arc.
@@ -277,3 +277,66 @@ What is still genuinely untested: **two concurrent clients on the
 at once. The accept loop spawns per-connection, so the contract
 "each client's request is answered independently" is the thing to
 pin. That is the one remaining gap, and it is being tested next.
+
+## Session 18 — arc complete
+
+**Commits this session:** `7e29e58`, `cf5a529`, `e2713fd`, `c4b30ea`, `9b66120`.
+
+The behavioral-integration arc is now complete. Every gap that was
+named across sessions 16-18 has been closed, or shown to be
+non-existent:
+
+- **Session 16** — provider adapter seam, ACP `session/prompt`,
+  MCP tool dispatch, ACP `session/request_permission`.
+- **Session 17** — ACP `session/cancel` (dispatch + stop-reason
+  mapping).
+- **Session 18** — real `@modelcontextprotocol/server-filesystem`
+  integration (A1, zero CI cost); **two concurrent clients on the
+  `kod serve` unix socket** (`9b66120`); and a correction showing
+  LSP live was already covered (the earlier claim was wrong).
+- **Session 18 recovery** — L20 (`7e29e58`): `wr1.sh` is written
+  atomically (tmp+mv), never in place. The session opened with a
+  hung terminal caused by exactly this.
+
+### Multi-client test (the last gap)
+
+`serve_roundtrip.rs::two_clients_are_served_independently_then_shutdown_stops_the_daemon`
+(`9b66120`) connects two clients, has each send a distinct
+unknown-method request, and asserts each receives its own
+`{type:"error"}` response keyed to its own id — the contract a
+serialised-handler regression would break. Then one client shuts
+the daemon down, the serve task returns, the socket file is removed.
+
+The wire shape was learned from two failing rounds, not assumed:
+`id` is a JSON **string** (not integer), and errors are
+**`{type, data}`-discriminated** (not `{error: ...}`). Both are
+pinned as strings in the final test. Recorded so the next session
+does not re-derive.
+
+### What is genuinely left
+
+Nothing in the testable surface. Three categories remain, each a
+decision rather than a code task:
+
+1. **CI wiring** (A2). The `#[ignore]`d MCP test and the LSP live
+   test both exist and run on a developer machine with the right
+   deps installed. CI could run them: there is no `.github/`
+   directory to modify — a workflow would be built from scratch.
+   Cost: one workflow, dependency install, ~5 min/night. Not code.
+2. **Operational assertions on a real editor session** — a real
+   editor speaking ACP against the binary, a real daemon on a
+   stable port. The pieces exist (`acp_handshake.rs` spawns the
+   binary; `serve_io` drives the bridge), what is missing is the
+   *editor* on the other end. Same decision as (1): CI cost.
+3. **Release tag** (option B from the earlier handoff). Not
+   recommended unless a consumer keys on tags — the post-release
+   commits are test-only.
+
+### The correct next move is a decision, not a commit
+
+Sessions 16-18 built the behavioral-testing foundation. Session 19
+should not write more tests until the CI-cost question is answered.
+If the answer is "no CI change," the codebase is in a clean,
+well-tested, documented state and the arc is done. If the answer is
+"nightly job," the work is a `.github/workflows/` file, not a
+`src/` or `tests/` change.
