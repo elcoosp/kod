@@ -184,22 +184,34 @@ fn first_sentence(text: &str, max: usize) -> String {
         .or_else(|| trimmed.find(".\n").map(|i| i + 1))
         .unwrap_or(trimmed.len());
     let sentence = &trimmed[..end];
-    if sentence.len() > max {
-        format!("{}…", truncate_chars(sentence, max))
+    // Rely on truncate_chars's own behavior to detect truncation:
+    // a byte-length guard would spuriously append "…" on inputs whose
+    // byte length exceeds `max` but whose char count does not (a CJK
+    // sentence of 200 chars is ~600 bytes). Comparing the returned
+    // prefix's byte length to the input's is exact — the prefix is
+    // strictly shorter iff a truncation happened.
+    let shown = truncate_chars(sentence, max);
+    if shown.len() < sentence.len() {
+        format!("{shown}…")
     } else {
         sentence.to_string()
     }
 }
 
+/// Truncate a UTF-8 string to at most `max` **characters**, ending on
+/// a UTF-8 char boundary.
+///
+/// Historical note: before session 16 this was a byte cap despite the
+/// name. Both callers of this local helper (`stub_line` at 80, and
+/// `first_sentence` with `digest_line`'s `200`) pass character-count
+/// display budgets; byte-capping silently returned roughly half to a
+/// third of the requested count on CJK/accented input. The workspace-
+/// level P2 is documented in `docs/BUG_REPORT_TRUNCATE_CHARS.md`.
 fn truncate_chars(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
+    match s.char_indices().nth(max) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s.to_string(),
     }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
 }
 
 /// Per-transcript cache of fidelity decisions. Keyed by the turn's
