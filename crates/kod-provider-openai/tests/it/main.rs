@@ -7,3 +7,4 @@
 mod contracts;
 mod provider;
 mod stream_retry;
+mod malformed_sse;
