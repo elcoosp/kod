@@ -53,6 +53,13 @@ use std::sync::Arc;
 /// Cloning is cheap (an `Arc` bump); every method is `&self` and
 /// fire-and-forget. A `Telemetry` value is either fully configured
 /// or disabled; there is no partial state.
+/// Cap on concurrent OTLP POSTs. Under a chatty model + slow
+/// collector, the pre-fix code spawned one task per record; each
+/// task could park for the 5s client timeout, so normal load could
+/// accumulate hundreds of concurrent POSTs. Bounded at this cap;
+/// payloads beyond it are dropped with a counter increment.
+const MAX_CONCURRENT_POSTS: usize = 32;
+
 #[derive(Clone)]
 pub struct Telemetry {
     inner: Arc<Inner>,
@@ -63,6 +70,14 @@ struct Inner {
     client: reqwest::Client,
     /// The URL each record POSTs to: `<endpoint>/v1/logs`.
     logs_url: String,
+
+    /// Bounds the number of concurrent OTLP POST tasks. Acquired
+    /// before `tokio::spawn` so the "check then spawn" race cannot
+    /// exceed the cap.
+    post_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    /// Number of OTLP payloads dropped because the semaphore was
+    /// full. Read by tests and by a user looking for missing spans.
+    dropped_posts: std::sync::atomic::AtomicU64,
 }
 
 impl std::fmt::Debug for Telemetry {
@@ -81,6 +96,10 @@ impl Telemetry {
     pub fn disabled() -> Self {
         Self {
             inner: Arc::new(Inner {
+                post_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                    MAX_CONCURRENT_POSTS,
+                )),
+                dropped_posts: std::sync::atomic::AtomicU64::new(0),
                 config: TelemetryConfig {
                     endpoint: None,
                     service_name: "kod".to_string(),
@@ -143,6 +162,10 @@ impl Telemetry {
         }
         Self {
             inner: Arc::new(Inner {
+                post_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                    MAX_CONCURRENT_POSTS,
+                )),
+                dropped_posts: std::sync::atomic::AtomicU64::new(0),
                 config: TelemetryConfig {
                     endpoint: Some(base.to_string()),
                     service_name,
@@ -192,15 +215,26 @@ impl Telemetry {
     }
 
     fn spawn_post(&self, payload: serde_json::Value) {
-        // T5-C26: no queue cap. Under a chatty model + slow collector,
-        // each record spawns a task that can park for the client
-        // timeout (5s), accumulating hundreds of concurrent POSTs.
-        // A bounded mpsc + consumer task would fix this; the current
-        // shape is a single task per record. Documented for now.
+        // Bug-hunt post-v0.1.9 (P2): closes the deferred T5-C26 note.
+        // Bound at MAX_CONCURRENT_POSTS: acquire a permit before
+        // spawning (so the check-then-spawn race cannot exceed the
+        // cap), hold it for the full request, drop the payload when
+        // the semaphore is full.
+        let Ok(permit) = self.inner.post_semaphore.clone().try_acquire_owned() else {
+            self.inner
+                .dropped_posts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tracing::debug!(
+                limit = MAX_CONCURRENT_POSTS,
+                "OTLP POST dropped: cap reached"
+            );
+            return;
+        };
         let url = self.inner.logs_url.clone();
         let client = self.inner.client.clone();
         let headers = self.inner.config.headers.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let mut req = client
                 .post(&url)
                 .header("content-type", "application/json")
@@ -290,5 +324,58 @@ mod tests {
         let h = parse_headers(Some("  a = b  , c=d "));
         assert_eq!(h[0], ("a".to_string(), "b".to_string()));
         assert_eq!(h[1], ("c".to_string(), "d".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod post_semaphore_is_bounded {
+    // Bug-hunt post-v0.1.9 (P2): closes T5-C26. spawn_post now
+    // acquires a semaphore permit before spawning, holds it for the
+    // request, drops the payload when full.
+    //
+    // The absence check ("T5-C26 comment gone") is scoped to the
+    // spawn_post region — an unscoped check would match the string
+    // needle in *this test's own source*, which the file read would
+    // include. Same self-reference trap fixed in round 76.
+    #[test]
+    fn post_semaphore_is_bounded() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read lib.rs");
+
+        assert!(
+            src.contains("MAX_CONCURRENT_POSTS: usize"),
+            "cap constant must exist"
+        );
+        assert!(
+            src.contains("post_semaphore: std::sync::Arc<tokio::sync::Semaphore>"),
+            "struct field must be typed"
+        );
+        assert!(
+            src.contains("dropped_posts: std::sync::atomic::AtomicU64"),
+            "drop counter must be typed"
+        );
+        assert!(
+            src.contains("try_acquire_owned"),
+            "spawn_post must acquire a permit before spawning"
+        );
+        assert!(
+            src.contains("let _permit = permit"),
+            "permit must be held for the full request"
+        );
+
+        // Absence check, scoped to the spawn_post body so this test's
+        // own needle literal (which lives outside the region) cannot
+        // satisfy it.
+        let start = src.find("fn spawn_post").expect("spawn_post present");
+        let tail = &src[start..];
+        let end = tail
+            .find("\n    }\n")
+            .map(|i| start + i)
+            .unwrap_or(src.len());
+        let region = &src[start..end];
+        assert!(
+            !region.contains("no queue cap"),
+            "the old 'no queue cap' note must be gone from spawn_post once the fix lands"
+        );
     }
 }
