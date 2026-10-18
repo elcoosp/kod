@@ -578,3 +578,68 @@ An `.await` that is not behind a spawn boundary and calls into
 third-party code (a provider, an MCP server, a plugin, a database)
 is a candidate for panic-isolation review. This arc fixed three of
 those; the fourth is not yet known.
+
+## Session 18 — the in_flight flag class (exhausted)
+
+The compaction-summary fix (`d5544ca`) and the ACP `in_flight`
+guard (`58345bb`) were both instances of one shape:
+
+    insert(flag) -> spawn an await -> clear(flag)
+
+The bug is that "clear" only runs on the task's normal-exit path.
+A panic between insert and clear leaks the mark; every future
+attempt for that key early-returns (insert returns false) and the
+feature silently no-ops. The bug-hunt fixed the ACP instance; the
+compaction instance was missed.
+
+### The audit
+
+Searched production code for the shape: any flag with a set-like
+mutation paired with a clear-like one, cross-referenced against
+existing `Drop` guards and `catch_unwind` wrappers.
+
+    grep -rnE "in_flight|in_progress|busy|poisoned|rebuild_in_progress" \
+      crates/*/src --include="*.rs"
+
+Every hit classified:
+
+| Flag | Where | How it is guarded |
+|---|---|---|
+| `in_flight` | `kod-core-serve/src/acp.rs` | **Fixed** `58345bb` |
+| `summaries_in_flight` | `kod-core/src/engine/compaction.rs` | **Fixed** `d5544ca` |
+| `rebuild_in_progress` | `kod-memory/src/manager.rs:393` | `RebuildGuard` Drop guard |
+| `poisoned` | `kod-mcp/src/client.rs:87` | Store-only — by design, permanent |
+| `is_running` | `kod-core/src/advisor_tools.rs:89` | Mirrored from engine control, not a leaked-mark flag |
+| `SwarmSlotGuard` / `SwarmRunGuard` / `DispatchGuard` | `kod-core/src/engine/swarm.rs`, `swarm_runner.rs` | Drop guards |
+| `ConcurrencyPermit` | `kod-provider/src/concurrency.rs:250` | Drop guard |
+
+### Result: class exhausted
+
+Every set/clear flag in production is either:
+- Drop-guarded (the guard clears on any unwind, including panic), or
+- intentionally permanent (`poisoned`), or
+- fixed in this session.
+
+No further instance of the class exists in production code today.
+That is a *finding*, not a gap: the search shape above came back
+clean against the current tree.
+
+### When this could reappear
+
+A future commit could add a fourth set/clear flag without a Drop
+guard. The way to catch it:
+
+    git grep -n "\.store(true" crates/*/src \
+      | grep -v "/tests" \
+      | cut -d: -f1 | sort -u
+
+For each file that stores a `true`/`insert`s an id, check whether
+the matching clear is Drop-guarded. A flag whose clear sits in the
+normal-exit path *after* an `.await` on third-party code is a
+candidate. This is a slower check than a source lint, but it works
+across the shape (it catches the four instances above without
+hard-coding any of them).
+
+If a fifth instance is ever added and leaks, the failure shape is
+the same: the feature silently no-ops after the first panicking
+attempt, and the flag's set membership is the only visible symptom.
