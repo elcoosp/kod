@@ -19,6 +19,8 @@ kod-core = { path = "../kod-core" }
 kod-core-state = { path = "../kod-core-state" }
 
 [dev-dependencies]
+kod-config = { path = "../kod-config" }
+futures = { workspace = true }
 tempfile = "3.8"
 
 [lints]
