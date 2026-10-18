@@ -12,18 +12,20 @@ use kod_types::{MemoryContext, ToolCall, ToolResult};
 use std::path::PathBuf;
 use std::time::Instant;
 
-/// Truncate a UTF-8 string to at most `max` bytes at a char boundary.
-/// Local to this module so the router does not need a public dependency
-/// on `kod_core::engine`'s helper.
+/// Truncate a UTF-8 string to at most `max` **characters**, ending on
+/// a char boundary. Local to this module so the router does not need
+/// a public dependency on `kod_core::engine`'s helper.
+///
+/// Historical note: before session 16 this was a byte cap under a char
+/// name. The only caller is the skill-example display at
+/// `MAX_EXAMPLE_CHARS = 1_500` (a `_CHARS` constant). On CJK skill
+/// examples the byte cap silently returned ~1/3 of the requested
+/// character count. See `docs/BUG_REPORT_TRUNCATE_CHARS.md`.
 fn truncate_chars(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
+    match s.char_indices().nth(max) {
+        Some((i, _)) => &s[..i],
+        None => s,
     }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
 }
 
 /// Types of tasks that can be routed
@@ -1309,8 +1311,17 @@ impl TaskRouter {
                                 prompt.push_str(&format!("Input: {}\n", ex.input.trim()));
                             }
                             let out = ex.output.trim();
-                            let shown = if out.len() > MAX_EXAMPLE_CHARS {
-                                format!("{}…", truncate_chars(out, MAX_EXAMPLE_CHARS))
+                            // Rely on truncate_chars's own behavior to
+                            // detect truncation: a byte-length guard
+                            // would spuriously append "…" on inputs whose
+                            // byte length exceeds MAX_EXAMPLE_CHARS but
+                            // whose char count does not (a CJK example of
+                            // 1500 chars is ~4500 bytes). Comparing the
+                            // returned prefix's byte length to the input's
+                            // is exact — strictly shorter iff truncated.
+                            let shown_prefix = truncate_chars(out, MAX_EXAMPLE_CHARS);
+                            let shown = if shown_prefix.len() < out.len() {
+                                format!("{shown_prefix}…")
                             } else {
                                 out.to_string()
                             };
