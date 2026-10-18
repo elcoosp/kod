@@ -480,7 +480,7 @@ impl MemoryManager {
         // extraction pass produces.
         const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content = if content.len() > MAX_CONTENT_BYTES {
-            kod_types::strutil::truncate_chars(content, MAX_CONTENT_BYTES)
+            kod_types::strutil::truncate_bytes(content, MAX_CONTENT_BYTES)
         } else {
             content
         };
@@ -817,7 +817,7 @@ impl MemoryManager {
         let content_owned = crate::hygiene::strip_memory_tags(&content_owned);
         const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content_owned: String = if content_owned.len() > MAX_CONTENT_BYTES {
-            kod_types::strutil::truncate_chars(&content_owned, MAX_CONTENT_BYTES).to_string()
+            kod_types::strutil::truncate_bytes(&content_owned, MAX_CONTENT_BYTES).to_string()
         } else {
             content_owned
         };
