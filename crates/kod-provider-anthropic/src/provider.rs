@@ -602,6 +602,17 @@ impl LlmProvider for AnthropicProvider {
             // Once committed, no retry: the caller has already seen
             // content a replay would have to re-generate.
             const MAX_STREAM_ATTEMPTS: u32 = 3;
+            // P8 (bug-hunt post-v0.1.8): a hostile or wedged endpoint
+            // trickling bytes indefinitely hangs `stream.next()`
+            // forever. `MAX_SSE_LINE_BYTES` bounds ONE line's size, not
+            // the whole attempt's DURATION. A trickle of unique chunks
+            // every N seconds trips neither the line cap nor the
+            // content-based stall detector, so `tracker.is_safe_to_retry`
+            // never fires — the retry mechanism is bypassed. 300s is
+            // generous for any legit completion (a max_tokens reply at
+            // typical tok/s is well under 60s); a real hostile trickle
+            // hits it.
+            const STREAM_ATTEMPT_TIMEOUT_SECS: u64 = 300;
             let mut empty_retry = kod_provider::retry_safety::EmptyCompletionRetry::new();
             let mut attempt: u32 = 0;
 
@@ -768,7 +779,25 @@ impl LlmProvider for AnthropicProvider {
                 let mut transport_error: Option<KodError> = None;
                 let mut stall_detector: Option<&'static str> = None;
 
-                'read: while let Some(chunk) = stream.next().await {
+                let attempt_deadline = tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(STREAM_ATTEMPT_TIMEOUT_SECS);
+                'read: while tokio::time::Instant::now() < attempt_deadline {
+                    let chunk = match tokio::time::timeout(
+                        attempt_deadline
+                            .saturating_duration_since(tokio::time::Instant::now()),
+                        stream.next(),
+                    )
+                    .await
+                    {
+                        Ok(Some(c)) => c,
+                        Ok(None) => break 'read,
+                        Err(_elapsed) => {
+                            transport_error = Some(KodError::Provider(format!(
+                                "anthropic stream: attempt exceeded {STREAM_ATTEMPT_TIMEOUT_SECS}s without completing"
+                            )));
+                            break 'read;
+                        }
+                    };
                     match chunk {
                         Ok(bytes) => {
                             buf.extend_from_slice(&bytes);
@@ -1553,6 +1582,31 @@ mod coverage_provider_parse {
         assert_eq!(
             normalize_base_url("https://api.anthropic.com/v1///"),
             "https://api.anthropic.com/v1"
+        );
+    }
+}
+
+#[cfg(test)]
+mod provider_stream_deadline {
+    /// P8 (bug-hunt post-v0.1.8): the streaming read loop must have a
+    /// per-attempt wall-clock deadline. Without one, a wedged or
+    /// hostile endpoint trickling bytes hangs the attempt forever and
+    /// bypasses the retry mechanism (no error surfaces -> no retry).
+    #[test]
+    fn anthropic_stream_has_attempt_deadline() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/provider.rs"))
+            .expect("read provider.rs");
+        assert!(
+            src.contains("STREAM_ATTEMPT_TIMEOUT_SECS"),
+            "streaming attempt must have a wall-clock timeout constant"
+        );
+        assert!(
+            src.contains("attempt_deadline"),
+            "streaming loop must compute a per-attempt deadline"
+        );
+        assert!(
+            src.contains("tokio::time::timeout("),
+            "streaming loop must wrap `.next()` in a timeout"
         );
     }
 }
