@@ -118,10 +118,19 @@ impl ChunkScorer for LexicalScorer {
             / query.terms.len().max(1) as f32;
         let recency = (-(chunk.age_turns as f32) / self.half_life_turns).exp2();
         let combined = 0.7 * overlap as f32 + 0.3 * recency;
+        // P2 bug-hunt post-v0.1.9: the BUG-C-11 fix normalized
+        // `overlap` to 0..1 (`/ query.terms.len().max(1)`), but the
+        // thresholds below were left at their pre-fix values
+        // (2.5, 1.2, 0.4) which were calibrated for the raw COUNT
+        // that `term_overlap` returns. Post-normalize, `combined`
+        // peaks at 1.0, so `> 2.5` and `> 1.2` are unreachable:
+        // `Fidelity::Digest` became dead code, and `Fidelity::Full`
+        // was only reachable via the pinned/tail short-circuits
+        // above. Recalibrated against the 0..1 combined range.
         match combined {
-            c if c > 2.5 => Fidelity::Full,
-            c if c > 1.2 => Fidelity::Digest,
-            c if c > 0.4 => Fidelity::Stub,
+            c if c > 0.5 => Fidelity::Full,
+            c if c > 0.25 => Fidelity::Digest,
+            c if c > 0.08 => Fidelity::Stub,
             _ => Fidelity::Omit,
         }
     }
@@ -609,5 +618,69 @@ mod tests {
         let (a, _) = render_scored(&turns, query.clone(), &scorer, &mut cache, 10_000, true);
         let (b, _) = render_scored(&turns, query, &scorer, &mut cache, 10_000, true);
         assert_eq!(a, b, "second render with warm cache diverged");
+    }
+    /// P2 bug-hunt post-v0.1.9: after BUG-C-11's normalize, the
+    /// thresholds (2.5, 1.2, 0.4) became unreachable for `combined`
+    /// in 0..1, so `Fidelity::Digest` was dead code. This test pins
+    /// reachability of each level from a non-pinned, non-recent,
+    /// non-error message. `overlap` comes from matching query terms
+    /// against the content; `recency` decays with age.
+    #[test]
+    fn digest_is_reachable_after_normalization() {
+        let scorer = LexicalScorer::new().with_tail(0);
+        // Query with 4 terms; message matches 1 -> overlap = 0.25.
+        let mut terms = std::collections::HashSet::new();
+        for t in ["alpha", "beta", "gamma", "delta"] {
+            terms.insert(t.to_string());
+        }
+        let q = Query {
+            terms,
+            ..Default::default()
+        };
+        // Message at age 10 with half_life 10: recency = 2^-1 = 0.5.
+        // combined = 0.7*0.25 + 0.3*0.5 = 0.175 + 0.15 = 0.325
+        // Falls in (0.25, 0.5] -> Digest.
+        let mut msg = ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::User,
+            "alpha only",
+            time::OffsetDateTime::now_utc(),
+        );
+        msg.role = kod_types::MessageRole::User;
+        let chunk = Chunk {
+            message: &msg,
+            age_turns: 10,
+            pinned: false,
+        };
+        let f = scorer.score(&chunk, &q);
+        assert_eq!(
+            f,
+            Fidelity::Digest,
+            "combined=0.325 should land in Digest band (0.25, 0.5]"
+        );
+
+        // Sanity: high overlap + fresh = Full (not via short-circuit,
+        // since tail = 0).
+        let mut full_terms = std::collections::HashSet::new();
+        for t in ["alpha", "beta", "gamma", "delta"] {
+            full_terms.insert(t.to_string());
+        }
+        let q_full = Query {
+            terms: full_terms,
+            ..Default::default()
+        };
+        let msg_full = ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::User,
+            "alpha beta gamma delta",
+            time::OffsetDateTime::now_utc(),
+        );
+        let chunk_full = Chunk {
+            message: &msg_full,
+            age_turns: 0,
+            pinned: false,
+        };
+        // overlap = 1.0, recency = 1.0 -> combined = 1.0 -> Full.
+        assert_eq!(scorer.score(&chunk_full, &q_full), Fidelity::Full);
     }
 }
