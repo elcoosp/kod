@@ -494,8 +494,13 @@ impl KodApp {
             let mut lend = ends[i];
             // Byte offset → expanded char offset of the cursor within
             // `input[from..to]`, for mapping the cursor into the row.
-            let cursor_in = |row_chars: usize, from: usize, to: usize| -> usize {
-                row_chars + expand_slice(&input[from..cb.min(to)]).chars().count()
+            // Bug-hunt post-v0.1.9: this closure used to return a
+            // CHAR count, but `styled_row`'s `boundary[]` lookup
+            // treats `cursor_cell` as a CELL offset. ASCII masks the
+            // difference; CJK / emoji render the caret one char too
+            // early. Route through the file-local `cells()` helper.
+            let cursor_in = |row_cells: usize, from: usize, to: usize| -> usize {
+                row_cells + cells(&expand_slice(&input[from..cb.min(to)]))
             };
             loop {
                 let nb = blocks
@@ -504,7 +509,7 @@ impl KodApp {
                     .copied();
                 match nb {
                     None => {
-                        let base = row.chars().count();
+                        let base = cells(&row);
                         row.push_str(&expand_slice(&input[pos..lend]));
                         if cursor_char.is_none() && cb >= pos && cb <= lend {
                             cursor_char = Some(cursor_in(base, pos, lend));
@@ -514,7 +519,7 @@ impl KodApp {
                     Some(b) => {
                         if b.start > pos {
                             let e = b.start.min(lend);
-                            let base = row.chars().count();
+                            let base = cells(&row);
                             row.push_str(&expand_slice(&input[pos..e]));
                             if cursor_char.is_none() && cb >= pos && cb <= e {
                                 cursor_char = Some(cursor_in(base, pos, e));
@@ -549,7 +554,7 @@ impl KodApp {
                             continue;
                         } else {
                             let e = b.end.min(lend);
-                            let base = row.chars().count();
+                            let base = cells(&row);
                             row.push_str(&expand_slice(&input[pos..e]));
                             if cursor_char.is_none() && cb >= pos && cb <= e {
                                 cursor_char = Some(cursor_in(base, pos, e));
@@ -653,5 +658,43 @@ impl KodApp {
             rows[last].cursor_cell = Some(cells(&rows[last].text));
         }
         InputView { rows, cursor_row }
+    }
+}
+
+#[cfg(test)]
+mod input_cursor_cells_regression {
+    // Bug-hunt post-v0.1.9: `cursor_cell` is a CELL offset, not a
+    // char count. `日` is 2 cells; ASCII masks the difference, so a
+    // char-count producer renders the caret one char too early on
+    // any CJK / emoji input.
+    //
+    // Note: `input_view` legitimately uses `.chars().count()` for
+    // the CHIP path (`chip_start`, chip cursor position) because
+    // chip text is pure ASCII ([Pasted N lines]) where char count
+    // equals cell count. Only the message-text cursor offset uses
+    // cells. The three assertions below pin the cursor path
+    // specifically; a bare `.chars().count()` scan is too broad
+    // and would false-positive on the chip path.
+    #[test]
+    fn cjk_cursor_uses_cell_units_not_char_counts() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app/input.rs"))
+            .expect("read input.rs");
+        let start = src.find("pub fn input_view").expect("input_view present");
+        let tail = &src[start..];
+        let end_rel = tail.find("\n    }\n").expect("input_view close");
+        let window = &tail[..end_rel];
+
+        assert!(
+            window.contains("cells(&expand_slice"),
+            "cursor_in must use cells() on the char slice"
+        );
+        assert!(
+            window.contains("let base = cells(&row)"),
+            "base offset must be computed in cells, not chars"
+        );
+        assert!(
+            !window.contains("cursor_in = |row_chars"),
+            "cursor_in closure parameter must not be named row_chars"
+        );
     }
 }
