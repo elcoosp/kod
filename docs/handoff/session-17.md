@@ -2,7 +2,7 @@
 
 **Continues:** session 16 (`docs/handoff/session-16.md`).
 **Last stable release:** `v0.1.11` (`98bbd1c`) — no release cut this session.
-**Last verified commit:** `72e9408 docs(handoff): mark ACP session/cancel closed (session 17)`.
+**Last verified commit:** `cf5a529 test(mcp): real filesystem server integration (#[ignore]d, availability-gated)`.
 **Working tree state at handoff:** clean.
 
 Session 17 was a short continuation of the behavioral-integration arc.
@@ -167,3 +167,75 @@ Recovery if it hangs: `Ctrl-C` the terminal, then
 `pkill -TERM -f 'cargo nextest|cargo check|cargo build'`, `sleep 2`,
 `pkill -KILL` anything left. Nothing is lost — the hang is a read
 failure, not a write corruption; `git status` will show clean.
+
+## Session 18 progress — operational integration, A1 (MCP)
+
+**Commits this session so far:** `7e29e58`, `cf5a529`.
+
+### Recovery first
+
+A hang at the start of session 18 was diagnosed as L20 (overwriting
+`wr1.sh` non-atomically while `watchexec` was mid-read). Recovery is
+recorded in L20 itself; nothing was lost. The `wr1.sh` writer now
+follows `cat > wr1.sh.tmp && mv`.
+
+### Option A1 — real MCP filesystem server (`cf5a529`)
+
+The first operational-integration test in the codebase. `kod-mcp` had
+no `tests/` directory; the protocol tests in `src/client.rs` drive a
+hand-written Python fake. This file drives the reference
+`@modelcontextprotocol/server-filesystem` via `npx`, exactly as
+`kod-provider-anthropic/tests/it/live.rs` and
+`kod-tools/tests/it/sandbox_containment.rs` gate their live tests:
+`#[ignore]`'d and guarded by an availability check.
+
+Two tests, verified green on this host (npx present, server
+downloaded in 3.5 s):
+
+1. `real_filesystem_server_initialize_and_list_tools` — real
+   `initialize` (name and version non-empty), real `tools/list`
+   contains `read_file` and `list_directory`, every tool carries
+   `inputSchema`.
+2. `real_filesystem_server_reads_a_written_file` — real `tools/call`
+   on both tools against a file the test wrote.
+
+**Zero CI cost.** `npx` is not installed on any CI host; the tests are
+`#[ignore]`'d, so `cargo nextest run --workspace` skips them. To run
+manually:
+
+    cargo nextest run -p kod-mcp --run-ignored only -E 'test(real_filesystem)'
+
+(Syntax note: `--run-ignored` takes an argument `default|only|all`;
+bare `--run-ignored` is a nextest usage error. Cost 1 round.)
+
+### What A1 does NOT do
+
+- No CI wiring. There is still no `.github/`; that is the A2 option
+  the original handoff described, and it is a from-scratch workflow,
+  not an edit.
+- No test against a real language server. `kod-lsp`'s live-test
+  surface was partially explored — `client.rs` has `binary_on_path`
+  but the specific `#[ignore]`d test body was not read. That is the
+  next A1 candidate if it turns out to exist in a form worth
+  following.
+- No multi-client daemon test. `serve_roundtrip.rs` covers single
+  client + shutdown; multiple concurrent clients on the unix socket
+  is untested.
+
+### What to do next
+
+The original three options are unchanged in shape; only A1 for MCP is
+newly done. Options ranked by cost:
+
+1. **Read `kod-lsp`'s live test** (`grep -B3 '#\[ignore'` or `grep
+   binary_on_path` in `crates/kod-lsp/src/client.rs`) and decide
+   whether to follow it with a real `rust-analyzer` test in the same
+   `#[ignore]` + availability-gated shape as `cf5a529`. Cost:
+   exploration + ~150 lines, no CI change.
+2. **`kod serve` multi-client test** — two `UnixStream` clients on
+   one socket, one shutting down while the other is idle. Cost:
+   ~80 lines, no new deps. `serve_roundtrip.rs` is the model.
+3. **Stop here.** The arc has delivered: P2 fix + fixups + source
+   lint + bug report (`v0.1.11`), five ACP/MCP seam tests, ACP cancel,
+   and a real MCP server integration. Everything that needed code
+   has code. Everything else is CI-policy.
