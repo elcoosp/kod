@@ -1,6 +1,7 @@
 //! Tool registry - manages available tools and their definitions.
 
 use crate::Tool;
+use futures::FutureExt;
 use crate::context::ToolContext;
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition};
@@ -154,7 +155,40 @@ impl ToolRegistry {
         }
 
         match tool {
-            Some(t) => t.execute(params, context).await,
+            // A panic in a tool's `execute` must not unwind through
+            // the registry. The engine awaits tool futures with
+            // `join_all` in its own task (no spawn boundary), so an
+            // unwind here would kill the whole turn — and one tool
+            // out of a model-invoked batch of dozens is enough. The
+            // swarm runner already wraps its agent bodies in
+            // `catch_unwind`; this closes the same gap at the
+            // individual-tool granularity, where it actually matters:
+            // a bad plugin or MCP server should surface as a tool
+            // error the model can read, not a dead session.
+            Some(t) => {
+                let fut = t.execute(params, context);
+                match std::panic::AssertUnwindSafe(fut)
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(payload) => {
+                        let what = payload
+                            .downcast_ref::<&'static str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                            .unwrap_or("non-string panic payload");
+                        tracing::error!(
+                            tool = %name,
+                            panic = what,
+                            "tool panicked; isolating as a tool error",
+                        );
+                        Ok(kod_types::ToolResult::Error(format!(
+                            "tool `{name}` panicked: {what}",
+                        )))
+                    }
+                }
+            }
             None => Err(KodError::ToolNotFound {
                 // The error names what the model sent, not the
                 // resolved form — the model needs to see its own
