@@ -445,7 +445,7 @@ pub fn tools_array(tools: &[ToolDefinition]) -> Value {
 /// The parser is a plain `&str -> Vec<StreamChunk>` (plus a
 /// `pending_stop` flag for the terminator). The provider drives it from
 /// the SSE byte stream and forwards what it returns.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AnthropicStreamState {
     /// Set once the SSE stream has emitted `message_stop`. The provider
     /// emits a final `StreamChunk::Done` when this is set and the byte
@@ -479,7 +479,7 @@ pub struct AnthropicStreamState {
 }
 
 /// Per-block state carried across events for one response.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct BlockInfo {
     /// `text` or `tool_use`. Unknown types are ignored.
     pub kind: String,
@@ -554,7 +554,9 @@ pub fn parse_sse_line(
                 state.cache_read_input_tokens = cache_read;
                 state.cache_creation_input_tokens = cache_creation;
                 state.cache_creation_1h_input_tokens = creation_1h;
-                state.input_tokens = base + cache_read + cache_creation;
+                state.input_tokens = base
+                    .saturating_add(cache_read)
+                    .saturating_add(cache_creation);
             }
             Vec::new()
         }
@@ -652,7 +654,7 @@ pub fn parse_sse_line(
                     // `message_start` handler above.
                     prompt_tokens: state.input_tokens,
                     completion_tokens: out,
-                    total_tokens: state.input_tokens + out,
+                    total_tokens: state.input_tokens.saturating_add(out),
                     cache_read_tokens: Some(state.cache_read_input_tokens as u64),
                     cache_creation_tokens: Some(state.cache_creation_input_tokens as u64),
                     // Delta §13.1: the 1-hour subset, parsed from the
@@ -2178,5 +2180,176 @@ mod compaction_tests {
             summary: "sum".into(),
         };
         assert!(!prepend_compaction_block(&mut body, &c));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of `parse_sse_line`.
+    //!
+    //! `parse_sse_line` is the byte-level boundary between Anthropic's
+    //! streaming SSE and every downstream consumer (the engine's agent
+    //! loop, cost tracking, tool dispatch). The contract is:
+    //!
+    //! - it never panics on any input the wire can carry;
+    //! - the state it accumulates is monotone in the directions the code
+    //!   only ever moves (`blocks` only grows, `finished` and
+    //!   `stream_error` are sticky);
+    //! - a valid `message_start` frame carrying values near `u64::MAX`
+    //!   does not overflow the counter arithmetic.
+    //!
+    //! The last is the failing-first property: `state.input_tokens =
+    //! base + cache_read + cache_creation` is `usize` addition on three
+    //! wire-supplied `u64`s. Test/dev profile has `overflow-checks` on
+    //! by default, so adversarial values panic here. The fix
+    //! (saturating_add) lands in the next commit.
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashMap;
+
+    fn arb_state() -> impl Strategy<Value = AnthropicStreamState> {
+        (
+            any::<bool>(),
+            prop::option::of("[ -~]{0,30}"),
+            any::<usize>(),
+            any::<usize>(),
+            any::<usize>(),
+            any::<usize>(),
+            prop::collection::hash_map(0usize..100, "[a-z]{0,10}", 0..3),
+        )
+            .prop_map(
+                |(finished, stream_error, inp, cr, cc, c1h, blocks)| AnthropicStreamState {
+                    finished,
+                    stream_error,
+                    input_tokens: inp,
+                    cache_read_input_tokens: cr,
+                    cache_creation_input_tokens: cc,
+                    cache_creation_1h_input_tokens: c1h,
+                    blocks: blocks
+                        .into_iter()
+                        .map(|(k, kind)| {
+                            (
+                                k,
+                                BlockInfo {
+                                    kind,
+                                    tool_id: None,
+                                    tool_name: None,
+                                },
+                            )
+                        })
+                        .collect::<HashMap<_, _>>(),
+                },
+            )
+    }
+
+    fn arb_line() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("data: [DONE]".to_string()),
+            Just("data:".to_string()),
+            Just(String::new()),
+            Just("event: message_start".to_string()),
+            "data: \\{.{0,80}".prop_map(String::from),
+            any::<String>(),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_sse_line_never_panics(
+            state_in in arb_state(),
+            line in arb_line(),
+        ) {
+            let mut state = state_in;
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse_sse_line(&mut state, &line);
+            }));
+            prop_assert!(
+                outcome.is_ok(),
+                "parse_sse_line panicked on line ({} bytes)",
+                line.len(),
+            );
+        }
+
+        #[test]
+        fn prop_blocks_only_grow(
+            state_in in arb_state(),
+            line in arb_line(),
+        ) {
+            let mut state = state_in;
+            let before = state.blocks.len();
+            let _ = parse_sse_line(&mut state, &line);
+            prop_assert!(
+                state.blocks.len() >= before,
+                "blocks.len() shrank from {} to {} on line {:?}",
+                before,
+                state.blocks.len(),
+                line,
+            );
+        }
+
+        #[test]
+        fn prop_finished_is_sticky(
+            state_in in arb_state(),
+            line in arb_line(),
+        ) {
+            let mut state = state_in;
+            let was_finished = state.finished;
+            let _ = parse_sse_line(&mut state, &line);
+            if was_finished {
+                prop_assert!(
+                    state.finished,
+                    "finished flipped from true to false on line {:?}",
+                    line,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_stream_error_is_sticky(
+            state_in in arb_state(),
+            line in arb_line(),
+        ) {
+            let mut state = state_in;
+            let was_set = state.stream_error.is_some();
+            let _ = parse_sse_line(&mut state, &line);
+            if was_set {
+                prop_assert!(
+                    state.stream_error.is_some(),
+                    "stream_error was cleared on line {:?}",
+                    line,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_adversarial_message_start_does_not_overflow(
+            base in prop_oneof![Just(u64::MAX), Just(u64::MAX - 1), 0u64..=u64::MAX],
+            cache_read in prop_oneof![Just(u64::MAX), Just(u64::MAX - 1), 0u64..=u64::MAX],
+            cache_creation in prop_oneof![Just(u64::MAX), Just(u64::MAX - 1), 0u64..=u64::MAX],
+            out in prop_oneof![Just(u64::MAX), Just(u64::MAX - 1), 0u64..=u64::MAX],
+        ) {
+            let mut state = AnthropicStreamState::default();
+
+            let start = format!(
+                "data: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\
+                 \"input_tokens\":{base},\
+                 \"cache_read_input_tokens\":{cache_read},\
+                 \"cache_creation_input_tokens\":{cache_creation}}}}}}}",
+            );
+            let delta = format!(
+                "data: {{\"type\":\"message_delta\",\"usage\":{{\"output_tokens\":{out}}}}}",
+            );
+
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse_sse_line(&mut state, &start);
+                let _ = parse_sse_line(&mut state, &delta);
+            }));
+            prop_assert!(
+                outcome.is_ok(),
+                "parse_sse_line panicked on message_start with base={} cache_read={} \
+                 cache_creation={} then message_delta out={}",
+                base, cache_read, cache_creation, out,
+            );
+        }
     }
 }
