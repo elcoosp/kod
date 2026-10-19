@@ -22,6 +22,7 @@ kod-tools = { path = "../kod-tools" }
 kod-provider = { path = "../kod-provider" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 rstest = { workspace = true }
 tempfile = "3.8"
 futures = { workspace = true }
