@@ -869,3 +869,103 @@ The discipline that prevents this: whenever a grep-based check is
 about to be written, ask "could the shape I'm grepping for appear
 in a comment, a test, a doc, or a string literal?" If yes, the
 check needs a stripper or a more specific pattern.
+
+## Session 18 — proptest surface expansion (three crates, one class)
+
+Follow-on to the byte/char migration. The audit asked: which crates
+have a contract claimed by doc-and-name, verified example-only?
+Three answers, all the same class as session 15's P2:
+
+| Crate | Contract | Tests added |
+|---|---|---|
+| `kod-schema-dialect::sanitize` | idempotency, no-mutation | `195f30b` |
+| `kod-error::provider_status` | classification, recoverable ⊆ retryable | `f665998` |
+| `kod-ast::extract::symbols` | kinds from documented table, 1-based line, no-panic | `0006609` |
+
+Each crate had one example test per claim, zero proptests. Each was
+extended with generated-input coverage. Every suite has a positive
+control that injects a plausible regression and confirms the
+property fails — a property test that only ever passes is untested.
+
+### The recurring failure: vacuity
+
+Four test-design lessons came out of these three crates, and they
+are one class — **the checker is code, and code has bugs**:
+
+- **L23 (schema-dialect)** — an assertion's arithmetic was wrong
+  (26 CJK chars is an 81-byte line under an 80-byte budget,
+  correctly dropped; 25 fits). The property was right; the
+  boundary was miscounted.
+- **L25 (release script)** — a count verification printed a WARN
+  and continued. Fail-open is not a check. Also: two recount
+  attempts had scope bugs (grep included doc comments + test
+  assertions).
+- **L26 (kod-error)** — a preflight grepped for `prop_assume!`
+  and matched a doc comment that *explained why it was removed*.
+  Match `name(` (open paren) or strip `//` / `*` lines, not
+  `name`.
+- **L27 (kod-ast, this entry)** — the first proptest draft used
+  `any::<u16>()` with `prop_assume!` to filter to 408/429; the
+  reject budget exhausted (2-3 values out of 65,536). The fix
+  was `prop::sample::select` over the exact set. Then on the
+  kod-ast crate, four proptests over arbitrary ASCII *passed*,
+  but the positive control (0-based line) did not fire — because
+  arbitrary ASCII parses to a tree with zero def/class/struct
+  nodes, `symbols()` returns an empty vec, and every property
+  iterating symbols is vacuously true.
+
+### L27 — a property test must exercise the code path it asserts on
+
+The last bullet above is the sharpest form of the class. A
+property test over a `Vec`-returning function is vacuous if the
+strategy does not generate inputs that populate the `Vec`. The
+first kod-ast draft had four properties that passed and zero
+that fired on the injected regression. The corrected module has
+**one** non-vacuous property (`prop_valid_snippet_emits_ordered_one_based_symbols`)
+drawn from a per-language corpus of valid declarations, and that
+property is the one the positive control fires on.
+
+The non-vacuity is now explicit:
+
+    let syms = symbols(lang, src).unwrap_or_else(...);
+    prop_assert!(!syms.is_empty(),
+        "{} snippet {:?} produced zero symbols — the corpus or the
+         parser is wrong", ...);
+
+If a future corpus entry stops parsing, this assertion fails
+before the line assertion can be vacuous.
+
+**The general rule:** for any property test that iterates a
+collection, add one input class that *guarantees* the collection
+is non-empty. The existing example tests are that class; the
+proptest's arbitrary-ASCII strategy is not.
+
+### What this session's three proptest crates collectively add
+
+- **19 new tests** (4 + 4 + 5 property tests + the depth stress +
+  the sub-assertions in each), all with positive controls.
+- **`proptest` added to three more crates' dev-deps** (it was
+  already a workspace dep, used by `kod-types`, `kod-core`,
+  `kod-provider`, `kod-risk`, `kod-tools`).
+- **One class explicitly exhausted in the record**: doc-claimed
+  contracts without generated-input coverage. The audit shape is:
+
+      for crate in crates/*/; do
+        grep -q "^proptest" "$crate/Cargo.toml" || grep -rn "never panic|does not panic" "$crate/src"
+      done
+
+  Candidates not yet covered after this session: `kod-minimize::plan::classify`
+  (17 example tests, zero proptests) and `kod-config` parsers
+  (tests exist; property coverage of `parse` round-trips not
+  audited). Both are the same shape.
+
+### The recurring failure rate is the interesting number
+
+Three crates, ~15 rounds, four checker-vs-code failures. The
+proptests themselves were correct from the first non-vacuous
+write; the *verification* (arithmetic, scope, comment-aware
+greps, non-vacuity) was what failed. That is a real datum:
+**writing the test is easy; proving it has teeth is the hard
+part.** Any future session that adds property tests to a new
+crate should expect one or two rounds of test-design correction
+before the positive control fires, not a clean first pass.
