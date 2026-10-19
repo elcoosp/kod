@@ -3,9 +3,9 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `a23bce7` (full-workspace gate green at that
-commit; see "State" below and the "Re-verification at `a23bce7`"
-subsection in "What's open" #1).
+**Last verified commit:** `47cc41a` (full-workspace gate green at that
+commit; see "State" below and the two "Re-verification" subsections
+in "What's open" #1).
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -22,7 +22,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7` and again at `47cc41a`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -56,6 +56,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `47cc41a` (after the `Policy::from_toml` proptests).**
+Ran the same command at `47cc41a`:
+
+    4439 tests run: 4439 passed, 5 skipped
+
+The count went from 4436 to 4439 — exactly the three new `policy.rs`
+properties. No execfail, no EAGAIN. This is the last-verified state.
 
 ### 2. `kod-config` parsers — the largest remaining proptest surface
 
@@ -118,7 +126,7 @@ correct last tag.
 
 ## State
 
-`main` at `a23bce7`, twelve commits past `v0.1.12`:
+`main` at `47cc41a`, fourteen commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -134,6 +142,8 @@ correct last tag.
 | `0cd837e` | docs(handoff): session-18.md — the starting document for the next agent |
 | `8b4e7f5` | test(config): proptests for KodConfig round-trip, recovery, load_default |
 | `a23bce7` | chore(config): the proptest dev-dep that 8b4e7f5 left behind |
+| `d279de0` | docs(handoff): full-workspace gate green at `a23bce7` (4436/4436) |
+| `47cc41a` | test(config): proptests for `Policy::from_toml` (never-panics, round-trip, preset_explicit) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -233,7 +243,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L30)
+## The lesson index (L20–L33)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -251,6 +261,9 @@ corresponding section in `session-17.md` for the full story.
 | L28 | `--` in a `git commit -m` message is git's pathspec separator. Use `-F <file>`. |
 | L29 | Staging a subset of the intended change leaves companion files behind. After a commit, verify `git status --porcelain` is empty, not just that the tests pass. |
 | L30 | In `echo "outer "inner's" outer"`, the apostrophe outside the nested double quotes opens a `'` bash reads to EOF for. Escape it or use a variable. |
+| L31 | A serialization round-trip that compares serialized strings cannot catch a field dropped from both directions. Assert on the field values on the way back, not only on the bytes. |
+| L32 | `let _ = catch_unwind(...)` passes on a panicking implementation. The `catch_unwind` swallows the panic; the property has to assert `.is_ok()` (or `is_err()`). A check that does not halt is not a check. |
+| L33 | A control's landing check must not count a string the file already contains in prose. Verify structure (attribute adjacent to the target field), not occurrence count. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -293,7 +306,7 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CI wiring, if the project is making a
    promise about live tests. That needs a decision first.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `a23bce7`. Nothing this session started is unfinished.
+   at `47cc41a`. Nothing this session started is unfinished.
 
 ## Note on `session-17.md`
 
@@ -324,7 +337,8 @@ kills a turn (four fixes, each failing-first), a char-named truncator
 no longer miscounts CJK (fourteen sites, one helper, one workspace
 lint), and doc-claimed contracts in five crates — kod-schema-dialect,
 kod-error, kod-ast, kod-minimize, and kod-config — are property-
-tested with positive controls, plus eleven handoff lessons
-(L20–L30) that are mostly about the *checker* being wrong, not the
-code. The full workspace gate at `a23bce7` runs 4436 tests, all
-green, including the three new kod-config properties.
+tested with positive controls, plus fourteen handoff lessons
+(L20–L33) that are mostly about the *checker* being wrong, not the
+code. The full workspace gate at `47cc41a` runs 4439 tests, all
+green, including six new properties across the two kod-config
+modules (`config.rs` and `policy.rs`).
