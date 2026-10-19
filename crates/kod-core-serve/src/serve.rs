@@ -468,7 +468,10 @@ async fn handle_connection(
                 let id = req.id.clone();
                 let input = string_param(&req.params, "input");
                 let key = string_param(&req.params, "transcript_key");
-                tokio::spawn(async move {
+                let out_for_guard = out.clone();
+                let id_for_guard = id.clone();
+                spawn_panic_guarded(
+                    async move {
                     match engine.process_for(&key, &input).await {
                         Ok(resp) => {
                             if let Err(write_err) = write_done(&out, &id, &resp).await {
@@ -493,7 +496,10 @@ async fn handle_connection(
                             }
                         }
                     }
-                });
+                    },
+                    out_for_guard,
+                    id_for_guard,
+                );
             }
             "process_streaming" => {
                 let engine = engine.clone();
@@ -501,7 +507,10 @@ async fn handle_connection(
                 let id = req.id.clone();
                 let input = string_param(&req.params, "input");
                 let key = string_param(&req.params, "transcript_key");
-                tokio::spawn(async move {
+                let out_for_guard = out.clone();
+                let id_for_guard = id.clone();
+                spawn_panic_guarded(
+                    async move {
                     if let Err(e) = run_streaming(&engine, &out, &id, &input, &key).await {
                         // The streaming pump failed mid-turn. Try to
                         // hand the client an error frame; a failure to
@@ -524,7 +533,10 @@ async fn handle_connection(
                             );
                         }
                     }
-                });
+                    },
+                    out_for_guard,
+                    id_for_guard,
+                );
             }
             "steer" => {
                 let note = string_param(&req.params, "note");
@@ -605,7 +617,10 @@ async fn handle_connection(
                 let engine = engine.clone();
                 let out = out_tx.clone();
                 let id = req.id.clone();
-                tokio::spawn(async move {
+                let out_for_guard = out.clone();
+                let id_for_guard = id.clone();
+                spawn_panic_guarded(
+                    async move {
                     if let Err(e) = run_swarm(&engine, &out, &id, &goal, max_agents, merge).await {
                         if let Err(write_err) = send_response(
                             &out,
@@ -624,7 +639,10 @@ async fn handle_connection(
                             );
                         }
                     }
-                });
+                    },
+                    out_for_guard,
+                    id_for_guard,
+                );
             }
             "peek_session" => {
                 // A read-only view of another transcript. An empty
@@ -848,6 +866,39 @@ async fn write_done(
         },
     )
     .await
+}
+
+/// Spawn `fut` with panic isolation.
+///
+/// A bare `tokio::spawn(fut)` is the pre-fix shape: a panic unwinds
+/// past the JoinHandle, no error frame reaches the client, and the
+/// caller waits on its request id until its own timeout. The fix is
+/// the shape `acp.rs:464` uses for `run_prompt` (aa21bf8): an inner
+/// `tokio::spawn` whose `JoinHandle::await` returns `Err` on panic,
+/// so the error path runs on normal, error, and panic.
+pub(crate) fn spawn_panic_guarded<F>(
+    fut: F,
+    out: tokio::sync::mpsc::Sender<String>,
+    id: String,
+) where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let handle = tokio::spawn(fut);
+        if let Err(join_err) = handle.await {
+            let msg = if join_err.is_panic() {
+                "serve: internal task panicked; the request could not be completed"
+            } else {
+                "serve: internal task was cancelled; the request could not be completed"
+            };
+            tracing::error!(
+                req_id = %id,
+                error = %join_err,
+                "serve: task ended abnormally; sending an error frame",
+            );
+            let _ = write_error(&out, &id, msg).await;
+        }
+    });
 }
 
 async fn write_error(
@@ -1389,5 +1440,44 @@ mod version_tests {
             .unwrap_or(1);
         assert_eq!(client_min, u8::MAX);
         assert_eq!(client_max, u8::MAX);
+    }
+}
+
+
+#[cfg(test)]
+mod panic_guard_tests {
+    //! Pins the contract of `spawn_panic_guarded`: a panic in the
+    //! spawned future must produce an error frame for the request id.
+    //!
+    //! Honest scope: the end-to-end `serve` path is not driven here.
+    //! `handle_connection` takes a concrete `transport::Stream`, not a
+    //! generic reader/writer, so a duplex-driven test would need the
+    //! same `serve_io` extraction `acp.rs` got. That extraction is a
+    //! separate change. What this test pins is the helper the three
+    //! spawn sites share, which is what the fix is. Same honest-scope
+    //! shape `in_flight_release.rs` established for the ACP guard.
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn panicking_task_produces_an_error_frame() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+        spawn_panic_guarded(
+            async { panic!("simulated task panic") },
+            tx,
+            "req-1".to_string(),
+        );
+        let got = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        let line = match got {
+            Ok(Some(line)) => line,
+            Ok(None) => panic!(
+                "channel closed with no error frame; the caller would wait on its request id"
+            ),
+            Err(_) => panic!(
+                "no error frame within 1s; the caller would wait on its request id"
+            ),
+        };
+        assert!(line.contains("\"error\""), "not an error frame: {line}");
+        assert!(line.contains("req-1"), "error frame is not for req-1: {line}");
     }
 }
