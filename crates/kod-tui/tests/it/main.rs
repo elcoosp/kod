@@ -10,3 +10,4 @@ mod main_loop;
 mod no_raw_terminal_writes;
 mod swarm_e2e;
 mod ui;
+mod truncate_helper_sites;

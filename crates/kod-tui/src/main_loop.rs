@@ -2331,11 +2331,8 @@ impl TuiLoop {
                             if d.is_empty() {
                                 format!("- {n}")
                             } else {
-                                let short = if d.len() > 100 {
-                                    format!("{}…", kod_types::strutil::truncate_chars(d, 100))
-                                } else {
-                                    d.to_string()
-                                };
+                                let short =
+                                    kod_types::strutil::truncate_with_ellipsis(d, 100, "…");
                                 format!("- {n} — {short}")
                             }
                         })
@@ -3685,11 +3682,8 @@ impl TuiLoop {
                 } else if rest.is_empty() {
                     match self.app.session_system_prompt() {
                         Some(s) => {
-                            let shown = if s.len() > 300 {
-                                format!("{}…", kod_types::strutil::truncate_chars(s, 300))
-                            } else {
-                                s.to_string()
-                            };
+                            let shown =
+                                kod_types::strutil::truncate_with_ellipsis(s, 300, "…");
                             self.app.push_system_message(&format!(
                                 "Active system prompt override:\n\n{}\n\nUse /system clear to remove it.",
                                 shown,
@@ -3701,11 +3695,8 @@ impl TuiLoop {
                     }
                 } else {
                     self.app.set_session_system_prompt(rest.to_string());
-                    let shown = if rest.len() > 80 {
-                        format!("{}…", kod_types::strutil::truncate_chars(rest, 80))
-                    } else {
-                        rest.to_string()
-                    };
+                    let shown =
+                        kod_types::strutil::truncate_with_ellipsis(rest, 80, "…");
                     self.app.push_system_message(&format!(
                         "System prompt override set: {}\nPrepended to every subsequent prompt.",
                         shown,
