@@ -11,3 +11,6 @@ kod-types = { path = "../kod-types" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }

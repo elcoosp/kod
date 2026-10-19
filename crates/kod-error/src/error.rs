@@ -651,3 +651,110 @@ mod coverage_error_classification {
         assert!(!has_status_code("", 500));
     }
 }
+
+#[cfg(test)]
+mod proptest_provider_status {
+    //! Property-based tests for `provider_status`'s classification
+    //! contract.
+    //!
+    //! `provider_status` maps an HTTP status code (plus body text) to
+    //! a `KodError` variant, and `is_retryable` / `is_recoverable`
+    //! classify the resulting variant. The example tests above pin
+    //! one code each (401, 403, 404, 408, 429, 500, 503-busy,
+    //! 503-plain). The `u16` space is 65,536 codes; the example tests
+    //! cover nine. A class of codes could regress unobserved.
+    //!
+    //! Note on what is *not* asserted (both are false):
+    //!
+    //! - "auth status is never retryable" — provider_status puts the
+    //!   body into Provider(...), and is_retryable runs
+    //!   is_transient_transport_error on that message. A 401 whose
+    //!   body says "please try again" is retryable.
+    //! - "500..=599 is always retryable" — a plain 503 with a
+    //!   non-busy body is Provider(...) and retryable only if the
+    //!   body contains a transient phrase.
+    //!
+    //! What IS true, and asserted below: for provider_status outputs,
+    //! is_recoverable ⇒ is_retryable.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Any HTTP status code plus a bounded ASCII body.
+    fn status_and_body() -> impl Strategy<Value = (u16, String)> {
+        (any::<u16>(), ".{0,200}")
+    }
+
+    proptest! {
+        /// provider_status must never panic for any status and body.
+        #[test]
+        fn prop_provider_status_never_panics((status, body) in status_and_body()) {
+            let _ = KodError::provider_status(status, &body);
+        }
+
+        /// 408 and 429 map to variants that are both retryable and
+        /// recoverable, for any body. Unlike Provider(...), these two
+        /// arms are unconditional.
+        ///
+        /// The status is generated via `prop::sample::select` over the
+        /// exact set. A previous draft used `any::<u16>()` with
+        /// `prop_assume!(status == 408 || status == 429)` and hit
+        /// "Too many global rejects" — 2 matching values out of
+        /// 65,536 exhaust the reject budget before any accept. The
+        /// strategy must generate the values of interest directly.
+        #[test]
+        fn prop_408_and_429_are_retryable_and_recoverable(
+            status in prop::sample::select(vec![408u16, 429]),
+            body in ".{0,200}",
+        ) {
+            let e = KodError::provider_status(status, &body);
+            prop_assert!(
+                e.is_retryable(),
+                "status {} must be retryable (got {:?})", status, e,
+            );
+            prop_assert!(
+                e.is_recoverable(),
+                "status {} must be recoverable (got {:?})", status, e,
+            );
+        }
+
+        /// For any output of provider_status, recoverable implies
+        /// retryable. The retry layer keys on is_retryable; the
+        /// user-facing surface keys on is_recoverable. If a future
+        /// change moved a variant out of is_retryable alone, they
+        /// would disagree.
+        ///
+        /// Scoped to provider_status outputs, not KodError at large:
+        /// LockTimeout is recoverable but not retryable in the general
+        /// type — a documented split. provider_status never produces
+        /// LockTimeout, so the subset holds for its outputs.
+        #[test]
+        fn prop_provider_status_outputs_are_recoverable_subset_of_retryable(
+            (status, body) in status_and_body()
+        ) {
+            let e = KodError::provider_status(status, &body);
+            if e.is_recoverable() {
+                prop_assert!(
+                    e.is_retryable(),
+                    "provider_status({}, ...) is recoverable but not retryable: {:?}",
+                    status, e,
+                );
+            }
+        }
+
+        /// 401, 403, and 404 map to Provider(_) regardless of body.
+        /// Their retryability is then body-dependent (module note),
+        /// but the *variant* is unconditional.
+        #[test]
+        fn prop_auth_and_not_found_are_provider_errors(
+            status in prop::sample::select(vec![401u16, 403, 404]),
+            body in ".{0,200}",
+        ) {
+            let e = KodError::provider_status(status, &body);
+            prop_assert!(
+                matches!(e, KodError::Provider(_)),
+                "status {} must map to Provider(_), got {:?}", status, e,
+            );
+        }
+    }
+}

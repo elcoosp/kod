@@ -2355,6 +2355,7 @@ name = "kod-error"
 version = "0.1.12"
 dependencies = [
  "kod-types",
+ "proptest",
  "thiserror 2.0.21",
 ]
 
