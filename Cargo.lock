@@ -2075,6 +2075,7 @@ dependencies = [
 name = "kod-ast"
 version = "0.1.12"
 dependencies = [
+ "proptest",
  "tempfile",
  "tracing",
  "tree-sitter",

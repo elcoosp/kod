@@ -19,6 +19,7 @@ xxhash-rust = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = "3.8"
 
 [lints]
