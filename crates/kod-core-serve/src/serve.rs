@@ -184,11 +184,27 @@ pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
                     Ok(stream) => {
                         let engine = engine.clone();
                         let shutdown = shutdown.clone();
-                        tokio::spawn(async move {
+                        let handler = tokio::spawn(async move {
                             if let Err(e) =
                                 handle_connection(stream, engine, shutdown).await
                             {
                                 tracing::debug!(error = %e, "connection ended");
+                            }
+                        });
+                        // A panic in the connection handler used to be
+                        // silent: the JoinHandle was dropped, so a
+                        // JoinError never reached anything that could
+                        // log it. The watcher turns an abnormal end
+                        // (panic or cancellation) into an ERROR line
+                        // rather than leaving "why did the daemon
+                        // log a connection for 3 seconds and then
+                        // nothing" unanswered.
+                        tokio::spawn(async move {
+                            if let Err(join_err) = handler.await {
+                                tracing::error!(
+                                    error = %join_err,
+                                    "serve: connection handler ended abnormally (panic or cancellation)",
+                                );
                             }
                         });
                     }
@@ -333,29 +349,32 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
     }
 }
 
-async fn handle_connection(
-    stream: crate::transport::Stream,
+pub async fn serve_io<R, W>(
     engine: Arc<KodEngine>,
+    input: R,
+    writer: W,
     shutdown: Arc<Notify>,
-) -> Result<()> {
-    // The peer check already ran inside `transport::Listener::accept`.
-    let (read_half, write_half) = stream.into_split();
+) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     // H-R4: cap the request line length. The pre-fix read used
     // `BufReader::lines()` with no bound: a same-UID client could
     // OOM the daemon by writing a giant line with no `\n`. 1 MiB is
     // several times any legitimate request frame.
     const MAX_REQUEST_LINE_BYTES: usize = 1024 * 1024;
-    let mut reader = tokio::io::BufReader::new(read_half);
+    let mut reader = tokio::io::BufReader::new(input);
     let mut lines = CappedLines::new(&mut reader, MAX_REQUEST_LINE_BYTES);
 
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
     let writer_task = tokio::spawn(async move {
-        let mut write_half = write_half;
+        let mut writer = writer;
         while let Some(line) = out_rx.recv().await {
-            if write_half.write_all(line.as_bytes()).await.is_err() {
+            if writer.write_all(line.as_bytes()).await.is_err() {
                 break;
             }
-            if write_half.flush().await.is_err() {
+            if writer.flush().await.is_err() {
                 break;
             }
         }
@@ -728,6 +747,16 @@ async fn handle_connection(
     }
     Ok(())
 }
+
+async fn handle_connection(
+    stream: crate::transport::Stream,
+    engine: Arc<KodEngine>,
+    shutdown: Arc<Notify>,
+) -> Result<()> {
+    let (read_half, write_half) = stream.into_split();
+    serve_io(engine, read_half, write_half, shutdown).await
+}
+
 
 /// Pump one streaming call's chunks through the writer channel.
 /// Extracted from the main loop so `process_streaming` can spawn it.

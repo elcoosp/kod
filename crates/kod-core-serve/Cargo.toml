@@ -19,7 +19,11 @@ kod-core = { path = "../kod-core" }
 kod-core-state = { path = "../kod-core-state" }
 
 [dev-dependencies]
+async-trait = "0.1"
 kod-config = { path = "../kod-config" }
+kod-error = { path = "../kod-error" }
+kod-provider = { path = "../kod-provider" }
+kod-types = { path = "../kod-types" }
 futures = { workspace = true }
 tempfile = "3.8"
 
