@@ -1061,3 +1061,156 @@ mod coverage_hooks_config {
         );
     }
 }
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A `KodConfig` with a handful of fields overridden away from
+    /// their defaults. Each overridden field is asserted on after the
+    /// round-trip, so the strategy's randomness is exercised rather
+    /// than absorbed by the container-level `#[serde(default)]`.
+    ///
+    /// Deliberately does not try to generate every section: the
+    /// section types do not derive `PartialEq`, and a full `Arbitrary`
+    /// impl would dwarf the property it exists to serve. The four
+    /// fields below span `config_version`, `[commands]`, and `[hooks]`
+    /// and cover both map and scalar shapes.
+    fn arb_config() -> impl Strategy<Value = KodConfig> {
+        (
+            any::<u32>(),
+            prop::collection::hash_map("[a-z]{1,10}", "[ -~]{0,30}", 0..3),
+            any::<bool>(),
+            prop::collection::hash_map("[a-z]{1,10}", "[ -~]{0,30}", 0..3),
+        )
+            .prop_map(|(version, commands, hooks_enabled, pre_tool_use)| {
+                let mut cfg = KodConfig::default();
+                cfg.config_version = version;
+                cfg.commands = commands;
+                cfg.hooks.enabled = hooks_enabled;
+                cfg.hooks.pre_tool_use = pre_tool_use;
+                cfg
+            })
+    }
+
+    proptest! {
+        /// `KodConfig` -> TOML -> `KodConfig` -> TOML loses nothing.
+        ///
+        /// The two serialized forms are compared as `toml::Value`, not
+        /// as strings: `HashMap` iteration order differs between the
+        /// original and the re-parsed map, so a string compare would
+        /// flake on any config with two or more `[commands]` entries.
+        /// `toml::Value::Table`'s `PartialEq` is order-insensitive.
+        ///
+        /// The per-field asserts are what give this teeth: the
+        /// container-level `#[serde(default)]` on `KodConfig` (and on
+        /// every section) would make a serialized-form comparison pass
+        /// even if a field were dropped, because the re-parse refills
+        /// it with the same default. Only an explicit `back.<field> ==
+        /// cfg.<field>` catches a dropped non-default value.
+        #[test]
+        fn prop_config_round_trips_through_toml(cfg in arb_config()) {
+            let s1 = toml::to_string_pretty(&cfg).unwrap();
+            let back: KodConfig = toml::from_str(&s1).unwrap();
+            let s2 = toml::to_string_pretty(&back).unwrap();
+            // Parse as a document (`from_str::<toml::Table>`), not a
+            // single value (`str::parse::<toml::Value>`, which reads
+            // `config_version` as the whole input and rejects the
+            // rest of the document as trailing content — L23: the
+            // checker was wrong, not the code under test).
+            //
+            // `toml::Table`'s `PartialEq` is order-insensitive; that is
+            // what makes this comparison stable over `[commands]` /
+            // `[hooks.pre_tool_use]`, whose `HashMap` iteration order
+            // differs between s1 and s2.
+            let v1: toml::Table = toml::from_str(&s1).unwrap();
+            let v2: toml::Table = toml::from_str(&s2).unwrap();
+            prop_assert_eq!(&v1, &v2, "serialized form changed through a parse round-trip");
+            prop_assert_eq!(back.config_version, cfg.config_version);
+            prop_assert_eq!(&back.commands, &cfg.commands);
+            prop_assert_eq!(back.hooks.enabled, cfg.hooks.enabled);
+            prop_assert_eq!(&back.hooks.pre_tool_use, &cfg.hooks.pre_tool_use);
+        }
+
+        /// H-D9 recovery: a section whose TOML parses individually is
+        /// kept; a section whose TOML does not is replaced with its
+        /// default, and the failure does not stop the other sections
+        /// from being recovered.
+        ///
+        /// The valid section is always `[hooks]` with `enabled = true`
+        /// (a non-default value, so a dropped `hooks` is visible). The
+        /// broken section is generated over the ten non-`hooks` arms
+        /// of the `recover!` macro; every arm is exercised.
+        ///
+        /// The whole recovered config is compared against "default with
+        /// `hooks.enabled = true`": since `hooks` is the only section
+        /// with a non-default value in the input, any other difference
+        /// means recovery either dropped `hooks` or let the broken
+        /// section's (impossible) value through.
+        ///
+        /// Scope: this pins the mechanism and the `hooks` arm. The
+        /// documented past bug (`[mcp]` and `[limits]` silently
+        /// dropped) is pinned by the sibling example tests; this
+        /// property cannot distinguish "arm removed from the macro
+        /// call list" from "arm present, section broken" for the
+        /// broken section itself. It does catch the "valid section
+        /// dropped" half of the contract for `hooks`.
+        #[test]
+        fn prop_recovery_preserves_valid_section_and_defaults_broken(
+            broken in prop::sample::select(vec![
+                "llm", "tools", "mcp", "limits", "lsp",
+                "memory", "skills", "swarm", "jev", "security",
+            ]),
+        ) {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let path = tmp.path().join("config.toml");
+            // `hooks` is a valid inline table with a non-default value;
+            // `<broken>` is a string where a table is expected, which
+            // makes `try_into::<Section>()` fail for exactly that arm.
+            let content = format!(
+                "hooks = {{ enabled = true }}\n{broken} = \"not a table\"\n",
+            );
+            std::fs::write(&path, &content).unwrap();
+            let recovered = KodConfig::recover_sections(&path)
+                .unwrap()
+                .expect("valid TOML with one broken section must be salvageable");
+            let mut expected = KodConfig::default();
+            expected.hooks.enabled = true;
+            prop_assert_eq!(
+                toml::to_string_pretty(&recovered).unwrap(),
+                toml::to_string_pretty(&expected).unwrap(),
+                "recovery of broken `{}` did not match default-with-hooks",
+                broken,
+            );
+        }
+
+        /// `load_default` must not panic on any file content. The
+        /// recovery path parses twice (whole-file, then per-section)
+        /// and renames the broken file; a panic in any of those steps
+        /// would take down the caller's startup. The contract is
+        /// "never panic", not "returns `Ok`" — an `Err` from a
+        /// genuinely unreadable file is a valid outcome, so the
+        /// assertion is on `catch_unwind`, not `is_ok`.
+        #[test]
+        fn prop_load_default_never_panics_on_garbage(garbage in any::<String>()) {
+            static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            // `cargo test` shares one process across tests; nextest does
+            // not. The lock makes the env-var mutation safe either way.
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let tmp = tempfile::TempDir::new().unwrap();
+            std::fs::write(tmp.path().join("config.toml"), garbage.as_bytes()).unwrap();
+            // SAFETY (edition 2024): `set_var`/`remove_var` are unsafe
+            // because the process environment is shared. `ENV_LOCK`
+            // serializes this test against itself; no other test in
+            // this crate reads `KOD_CONFIG_DIR`.
+            unsafe { std::env::set_var("KOD_CONFIG_DIR", tmp.path()) };
+            let outcome = std::panic::catch_unwind(|| KodConfig::load_default());
+            unsafe { std::env::remove_var("KOD_CONFIG_DIR") };
+            prop_assert!(
+                outcome.is_ok(),
+                "load_default panicked on malformed config ({} bytes)",
+                garbage.len(),
+            );
+        }
+    }
+}
