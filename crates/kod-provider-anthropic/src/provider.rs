@@ -369,11 +369,7 @@ impl LlmProvider for AnthropicProvider {
                             "anthropic complete: server suggested a retry delay",
                         );
                     }
-                    let snippet = if text.len() > 400 {
-                        format!("{}…", kod_types::strutil::truncate_chars(&text, 400))
-                    } else {
-                        text
-                    };
+                    let snippet = kod_types::strutil::truncate_with_ellipsis(&text, 400, "…");
                     // H-RL1: a 429 whose hint is within the configured
                     // budget surfaces as a typed `RateLimited` so the
                     // retry layer (or the engine's turn-level wait)
