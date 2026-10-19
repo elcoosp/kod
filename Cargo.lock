@@ -2269,6 +2269,7 @@ dependencies = [
 name = "kod-core-serve"
 version = "0.1.12"
 dependencies = [
+ "async-trait",
  "futures",
  "kod-config",
  "kod-core",
