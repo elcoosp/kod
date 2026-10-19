@@ -1,0 +1,301 @@
+# Handoff — kod, session 18
+
+**Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
+record — see "Note on session-17.md" at the end).
+**Last tag:** `v0.1.12` (`59e6951`).
+**Last commit at handoff:** `74d8ef7` (the gate record; the code state is `a2eb27b`).
+**Tree at handoff:** clean.
+
+## Step 0 — verify before touching anything
+
+Three commands, reconcile against "State" below:
+
+    git log --oneline -8
+    git status --porcelain --untracked-files=no
+    git describe --tags --abbrev=0
+
+Expect HEAD at `a2eb27b` or later, tree clean, tag `v0.1.12`.
+If the tree is dirty, name the files before proceeding — do not
+assume an in-progress change is yours.
+
+## What's open, in order
+
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`)
+
+The four proptest crates (`195f30b`, `f665998`, `0006609`,
+`b5704c3`) were each gated per-crate. The full-workspace run since
+them — `CARGO_BUILD_JOBS=1 cargo nextest run --workspace
+--test-threads 2` — passed at `a2eb27b`, recorded in `74d8ef7`.
+The four-crate expansion did not perturb any other crate.
+
+If you are reading this and HEAD has moved past `74d8ef7`: re-run
+the gate before trusting the four-crate state, because a later
+commit could have changed the interaction.
+
+**`--no-fail-fast` is not optional on this host.** The first attempt
+at `--test-threads 2` without it stopped at test 1902 of 4433 on an
+EAGAIN execfail, leaving 2531 tests unrun — a partial run that is
+not a verification. The complete command:
+
+    CARGO_BUILD_JOBS=1 cargo nextest run --workspace --no-fail-fast --test-threads 2
+
+`--test-threads 2` and `JOBS=1` are host requirements, not
+preferences (L21). If the run ends nonzero, read the failure list
+before interpreting: `execfail` + `os error 35` is EAGAIN fork
+pressure (L21), not a regression. Re-run only the execfailed names
+at `--test-threads 1` to distinguish.
+
+### 2. `kod-config` parsers — the largest remaining proptest surface
+
+Ten modules in `crates/kod-config/src/` parse TOML or JSON
+(`config.rs`, `llm.rs`, `policy.rs`, `memory.rs`, `limits.rs`,
+`swarm.rs`, `jev.rs`, `mcp.rs`, `retry.rs`, `skills.rs`). Each has
+example tests; none has a proptest. The `load_from` /
+per-section-recovery path in `config.rs` is the biggest single
+contract: `recover!` keeps the sections that parsed and drops the
+ones that did not, and the record in `docs/brainstorms/` names a
+past bug where `[mcp]` and `[limits]` were silently dropped on a
+partial parse failure.
+
+The property shape is the one the four crates this session used:
+
+- `parse(serialize(cfg)) == cfg` for generated `KodConfig` values
+- recovery preserves every section whose TOML is individually valid
+- `load_default` never panics on a malformed file
+
+First exploration, not a guess:
+
+    sed -n '/pub fn load_from/,+60p' crates/kod-config/src/config.rs
+    grep -n 'recover' crates/kod-config/src/config.rs
+
+Read the `recover!` macro before writing any property against it.
+Budget 2-4 rounds; the checker-vs-code failure rate this session was
+4 failures in ~15 rounds, all in the *check*, none in the code
+(L23, L25, L26, L27).
+
+### 3. CI wiring — a decision, not a script
+
+There is no `.github/`. Two tests exist that the workspace suite
+does not run:
+
+- `kod-mcp` `real_filesystem` (`cf5a529`) — `#[ignore]`d, gated on
+  `npx_available()`. Runs `cargo nextest run -p kod-mcp --run-ignored only -E 'test(real_filesystem)'`.
+- The live LSP test in `kod-lsp/src/client.rs` — not `#[ignore]`d,
+  but skips at runtime unless `rust-analyzer` is on PATH with a real
+  toolchain (it probes the handshake, not just the binary).
+
+Options, each with a real cost:
+
+- A nightly workflow that installs `npx` + `rust-analyzer` and runs
+  the ignored set. ~5 min/night, one workflow file, a dependency
+  install step. High confidence in catching Node/rust-analyzer
+  drift.
+- A documented manual step in release prep (`--run-ignored only` in
+  a release checklist). Zero CI cost, zero automation.
+- Do nothing and record that the live tests are developer-only.
+  Honest, but the handoff must say so.
+
+This needs a decision about what the project promises. Do not build
+a workflow without that decision.
+
+### 4. `v0.1.13` — do not tag
+
+Everything since `v0.1.12` is test-only or docs. A release tag for
+test-only commits is a tag that means nothing. `v0.1.12` is the
+correct last tag.
+
+## State
+
+`main` at `74d8ef7`, nine commits past `v0.1.12`:
+
+| Commit | What |
+|---|---|
+| `e489e04` | L25 — a check that does not halt is not a check |
+| `195f30b` | `kod-schema-dialect::sanitize` proptests (4) |
+| `744d1cb` | L26 — grep for a code shape must exclude comments |
+| `f665998` | `kod-error::provider_status` proptests (4) |
+| `0006609` | `kod-ast::extract::symbols` proptests (4 + depth stress) |
+| `eb92c8e` | L27 — a property test must exercise the code path it asserts on |
+| `b5704c3` | `kod-minimize::plan::classify` proptests (5) |
+| `a2eb27b` | L28 — `--` in a `git commit -m` message is a pathspec separator |
+| `74d8ef7` | full-workspace gate green at `a2eb27b` |
+
+`v0.1.12` (`59e6951`) is the release that carries the two behavior
+changes from this work: four panic-isolation fixes (a panic in
+third-party code no longer kills a turn or wedges a session) and
+fourteen CJK display-site fixes (no spurious ellipsis at the char
+cap). Everything after is tests and documentation.
+
+## What landed before `v0.1.12` in this arc
+
+Three sub-arcs, summarized so the next agent does not re-derive:
+
+**Behavioral integration.** Five seam tests (provider adapter,
+ACP `session/prompt`, ACP approval, ACP cancel, MCP tool dispatch),
+`serve_io` extraction, a real MCP filesystem test, two concurrent
+`serve` clients. Each closes a *join* between two already-tested
+layers, not a layer itself.
+
+**Fault injection.** Four real bugs, each failing-first: a
+panicking tool killed the turn (`1dbf8cc`), a panicking embedder
+killed retrieval (`69c94aa`) and consolidation (`fd84489`), a
+panicking compaction-summary provider wedged the transcript forever
+(`d5544ca`). Three guards on already-correct behavior (malformed SSE
+mid-stream, both adapters; MCP garbage line + timeout). Two source
+lints with positive controls (`embed_safe_lint`, and the in-flight
+flag class audited as exhausted in `665a74d`).
+
+**Byte/char display sites.** The session-16 P2 (byte cap under a
+char name) had fourteen call sites still using the pre-fix shape.
+A shared helper `strutil::truncate_with_ellipsis` (`9042592`), six
+per-crate migration commits, and a workspace source lint
+(`2450be1`) with a positive control.
+
+**Proptest surface.** Four crates, 19 new property tests, each with
+a positive control proving it fails on an injected regression:
+`sanitize` (idempotency, no-mutation), `provider_status`
+(recoverable ⊆ retryable), `symbols` (1-based lines, documented
+kinds, no-panic), `classify` (false negatives impossible — the
+doc's own claim, mechanized).
+
+## Operational quirks — read before running anything
+
+These cost rounds this session. They are not preferences.
+
+**The file watcher.** Six `watchexec` instances watch `wr1.sh`;
+every write fires all six. Write scripts atomically:
+
+    cat > wr1.sh.tmp << 'SCRIPT'
+    ...
+    SCRIPT
+    chmod +x wr1.sh.tmp && mv wr1.sh.tmp wr1.sh
+
+A direct `cat > wr1.sh` races a mid-execution reader; bash reads
+scripts incrementally, so a replaced file executes a mix of old and
+new content and can hang on a half-read heredoc. If it hangs:
+`Ctrl-C`, `pkill -TERM -f 'cargo nextest|cargo check|cargo build'`,
+`sleep 2`, `pkill -KILL` anything left. Nothing is lost — the hang
+is a read failure, not a write corruption. `git status` will be
+clean.
+
+**Heredocs truncate at roughly 120-150 lines on this host.** Write
+long files in verified chunks: write, check `wc -l` and `tail -1`,
+append, re-check. Never assume a long heredoc completed.
+
+**Markdown files with triple-backtick fences cannot be written via
+heredoc** — the watcher's fence stripper treats the inner fence as a
+message boundary and truncates the script there. Use `~~~` for
+Markdown fences (valid CommonMark, renders identically, no
+triple-backtick for the stripper to match).
+
+**Bash 3.2.** No `declare -A`, no `mapfile`, no `${x^^}`. No
+`timeout` binary either (`gtimeout` from coreutils, or absent) — a
+`command not found` swallowed by `2>/dev/null` looks exactly like
+"no matches". Diagnose tool availability before relying on it.
+
+**`set -uo pipefail` does not include `-e`.** A failed `cat >` or
+`python3 -` does not abort the script. Every write must be followed
+by `test -f`, and every verification must `exit 1` on mismatch.
+
+**`grep -c X || echo 0` produces `"0\n0"`** — use `grep -c X; true`
+or capture into a variable first.
+
+**`tokio::fs` is not in the workspace feature set.** Use
+`spawn_blocking` for sync file IO.
+
+**kache disk pressure can trigger EAGAIN on `rustc` fork.** If the
+build fails with `Resource temporarily unavailable`, `rm -rf target`
+(never `cargo clean`, never delete the kache cache).
+
+**Full-workspace suites need `--test-threads 2`, `JOBS=1`, and
+`--no-fail-fast`.** At default parallelism, 9+ false `exec_failed`.
+Without `--no-fail-fast`, a single execfail stops the run and leaves
+the rest unverified.
+
+**A ` -- ` in a `git commit -m` message is parsed by git as the
+end-of-options separator**, not just by the shell. The message is
+truncated at `--` and the trailing words become pathspecs. Any
+message containing an em-dash, a `--flag` snippet, or a Markdown
+horizontal rule needs `git commit -F <file>`.
+
+## The lesson index (L20–L28)
+
+Every one of these is from a real failure this session. Read the
+corresponding section in `session-17.md` for the full story.
+
+| L | One line |
+|---|---|
+| L20 | Never overwrite `wr1.sh` in place; write tmp + mv |
+| L21 | Fork pressure hits tests *and* the linker; `execfail` + `os error 35` is host pressure, not regression. Read the failure list before interpreting exit code. |
+| L22 | `fuzz/` is excluded from the workspace; a call from `fuzz/fuzz_targets/` is invisible to `grep crates/`. Grep the whole repo when a `pub fn` looks uncalled. |
+| L23 | A guard test is code, and code has bugs. Read the assertion's arithmetic before concluding the *code under test* is wrong. |
+| L24 | `cat > missing/path` fails silently without `-e`. `mkdir -p` first; `test -f` after. |
+| L25 | A check that prints a warning and continues is fail-open. Every verification must `exit 1` on mismatch. |
+| L26 | A grep for a code shape matches comments. Match `name(` (open paren) or strip `//` / `*` lines. For a committed lint, use `production_lines()`. |
+| L27 | A property test over a `Vec` is vacuous if the strategy does not populate it. Add one input class that guarantees non-empty; the existing example tests are that class. |
+| L28 | `--` in a `git commit -m` message is git's pathspec separator. Use `-F <file>`. |
+
+The pattern behind L23–L27: **the checker is code, and code has
+bugs.** In four proptest crates and ~15 rounds, there were four
+checker-vs-code failures and zero code failures. The proptests
+themselves were correct from the first non-vacuous write. Writing
+the test is easy; proving it has teeth is the hard part.
+
+## What NOT to do
+
+- **Do not interpret a nonzero workspace gate as a regression before
+  reading the failure list.** `execfail` + `os error 35` is host
+  pressure. Assertions and panics are real. This is L21 and it cost
+  a round this session.
+- **Do not write `wr1.sh` in place.** L20.
+- **Do not put triple-backtick fences in a file written by heredoc.**
+  Use `~~~`.
+- **Do not trust a warning-only check.** If a verification can fail
+  and does not exit, it is not a check. L25.
+- **Do not conclude a property test has teeth because it passes.**
+  Write the positive control: inject a plausible regression, confirm
+  the property fails at the intended assertion, restore, re-confirm
+  green. All four proptest crates this session did this; the one
+  that did not (the first kod-ast draft) was vacuous and the control
+  caught it. L27.
+- **Do not `git commit -m` with `--` in the message.** L28.
+- **Do not tag `v0.1.13` for test-only commits.** Everything since
+  `v0.1.12` is tests and docs; a tag would be meaningless.
+- **Do not re-build a covered seam.** Three times this session a
+  "gap" was named from memory and reading the tests showed it
+  covered. Read the test file first.
+
+## Where to start
+
+1. **Step 0** — verify tree, HEAD, tag.
+2. **"What's open" #1** — if HEAD has moved past `74d8ef7`, re-run
+   the full-workspace gate with `--no-fail-fast`.
+3. **"What's open" #2** — `kod-config` parsers, if you want the
+   largest remaining proptest surface. Read the code before writing
+   a property; budget 2–4 rounds.
+4. **"What's open" #3** — CI wiring, if the project is making a
+   promise about live tests. That needs a decision first.
+5. **Or stop.** The tree is clean, tagged, and verified end-to-end
+   at `a2eb27b`. Nothing this session started is unfinished.
+
+## Note on `session-17.md`
+
+`session-17.md` is now 1100+ lines and is a **mixed record**: it
+began as the session-17 handoff and accumulated eight appendices
+from session 18 (behavioral integration, fault injection, byte/char
+migration, proptest expansion, L20–L28). It is the *detail* file —
+the place to read the full story of a lesson or a fix. This file is
+the *starting* file — the place to read what is open and where to
+go. If a future session finds the split unhelpful, the fix is to
+extract session 18's appendices into `session-18-detail.md` and
+leave `session-17.md` as a coherent session-17 record.
+
+## Session 18 in one line
+
+Started with a P2 fix plan from session 15 and closed three bug
+classes and a test-surface class: a panicking third party no longer
+kills a turn (four fixes, each failing-first), a char-named truncator
+no longer miscounts CJK (fourteen sites, one helper, one workspace
+lint), and doc-claimed contracts in four crates are now property-
+tested with positive controls — plus nine handoff lessons (L20–L28)
+that are mostly about the *checker* being wrong, not the code.
