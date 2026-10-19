@@ -286,11 +286,7 @@ pub async fn run_update() -> Result<()> {
     if !resp.status().is_success() {
         let status = resp.status();
         let body = read_bounded_error_body(resp).await;
-        let short = if body.len() > 300 {
-            format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
-        } else {
-            body
-        };
+        let short = kod_types::strutil::truncate_with_ellipsis(&body, 300, "…");
         eprintln!("GitHub returned {status}: {short}");
         return Err(kod_error::KodError::Internal(
             "admin: fatal check failed".to_string(),

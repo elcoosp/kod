@@ -289,11 +289,7 @@ pub async fn run_chat(
         model_name
     );
     if let Some(sys) = &system_prompt {
-        let preview = if sys.len() > 120 {
-            format!("{}…", kod_types::strutil::truncate_chars(sys, 120))
-        } else {
-            sys.clone()
-        };
+        let preview = kod_types::strutil::truncate_with_ellipsis(sys, 120, "…");
         println!("System prompt override: {}", preview);
     }
     println!();

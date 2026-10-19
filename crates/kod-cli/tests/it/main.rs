@@ -12,3 +12,4 @@ mod policy_explain;
 mod replay;
 #[cfg(unix)]
 mod tui_e2e;
+mod truncate_helper_sites;
