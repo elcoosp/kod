@@ -3,7 +3,9 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last commit at handoff:** `74d8ef7` (the gate record; the code state is `a2eb27b`).
+**Last verified commit:** `a23bce7` (full-workspace gate green at that
+commit; see "State" below and the "Re-verification at `a23bce7`"
+subsection in "What's open" #1).
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -20,7 +22,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`)
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -44,6 +46,16 @@ preferences (L21). If the run ends nonzero, read the failure list
 before interpreting: `execfail` + `os error 35` is EAGAIN fork
 pressure (L21), not a regression. Re-run only the execfailed names
 at `--test-threads 1` to distinguish.
+
+**Re-verification at `a23bce7` (after the kod-config proptests).**
+The gate at `74d8ef7` predates the two kod-config commits (`8b4e7f5`
+and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
+
+    4436 tests run: 4436 passed, 5 skipped
+
+The count went from 4433 to 4436 — exactly the three new kod-config
+properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
+whole suite ran). This is the last-verified state.
 
 ### 2. `kod-config` parsers — the largest remaining proptest surface
 
@@ -106,7 +118,7 @@ correct last tag.
 
 ## State
 
-`main` at `74d8ef7`, nine commits past `v0.1.12`:
+`main` at `a23bce7`, twelve commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -119,6 +131,9 @@ correct last tag.
 | `b5704c3` | `kod-minimize::plan::classify` proptests (5) |
 | `a2eb27b` | L28 — `--` in a `git commit -m` message is a pathspec separator |
 | `74d8ef7` | full-workspace gate green at `a2eb27b` |
+| `0cd837e` | docs(handoff): session-18.md — the starting document for the next agent |
+| `8b4e7f5` | test(config): proptests for KodConfig round-trip, recovery, load_default |
+| `a23bce7` | chore(config): the proptest dev-dep that 8b4e7f5 left behind |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -218,7 +233,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L28)
+## The lesson index (L20–L30)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -234,6 +249,8 @@ corresponding section in `session-17.md` for the full story.
 | L26 | A grep for a code shape matches comments. Match `name(` (open paren) or strip `//` / `*` lines. For a committed lint, use `production_lines()`. |
 | L27 | A property test over a `Vec` is vacuous if the strategy does not populate it. Add one input class that guarantees non-empty; the existing example tests are that class. |
 | L28 | `--` in a `git commit -m` message is git's pathspec separator. Use `-F <file>`. |
+| L29 | Staging a subset of the intended change leaves companion files behind. After a commit, verify `git status --porcelain` is empty, not just that the tests pass. |
+| L30 | In `echo "outer "inner's" outer"`, the apostrophe outside the nested double quotes opens a `'` bash reads to EOF for. Escape it or use a variable. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -276,7 +293,7 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CI wiring, if the project is making a
    promise about live tests. That needs a decision first.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `a2eb27b`. Nothing this session started is unfinished.
+   at `a23bce7`. Nothing this session started is unfinished.
 
 ## Note on `session-17.md`
 
@@ -290,12 +307,24 @@ go. If a future session finds the split unhelpful, the fix is to
 extract session 18's appendices into `session-18-detail.md` and
 leave `session-17.md` as a coherent session-17 record.
 
+One concrete issue in that file: its "Full-workspace verification
+at $(git rev-parse --short HEAD)" section contains literal
+`$SUMMARY_LINE` and `$EPILOGUE` placeholders — the script that wrote
+it used a quoted heredoc, so those never expanded. The verdict
+(green at `a2eb27b`) is correct; the summary line the file shows is
+a template, not the real 4433-test output. If a future session needs
+a gate-record shape, copy the "Re-verification at `a23bce7`"
+section in this file, not that one.
+
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
 classes and a test-surface class: a panicking third party no longer
 kills a turn (four fixes, each failing-first), a char-named truncator
 no longer miscounts CJK (fourteen sites, one helper, one workspace
-lint), and doc-claimed contracts in four crates are now property-
-tested with positive controls — plus nine handoff lessons (L20–L28)
-that are mostly about the *checker* being wrong, not the code.
+lint), and doc-claimed contracts in five crates — kod-schema-dialect,
+kod-error, kod-ast, kod-minimize, and kod-config — are property-
+tested with positive controls, plus eleven handoff lessons
+(L20–L30) that are mostly about the *checker* being wrong, not the
+code. The full workspace gate at `a23bce7` runs 4436 tests, all
+green, including the three new kod-config properties.
