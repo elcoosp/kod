@@ -643,3 +643,94 @@ hard-coding any of them).
 If a fifth instance is ever added and leaks, the failure shape is
 the same: the feature silently no-ops after the first panicking
 attempt, and the flag's set membership is the only visible symptom.
+
+## Session 18 — byte/char display-site migration (complete)
+
+Continuation of session 18 after the fault-injection arc. This
+sub-arc migrated the eleven remaining display-preview sites that had
+the pre-P2-fix shape, added a helper to make the fix uniform, and
+closed the class with a workspace-wide source lint.
+
+### The shape
+
+    if s.len() > N {
+        format!("{ellipsis}", truncate_chars(s, N))
+    } else {
+        owned
+    }
+
+`truncate_chars` is a char cap since session 16. The guard is a
+byte-length check. On CJK input whose char count is at the cap but
+whose byte count exceeds it, the guard fires, `truncate_chars`
+returns the string unchanged, and the caller appends an ellipsis to
+a string that was never truncated. Session 16 fixed seven sites in
+`render.rs`; the same shape persisted elsewhere.
+
+### The work
+
+| Round | Commits | What |
+|---|---|---|
+| Helper | `9042592` | `strutil::truncate_with_ellipsis(s, N, ellipsis)` + 8 tests |
+| 1 | `f9b6ab8`, `d9515dd` | kod-cli × 2, kod-core-state × 1 |
+| 2 | `336bba3`, `5e81c4b`, `8b93eb9` | kod-core × 1, kod-provider-anthropic × 1, kod-tools × 1 |
+| 3 | `65c8e2a` | kod-tui × 3 |
+| 4 | `2450be1` | workspace source lint + positive control |
+
+Eleven call sites migrated across six crates. Six source-level
+assertion files pin per-crate adoption; the workspace lint in
+`kod-types::it::source_lints::truncate_display_sites_use_helper`
+catches any future reintroduction.
+
+### The design choices, worth keeping
+
+**The helper removes the outer guard entirely.** `truncate_with_ellipsis`
+compares the returned prefix's byte length to the input's — strictly
+shorter iff truncation happened. Exact in any unit. The naive fix
+(change the guard to `.chars().count()`) would work for the *call
+sites* but leaves the same decision split across two places
+(the guard, and the format). The helper collapses it.
+
+**Each round is per-crate with its own gate.** A regression is
+attributable to one crate. The alternative (one large commit) would
+make a failed workspace gate ambiguous.
+
+**The source-level assertions are honest coverage, not tests of
+behavior.** These are private display-preview sites inside command
+handlers. A behavior harness would cost more than the specificity it
+adds; the helper's own unit tests (in `kod-types`) cover the
+semantics; the source assertions cover the *adoption*.
+
+**The lint has a positive control.** The commit script injected a
+plausible bad shape at the end of `render.rs`, confirmed the lint
+fails with the byte-guard message, restored, and re-confirmed green.
+A guard that only ever passes is untested.
+
+### What this sub-arc leaves un-done
+
+- **No `.github/workflows/`** — the `#[ignore]`d MCP-filesystem test
+  and the live LSP test still run only on a developer machine with
+  the right deps. The lint runs in `cargo nextest --workspace`; the
+  live tests do not.
+- **No release tag** — the last is `v0.1.11`. Everything since is
+  test-only or docs except the four panic-isolation fixes
+  (`1dbf8cc`, `69c94aa`, `fd84489`, `d5544ca`) and the eleven
+  display-site fixes (`f9b6ab8` … `65c8e2a`). The panic-isolation
+  fixes are behavior changes: a panic that killed a turn or wedged a
+  session now returns a tool error or falls through to
+  keyword+recency. `v0.1.12` would be a legitimate release.
+
+### Bug-hunt-markers audit (session 18)
+
+Grepping for `P1`/`P2`/`bug-hunt` comments and checking which had
+tests surfaced the ACP `in_flight` gap, now closed by `58345bb`.
+That audit is repeatable:
+
+    grep -rnE "// (P1|P2|bug-hunt)" crates/*/src --include="*.rs"
+
+For each hit, check whether the fix it names has a test pinning the
+observable behavior. Two that were checked and closed:
+
+- ACP `in_flight` release-on-completion (`58345bb`) — the compaction
+  sibling of this was fixed under fault-injection (`d5544ca`).
+- The in_flight flag class — audited, exhausted, recorded under
+  "in_flight flag class exhausted".
