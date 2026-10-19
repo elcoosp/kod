@@ -3,11 +3,12 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `dac5844` (full-workspace gate green at that
-commit; see "State" below and the seven "Re-verification"
-subsections in "What's open" #1). 4450/4450 on the first try; 5
-skipped; no leaky this run. The commit fixes a wire-input overflow
-in the Anthropic SSE parser and adds five proptests to it.
+**Last verified commit:** `1ce1bb6` (full-workspace gate green at that
+commit; see "State" below and the eight "Re-verification"
+subsections in "What's open" #1). 4455/4455 on the first try; 5
+skipped; no leaky. The commit adds five proptests to the memory
+extraction parser (`parse_reply`), a regression-guard round with
+two positive controls that caught checker bugs (L23, L35).
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -24,7 +25,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, and `dac5844`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, and `1ce1bb6`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -58,6 +59,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `1ce1bb6` (after the `parse_reply` proptests).**
+Ran the same command at `1ce1bb6`:
+
+    4455 tests run: 4455 passed, 5 skipped
+
+Up from 4450 at `dac5844` — exactly the five new `kod-memory`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `dac5844` (after the Anthropic SSE overflow fix).**
 Ran the same command at `dac5844`:
@@ -189,7 +198,7 @@ correct last tag.
 
 ## State
 
-`main` at `dac5844`, twenty-two commits past `v0.1.12`:
+`main` at `1ce1bb6`, twenty-three commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -220,6 +229,8 @@ correct last tag.
 | `7f6cfd5` | test(serve): streaming E2E + finding: only `process` was wedged |
 | `34fc35c` | docs(handoff): gate at `7f6cfd5`; scope correction + cache lesson |
 | `dac5844` | fix(anthropic): saturating_add on SSE usage counters; proptests for `parse_sse_line` |
+| `aa03e3c` | docs(handoff): gate at `dac5844`; SSE overflow fix + L41/L42 |
+| `1ce1bb6` | test(memory): proptests for `parse_reply` (5 properties, 2 controls) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -404,6 +415,65 @@ last three targets. The next same-class target, named under
 "Where to start" item 5, is `kod-memory/src/extract.rs`
 `parse_reply` — parses LLM output, zero proptests.
 
+**Fourth round: the memory extraction parser (`1ce1bb6`).** The
+next target from the L42 survey: `kod-memory/src/extract.rs`
+`parse_reply`, which parses the LLM's reply for an extraction
+call. Prose that *may* contain one JSON array; 270 lines total;
+five example tests; zero proptests.
+
+Five properties were written:
+
+- `prop_parse_reply_never_panics` — boundary contract
+- `prop_returned_facts_are_well_formed` — every returned fact
+  has non-empty trimmed content and `>= 12` bytes
+- `prop_cap_holds` — `parse_reply(r, n).len() <= n`
+- `prop_prefix_stable_across_caps` — for `n1 <= n2`,
+  `parse_reply(r, n1)` is a prefix of `parse_reply(r, n2)`
+- `prop_valid_reply_is_fully_parsed` — a well-formed reply with
+  `k <= n` entries round-trips with `k` facts, in order,
+  kind-preserved
+
+The parser is defensive; all five passed on the first try once
+the strategy was correct. Two checker bugs surfaced during the
+control drill — the properties were fine, the strategy was not.
+
+**Checker bug 1 (L23, second appearance this session).** The
+first content strategy used `[a-zA-Z0-9 ]{12,40}` (spaces
+allowed). `parse_reply` trims before the `>= 12` check and
+before storing, so a 12-byte raw value with a leading space
+became an 11-byte trimmed value and was *correctly* dropped —
+then the expected-value comparison (against the untrimmed
+string) failed on a correct parser. `parse_reply` was never at
+fault. Fixed by `[a-zA-Z0-9]{12,40}` (no whitespace).
+
+**Checker bug 2 (L43, new).** After the first fix, control B
+(remove the `if content.len() < 12` filter) passed all five
+properties. The cause: the strategy only generated 12-40-byte
+content, so the filter **never fired** on the corpus — the
+edge was present in the type domain but never sampled. This is
+L35's companion, on the guard's own invariant: a strategy that
+*can* generate the edge but almost never *does* is vacuous
+against a control that targets that edge. Fixed by an
+`arb_content` strategy that `prop_oneof!`-forces `"x"`,
+`"hello!"`, and `"12345678901"` (11 bytes, one short) into
+every 2-case window.
+
+**Both controls now fail the intended property:**
+
+- Reversing `arr.iter()` -> `arr.iter().rev()` fails
+  `prop_valid_reply_is_fully_parsed` on the entry order.
+- Removing the `if content.len() < 12` filter fails
+  `prop_returned_facts_are_well_formed` on the `>= 12`
+  invariant (the short-content branch now appears in the
+  corpus).
+
+The honest shape: five properties, two checker bugs, zero
+parser bugs. The parser was correct; the test harness needed a
+second revision before it could prove that. That ratio is the
+same one the handoff has been naming since L23 — in four
+proptest crates and ~20 rounds, most failures are in the check,
+not the code.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -497,7 +567,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L42)
+## The lesson index (L20–L43)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -527,6 +597,7 @@ corresponding section in `session-17.md` for the full story.
 | L40 | A build cache can silently fail in two ways at once. (a) kache's `kache stats` header reports logical-vs-physical sizes and a cap that does not match `~/.config/kache/config.toml`'s `max_cache_size`; `kache gc` with no args is a no-op if physical size is under that (wrong) cap. (b) `auto-gc.log` had hundreds of `skipping eviction ... database is locked` lines, and `gc_stats.json` showed `entries_evicted: 0` — the daemon's LRU was silently broken for at least a day. `kache gc --max-age 3d` reclaimed 14 GiB. Check `kache stats`, `auto-gc.log`, and `gc_stats.json` when a disk-full recurs. |
 | L41 | proptest's failure reporting needs `Debug` on every type in the strategy tuple. A struct with only `#[derive(Default)]` needs `Debug` added alongside it — and the *first* `#[derive(Debug)]` insertion will collide with the existing derive unless you edit in place (`#[derive(Default)]` -> `#[derive(Default, Debug)]`), not add a second `#[derive(Debug)]` above it. |
 | L42 | "The proptest surface is closed" is a claim about the *codebase*, not about the last three targets. The prior handoff closed item #2 after covering three custom-parsing modules; the survey this round found `parse_sse_line` in `kod-provider-anthropic` — a 2182-line external-boundary parser with 30 example tests and zero proptests, and a real overflow bug in it. Before declaring a surface done, list every parser on a crate boundary and check each one. |
+| L43 | A proptest's strategy can be non-vacuous and still blind to a control. When the drill reverted the `>= 12` content-length filter and the property still passed, the cause was the strategy: it only generated 12–40-byte content, so the filter never fired. Force every edge the code branches on into the corpus with `prop_oneof![Just(edge), range]`. L35's companion — same failure shape, on the guard's own invariant. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -570,12 +641,14 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `dac5844`. Nothing this session started is unfinished. Two
-   known gaps: (a) kache's auto-gc daemon was not evicting (L40),
-   check `kache stats` and `auto-gc.log` if disk-full recurs;
-   (b) the parser survey (L42) found `kod-memory/extract.rs`
-   `parse_reply` — parses LLM output, zero proptests — as the
-   next same-class target.
+   at `1ce1bb6`. Nothing this session started is unfinished.
+   Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
+   check `kache stats` and `auto-gc.log` if disk-full recurs.
+   (b) Remaining same-class parsers from the survey (L42), none
+   with a real bug found yet: `kod-skills/parser.rs`,
+   `kod-mcp/http_policy.rs::parse`, `kod-swarm/brief.rs`,
+   `kod-swarm/completion_report.rs`, `kod-types/effort.rs`.
+   Each is a small read-then-write round; none is urgent.
 
 ## Note on `session-17.md`
 
@@ -612,18 +685,21 @@ the two previously-uncovered live tests run in CI on every
 push to main/develop, a panicking spawned engine task in the
 NDJSON serve adapter now sends an error frame instead of
 leaving the caller to time out (same class as the ACP fix in
-aa21bf8), and a wire-input `usize` overflow in the Anthropic
-SSE parser (`dac5844`) is now saturated, with five proptests
-pinning the boundary parser's contract. The honest-scope
-caveat from the serve fix was closed by a `serve_io`
-extraction (`b38b7c2`) and an end-to-end test (`90e8126`).
-A follow-up test (`7f6cfd5`) verified the finding that only
-the `process` site was ever wedged (L39). Twenty-three handoff
-lessons (L20–L42) that are mostly about the *checker* being
-wrong, not the code; two (L40) came from a build cache that
-failed silently, and two (L41, L42) came from a parser survey
+aa21bf8), a wire-input `usize` overflow in the Anthropic SSE
+parser (`dac5844`) is now saturated, and the memory extraction
+parser (`parse_reply`, `1ce1bb6`) is pinned by five properties
+with two controls that caught checker bugs (L23, L43). The
+honest-scope caveat from the serve fix was closed by a
+`serve_io` extraction (`b38b7c2`) and an end-to-end test
+(`90e8126`). A follow-up test (`7f6cfd5`) verified the finding
+that only the `process` site was ever wedged (L39). Twenty-four
+handoff lessons (L20–L43) that are mostly about the *checker*
+being wrong, not the code; two (L40) came from a build cache
+that failed silently, two (L41, L42) came from a parser survey
 that found a real overflow the prior "surface closed" claim
-missed. The full workspace gate at `dac5844` runs 4450 tests,
-all green, including fourteen new properties across four
-modules (`kod-config/config.rs`, `kod-config/policy.rs`,
-`kod-config/llm.rs`, and `kod-provider-anthropic/wire.rs`).
+missed, and one (L43) came from a control that ran blind to
+the edge the guard branches on. The full workspace gate at
+`1ce1bb6` runs 4455 tests, all green, including nineteen new
+properties across five modules (`kod-config/config.rs`,
+`kod-config/policy.rs`, `kod-config/llm.rs`,
+`kod-provider-anthropic/wire.rs`, `kod-memory/extract.rs`).
