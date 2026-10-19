@@ -412,6 +412,94 @@ jobs:
       run: |
         cargo test -p kod-provider-anthropic --test it -- live --ignored --nocapture
 
+  # The two tests that the default suite does not actually exercise:
+  #
+  # - `kod-lsp` `test_rust_analyzer_did_change_clears_error` runs in
+  #   the default `test` job but silently skips when `rust-analyzer`
+  #   is not on PATH. Installing the rustup component turns it into a
+  #   real assertion, and the `skipping:` grep turns a
+  #   present-but-broken toolchain into a failure instead of a silent
+  #   pass (L25 — a check that does not halt is not a check).
+  #
+  # - `kod-mcp` `real_filesystem` is `#[ignore]`d and needs `npx`.
+  #   The runner image ships Node LTS, so no install step is needed;
+  #   the Verify step exists to fail loudly if that changes.
+  #
+  # Decision (item #3 of session 18's handoff): the project promises
+  # to exercise these on every push to main/develop and every PR from
+  # the same repo, and to skip cleanly on a fork PR (the same shape
+  # `live-model` and `live-anthropic` already use). Not nightly;
+  # every push. If the ~3 min cost becomes a problem, moving this job
+  # behind a schedule is a one-line change.
+  live-integrations:
+    name: Live integrations (rust-analyzer + npx)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+      with:
+        toolchain: stable
+        # rust-analyzer ships with rustup. Without this the LSP test
+        # returns early on `binary_on_path` and the whole job passes
+        # green on a workspace where LSP is entirely broken.
+        components: rust-analyzer
+
+    - name: Cache cargo registry
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-live-int-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-live-int-
+          ${{ runner.os }}-cargo-
+
+    - name: Verify toolchain
+      run: |
+        set -euo pipefail
+        rust-analyzer --version
+        node --version
+        npx --version
+
+    # The test asserts on real rust-analyzer diagnostics. If the
+    # workspace's LSP path regresses (a `didChange` stops firing, a
+    # diagnostic is lost), this fails. If the *toolchain* regresses
+    # (rust-analyzer is on PATH but the handshake fails), the test
+    # emits a `skipping:` line — grep for it and fail the job
+    # explicitly. A silent skip here would be the fail-open shape
+    # L25 records.
+    - name: LSP live test (rust-analyzer handshake)
+      run: |
+        set -euo pipefail
+        LOG=$(mktemp)
+        if ! cargo test -p kod-lsp --lib \
+          test_rust_analyzer_did_change_clears_error -- --nocapture >"$LOG" 2>&1; then
+          echo "LSP live test failed; full output:" >&2
+          cat "$LOG" >&2
+          exit 1
+        fi
+        if grep -q 'skipping:' "$LOG"; then
+          echo "rust-analyzer live test skipped; the toolchain is not usable:" >&2
+          grep 'skipping:' "$LOG" >&2
+          exit 1
+        fi
+        echo "LSP live test passed with real rust-analyzer"
+
+    # `--run-ignored=only` runs the `#[ignore]`d real-filesystem
+    # tests, not the default suite. npx downloads
+    # `@modelcontextprotocol/server-filesystem` on first run; the
+    # cache step above keeps it warm across jobs.
+    - name: MCP real-filesystem test (npx @modelcontextprotocol/server-filesystem)
+      run: |
+        cargo nextest run -p kod-mcp --locked --no-fail-fast \
+          --run-ignored=only -E 'test(real_filesystem)'
+
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
