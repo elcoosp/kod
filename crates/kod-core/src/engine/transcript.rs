@@ -40,11 +40,11 @@ impl KodEngine {
         if text.is_empty() {
             return;
         }
-        let short = if text.len() > MAX_TURN_CHARS {
-            format!("{}… [truncated]", truncate_chars(text, MAX_TURN_CHARS))
-        } else {
-            text.to_string()
-        };
+        let short = kod_types::strutil::truncate_with_ellipsis(
+            text,
+            MAX_TURN_CHARS,
+            "… [truncated]",
+        );
         let role = if user {
             kod_types::MessageRole::User
         } else {

@@ -48,3 +48,4 @@ mod transcript_working_dir;
 mod provider_seam;
 mod mcp_roundtrip;
 mod format_call_brief_cjk;
+mod truncate_helper_sites;
