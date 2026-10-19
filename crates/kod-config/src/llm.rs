@@ -1270,3 +1270,250 @@ mod family_tests {
         assert_eq!(family_context_window("Claude-Opus-4"), Some(200_000));
     }
 }
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// An `EndpointConfig` whose every field `validate` touches is
+    /// generated across the full domain `serde` will accept:
+    /// `temperature` can be `NaN`, `±∞`, negative, above 2.0, or
+    /// `None`; `max_tokens` can be `Some(0)`; `context_window` can
+    /// be 0; `timeout_secs` can be 0; `base_url` and `model` can be
+    /// empty or whitespace.
+    ///
+    /// The three integer fields (`max_tokens`, `context_window`,
+    /// `timeout_secs`) are bounded to `i64::MAX`, not `u64::MAX`.
+    /// TOML integers are signed 64-bit; the `toml` serializer rejects
+    /// values above `i64::MAX` with "u64 value was too large". A
+    /// config file cannot express such a value, so a strategy that
+    /// generates one tests the format, not the code under test
+    /// (L31/L34 — an assertion's comparison method bounds the
+    /// strategy's domain).
+    ///
+    /// Built on top of `LlmConfig::default().endpoints[0]` so the
+    /// fields `validate` does not touch stay at their well-formed
+    /// defaults — the property is about `validate`, not about
+    /// arbitrary `ProviderKind` values.
+    fn arb_endpoint() -> impl Strategy<Value = EndpointConfig> {
+        let base = LlmConfig::default().endpoints[0].clone();
+        (
+            "[a-zA-Z0-9_-]{0,10}",
+            "[ -~]{0,40}",
+            "[ -~]{0,20}",
+            // L35: every edge `validate` has a branch for is forced
+            // with `prop_oneof![Just(v), range]`. A uniform sampler
+            // inside a huge range includes the edge but rarely samples
+            // it: 0u64..=i64::MAX has 2^63 values, so P(0) ≈ 10⁻¹⁵ per
+            // case even at 10,000 cases. The no-op-timeout control
+            // proved the vacuity — it passed with the clamp disabled.
+            // Forcing the edge makes the clamp branch fire every run.
+            prop_oneof![
+                Just(None),
+                Just(Some(f32::NAN)),
+                Just(Some(f32::INFINITY)),
+                Just(Some(f32::NEG_INFINITY)),
+                Just(Some(-1.0)),
+                Just(Some(3.0)),
+                Just(Some(0.0)),
+                Just(Some(2.0)),
+                any::<f32>().prop_map(Some),
+            ],
+            prop_oneof![
+                Just(None),
+                Just(Some(0usize)),
+                Just(Some(1usize)),
+                (2usize..=(i64::MAX as usize)).prop_map(Some),
+            ],
+            prop_oneof![
+                Just(0usize),
+                Just(1usize),
+                Just(1999usize),
+                Just(2000usize),
+                (2001usize..=(i64::MAX as usize)),
+            ],
+            prop_oneof![
+                Just(0u64),
+                Just(1u64),
+                (2u64..=(i64::MAX as u64)),
+            ],
+            prop::option::of("[a-z]{0,15}"),
+        )
+            .prop_map(
+                move |(
+                    name,
+                    base_url,
+                    model,
+                    temperature,
+                    max_tokens,
+                    context_window,
+                    timeout_secs,
+                    trust,
+                )| {
+                    let mut ep = base.clone();
+                    ep.name = name;
+                    ep.base_url = base_url;
+                    ep.model = model;
+                    ep.temperature = temperature;
+                    ep.max_tokens = max_tokens;
+                    ep.context_window = context_window;
+                    ep.timeout_secs = timeout_secs;
+                    ep.trust = trust;
+                    ep
+                },
+            )
+    }
+
+    /// A `RoutingConfig` with arbitrary (often invalid) keys and
+    /// target names, so `validate` has both valid and invalid
+    /// entries to keep or drop. `plan` is included — it is a
+    /// `#[serde(default)]` field on the struct and a literal
+    /// initializer needs it.
+    fn arb_routing() -> impl Strategy<Value = Option<RoutingConfig>> {
+        prop::option::of(
+            (
+                prop::collection::vec(("[A-Za-z]{0,15}", "[a-z_]{0,10}"), 0..3),
+                prop::collection::vec("[a-z_]{0,10}", 0..3),
+                prop::collection::vec(("[a-z_-]{0,15}", "[a-z_]{0,10}"), 0..3),
+                prop::option::of("[a-z_]{0,10}"),
+            )
+                .prop_map(|(by_task_pairs, fallback, swarm_pairs, plan)| RoutingConfig {
+                    by_task: by_task_pairs.into_iter().collect(),
+                    fallback,
+                    swarm: swarm_pairs.into_iter().collect(),
+                    plan,
+                }),
+        )
+    }
+
+    fn arb_llm_config() -> impl Strategy<Value = LlmConfig> {
+        (prop::collection::vec(arb_endpoint(), 0..3), arb_routing()).prop_map(
+            |(endpoints, routing)| LlmConfig {
+                endpoints,
+                routing,
+                ..LlmConfig::default()
+            },
+        )
+    }
+
+    proptest! {
+        /// `LlmConfig::validate` must never panic on any input the
+        /// schema can produce. The function mutates in place and
+        /// touches `self.endpoints`, each endpoint's scalar fields,
+        /// and the routing maps; a panic in any of those (an `unwrap`
+        /// on a missing default endpoint, an index out of bounds, an
+        /// overflow on a `usize` near `MAX`) would take down the
+        /// caller's startup.
+        #[test]
+        fn prop_validate_never_panics(cfg in arb_llm_config()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut c = cfg;
+                c.validate();
+            }));
+            prop_assert!(
+                outcome.is_ok(),
+                "validate panicked on a schema-accepted LlmConfig",
+            );
+        }
+
+        /// Every post-condition `validate` documents holds on its
+        /// output, for arbitrary input.
+        ///
+        /// The set of asserts is the contract, mechanized:
+        /// - `endpoints` non-empty (default fills an empty list)
+        /// - `temperature` finite and in `[0.0, 2.0]` when `Some`
+        /// - `context_window >= 2000`
+        /// - `max_tokens != Some(0)`
+        /// - `timeout_secs >= 1`
+        /// - `base_url` and `model` non-empty after trim
+        /// - every `routing.by_task` / `routing.swarm` key is one of
+        ///   the documented names (the "no placebo config" claim)
+        /// - every routing target names an existing endpoint
+        ///
+        /// The routing checks are the interesting teeth: a regression
+        /// that stopped dropping unknown keys, or stopped dropping
+        /// targets that point at a renamed endpoint, would surface
+        /// here as a startup that promises a route it can never fire.
+        #[test]
+        fn prop_validate_postconditions(cfg in arb_llm_config()) {
+            let mut c = cfg;
+            c.validate();
+
+            prop_assert!(!c.endpoints.is_empty(), "endpoints must be non-empty after validate");
+            for e in &c.endpoints {
+                if let Some(t) = e.temperature {
+                    prop_assert!(t.is_finite(), "temperature must be finite (got {})", t);
+                    prop_assert!(t >= 0.0, "temperature must be >= 0.0 (got {})", t);
+                    prop_assert!(t <= 2.0, "temperature must be <= 2.0 (got {})", t);
+                }
+                prop_assert!(e.context_window >= 2_000, "context_window must be >= 2000 (got {})", e.context_window);
+                prop_assert!(!matches!(e.max_tokens, Some(0)), "max_tokens must not be Some(0) after validate");
+                prop_assert!(e.timeout_secs >= 1, "timeout_secs must be >= 1 (got {})", e.timeout_secs);
+                prop_assert!(!e.base_url.trim().is_empty(), "base_url must be non-empty after trim");
+                prop_assert!(!e.model.trim().is_empty(), "model must be non-empty after trim");
+            }
+
+            if let Some(r) = &c.routing {
+                const KNOWN_TASK: &[&str] = &[
+                    "Simple", "CodeModification", "Debugging", "Research",
+                    "Testing", "Documentation", "Complex", "MultiStep",
+                ];
+                const KNOWN_SWARM: &[&str] = &[
+                    "coding", "testing", "documentation", "code-review",
+                    "planning", "research", "debugging", "refactoring", "judge",
+                ];
+                for k in r.by_task.keys() {
+                    prop_assert!(KNOWN_TASK.contains(&k.as_str()),
+                        "routing.by_task key {:?} survived validate but is not a known TaskType name", k);
+                }
+                for k in r.swarm.keys() {
+                    prop_assert!(KNOWN_SWARM.contains(&k.as_str()),
+                        "routing.swarm key {:?} survived validate but is not a known Capability name", k);
+                }
+                let names: std::collections::HashSet<&str> =
+                    c.endpoints.iter().map(|e| e.name.as_str()).collect();
+                for (k, v) in &r.by_task {
+                    prop_assert!(names.contains(v.as_str()),
+                        "routing.by_task[{:?}] = {:?} references a non-existent endpoint", k, v);
+                }
+                for v in &r.fallback {
+                    prop_assert!(names.contains(v.as_str()),
+                        "routing.fallback references a non-existent endpoint {:?}", v);
+                }
+                for (k, v) in &r.swarm {
+                    prop_assert!(names.contains(v.as_str()),
+                        "routing.swarm[{:?}] = {:?} references a non-existent endpoint", k, v);
+                }
+            }
+        }
+
+        /// `validate` is idempotent: running it a second time changes
+        /// nothing. The example test `validate_is_idempotent` covers
+        /// two hand-written configs; this covers the full domain.
+        ///
+        /// Non-vacuity: `arb_endpoint` generates `Some(NaN)`,
+        /// `Some(-1.0)`, `Some(3.0)`, `Some(0)` for `max_tokens`, and
+        /// `timeout_secs = 0` — every clamping branch fires at least
+        /// once across the corpus, and a branch whose first-pass
+        /// output would be re-clamped by the second pass (a classic
+        /// idempotence bug) fails here.
+        ///
+        /// Comparison is on the serialized form as a `toml::Table`
+        /// (order-insensitive over the routing `BTreeMap`), because
+        /// `LlmConfig` has no `PartialEq`. Both sides are post-validate
+        /// and therefore carry no `NaN`/`∞`, so the `toml` serializer
+        /// accepts both.
+        #[test]
+        fn prop_validate_is_idempotent(cfg in arb_llm_config()) {
+            let mut c1 = cfg.clone();
+            c1.validate();
+            let mut c2 = c1.clone();
+            c2.validate();
+            let s1 = toml::to_string(&c1).unwrap();
+            let s2 = toml::to_string(&c2).unwrap();
+            let t1: toml::Table = toml::from_str(&s1).unwrap();
+            let t2: toml::Table = toml::from_str(&s2).unwrap();
+            prop_assert_eq!(t1, t2);
+        }
+    }
+}
