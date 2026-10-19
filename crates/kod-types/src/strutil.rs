@@ -56,6 +56,35 @@ pub fn truncate_chars(s: &str, max: usize) -> &str {
     }
 }
 
+/// Truncate `s` to at most `max` **characters**, appending `ellipsis`
+/// only when the truncation actually shortened the string.
+///
+/// The naive form — `if s.len() > max { format!("{}{ellipsis}",
+/// truncate_chars(s, max)) } else { s.to_string() }` — fires on
+/// non-ASCII input whose **char count** is at the cap but whose
+/// **byte count** exceeds it (CJK is 3 bytes per char), because the
+/// guard is a byte-length check and `truncate_chars` is a char cap.
+/// The result is a spurious ellipsis on a string that was never
+/// truncated. This helper removes the outer guard entirely: it
+/// compares the returned prefix's byte length to the input's —
+/// strictly shorter iff truncation happened — so it is exact in
+/// whatever units the caller uses.
+///
+/// `ellipsis` may be empty (`""`) or multi-character
+/// (`"… [truncated]"`), depending on the caller's display.
+///
+/// Never panics. `truncate_with_ellipsis("hello", 10, "…")` is
+/// `"hello"`; `truncate_with_ellipsis("hello world", 5, "…")` is
+/// `"hello…"`.
+pub fn truncate_with_ellipsis(s: &str, max: usize, ellipsis: &str) -> String {
+    let shown = truncate_chars(s, max);
+    if shown.len() < s.len() {
+        format!("{shown}{ellipsis}")
+    } else {
+        s.to_string()
+    }
+}
+
 /// The longest prefix of `s` that is at most `max` bytes and ends
 /// on a UTF-8 char boundary.
 ///
@@ -219,5 +248,66 @@ mod truncate_bytes_tests {
             assert!(out.is_char_boundary(out.len()));
         }
         assert_eq!(truncate_bytes(s, 9), "deploy ");
+    }
+}
+
+#[cfg(test)]
+mod truncate_with_ellipsis_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_under_cap_is_unchanged() {
+        assert_eq!(truncate_with_ellipsis("hello", 10, "…"), "hello");
+    }
+
+    #[test]
+    fn ascii_over_cap_is_cut_with_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello world", 5, "…"), "hello…");
+    }
+
+    #[test]
+    fn cjk_at_char_cap_gets_no_spurious_ellipsis() {
+        // The bug this helper exists to prevent: 5 CJK chars = 15
+        // bytes; a byte-length guard (15 > 5) fires, truncate_chars
+        // returns the whole string unchanged, and the naive caller
+        // appends an ellipsis anyway.
+        let s = "你好世界呀";
+        assert_eq!(s.chars().count(), 5);
+        assert!(s.len() > 5, "fixture must be >5 bytes to trigger a \
+                              byte-based guard");
+        assert_eq!(
+            truncate_with_ellipsis(s, 5, "…"),
+            s,
+            "at the char cap, no ellipsis must be added",
+        );
+    }
+
+    #[test]
+    fn cjk_over_cap_is_cut_with_ellipsis() {
+        let s = "你好世界呀";
+        assert_eq!(truncate_with_ellipsis(s, 3, "…"), "你好世…");
+    }
+
+    #[test]
+    fn empty_ellipsis_is_allowed() {
+        assert_eq!(truncate_with_ellipsis("hello world", 5, ""), "hello");
+    }
+
+    #[test]
+    fn multichar_ellipsis_is_allowed() {
+        assert_eq!(
+            truncate_with_ellipsis("hello world", 5, "… [truncated]"),
+            "hello… [truncated]",
+        );
+    }
+
+    #[test]
+    fn empty_input_returns_empty() {
+        assert_eq!(truncate_with_ellipsis("", 5, "…"), "");
+    }
+
+    #[test]
+    fn zero_cap_returns_only_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello", 0, "…"), "…");
     }
 }
