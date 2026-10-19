@@ -432,11 +432,7 @@ fn summarize_result(result: &kod_types::ToolResult) -> String {
     match result {
         kod_types::ToolResult::Success(v) => {
             let s = v.to_string();
-            if s.len() > 240 {
-                format!("{}…", kod_types::strutil::truncate_chars(&s, 240))
-            } else {
-                s
-            }
+            kod_types::strutil::truncate_with_ellipsis(&s, 240, "…")
         }
         kod_types::ToolResult::Error(e) => format!("ERROR: {e}"),
         kod_types::ToolResult::RequiresConfirmation { description, .. } => {
