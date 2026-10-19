@@ -856,3 +856,89 @@ fn truncate_helpers_name_matches_contract() {
         report(&bad, header);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a truncate_chars display site guarded by a byte-length check
+// ---------------------------------------------------------------------------
+//
+// Session-16's P2 fix made `truncate_chars` a char cap. Seven display
+// sites in `kod-core/src/engine/render.rs` and nine more across the
+// workspace still had the pre-fix shape:
+//
+//     if s.len() > N {
+//         format!("{ellipsis}", truncate_chars(s, N))
+//     } else {
+//         owned
+//     }
+//
+// On CJK input whose char count is at the cap but whose byte count
+// exceeds it, the byte-length guard fires, `truncate_chars` returns
+// the string unchanged, and the caller appends an ellipsis to a
+// string that was never truncated. All sites were migrated to
+// `kod_types::strutil::truncate_with_ellipsis` in sessions 16-18.
+//
+// This lint is the class-level guard: a future site that reintroduces
+// the shape fails here. The helper itself (`truncate_with_ellipsis`)
+// is allowed — it must call `truncate_chars` to do its job. The
+// definition of `truncate_chars` itself is allowed.
+//
+// The class was found by hand across two sessions; this lint stops the
+// third reintroduction.
+
+#[test]
+fn truncate_display_sites_use_helper() {
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    for path in all_production_sources() {
+        // Read only this file's production lines (past any test module).
+        let lines = production_lines(&path);
+        for (i, (lineno, line)) in lines.iter().enumerate() {
+            // The call site — truncate_chars( present, not the definition.
+            if !line.contains("truncate_chars(") || line.contains("fn truncate_chars") {
+                continue;
+            }
+            // Skip the definition-in-scope case where the call is
+            // inside the truncate_with_ellipsis helper.
+            let near_helper = lines
+                .iter()
+                .skip(i.saturating_sub(6))
+                .take(7)
+                .any(|(_, l)| l.contains("fn truncate_with_ellipsis"));
+            if near_helper {
+                continue;
+            }
+            // Skip comments — the helper's own doc mentions the call
+            // shape, and other docs explain the class.
+            if is_comment(line) {
+                continue;
+            }
+            // Look back up to 4 production lines for a byte-length guard.
+            let start = i.saturating_sub(4);
+            for (j, (_, prev)) in lines.iter().enumerate().skip(start).take(i - start) {
+                if is_comment(prev) {
+                    continue;
+                }
+                if prev.contains(".len() >") && !prev.contains("truncate_chars") {
+                    let _ = j;
+                    bad.push((
+                        path.clone(),
+                        *lineno,
+                        format!("preceded by byte-length guard: {}", prev.trim()),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "a truncate_chars display site is guarded by a byte-length check \
+             (s.len() > N). On CJK input whose char count is at the cap but \
+             whose byte count exceeds it, the guard fires, truncate_chars \
+             returns the string unchanged, and an ellipsis is appended to an \
+             untruncated string. Use \
+             kod_types::strutil::truncate_with_ellipsis(s, N, \"…\") instead:",
+        );
+    }
+}
