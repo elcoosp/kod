@@ -969,3 +969,115 @@ greps, non-vacuity) was what failed. That is a real datum:
 part.** Any future session that adds property tests to a new
 crate should expect one or two rounds of test-design correction
 before the positive control fires, not a clean first pass.
+
+## Session 18 — proptest surface, fourth crate + L28
+
+`kod-minimize::plan::classify` (commit `b5704c3`) closes the
+proptest-surface expansion at four crates. The module doc makes an
+explicit safety claim ("false negatives are impossible because the
+scan is exhaustive on the operator set"), and the proptest is the
+proof of that claim:
+
+    #[test]
+    fn prop_operator_implies_not_single(
+        a in "[a-zA-Z0-9 ]{0,15}",
+        b in "[a-zA-Z0-9 ]{0,15}",
+        op in prop::sample::select(vec!["|", "&&", ";", "&"]),
+    ) {
+        let cmd = format!("{a}{op}{b}");
+        prop_assert!(!matches!(classify(&cmd), CommandPlan::Single { .. }));
+    }
+
+The generator is non-vacuous by construction — a and b are
+alphanumeric, op is one of the four shell operators, and the
+assertion fires on every case the shrunken input produces. The
+positive control (comment out the `b'|'` arm) caught it: minimal
+failing input `a="A", b="", op="|"`, exact message
+`operator "|" in "A|" produced Single { program: "A|" }`.
+
+### The four-crate set
+
+| Crate | Contract | Commit |
+|---|---|---|
+| `kod-schema-dialect::sanitize` | idempotency, no-mutation | `195f30b` |
+| `kod-error::provider_status` | classification, recoverable ⊆ retryable | `f665998` |
+| `kod-ast::extract::symbols` | kinds from documented table, 1-based line | `0006609` |
+| `kod-minimize::plan::classify` | false negatives impossible | `b5704c3` |
+
+19 new property tests across the four, each with a positive
+control. `proptest` was added to four more crates' dev-deps (it
+was already a workspace dep used by five others).
+
+### L28 — a `--` in a `git commit -m` message is parsed as a pathspec separator
+
+The `kod-minimize` commit failed at the *git* step, not the code
+step. The message contained:
+
+    ... The generator filters out every operator,
+    quote, and escape char, so "clean input" is unambiguous. A future
+    change returning Unsupported for e.g. a leading dash fires here.
+
+    Positive control: commented out the b'|' arm of classify's byte
+    loop. prop_operator_implies_not_single fired with 'operator "|"
+    produced Single' -- the doc's false-negative claim, violated. ...
+
+The ` -- ` in `Single' -- the doc's` is **git's end-of-options
+separator**. `git commit -m "<message>"` passes the message through
+the shell (fine) but git itself parses the resulting argv: a bare
+`--` terminates option parsing, and everything after becomes a
+pathspec. The commit was refused with:
+
+    error: pathspec 'input is unambiguous. If a
+    future change made the classifier return Unsupported ...'
+    did not match any file(s) known to git
+
+The fix is `git commit -F <file>`, which reads the message from a
+file with no shell or git parsing of its contents. Any message
+containing `--` (prose em-dashes, code snippets with `--flag`,
+Markdown horizontal rules) needs this form.
+
+**Recorded because**: `--` is common English prose (em-dash), and
+the failure is non-obvious — the message looks fine, the error
+mentions paths, and the words after `--` are silently reinterpreted
+as files. Every commit message in this session that contains `--`
+should use `-F`, not `-m`.
+
+### Checker-bug rate, honest number
+
+Four proptest crates, roughly 15 rounds. Four checker-vs-code
+failures (L23 arithmetic, L25 fail-open + scope, L26 comment-grep,
+L27 vacuity). Zero code failures — every failure was in the
+**check** or in the **git** step, never in the test's target
+behavior. The proptests themselves were correct from the first
+non-vacuous write.
+
+That is a real datum: **writing the test is easy; proving it has
+teeth is the hard part**, and most of the round-cost was in the
+proof. Any future session adding property tests to a new crate
+should expect one or two rounds of test-design correction before
+the positive control fires.
+
+### What remains in the audit
+
+- `kod-config` parsers — `config.rs`, `llm.rs`, `policy.rs`, and
+  the other seven modules all parse TOML or JSON; each has example
+  tests and none has a proptest. The `load_from` / per-section
+  recovery surface is the largest.
+- `kod-tools` — already has four proptests (`path_lock`,
+  `patch_text`, `search`); the audit did not name a specific gap.
+- CI wiring — the `#[ignore]`d MCP-filesystem test and the live LSP
+  test run only on a developer machine with the right deps. The
+  proptests run in the workspace suite; the live tests do not. That
+  is a decision, not a script.
+
+### After `v0.1.12`
+
+The tag is on the panic-isolation + CJK-display fixes. Everything
+since (`195f30b` onward) is test-only or docs. No re-tag is
+warranted; `v0.1.13` would be a "test-only" bump, which is not a
+reason to release.
+
+If a future session wants to expand the proptest surface further,
+`kod-config` is the next candidate. If it wants to change the
+project's testing posture, CI wiring is the substantive step. Both
+are named in this file; neither is pending.
