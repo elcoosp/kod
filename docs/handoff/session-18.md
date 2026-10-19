@@ -3,12 +3,13 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `1ce1bb6` (full-workspace gate green at that
-commit; see "State" below and the eight "Re-verification"
-subsections in "What's open" #1). 4455/4455 on the first try; 5
-skipped; no leaky. The commit adds five proptests to the memory
-extraction parser (`parse_reply`), a regression-guard round with
-two positive controls that caught checker bugs (L23, L35).
+**Last verified commit:** `31bd1a5` (full-workspace gate green at that
+commit; see "State" below and the nine "Re-verification"
+subsections in "What's open" #1). 4459/4459 on the first try; 5
+skipped; no leaky. The commit fixes a **security-relevant origin
+disagreement** in `kod-mcp/src/http_policy.rs::Origin::parse` —
+the hand-rolled parser accepted URLs `reqwest` rejects, including
+one where the two parsers disagreed on the host.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -25,7 +26,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, and `1ce1bb6`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, and `31bd1a5`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -59,6 +60,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `31bd1a5` (after the MCP origin-parser fix).**
+Ran the same command at `31bd1a5`:
+
+    4459 tests run: 4459 passed, 5 skipped
+
+Up from 4455 at `1ce1bb6` — exactly the four new `kod-mcp`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `1ce1bb6` (after the `parse_reply` proptests).**
 Ran the same command at `1ce1bb6`:
@@ -198,7 +207,7 @@ correct last tag.
 
 ## State
 
-`main` at `1ce1bb6`, twenty-three commits past `v0.1.12`:
+`main` at `31bd1a5`, twenty-four commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -231,6 +240,8 @@ correct last tag.
 | `dac5844` | fix(anthropic): saturating_add on SSE usage counters; proptests for `parse_sse_line` |
 | `aa03e3c` | docs(handoff): gate at `dac5844`; SSE overflow fix + L41/L42 |
 | `1ce1bb6` | test(memory): proptests for `parse_reply` (5 properties, 2 controls) |
+| `82ee974` | docs(handoff): gate at `1ce1bb6`; `parse_reply` proptests + L43 |
+| `31bd1a5` | fix(mcp): use `url::Url` for `Origin::parse`; proptests for the redirect policy |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -474,6 +485,75 @@ same one the handoff has been naming since L23 — in four
 proptest crates and ~20 rounds, most failures are in the check,
 not the code.
 
+**Fifth round: the MCP redirect origin parser (`31bd1a5`).** The
+next target from the L42 survey: `kod-mcp/src/http_policy.rs`.
+305 lines, 17 example tests, zero proptests. `Origin::parse` is a
+**hand-rolled** URL parser whose result `decide_redirect` uses to
+decide whether to forward the configured auth header across a
+redirect. `reqwest` — the client actually following the redirect
+— uses the WHATWG parser (the `url` crate). Any disagreement
+between the two matters.
+
+Four proptests, all taking `url::Url::parse` as the reference:
+
+- `prop_never_panics` — boundary contract
+- `prop_rejects_what_url_rejects` — over-acceptance is the
+  unsafe direction
+- `prop_agrees_with_url_crate` — for inputs both accept, the
+  `(scheme, host, effective_port)` triples must match
+- `prop_same_as_implies_url_same_origin` — if `same_as` is true,
+  the WHATWG origins must be equal
+
+**Two were red on the pre-fix code**, minimal cases in the
+forced corpus:
+
+- `https://example.com:abc/x` — non-numeric port treated as part
+  of the host; WHATWG rejects.
+- `https:///x` — empty host accepted; WHATWG rejects.
+- `https://evil.com\@example.com/` — `\` not treated as `/` for
+  special schemes; the two parsers disagree on the host
+  (`evil.com` from WHATWG, `example.com` from the hand-rolled
+  parser). `same_as` on this pair returns **true**, so
+  `decide_redirect` would attach the configured auth header to
+  a request the wire client resolves to `evil.com`.
+
+**The fix:** delegate `Origin::parse` to `url::Url::parse`. The
+same parser reqwest uses; any disagreement *is* the bug.
+`Url::port()` already normalizes the scheme's default port to
+`None`, so `effective_port()` is a no-op for this constructor;
+the struct's `pub` fields are unchanged, and an external
+`Origin { port: Some(443), .. }` still behaves correctly.
+`url = "2"` moves from `[dev-dependencies]` to
+`[dependencies]` on `kod-mcp` (already in the lockfile
+transitively via reqwest, so the lock change is a per-package
+list update).
+
+**Two independent controls (L27):**
+
+- Control A: revert `Origin::parse` to the hand-rolled version.
+  `prop_agrees_with_url_crate` and `prop_rejects_what_url_rejects`
+  both fail.
+- Control B: `same_as` returns `true` unconditionally.
+  `prop_same_as_implies_url_same_origin` fails.
+
+**L44 — the pair-property lesson.** `prop_same_as_implies_url_same_origin`
+**passed** on the pre-fix code, even though the underlying bug
+(disagreement on `evil.com\@example.com`) was present. The
+property draws `a` and `b` independently from the corpus; the
+specific adversarial pair is one out of ~2^128 possible pairs
+and was never sampled. The property is *semantically correct*
+and *pragmatically vacuous* on the corpus, and its teeth are
+proved by control B — the direct mutation of `same_as` — not
+by the corpus. Pair properties need either a derived second
+side (mutate `a` to get `b`), or a direct control. The control
+is the proof; the corpus is not.
+
+**Net for the round:** two real over-acceptances, one real
+host-disagreement (the security-relevant one), four properties
+with two controls, and a lesson about the *shape* of the
+property rather than its strategy. That is the most
+productive surface a single round has found in this arc.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -567,7 +647,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L43)
+## The lesson index (L20–L44)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -598,6 +678,7 @@ corresponding section in `session-17.md` for the full story.
 | L41 | proptest's failure reporting needs `Debug` on every type in the strategy tuple. A struct with only `#[derive(Default)]` needs `Debug` added alongside it — and the *first* `#[derive(Debug)]` insertion will collide with the existing derive unless you edit in place (`#[derive(Default)]` -> `#[derive(Default, Debug)]`), not add a second `#[derive(Debug)]` above it. |
 | L42 | "The proptest surface is closed" is a claim about the *codebase*, not about the last three targets. The prior handoff closed item #2 after covering three custom-parsing modules; the survey this round found `parse_sse_line` in `kod-provider-anthropic` — a 2182-line external-boundary parser with 30 example tests and zero proptests, and a real overflow bug in it. Before declaring a surface done, list every parser on a crate boundary and check each one. |
 | L43 | A proptest's strategy can be non-vacuous and still blind to a control. When the drill reverted the `>= 12` content-length filter and the property still passed, the cause was the strategy: it only generated 12–40-byte content, so the filter never fired. Force every edge the code branches on into the corpus with `prop_oneof![Just(edge), range]`. L35's companion — same failure shape, on the guard's own invariant. |
+| L44 | A **pair** property can be semantically correct and pragmatically vacuous. `prop_same_as_implies_url_same_origin` draws two URLs independently; the specific adversarial pair (e.g. `evil\@example.com` vs `example.com`) is one out of 2^128 possible pairs and is never sampled. Pair properties need either a derived second side (mutate `a` to get `b`), or a direct control that forces `same_as` to return the wrong answer. Proving a pair property has teeth is the same shape as proving a unit property has teeth — the control is the proof, not the corpus. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -641,14 +722,14 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `1ce1bb6`. Nothing this session started is unfinished.
+   at `31bd1a5`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs.
    (b) Remaining same-class parsers from the survey (L42), none
    with a real bug found yet: `kod-skills/parser.rs`,
-   `kod-mcp/http_policy.rs::parse`, `kod-swarm/brief.rs`,
-   `kod-swarm/completion_report.rs`, `kod-types/effort.rs`.
-   Each is a small read-then-write round; none is urgent.
+   `kod-swarm/brief.rs`, `kod-swarm/completion_report.rs`,
+   `kod-types/effort.rs`. Each is a small read-then-write round;
+   none is urgent.
 
 ## Note on `session-17.md`
 
@@ -674,32 +755,41 @@ section in this file, not that one.
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
-classes, a test-surface class, two open items, and four more
-bugs found by extended hunting: a panicking third party no
-longer kills a turn (four fixes, each failing-first), a
-char-named truncator no longer miscounts CJK (fourteen sites,
-one helper, one workspace lint), doc-claimed contracts in five
-crates — kod-schema-dialect, kod-error, kod-ast, kod-minimize,
-and kod-config — are property-tested with positive controls,
-the two previously-uncovered live tests run in CI on every
-push to main/develop, a panicking spawned engine task in the
-NDJSON serve adapter now sends an error frame instead of
-leaving the caller to time out (same class as the ACP fix in
-aa21bf8), a wire-input `usize` overflow in the Anthropic SSE
-parser (`dac5844`) is now saturated, and the memory extraction
-parser (`parse_reply`, `1ce1bb6`) is pinned by five properties
-with two controls that caught checker bugs (L23, L43). The
-honest-scope caveat from the serve fix was closed by a
-`serve_io` extraction (`b38b7c2`) and an end-to-end test
-(`90e8126`). A follow-up test (`7f6cfd5`) verified the finding
-that only the `process` site was ever wedged (L39). Twenty-four
-handoff lessons (L20–L43) that are mostly about the *checker*
-being wrong, not the code; two (L40) came from a build cache
-that failed silently, two (L41, L42) came from a parser survey
+classes, a test-surface class, two open items, five more bugs
+found by extended hunting, and one security-relevant
+disagreement: a panicking third party no longer kills a turn
+(four fixes, each failing-first), a char-named truncator no
+longer miscounts CJK (fourteen sites, one helper, one
+workspace lint), doc-claimed contracts in five crates —
+kod-schema-dialect, kod-error, kod-ast, kod-minimize, and
+kod-config — are property-tested with positive controls, the
+two previously-uncovered live tests run in CI on every push to
+main/develop, a panicking spawned engine task in the NDJSON
+serve adapter now sends an error frame instead of leaving the
+caller to time out (same class as the ACP fix in aa21bf8), a
+wire-input `usize` overflow in the Anthropic SSE parser
+(`dac5844`) is now saturated, the memory extraction parser
+(`parse_reply`, `1ce1bb6`) is pinned by five properties with
+two controls that caught checker bugs (L23, L43), and the
+MCP redirect's `Origin::parse` (`31bd1a5`) now delegates to
+`url::Url` — the hand-rolled parser accepted URLs reqwest
+rejects, including one where the two parsers disagreed on the
+host, which `same_as` would have reported as same-origin and
+forwarded the auth header to the wrong host. The honest-scope
+caveat from the serve fix was closed by a `serve_io`
+extraction (`b38b7c2`) and an end-to-end test (`90e8126`).
+A follow-up test (`7f6cfd5`) verified the finding that only
+the `process` site was ever wedged (L39). Twenty-five handoff
+lessons (L20–L44) that are mostly about the *checker* being
+wrong, not the code; two (L40) came from a build cache that
+failed silently, two (L41, L42) came from a parser survey
 that found a real overflow the prior "surface closed" claim
-missed, and one (L43) came from a control that ran blind to
-the edge the guard branches on. The full workspace gate at
-`1ce1bb6` runs 4455 tests, all green, including nineteen new
-properties across five modules (`kod-config/config.rs`,
-`kod-config/policy.rs`, `kod-config/llm.rs`,
-`kod-provider-anthropic/wire.rs`, `kod-memory/extract.rs`).
+missed, one (L43) came from a control that ran blind to the
+edge the guard branches on, and one (L44) came from a
+**pair** property whose adversarial pair was never sampled —
+the direct control proved its teeth instead. The full
+workspace gate at `31bd1a5` runs 4459 tests, all green,
+including twenty-three new properties across six modules
+(`kod-config/config.rs`, `kod-config/policy.rs`,
+`kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
+`kod-memory/extract.rs`, `kod-mcp/http_policy.rs`).
