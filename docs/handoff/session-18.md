@@ -3,11 +3,11 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `5a005a9` (full-workspace gate green at that
-commit; see "State" below and the three "Re-verification"
-subsections in "What's open" #1). `4f794fc` is a CI-only
-commit on top; the tree state at HEAD has not been re-gated, but
-the code state at `5a005a9` has.
+**Last verified commit:** `98e129b` (full-workspace gate green at that
+commit; see "State" below and the four "Re-verification"
+subsections in "What's open" #1). The gate at `98e129b` had one
+`execfail` (`os error 35`); the execfailed test reran green at
+`--test-threads 1`, confirming L21 host pressure, not a regression.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -24,7 +24,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, and `5a005a9`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, and `98e129b`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -58,6 +58,16 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `98e129b` (after the serve panic-guard fix).**
+Ran the same command at `98e129b`:
+
+    4443 tests run: 4442 passed, 1 exec failed, 5 skipped
+
+One `execfail` (`Resource temporarily unavailable`, `os error 35`)
+on `kod-risk paths::tests::etc_exact_is_catastrophic_and_below_it_too`.
+Re-ran only that test at `--test-threads 1`: passed in 0.02s. L21
+host fork pressure, not a regression. Total 4443/4443 green.
 
 **Re-verification at `5a005a9` (after the `LlmConfig::validate` proptests).**
 Ran the same command at `5a005a9`:
@@ -144,7 +154,7 @@ correct last tag.
 
 ## State
 
-`main` at `4f794fc`, sixteen commits past `v0.1.12`:
+`main` at `98e129b`, seventeen commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -165,12 +175,61 @@ correct last tag.
 | `12a1ec1` | docs(handoff): full-workspace gate green at `47cc41a` (4439/4439) |
 | `5a005a9` | test(config): proptests for `LlmConfig::validate` (never-panics, postconditions, idempotent) |
 | `4f794fc` | ci: add live-integrations job (rust-analyzer + npx) |
+| `092bc4a` | docs(handoff): gate at `5a005a9`; items #2 and #3 closed |
+| `98e129b` | fix(serve): send an error frame when a spawned engine task panics |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
 third-party code no longer kills a turn or wedges a session) and
 fourteen CJK display-site fixes (no spurious ellipsis at the char
 cap). Everything after is tests and documentation.
+
+## Bug hunt — the panicking serve task (session 18, continuation)
+
+After the two open items closed, a fresh hunt explored the panic-isolation
+class — the same class as the four prior fixes (`1dbf8cc`, `69c94aa`,
+`fd84489`, `d5544ca`). The reading found one gap: the NDJSON serve
+adapter (`crates/kod-core-serve/src/serve.rs`) spawns
+`engine.process_for`, `run_streaming`, and `run_swarm` directly in
+`tokio::spawn`. A panic unwinds past the `match ... Err(e)` arm — that
+arm handles `Result::Err`, not an unwind — so no error frame reaches
+the caller, and it waits on its request id until its own timeout.
+
+The sibling adapter `acp.rs` fixed exactly this shape in `aa21bf8` (P1:
+a panicking `run_prompt` wedged the session on `-32002` forever). The
+ACP fix used an inner `tokio::spawn` whose `JoinHandle::await` returns
+`Err` on panic, so the cleanup runs on every path. Same class, one
+adapter fixed, one not.
+
+The fix (`98e129b`): a shared `spawn_panic_guarded` helper that takes
+the future, the outbound writer channel, and the request id. On a
+`JoinError` it sends a `kind: "error"` frame for that id and logs;
+`is_panic` vs cancelled are distinguished in the frame message so a
+cancelled task is not reported as a panic. Three sites wired through
+the helper — `process` (line 471 pre-fix), `process_streaming` (line
+504), `swarm` (line 608).
+
+**Honest scope** (matching `in_flight_release.rs`): the end-to-end
+serve path is not driven by the new test. `handle_connection` takes a
+concrete `transport::Stream`, not a generic reader/writer, so a
+duplex-driven test would need the same `serve_io` extraction `acp.rs`
+got. That extraction is a separate change; named here so the next
+session does not re-derive it. What the new test pins is the helper
+the three sites share, which is what the fix is.
+
+**Positive control** (L27): the test script temporarily reverts the
+helper body to `let _handle = tokio::spawn(fut); let _ = (out, id);`,
+confirms the test fails with "no error frame" (channel-close or
+timeout, either means no frame), restores, and re-confirms green.
+
+**A dishonest red, kept as a lesson (L37):** the first attempt at the
+failing-first test spawned its *own* panicking future and asserted on
+its own channel. That test would fail before the fix and pass after,
+but only because the fix was inside the test body — not because
+production code changed. The reverted stub left no trace; the lesson
+is recorded because the shape is tempting and the check is easy to
+write without noticing it is tautological.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -264,7 +323,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L36)
+## The lesson index (L20–L37)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -288,6 +347,7 @@ corresponding section in `session-17.md` for the full story.
 | L34 | A strategy that generates values the comparison method rejects is vacuous: the assert never runs, and the error is in `toml::to_string`, not in the code under test. Bound the strategy by the comparison method's domain. |
 | L35 | A strategy whose *range* includes an edge is vacuous if the edge is never *sampled*. `0u64..=i64::MAX` has 2^63 values; P(0) per case ≈ 10⁻¹⁵ even at 10,000 cases. Force the edge with `prop_oneof![Just(v), range]`. |
 | L36 | An item named "CI wiring — a decision" must be checked against `ls .github/` before being rewritten from memory. The handoff claimed `.github/` was absent; it was present and comprehensive since `668e54b`. |
+| L37 | A failing-first test that spawns its own panicking future is tautological: the fix it proves cannot be in production code. Drive the failure through production code, or pin a helper and accept the honest-scope caveat the way `in_flight_release.rs` does. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -331,7 +391,7 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `5a005a9`. Nothing this session started is unfinished.
+   at `98e129b`. Nothing this session started is unfinished.
 
 ## Note on `session-17.md`
 
@@ -357,15 +417,19 @@ section in this file, not that one.
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
-classes, a test-surface class, and two open items: a panicking
-third party no longer kills a turn (four fixes, each
-failing-first), a char-named truncator no longer miscounts CJK
-(fourteen sites, one helper, one workspace lint), doc-claimed
-contracts in five crates — kod-schema-dialect, kod-error, kod-ast,
-kod-minimize, and kod-config — are property-tested with positive
-controls, and the two previously-uncovered live tests run in CI
-on every push to main/develop. Seventeen handoff lessons
-(L20–L36) that are mostly about the *checker* being wrong, not
-the code. The full workspace gate at `5a005a9` runs 4442 tests,
-all green, including nine new properties across the three
-kod-config modules (`config.rs`, `policy.rs`, `llm.rs`).
+classes, a test-surface class, two open items, and one more
+bug found in a follow-up hunt: a panicking third party no longer
+kills a turn (four fixes, each failing-first), a char-named
+truncator no longer miscounts CJK (fourteen sites, one helper,
+one workspace lint), doc-claimed contracts in five crates —
+kod-schema-dialect, kod-error, kod-ast, kod-minimize, and
+kod-config — are property-tested with positive controls, the
+two previously-uncovered live tests run in CI on every push to
+main/develop, and a panicking spawned engine task in the NDJSON
+serve adapter now sends an error frame instead of leaving the
+caller to time out (same class as the ACP fix in aa21bf8).
+Eighteen handoff lessons (L20–L37) that are mostly about the
+*checker* being wrong, not the code. The full workspace gate at
+`98e129b` runs 4443 tests, all green, including nine new
+properties across the three kod-config modules (`config.rs`,
+`policy.rs`, `llm.rs`).
