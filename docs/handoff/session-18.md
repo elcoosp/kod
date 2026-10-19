@@ -3,9 +3,11 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `47cc41a` (full-workspace gate green at that
-commit; see "State" below and the two "Re-verification" subsections
-in "What's open" #1).
+**Last verified commit:** `5a005a9` (full-workspace gate green at that
+commit; see "State" below and the three "Re-verification"
+subsections in "What's open" #1). `4f794fc` is a CI-only
+commit on top; the tree state at HEAD has not been re-gated, but
+the code state at `5a005a9` has.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -22,7 +24,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7` and again at `47cc41a`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, and `5a005a9`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -57,6 +59,15 @@ The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
 
+**Re-verification at `5a005a9` (after the `LlmConfig::validate` proptests).**
+Ran the same command at `5a005a9`:
+
+    4442 tests run: 4442 passed, 5 skipped
+
+The count went from 4439 to 4442 — exactly the three new
+`llm.rs` properties. No execfail, no EAGAIN. The `4f794fc` commit on
+top is YAML-only; the code state at `5a005a9` is what is verified.
+
 **Re-verification at `47cc41a` (after the `Policy::from_toml` proptests).**
 Ran the same command at `47cc41a`:
 
@@ -65,7 +76,7 @@ Ran the same command at `47cc41a`:
 The count went from 4436 to 4439 — exactly the three new `policy.rs`
 properties. No execfail, no EAGAIN. This is the last-verified state.
 
-### 2. `kod-config` parsers — the largest remaining proptest surface
+### 2. CLOSED — `kod-config` parsers (three custom-parsing modules done)
 
 Ten modules in `crates/kod-config/src/` parse TOML or JSON
 (`config.rs`, `llm.rs`, `policy.rs`, `memory.rs`, `limits.rs`,
@@ -93,30 +104,37 @@ Budget 2-4 rounds; the checker-vs-code failure rate this session was
 4 failures in ~15 rounds, all in the *check*, none in the code
 (L23, L25, L26, L27).
 
-### 3. CI wiring — a decision, not a script
+### 3. CLOSED — live integration tests wired into CI
 
-There is no `.github/`. Two tests exist that the workspace suite
-does not run:
+The previous text claimed `.github/` was absent and framed CI as an
+open decision. That was stale: `.github/workflows/ci.yml` has existed
+since `668e54b` and runs the full workspace test suite, provider
+contracts, prompt goldens, MSRV, security audit, cargo-deny,
+coverage, PR bloat gate, live Ollama, live Anthropic (skippable),
+benchmarks, and a fuzz smoke.
 
-- `kod-mcp` `real_filesystem` (`cf5a529`) — `#[ignore]`d, gated on
-  `npx_available()`. Runs `cargo nextest run -p kod-mcp --run-ignored only -E 'test(real_filesystem)'`.
-- The live LSP test in `kod-lsp/src/client.rs` — not `#[ignore]`d,
-  but skips at runtime unless `rust-analyzer` is on PATH with a real
-  toolchain (it probes the handshake, not just the binary).
+The gap was narrower. Two tests were not being exercised:
 
-Options, each with a real cost:
+- `kod-mcp` `real_filesystem` (`cf5a529`) — `#[ignore]`d, needs
+  `npx`.
+- The live LSP test in `kod-lsp/src/client.rs` — runs in the
+  default suite but silently skips when `rust-analyzer` is not on
+  `PATH`.
 
-- A nightly workflow that installs `npx` + `rust-analyzer` and runs
-  the ignored set. ~5 min/night, one workflow file, a dependency
-  install step. High confidence in catching Node/rust-analyzer
-  drift.
-- A documented manual step in release prep (`--run-ignored only` in
-  a release checklist). Zero CI cost, zero automation.
-- Do nothing and record that the live tests are developer-only.
-  Honest, but the handoff must say so.
+Both are now covered by the `live-integrations` job in `ci.yml`,
+which installs the `rust-analyzer` rustup component (turning the
+LSP test from a silent skip into a real assertion), asserts
+node/npx/rust-analyzer versions up front, runs the MCP
+`--run-ignored` set, and greps the LSP test's output for
+`skipping:` — a silent skip in this job would be the fail-open
+shape L25 records.
 
-This needs a decision about what the project promises. Do not build
-a workflow without that decision.
+The decision: the project promises to exercise the real
+integrations on every push to main/develop and every PR from the
+same repo, and to skip cleanly on a fork PR (same shape
+`live-model` and `live-anthropic` already use). Not nightly; every
+push. If the cost becomes a problem, moving behind a schedule is a
+one-line change.
 
 ### 4. `v0.1.13` — do not tag
 
@@ -126,7 +144,7 @@ correct last tag.
 
 ## State
 
-`main` at `47cc41a`, fourteen commits past `v0.1.12`:
+`main` at `4f794fc`, sixteen commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -144,6 +162,9 @@ correct last tag.
 | `a23bce7` | chore(config): the proptest dev-dep that 8b4e7f5 left behind |
 | `d279de0` | docs(handoff): full-workspace gate green at `a23bce7` (4436/4436) |
 | `47cc41a` | test(config): proptests for `Policy::from_toml` (never-panics, round-trip, preset_explicit) |
+| `12a1ec1` | docs(handoff): full-workspace gate green at `47cc41a` (4439/4439) |
+| `5a005a9` | test(config): proptests for `LlmConfig::validate` (never-panics, postconditions, idempotent) |
+| `4f794fc` | ci: add live-integrations job (rust-analyzer + npx) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -243,7 +264,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L33)
+## The lesson index (L20–L36)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -264,6 +285,9 @@ corresponding section in `session-17.md` for the full story.
 | L31 | A serialization round-trip that compares serialized strings cannot catch a field dropped from both directions. Assert on the field values on the way back, not only on the bytes. |
 | L32 | `let _ = catch_unwind(...)` passes on a panicking implementation. The `catch_unwind` swallows the panic; the property has to assert `.is_ok()` (or `is_err()`). A check that does not halt is not a check. |
 | L33 | A control's landing check must not count a string the file already contains in prose. Verify structure (attribute adjacent to the target field), not occurrence count. |
+| L34 | A strategy that generates values the comparison method rejects is vacuous: the assert never runs, and the error is in `toml::to_string`, not in the code under test. Bound the strategy by the comparison method's domain. |
+| L35 | A strategy whose *range* includes an edge is vacuous if the edge is never *sampled*. `0u64..=i64::MAX` has 2^63 values; P(0) per case ≈ 10⁻¹⁵ even at 10,000 cases. Force the edge with `prop_oneof![Just(v), range]`. |
+| L36 | An item named "CI wiring — a decision" must be checked against `ls .github/` before being rewritten from memory. The handoff claimed `.github/` was absent; it was present and comprehensive since `668e54b`. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -300,13 +324,14 @@ the test is easy; proving it has teeth is the hard part.
 1. **Step 0** — verify tree, HEAD, tag.
 2. **"What's open" #1** — if HEAD has moved past `74d8ef7`, re-run
    the full-workspace gate with `--no-fail-fast`.
-3. **"What's open" #2** — `kod-config` parsers, if you want the
-   largest remaining proptest surface. Read the code before writing
-   a property; budget 2–4 rounds.
-4. **"What's open" #3** — CI wiring, if the project is making a
-   promise about live tests. That needs a decision first.
+3. **"What's open" #2** — CLOSED. `config.rs`, `policy.rs`, and
+   `llm.rs` are property-tested. The other seven modules in
+   kod-config are pure `#[serde(default)]` derives where the only
+   contract is serde's own.
+4. **"What's open" #3** — CLOSED. The `live-integrations` job in
+   `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `47cc41a`. Nothing this session started is unfinished.
+   at `5a005a9`. Nothing this session started is unfinished.
 
 ## Note on `session-17.md`
 
@@ -332,13 +357,15 @@ section in this file, not that one.
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
-classes and a test-surface class: a panicking third party no longer
-kills a turn (four fixes, each failing-first), a char-named truncator
-no longer miscounts CJK (fourteen sites, one helper, one workspace
-lint), and doc-claimed contracts in five crates — kod-schema-dialect,
-kod-error, kod-ast, kod-minimize, and kod-config — are property-
-tested with positive controls, plus fourteen handoff lessons
-(L20–L33) that are mostly about the *checker* being wrong, not the
-code. The full workspace gate at `47cc41a` runs 4439 tests, all
-green, including six new properties across the two kod-config
-modules (`config.rs` and `policy.rs`).
+classes, a test-surface class, and two open items: a panicking
+third party no longer kills a turn (four fixes, each
+failing-first), a char-named truncator no longer miscounts CJK
+(fourteen sites, one helper, one workspace lint), doc-claimed
+contracts in five crates — kod-schema-dialect, kod-error, kod-ast,
+kod-minimize, and kod-config — are property-tested with positive
+controls, and the two previously-uncovered live tests run in CI
+on every push to main/develop. Seventeen handoff lessons
+(L20–L36) that are mostly about the *checker* being wrong, not
+the code. The full workspace gate at `5a005a9` runs 4442 tests,
+all green, including nine new properties across the three
+kod-config modules (`config.rs`, `policy.rs`, `llm.rs`).
