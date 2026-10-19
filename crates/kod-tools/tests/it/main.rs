@@ -9,3 +9,4 @@ mod registry;
 mod sandbox_containment;
 mod tools;
 mod panic_isolation;
+mod truncate_helper_sites;

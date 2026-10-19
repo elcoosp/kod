@@ -429,11 +429,7 @@ impl Tool for WebFetchTool {
                     }
                 }
                 let body = String::from_utf8_lossy(&body_bytes).into_owned();
-                let preview = if body.len() > 300 {
-                    format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
-                } else {
-                    body
-                };
+                let preview = kod_types::strutil::truncate_with_ellipsis(&body, 300, "…");
                 Ok(FetchStep::Retryable {
                     status: status.as_u16(),
                     retry_after_secs,
