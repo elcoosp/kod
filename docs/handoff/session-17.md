@@ -736,3 +736,69 @@ observable behavior. Two that were checked and closed:
   sibling of this was fixed under fault-injection (`d5544ca`).
 - The in_flight flag class — audited, exhausted, recorded under
   "in_flight flag class exhausted".
+
+## L25 — a check that does not halt is not a check
+
+The v0.1.12 release script had a verification block that printed a
+warning but did not halt:
+
+    ACTUAL=$(grep ... | wc -l)
+    if [ "$ACTUAL" -ne 14 ]; then
+      echo "WARN: expected 14, got $ACTUAL — inspect before releasing"
+    fi
+    # proceeds to bump version and tag regardless
+
+When the count came back 24, the WARN printed and the release
+proceeded. **That is fail-open, which is not a check.** Every
+verification in a script that mutates the tree must `exit 1` on
+mismatch; otherwise it gives the operator a false sense of a gate.
+
+### The follow-up: the recount was wrong twice, and that is what
+### fail-closed is for
+
+The corrective script (this one's predecessor) tried to fix the
+grep and recount. Its recount came back 16, exited 1, and — because
+that step *was* fail-closed — did **not** append this entry or
+commit anything. The tree stayed clean.
+
+The 16 was again a scope bug, in a different way: two of the 16
+hits were continuation lines inside multi-line `assert_eq!` calls in
+`strutil.rs`'s test module. The exclusion `grep -v "strutil.rs.*assert"`
+did not catch them because the `assert` and the `truncate_with_ellipsis(`
+land on different lines.
+
+**The handoff's count (14) was correct the whole time.** The two
+failed verification attempts were both in the *checker*, not the
+number.
+
+### The correct verification
+
+Exclude the definition file entirely — no production migrations
+live in `strutil.rs`; only the helper's definition, its doc, and its
+tests do:
+
+    REAL=$(grep -rn "truncate_with_ellipsis(" crates/*/src --include="*.rs" 2>/dev/null \
+      | grep -v "crates/kod-types/src/strutil.rs" \
+      | grep -v "fn truncate_with_ellipsis" \
+      | grep -v "///" \
+      | wc -l | tr -d ' ')
+    # -> 14
+
+Or, more robustly, use the same `all_production_sources()` +
+`production_lines()` helpers the source lints use (which already
+strip test modules and comments). A shell one-liner is fine for a
+throwaway diagnostic, but any *committed* verification should use
+the same scanner the lints use, so "production line" has one
+definition in the tree, not three.
+
+### What this L25 records
+
+- A release script's check must be fail-closed. No `WARN` without
+  `exit 1`.
+- A grep-based count that tries to exclude test modules must either
+  use `production_lines()` or exclude the definition file outright.
+  Ad-hoc `grep -v` patterns miss multi-line constructs.
+- The fail-closed discipline is load-bearing. The corrective
+  script's mis-count exited before mutating the tree; that is why
+  this L25 could be written after finding the real count, rather
+  than written against a corrupted state.
