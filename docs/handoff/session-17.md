@@ -802,3 +802,70 @@ definition in the tree, not three.
   script's mis-count exited before mutating the tree; that is why
   this L25 could be written after finding the real count, rather
   than written against a corrupted state.
+
+## L26 — grep for a code shape must exclude comments
+
+Session 18's `kod-error` proptest module had a doc comment
+describing the first, failed strategy:
+
+    /// A previous draft used `any::<u16>()` with
+    /// `prop_assume!(status == 408 || status == 429)` and hit
+    /// "Too many global rejects" ...
+
+A preflight ran `grep -q "prop_assume!"` to verify the corrected
+module had no such invocation. The grep matched the doc comment,
+the check failed, and the script exited 1 — without inspecting
+whether the match was an invocation or prose.
+
+**Third instance this session of a checker matching prose.** L25's
+count of `truncate_with_ellipsis` included two doc comments and
+eight test-module assertions; the schema-seed preflight's
+`git ls-files | head -1` matched empty output (git ls-files exits 0
+even when it outputs nothing, so the `&&` branch fired
+unconditionally). Each was a checker bug, not a code bug. The
+fail-closed exit was correct each time; the check itself was
+wrong.
+
+### The correct form
+
+Strip comments before grepping, or match the invocation with a
+terminator:
+
+- **For a macro or fn invocation**, match `name(` with an open
+  paren. A doc comment's backtick-wrapped mention is `name` with no
+  paren, so `name(` will not match it.
+- **For a name-only check**, exclude lines whose first
+  non-whitespace is `//` or `*`.
+- **For a committed source lint**, use `production_lines()` from
+  `source_lints.rs`, which already strips test modules and
+  comments. That way "production line" has one definition in the
+  tree, not three (one per grep).
+
+The comment-stripped Python preflight used in this session:
+
+    INVOKED=$(python3 - << 'PY'
+    import sys
+    for line in open("crates/kod-error/src/error.rs"):
+        s = line.lstrip()
+        if s.startswith("//") or s.startswith("*"):
+            continue
+        if "prop_assume!(" in line:
+            print(f"INVOKED: {line.rstrip()}")
+            sys.exit(1)
+    print("NOT_INVOKED")
+    PY
+    )
+
+### The general principle
+
+A fail-closed exit on a broken check is correct, but not
+sufficient. The **checker** must be reviewed as carefully as the
+code it checks. Session 18 has now recorded three separate
+checker-vs-code failures (L23's arithmetic, L25's scope, L26's
+comments) and each cost a round that a moment's thought about the
+checker would have saved.
+
+The discipline that prevents this: whenever a grep-based check is
+about to be written, ask "could the shape I'm grepping for appear
+in a comment, a test, a doc, or a string literal?" If yes, the
+check needs a stripper or a more specific pattern.
