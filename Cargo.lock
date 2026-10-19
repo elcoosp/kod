@@ -2499,6 +2499,7 @@ dependencies = [
 name = "kod-schema-dialect"
 version = "0.1.12"
 dependencies = [
+ "proptest",
  "rstest",
  "serde_json",
 ]

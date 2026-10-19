@@ -633,3 +633,134 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptest_sanitize {
+    //! Property-based tests for `sanitize`.
+    //!
+    //! The example tests above pin two pure-property contracts:
+    //! idempotency (`sanitize_is_idempotent_on_a_sanitized_schema`)
+    //! and no-mutation of the input
+    //! (`the_input_schema_is_not_mutated`). Each exercises *one*
+    //! hand-picked schema. Both are pure contracts on arbitrary
+    //! `serde_json::Value`; a shape neither example covers could
+    //! break one of them silently.
+    //!
+    //! Session-18 lesson (the P2 that started this arc): a property
+    //! claimed by name and tested example-only is the exact shape
+    //! that survives audits. Extend both claims to generated input.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Arbitrary JSON. Covers every shape `sanitize` recurses into
+    /// (objects with nested schemas, arrays, combinators, dangling
+    /// `required` names) without hand-enumeration.
+    /// A leaf value. `any::<serde_json::Value>()` does not exist in
+    /// proptest — `serde_json::Value` does not implement `Arbitrary`.
+    /// Build leaves from primitives that do.
+    fn any_leaf() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(|n| serde_json::Value::Number(n.into())),
+            ".*".prop_map(serde_json::Value::String),
+        ]
+    }
+
+    /// Arbitrary JSON, bounded in depth. `prop_recursive` builds trees
+    /// of arrays and objects over `any_leaf`. Depth 6, size 64, branch
+    /// 8 are generous for the shape `sanitize` recurses into (a schema
+    /// is at most a handful of levels) and keep the runtime bounded.
+    fn any_json() -> impl Strategy<Value = serde_json::Value> {
+        any_leaf().prop_recursive(6, 64, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4)
+                    .prop_map(serde_json::Value::Array),
+                prop::collection::vec((".{1,12}", inner), 0..4).prop_map(|entries| {
+                    let mut map = serde_json::Map::new();
+                    for (k, v) in entries {
+                        map.insert(k, v);
+                    }
+                    serde_json::Value::Object(map)
+                }),
+            ]
+        })
+    }
+
+    fn all_specs() -> Vec<(&'static str, DialectSpec)> {
+        ["openai", "anthropic", "google", "generic"]
+            .into_iter()
+            .map(|p| (p, spec_for_provider(p)))
+            .collect()
+    }
+
+    proptest! {
+        /// `sanitize` must never panic on any JSON input, for any
+        /// provider's dialect spec.
+        #[test]
+        fn prop_sanitize_never_panics(input in any_json()) {
+            for (_name, spec) in all_specs() {
+                let _ = sanitize(&input, &spec);
+            }
+        }
+
+        /// `sanitize(sanitize(x)) == sanitize(x)`. The one-example
+        /// test above asserts this for a single schema; this asserts
+        /// it for generated input. A shape whose transform is not
+        /// idempotent — e.g. a combinator that renames on the first
+        /// pass and then matches a *second* rename rule on the
+        /// second — passes the example test and fails here.
+        #[test]
+        fn prop_sanitize_is_idempotent(input in any_json()) {
+            for (name, spec) in all_specs() {
+                let (once, _) = sanitize(&input, &spec);
+                let (twice, applied_second) = sanitize(&once, &spec);
+                prop_assert_eq!(
+                    &once, &twice,
+                    "not idempotent for provider {}; second pass applied {} transform(s)",
+                    name, applied_second.len(),
+                );
+            }
+        }
+
+        /// `sanitize` takes `&Value` and returns a new one. The input
+        /// must be byte-identical before and after. The one-example
+        /// test uses `{"const": "x"}`; a bug that mutates only on
+        /// certain shapes (e.g. a `Value::Object` that shares a
+        /// reference with the clone) would not be caught without
+        /// generated input.
+        #[test]
+        fn prop_sanitize_does_not_mutate_input(input in any_json()) {
+            for (name, spec) in all_specs() {
+                let before = input.clone();
+                let _ = sanitize(&input, &spec);
+                prop_assert_eq!(
+                    &input, &before,
+                    "sanitize mutated its input for provider {}",
+                    name,
+                );
+            }
+        }
+
+        /// Any transform the sanitizer reports as applied must
+        /// correspond to a real change: `applied.is_empty()` iff
+        /// `sanitize(x) == x`. Idempotency alone does not require
+        /// this — a sanitizer that claims a transform but produces
+        /// the same output would be idempotent-but-lying. This pins
+        /// the contract that `AppliedTransform`s describe actual
+        /// work.
+        #[test]
+        fn prop_applied_transforms_match_actual_changes(input in any_json()) {
+            for (name, spec) in all_specs() {
+                let (out, applied) = sanitize(&input, &spec);
+                let changed = out != input;
+                prop_assert_eq!(
+                    !applied.is_empty(), changed,
+                    "applied.len()={} but changed={} for provider {}",
+                    applied.len(), changed, name,
+                );
+            }
+        }
+    }
+}
