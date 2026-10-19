@@ -3,13 +3,13 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `31bd1a5` (full-workspace gate green at that
-commit; see "State" below and the nine "Re-verification"
-subsections in "What's open" #1). 4459/4459 on the first try; 5
-skipped; no leaky. The commit fixes a **security-relevant origin
-disagreement** in `kod-mcp/src/http_policy.rs::Origin::parse` —
-the hand-rolled parser accepted URLs `reqwest` rejects, including
-one where the two parsers disagreed on the host.
+**Last verified commit:** `45aec66` (full-workspace gate green at that
+commit; see "State" below and the ten "Re-verification"
+subsections in "What's open" #1). 4463/4463 on the first try; 5
+skipped; no leaky. The commit fixes a **panic** in
+`kod-swarm/src/brief.rs::parse_report` — a `}` before the first
+`{` in LLM subagent text sliced `&trimmed[start..=end]` with
+`start > end` and panicked mid-wave.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -26,7 +26,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, and `31bd1a5`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, and `45aec66`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -60,6 +60,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `45aec66` (after the `parse_report` panic fix).**
+Ran the same command at `45aec66`:
+
+    4463 tests run: 4463 passed, 5 skipped
+
+Up from 4459 at `31bd1a5` — exactly the four new `kod-swarm`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `31bd1a5` (after the MCP origin-parser fix).**
 Ran the same command at `31bd1a5`:
@@ -207,7 +215,7 @@ correct last tag.
 
 ## State
 
-`main` at `31bd1a5`, twenty-four commits past `v0.1.12`:
+`main` at `45aec66`, twenty-five commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -242,6 +250,8 @@ correct last tag.
 | `1ce1bb6` | test(memory): proptests for `parse_reply` (5 properties, 2 controls) |
 | `82ee974` | docs(handoff): gate at `1ce1bb6`; `parse_reply` proptests + L43 |
 | `31bd1a5` | fix(mcp): use `url::Url` for `Origin::parse`; proptests for the redirect policy |
+| `5f03d2c` | docs(handoff): gate at `31bd1a5`; MCP origin fix + L44 |
+| `45aec66` | fix(swarm): guard `start <= end` in `parse_report`; proptests for the report parser |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -554,6 +564,74 @@ with two controls, and a lesson about the *shape* of the
 property rather than its strategy. That is the most
 productive surface a single round has found in this arc.
 
+**Sixth round: the swarm report parser (`45aec66`).** The next
+target from the L42 survey: `kod-swarm/src/brief.rs::parse_report`,
+which parses the LLM subagent's final text into a
+`SubagentReport`. Model-authored prose that *may* contain a JSON
+object; the parser tries a fenced block, then a `{...}` slice,
+then falls back to the whole text as the summary.
+
+**One real panic, in the second branch.** The slice
+`&trimmed[start..=end]` had no `start <= end` guard. An input
+with a `}` before the first `{` — e.g. `"a}b{c"` — produced
+`&trimmed[3..=1]` = `&trimmed[3..2]` and panicked with
+`byte range starts at 3 but ends at 2`. Reachable from model
+text: a subagent's closing prose with a `}` before the JSON
+block would panic the swarm runner mid-wave (call site:
+`kod-core/src/swarm_runner.rs:1832`). Same class as the four
+panic-isolation fixes that opened this arc, and the serve
+panic-guard: a panic in a boundary parser kills the turn.
+
+The minimal failing case was forced into the corpus with
+`Just("a}b{c")` (L43), because a purely random `any::<String>()`
+corpus almost never produces that exact shape. Proptest shrank
+to the same input on the first run; no further reduction needed.
+
+**The fix:** `&& start <= end` in the second branch's `if let`
+chain. A `}` before the first `{` cannot be a well-formed JSON
+object anyway, so skipping the branch is correct — the fallback
+summary is what the caller gets for a non-JSON reply.
+
+**Four proptests added:**
+
+- `prop_parse_report_never_panics` — the failing-first red
+- `prop_valid_report_round_trips` — a well-formed report
+  serializes through `serde_json` and parses back identically
+  (required adding `PartialEq, Eq` to `SubagentReport`;
+  non-behavioural)
+- `prop_fallback_preserves_trimmed_input` — with no `{` in the
+  input, the fallback preserves the trimmed text in `summary`
+  and defaults every other field
+- `prop_fenced_block_strips_to_bare_json` — a fenced JSON block
+  parses identically to the bare JSON
+
+**Two independent controls (L27):**
+
+- Control A: revert `&& start <= end`.
+  `prop_parse_report_never_panics` fails on `"a}b{c"`.
+- Control B: overwrite the parsed report with a `CONTROL`
+  summary. `prop_valid_report_round_trips` fails.
+
+**L45 — the relational-property lesson.** Control B was designed
+to target the fenced-block stripping, and I expected
+`prop_fenced_block_strips_to_bare_json` to catch it. It did not:
+the mutation replaced the *result* of the JSON branch with a
+fixed value, so both the bare parse and the fenced parse returned
+the same fixed value, and the relational comparison passed. The
+property that caught it was `prop_valid_report_round_trips`,
+which compares against `serde_json::to_string` — something
+outside the pair. A relational property ("A is identical to B")
+needs a companion that pins *one* side to external truth; without
+it, any mutation that affects both sides equally is invisible.
+
+The honest shape: one real panic, four properties, two controls,
+and a lesson about relational properties. That is the second
+round in a row where the *control* found something the property
+structure did not — L43 (strategy blind to edge), L44 (pair
+vacuous on unsampled pair), L45 (relational blind to symmetric
+mutation). The control drill keeps producing lessons that are
+about the shape of the check, not the shape of the code.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -647,7 +725,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L44)
+## The lesson index (L20–L45)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -679,6 +757,7 @@ corresponding section in `session-17.md` for the full story.
 | L42 | "The proptest surface is closed" is a claim about the *codebase*, not about the last three targets. The prior handoff closed item #2 after covering three custom-parsing modules; the survey this round found `parse_sse_line` in `kod-provider-anthropic` — a 2182-line external-boundary parser with 30 example tests and zero proptests, and a real overflow bug in it. Before declaring a surface done, list every parser on a crate boundary and check each one. |
 | L43 | A proptest's strategy can be non-vacuous and still blind to a control. When the drill reverted the `>= 12` content-length filter and the property still passed, the cause was the strategy: it only generated 12–40-byte content, so the filter never fired. Force every edge the code branches on into the corpus with `prop_oneof![Just(edge), range]`. L35's companion — same failure shape, on the guard's own invariant. |
 | L44 | A **pair** property can be semantically correct and pragmatically vacuous. `prop_same_as_implies_url_same_origin` draws two URLs independently; the specific adversarial pair (e.g. `evil\@example.com` vs `example.com`) is one out of 2^128 possible pairs and is never sampled. Pair properties need either a derived second side (mutate `a` to get `b`), or a direct control that forces `same_as` to return the wrong answer. Proving a pair property has teeth is the same shape as proving a unit property has teeth — the control is the proof, not the corpus. |
+| L45 | A **relational** property ("A parses identically to B") is blind to any mutation that changes both sides identically. `prop_fenced_block_strips_to_bare_json` compares the fenced parse to the bare parse; a control that overwrote both with the same wrong value would pass it. The property that anchors to *external truth* — `prop_valid_report_round_trips` comparing against `serde_json::to_string` — is what caught the mutation. Relational properties need a companion that pins one side to something outside the pair. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -722,14 +801,13 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `31bd1a5`. Nothing this session started is unfinished.
+   at `45aec66`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs.
    (b) Remaining same-class parsers from the survey (L42), none
    with a real bug found yet: `kod-skills/parser.rs`,
-   `kod-swarm/brief.rs`, `kod-swarm/completion_report.rs`,
-   `kod-types/effort.rs`. Each is a small read-then-write round;
-   none is urgent.
+   `kod-swarm/completion_report.rs`, `kod-types/effort.rs`.
+   Each is a small read-then-write round; none is urgent.
 
 ## Note on `session-17.md`
 
@@ -755,7 +833,7 @@ section in this file, not that one.
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
-classes, a test-surface class, two open items, five more bugs
+classes, a test-surface class, two open items, six more bugs
 found by extended hunting, and one security-relevant
 disagreement: a panicking third party no longer kills a turn
 (four fixes, each failing-first), a char-named truncator no
@@ -770,26 +848,30 @@ caller to time out (same class as the ACP fix in aa21bf8), a
 wire-input `usize` overflow in the Anthropic SSE parser
 (`dac5844`) is now saturated, the memory extraction parser
 (`parse_reply`, `1ce1bb6`) is pinned by five properties with
-two controls that caught checker bugs (L23, L43), and the
-MCP redirect's `Origin::parse` (`31bd1a5`) now delegates to
+two controls that caught checker bugs (L23, L43), the MCP
+redirect's `Origin::parse` (`31bd1a5`) now delegates to
 `url::Url` — the hand-rolled parser accepted URLs reqwest
 rejects, including one where the two parsers disagreed on the
 host, which `same_as` would have reported as same-origin and
-forwarded the auth header to the wrong host. The honest-scope
-caveat from the serve fix was closed by a `serve_io`
-extraction (`b38b7c2`) and an end-to-end test (`90e8126`).
-A follow-up test (`7f6cfd5`) verified the finding that only
-the `process` site was ever wedged (L39). Twenty-five handoff
-lessons (L20–L44) that are mostly about the *checker* being
-wrong, not the code; two (L40) came from a build cache that
-failed silently, two (L41, L42) came from a parser survey
-that found a real overflow the prior "surface closed" claim
-missed, one (L43) came from a control that ran blind to the
-edge the guard branches on, and one (L44) came from a
-**pair** property whose adversarial pair was never sampled —
-the direct control proved its teeth instead. The full
-workspace gate at `31bd1a5` runs 4459 tests, all green,
-including twenty-three new properties across six modules
-(`kod-config/config.rs`, `kod-config/policy.rs`,
-`kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
-`kod-memory/extract.rs`, `kod-mcp/http_policy.rs`).
+forwarded the auth header to the wrong host — and the swarm
+report parser (`parse_report`, `45aec66`) now guards
+`start <= end` before slicing, fixing a panic on LLM text with
+a `}` before the first `{`. The honest-scope caveat from the
+serve fix was closed by a `serve_io` extraction (`b38b7c2`)
+and an end-to-end test (`90e8126`). A follow-up test
+(`7f6cfd5`) verified the finding that only the `process` site
+was ever wedged (L39). Twenty-six handoff lessons (L20–L45)
+that are mostly about the *checker* being wrong, not the code;
+two (L40) came from a build cache that failed silently, two
+(L41, L42) came from a parser survey that found a real
+overflow the prior "surface closed" claim missed, one (L43)
+came from a control that ran blind to the edge the guard
+branches on, one (L44) came from a **pair** property whose
+adversarial pair was never sampled, and one (L45) came from a
+**relational** property that changed both sides identically
+under the control. The full workspace gate at `45aec66` runs
+4463 tests, all green, including twenty-seven new properties
+across seven modules (`kod-config/config.rs`,
+`kod-config/policy.rs`, `kod-config/llm.rs`,
+`kod-provider-anthropic/wire.rs`, `kod-memory/extract.rs`,
+`kod-mcp/http_policy.rs`, `kod-swarm/brief.rs`).
