@@ -170,15 +170,20 @@ fn line_is_goal_marker(line: &str) -> bool {
 /// so a re-render at the same generation produces the same string.
 ///
 /// `max_tokens` is a soft cap: the render stops before adding a line
-/// that would push past `max_tokens * 4` characters (the 4-chars-per-
-/// token heuristic the rest of the codebase uses for prompt budget).
+/// that would push `used + line.len()` past `max_tokens * 4` **bytes**
+/// (the 4-bytes-per-token approximation the rest of the codebase uses
+/// for prompt budget). Bytes are the right unit here, not chars: CJK
+/// is roughly 3 bytes per token and English roughly 4, so a byte count
+/// tracks a token budget more closely than a char count does. A
+/// char-budgeted check would let 3x more CJK text through than the
+/// token budget supports — a prompt-budget regression.
 /// A single entry longer than the cap is dropped, not truncated, so
 /// a half-sentence never enters the frozen block.
 pub(crate) fn render_mental_model_block(
     entries: &[kod_types::MemoryEntry],
     max_tokens: usize,
 ) -> String {
-    let budget_chars = max_tokens.saturating_mul(4);
+    let budget_bytes = max_tokens.saturating_mul(4);
     let mut out = String::new();
     let mut used = 0usize;
     for e in entries {
@@ -187,7 +192,7 @@ pub(crate) fn render_mental_model_block(
             continue;
         }
         let line = format!("- {content}\n");
-        if used + line.len() > budget_chars {
+        if used + line.len() > budget_bytes {
             continue;
         }
         used += line.len();

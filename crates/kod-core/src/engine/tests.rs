@@ -2085,3 +2085,86 @@ async fn panicking_compaction_summary_clears_the_in_flight_mark() {
          second task was a silent no-op (pending_summaries has no 't')",
     );
 }
+
+// --- Session 18, adversarial-input arc: mental-model block budget ---
+
+use kod_types::memory::{MemoryEntry, MemoryMetadata, MemoryType};
+use kod_types::MemoryId;
+
+fn mental_entry(content: &str) -> MemoryEntry {
+    MemoryEntry {
+        id: MemoryId::new(),
+        memory_type: MemoryType::LongTerm,
+        content: content.to_string(),
+        metadata: MemoryMetadata::default(),
+        timestamp: time::OffsetDateTime::now_utc(),
+        relevance: 0.5,
+        superseded_by: None,
+        contradicts: Vec::new(),
+    }
+}
+
+/// The mental-model block is **byte**-budgeted, not char-budgeted.
+///
+/// `render_mental_model_block(entries, max_tokens)` stops adding
+/// entries when `used + line.len() > max_tokens * 4`. The `* 4` is a
+/// bytes-per-token approximation (the codebase's heuristic); the unit
+/// the check actually compares is bytes. This is the correct unit for
+/// token-budget safety — CJK is roughly 3 bytes per token, English
+/// roughly 4, and bytes is closer to a token count than chars is for
+/// both. A **char**-budgeted check would let 3× more CJK text through
+/// than the token budget supports.
+///
+/// This test pins the byte-budget behavior. If a future refactor
+/// "fixes" the comparison to use `.chars().count()` (to match a
+/// docstring or a variable name that said "chars"), this test fails
+/// — that change would be a prompt-budget regression for CJK.
+#[test]
+fn mental_model_block_budget_is_bytes_not_chars() {
+    // 40 CJK chars = 120 bytes. With max_tokens = 20, the budget is
+    // 80 bytes; the entry must be dropped. A char-budgeted version
+    // would see 40 chars < 80 chars and include it — a regression.
+    let cjk_entry = mental_entry(&"你".repeat(40));
+    let block = super::render_mental_model_block(&[cjk_entry], 20);
+    assert_eq!(
+        block, "",
+        "a 120-byte entry must be dropped under an 80-byte budget; \
+         got {block:?}",
+    );
+
+    // The same content in ASCII: 40 chars = 40 bytes, well under 80.
+    // Included. This shows the budget is a byte count, not a char
+    // count masking as bytes.
+    let ascii_entry = mental_entry(&"a".repeat(40));
+    let block = super::render_mental_model_block(&[ascii_entry], 20);
+    assert!(
+        block.contains(&"a".repeat(40)),
+        "a 40-byte ASCII entry must fit under an 80-byte budget; \
+         got {block:?}",
+    );
+
+    // And a mixed boundary case: 27 CJK chars = 81 bytes > 80. Just
+    // over the budget; must drop.
+    let just_over = mental_entry(&"你".repeat(27));
+    let block = super::render_mental_model_block(&[just_over], 20);
+    assert_eq!(
+        block, "",
+        "an 81-byte entry must be dropped under an 80-byte budget; \
+         got {block:?}",
+    );
+
+    // 25 CJK chars = 75 bytes; the rendered line is
+    // "- " + content + "\n" = 3 bytes of overhead, so the line is
+    // 78 bytes — just under the 80-byte budget. Must include.
+    //
+    // (The boundary is 25, not 26: 26 CJK chars would be an 81-byte
+    // line, correctly dropped. Pinned here so the arithmetic cannot
+    // drift from the code's own units.)
+    let just_under = mental_entry(&"你".repeat(25));
+    let block = super::render_mental_model_block(&[just_under], 20);
+    assert!(
+        block.contains(&"你".repeat(25)),
+        "a 78-byte line (25 CJK chars + 3 bytes of '- ...\\n' \
+         overhead) must fit under an 80-byte budget; got {block:?}",
+    );
+}
