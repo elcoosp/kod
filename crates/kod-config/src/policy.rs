@@ -2326,3 +2326,143 @@ mod binary_candidates_tests {
         check("su", "su");
     }
 }
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A `Policy` whose `preset` varies across all three variants and
+    /// whose `[tools]` map contains 1 or 2 entries, each with
+    /// `mode = Some(_)` and `network = Some(_)`.
+    ///
+    /// The `Some` fields are deliberate (L31): a strategy that
+    /// sometimes emits `None` would let a `#[serde(skip_serializing)]`
+    /// on `mode` slip past on the cases where the field is `None`; the
+    /// property would then pass *probabilistically*. Forcing `Some`
+    /// makes every corpus entry carry a value that *must* survive the
+    /// round-trip, so a skip is caught on the first case.
+    fn arb_policy() -> impl Strategy<Value = Policy> {
+        (
+            prop::sample::select(vec![Preset::ReadOnly, Preset::Standard, Preset::Yolo]),
+            prop::collection::btree_map(
+                "[a-z_]{1,10}",
+                (
+                    prop::sample::select(vec![Decision::Allow, Decision::Ask, Decision::Deny]),
+                    any::<bool>(),
+                ),
+                1..3,
+            ),
+        )
+            .prop_map(|(preset, tools_raw)| {
+                let mut p = Policy::default();
+                p.preset = preset;
+                for (name, (mode, network)) in tools_raw {
+                    p.tools.insert(
+                        name,
+                        ToolPolicy {
+                            mode: Some(mode),
+                            network: Some(network),
+                            ..ToolPolicy::default()
+                        },
+                    );
+                }
+                p
+            })
+    }
+
+    proptest! {
+        /// `Policy::from_toml` must not panic on any input. Same
+        /// contract as `KodConfig::load_default`: a malformed file is
+        /// `Err(KodError::Config)`, not an unwind.
+        #[test]
+        fn prop_from_toml_never_panics(s in any::<String>()) {
+            // The `.is_ok()` assert is the property. Without it,
+            // `catch_unwind` swallows the panic and the test passes on
+            // a panicking implementation — a check that does not halt
+            // is not a check (L25, L32).
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = Policy::from_toml(&s);
+            }));
+            prop_assert!(
+                outcome.is_ok(),
+                "from_toml panicked on input ({} bytes); \
+                 malformed TOML is Err(KodError::Config), not an unwind",
+                s.len(),
+            );
+        }
+
+        /// **Round-trip without loss.** Serializing a `Policy`,
+        /// re-parsing it, and re-serializing it preserves every
+        /// field the strategy populates: `preset`, the set of keys
+        /// in `[tools]`, and — for each key — `mode` and `network`.
+        /// The serialized form is also stable across the two writes
+        /// (catches formatting drift), but that string compare is a
+        /// *secondary* check: it is symmetric, so it would pass even
+        /// if a field were dropped in both directions (L31).
+        ///
+        /// The per-field asserts are what give the property teeth.
+        /// The `Vec` length assert cannot be vacuous: `arb_policy`
+        /// guarantees `p.tools.len() ∈ {1, 2}`, so `back.tools.len()
+        /// == 0` (from a `skip_serializing` on `tools`) fails at once.
+        /// The `mode` assert is likewise non-vacuous on every entry,
+        /// because the strategy sets `mode = Some(_)` unconditionally.
+        #[test]
+        fn prop_from_toml_round_trip_is_idempotent(p in arb_policy()) {
+            let s1 = toml::to_string(&p).unwrap();
+            let back = Policy::from_toml(&s1).unwrap();
+
+            // (a) Top-level scalars.
+            prop_assert_eq!(back.preset, p.preset);
+
+            // (b) The `[tools]` map — length, then every entry's
+            //     populated fields. This is where a symmetric
+            //     string-compare would be blind (L31).
+            prop_assert_eq!(
+                back.tools.len(), p.tools.len(),
+                "tools map length changed across round-trip",
+            );
+            for (name, orig) in &p.tools {
+                prop_assert!(
+                    back.tools.contains_key(name),
+                    "tools[{:?}] lost on round-trip", name,
+                );
+                let back_entry = back.tools.get(name).unwrap();
+                prop_assert_eq!(
+                    back_entry.mode, orig.mode,
+                    "tools[{:?}].mode lost on round-trip", name,
+                );
+                prop_assert_eq!(
+                    back_entry.network, orig.network,
+                    "tools[{:?}].network lost on round-trip", name,
+                );
+            }
+
+            // (c) The serialized form itself is stable. Catches
+            //     ordering / formatting drift the per-field checks
+            //     do not (e.g. a `BTreeMap` -> `HashMap` swap).
+            let s2 = toml::to_string(&back).unwrap();
+            prop_assert_eq!(s1, s2, "serialized form changed across round-trip");
+        }
+
+        /// Every serialized `Policy` carries a `preset = ...` line
+        /// (Serde writes every non-skipped field), so `from_toml` —
+        /// which sets `preset_explicit` by scanning for exactly that
+        /// line — always reads one back as "the preset was explicit."
+        ///
+        /// Pins the interaction between `#[serde(skip)]` on
+        /// `preset_explicit` and the text scan. Adding `#[serde(skip)]`
+        /// on `preset` (so the line vanished) would flip
+        /// `preset_explicit` to `false` on every round-trip, silently
+        /// breaking "project can pin standard" — with no compile error.
+        #[test]
+        fn prop_from_toml_of_serialized_sets_preset_explicit(p in arb_policy()) {
+            let s = toml::to_string(&p).unwrap();
+            let back = Policy::from_toml(&s).unwrap();
+            prop_assert!(
+                back.preset_explicit,
+                "serialized form must contain a `preset = ` line; \
+                 from_toml must set preset_explicit on it",
+            );
+        }
+    }
+}
