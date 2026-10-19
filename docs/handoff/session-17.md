@@ -676,7 +676,9 @@ a string that was never truncated. Session 16 fixed seven sites in
 | 3 | `65c8e2a` | kod-tui × 3 |
 | 4 | `2450be1` | workspace source lint + positive control |
 
-Eleven call sites migrated across six crates. Six source-level
+Fourteen call sites migrated across six crates (five in render.rs
+across fc14303 + e02f958, nine across the six other-crate migration
+commits). Six source-level
 assertion files pin per-crate adoption; the workspace lint in
 `kod-types::it::source_lints::truncate_display_sites_use_helper`
 catches any future reintroduction.
