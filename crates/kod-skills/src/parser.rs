@@ -462,3 +462,160 @@ mod bom_tests {
         assert_eq!(skill.metadata.name, "bom-skill");
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of `SkillParser::parse_content`.
+    //!
+    //! `parse_content` is the SKILL.md boundary: split YAML front
+    //! matter from markdown body, deserialize metadata, extract
+    //! sections and `<example>...</example>` blocks.
+    //!
+    //! The `split_front_matter` / `extract_section` /
+    //! `extract_examples` arithmetic was hand-checked: each slice is
+    //! preceded by a `find` whose result bounds the slice, so no
+    //! `start > end` panic exists here (unlike `parse_report` at
+    //! `45aec66`). This is a regression-guard round.
+    //!
+    //! **Two checker bugs caught during the write (L23 twice).**
+    //!
+    //! 1. `build` first interpolated name/description unquoted into
+    //!    the front matter; a description of `" "` (one space)
+    //!    becomes YAML's `""` after normalization, so
+    //!    `validate_metadata` correctly rejects it and the test's
+    //!    `expect("must parse")` panicked on five properties at once.
+    //!    Fixed by serializing through `serde_yaml::to_string` in
+    //!    `build`.
+    //!
+    //! 2. The example output strategy first allowed whitespace-only
+    //!    strings (`"[a-zA-Z0-9 ]{1,40}"`); a value of `" "` gets
+    //!    trimmed to `""` by `extract_examples`'s `content.trim()`,
+    //!    so the assert compared `""` (actual) to `" "` (expected).
+    //!    The parser is correct; the expected value was wrong. Fixed
+    //!    by dropping spaces from the output strategy — no trim can
+    //!    change a value it can produce.
+    //!
+    //! Neither was a parser bug. Same shape as the parse_reply round
+    //! (`1ce1bb6`) — the test input was not what the assertion
+    //! assumed.
+    use super::*;
+
+    fn parser() -> SkillParser {
+        SkillParser::new()
+    }
+
+    fn strict_parser() -> SkillParser {
+        SkillParser::new().strict()
+    }
+
+    /// Build a well-formed SKILL.md. Name and description are
+    /// serialized through `serde_yaml`, so arbitrary strategy output
+    /// (including leading/trailing spaces, colons, quotes) stays
+    /// well-formed.
+    fn build(name: &str, description: &str, body: &str) -> String {
+        let meta = SkillMetadata {
+            name: name.to_string(),
+            description: description.to_string(),
+            version: String::new(),
+            author: None,
+            category: String::new(),
+            tags: Vec::new(),
+            capabilities: Vec::new(),
+            requirements: Vec::new(),
+            triggers: Vec::new(),
+        };
+        let yaml = serde_yaml::to_string(&meta).unwrap();
+        format!("---\n{yaml}---\n{body}")
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_parse_content_never_panics(content in proptest::prelude::any::<String>()) {
+            let p = parser();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = p.parse_content(&content, "test.skill.md");
+            }));
+            proptest::prop_assert!(outcome.is_ok());
+        }
+
+        #[test]
+        fn prop_parse_content_never_panics_strict(content in proptest::prelude::any::<String>()) {
+            let p = strict_parser();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = p.parse_content(&content, "test.skill.md");
+            }));
+            proptest::prop_assert!(outcome.is_ok());
+        }
+
+        #[test]
+        fn prop_valid_skill_preserves_metadata(
+            name in "[a-zA-Z][a-zA-Z0-9_-]{0,20}",
+            description in "[a-zA-Z0-9 .]{1,60}",
+            body in "[a-zA-Z0-9 \n.]{0,200}",
+        ) {
+            let content = build(&name, &description, &body);
+            let p = parser();
+            let skill = p
+                .parse_content(&content, "test.skill.md")
+                .expect("well-formed content must parse");
+            proptest::prop_assert_eq!(skill.metadata.name, name);
+            proptest::prop_assert_eq!(skill.metadata.description, description);
+        }
+
+        #[test]
+        fn prop_no_example_tags_means_no_examples(
+            name in "[a-zA-Z]{1,10}",
+            description in "[a-zA-Z ]{1,30}",
+            body in "[a-zA-Z0-9 \n#.]{0,200}",
+        ) {
+            let content = build(&name, &description, &body);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert!(skill.examples.is_empty());
+        }
+
+        #[test]
+        fn prop_example_blocks_are_captured_in_order(
+            name in "[a-zA-Z]{1,10}",
+            description in "[a-zA-Z ]{1,30}",
+            a_output in "[a-zA-Z0-9]{1,40}",
+            b_output in "[a-zA-Z0-9]{1,40}",
+        ) {
+            let body = format!(
+                "<example>\n{a_output}\n</example>\n\n<example>\n{b_output}\n</example>\n",
+            );
+            let content = build(&name, &description, &body);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(skill.examples.len(), 2);
+            proptest::prop_assert_eq!(&skill.examples[0].output, &a_output);
+            proptest::prop_assert_eq!(&skill.examples[1].output, &b_output);
+        }
+
+        #[test]
+        fn prop_strict_mode_requires_version(
+            name in "[a-zA-Z]{1,10}",
+            description in "[a-zA-Z ]{1,30}",
+        ) {
+            let content = build(&name, &description, "");
+            let p_strict = strict_parser();
+            let p_lenient = parser();
+            proptest::prop_assert!(p_strict.parse_content(&content, "test.skill.md").is_err());
+            proptest::prop_assert!(p_lenient.parse_content(&content, "test.skill.md").is_ok());
+        }
+
+        #[test]
+        fn prop_bom_is_stripped(
+            name in "[a-zA-Z]{1,10}",
+            description in "[a-zA-Z ]{1,30}",
+        ) {
+            let without_bom = build(&name, &description, "");
+            let with_bom = format!("\u{feff}{without_bom}");
+            let p = parser();
+            let a = p.parse_content(&without_bom, "test.skill.md").unwrap();
+            let b = p.parse_content(&with_bom, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(a.metadata.name, b.metadata.name);
+            proptest::prop_assert_eq!(a.metadata.description, b.metadata.description);
+        }
+    }
+}
