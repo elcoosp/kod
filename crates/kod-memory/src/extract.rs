@@ -268,3 +268,233 @@ mod tests {
         assert_eq!(m.project_key.as_deref(), Some("proj"));
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of `parse_reply`.
+    //!
+    //! The parser is the boundary between the LLM's reply (arbitrary
+    //! prose that *may* contain one JSON array) and every downstream
+    //! consumer (the memory store, the `/memory` display path). The
+    //! contract:
+    //!
+    //! - never panics on arbitrary input;
+    //! - every returned fact has non-empty trimmed content and
+    //!   `>= 12` bytes after trim (the documented filter);
+    //! - `parse_reply(r, n).len() <= n`;
+    //! - prefix-stable across `max_entries`;
+    //! - a well-formed reply with `k <= n` entries round-trips with
+    //!   `k` facts, in order, kind-preserved.
+    //!
+    //! Two strategy lessons, both from the L27 control drill on this
+    //! suite:
+    //!
+    //! 1. Content must be `[a-zA-Z0-9]{12,40}` (no whitespace). The
+    //!    first draft used `[a-zA-Z0-9 ]{12,40}`, which admits
+    //!    leading/trailing spaces; `parse_reply` trims before the
+    //!    `>= 12` check and before storing, so a 12-byte raw value
+    //!    with a leading space became an 11-byte trimmed value and
+    //!    was correctly dropped — then the expected-value comparison
+    //!    (against the untrimmed string) failed on a correct parser.
+    //!    L23: the checker, not the code.
+    //!
+    //! 2. `arb_valid_reply` must sometimes emit **short** content
+    //!    (`"x"`, `"hello!"`). The first version only generated
+    //!    `{12,40}`-byte content, so the `if content.len() < 12`
+    //!    filter **never fired**; control B (remove the filter) then
+    //!    passed all five properties. The edge was present in the
+    //!    type domain but never sampled — L35 in a new shape. Forcing
+    //!    short content into the corpus makes the filter observable:
+    //!    with the filter removed, `prop_returned_facts_are_well_formed`
+    //!    fails on the `>= 12` invariant.
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Content that is either short (below the 12-byte filter) or
+    /// well-formed (12-40 bytes). `prop_oneof!` forces both into
+    /// every 2-case window, so a filter regression is caught on the
+    /// first short case (L35).
+    fn arb_content() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x".to_string()),
+            Just("hello!".to_string()),
+            Just("12345678901".to_string()), // 11 bytes, one short
+            "[a-zA-Z0-9]{12,40}",
+        ]
+    }
+
+    /// A reply that is a well-formed JSON array of 1..=3 entries with
+    /// arbitrary `arb_content` content and one of the four documented
+    /// `type` strings (plus one unrecognized string to exercise the
+    /// fallthrough). Short entries are dropped by the filter; the
+    /// properties that only see the *output* are unaffected.
+    fn arb_valid_reply() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            (
+                prop::sample::select(vec![
+                    "preference", "decision", "pattern", "fact", "unknown",
+                ]),
+                arb_content(),
+            ),
+            1..=3,
+        )
+        .prop_map(|entries| {
+            let mut s = String::from("[");
+            for (i, (kind, content)) in entries.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push_str(&format!(
+                    r#"{{"type":{},"content":{}}}"#,
+                    serde_json::to_string(kind).unwrap(),
+                    serde_json::to_string(content).unwrap(),
+                ));
+            }
+            s.push(']');
+            s
+        })
+    }
+
+    fn arb_reply() -> impl Strategy<Value = String> {
+        prop_oneof![arb_valid_reply(), any::<String>(),]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_reply_never_panics(
+            reply in arb_reply(),
+            max in any::<usize>(),
+        ) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse_reply(&reply, max);
+            }));
+            prop_assert!(
+                outcome.is_ok(),
+                "parse_reply panicked on a {}-byte reply with max={}",
+                reply.len(),
+                max,
+            );
+        }
+
+        /// Every returned fact has non-empty trimmed content and at
+        /// least 12 bytes after trim. With `arb_content` forcing
+        /// short strings into the corpus, this property fires on the
+        /// `>= 12` invariant whenever the filter is present; with the
+        /// filter removed (control B), a short entry survives and the
+        /// property fails.
+        #[test]
+        fn prop_returned_facts_are_well_formed(
+            reply in arb_reply(),
+            max in any::<usize>(),
+        ) {
+            for fact in parse_reply(&reply, max) {
+                prop_assert!(
+                    !fact.content.trim().is_empty(),
+                    "returned an empty-content fact on reply ({} bytes)",
+                    reply.len(),
+                );
+                prop_assert!(
+                    fact.content.len() >= 12,
+                    "returned a fact with {}-byte content (< 12) on reply ({} bytes)",
+                    fact.content.len(),
+                    reply.len(),
+                );
+            }
+        }
+
+        #[test]
+        fn prop_cap_holds(
+            reply in arb_reply(),
+            max in any::<usize>(),
+        ) {
+            let facts = parse_reply(&reply, max);
+            prop_assert!(
+                facts.len() <= max,
+                "parse_reply({}-byte reply, {}) returned {} facts",
+                reply.len(), max, facts.len(),
+            );
+        }
+
+        #[test]
+        fn prop_prefix_stable_across_caps(
+            reply in arb_reply(),
+            n1 in any::<usize>(),
+            n2 in any::<usize>(),
+        ) {
+            let (n_lo, n_hi) = if n1 <= n2 { (n1, n2) } else { (n2, n1) };
+            let small = parse_reply(&reply, n_lo);
+            let big = parse_reply(&reply, n_hi);
+            prop_assert!(
+                small.len() <= big.len(),
+                "monotonicity violated: caps {}={} facts, {}={} facts on reply ({} bytes)",
+                n_lo, small.len(), n_hi, big.len(), reply.len(),
+            );
+            for (i, (a, b)) in small.iter().zip(big.iter()).enumerate() {
+                prop_assert_eq!(
+                    &a.content, &b.content,
+                    "prefix content mismatch at index {} on reply ({} bytes)",
+                    i, reply.len(),
+                );
+                prop_assert_eq!(
+                    &a.kind, &b.kind,
+                    "prefix kind mismatch at index {} on reply ({} bytes)",
+                    i, reply.len(),
+                );
+            }
+        }
+
+        /// The strongest happy-path claim. Uses its **own** inline
+        /// strategy (well-formed content only, `[a-zA-Z0-9]{12,40}`),
+        /// deliberately decoupled from `arb_content`'s short branch:
+        /// the round-trip claim is about well-formed inputs, and a
+        /// short-content input is by design dropped by the filter.
+        #[test]
+        fn prop_valid_reply_is_fully_parsed(
+            entries in prop::collection::vec(
+                (
+                    prop::sample::select(vec![
+                        ("preference", FactKind::Preference),
+                        ("decision", FactKind::Decision),
+                        ("pattern", FactKind::Pattern),
+                        ("fact", FactKind::Fact),
+                    ]),
+                    "[a-zA-Z0-9]{12,40}",
+                ),
+                1..=3,
+            ),
+        ) {
+            let k = entries.len();
+            let mut s = String::from("[");
+            for (i, ((kind_str, _), content)) in entries.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push_str(&format!(
+                    r#"{{"type":{},"content":{}}}"#,
+                    serde_json::to_string(kind_str).unwrap(),
+                    serde_json::to_string(content).unwrap(),
+                ));
+            }
+            s.push(']');
+
+            let facts = parse_reply(&s, k);
+            prop_assert_eq!(
+                facts.len(), k,
+                "expected {} facts, got {} from reply {:?}",
+                k, facts.len(), s,
+            );
+            for (fact, ((_, expected_kind), expected_content)) in
+                facts.iter().zip(entries.iter())
+            {
+                prop_assert_eq!(
+                    &fact.content, expected_content,
+                    "content mismatch on reply {:?}", s,
+                );
+                prop_assert_eq!(
+                    &fact.kind, expected_kind,
+                    "kind mismatch for content {:?}", fact.content,
+                );
+            }
+        }
+    }
+}

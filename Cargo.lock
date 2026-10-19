@@ -2400,6 +2400,7 @@ dependencies = [
  "kod-provider",
  "kod-types",
  "parking_lot",
+ "proptest",
  "redb",
  "reqwest 0.13.5",
  "rstest",

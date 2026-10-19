@@ -27,6 +27,7 @@ kod-error = { path = "../kod-error" }
 kod-config = { path = "../kod-config" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 serial_test = { workspace = true }
 tempfile = "3.8"
 rstest = { workspace = true }

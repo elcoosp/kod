@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 329134606b466641fd3121e90923b45149249a689e5b2bd4414c285e88281f2e # shrinks to entries = [(("preference", Preference), "aAaaa0Aa0A0A"), (("preference", Preference), "aA0Aa0aAAaAA")]
+cc ce10352001c9e8407c0c4a8c37a590ca4719e746a4d90d419c249e84ce26c132 # shrinks to reply = "[{\"type\":\"preference\",\"content\":\"x\"}]", max = 1
