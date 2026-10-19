@@ -3,10 +3,11 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `98e129b` (full-workspace gate green at that
-commit; see "State" below and the four "Re-verification"
-subsections in "What's open" #1). The gate at `98e129b` had one
-`execfail` (`os error 35`); the execfailed test reran green at
+**Last verified commit:** `90e8126` (full-workspace gate green at that
+commit; see "State" below and the five "Re-verification"
+subsections in "What's open" #1). The gate at `90e8126` was clean
+first try (4444/4444); the earlier gate at `98e129b` had one
+`execfail` (`os error 35`), and the execfailed test reran green at
 `--test-threads 1`, confirming L21 host pressure, not a regression.
 **Tree at handoff:** clean.
 
@@ -24,7 +25,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, and `98e129b`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, and `90e8126`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -58,6 +59,17 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `90e8126` (after the `serve_io` extraction + E2E test).**
+Ran the same command at `90e8126`:
+
+    4444 tests run: 4444 passed, 5 skipped
+
+Up from 4443 at `98e129b` — exactly the new E2E panic-guard test.
+Clean on the first try this time: no execfail, no EAGAIN. The
+prior gate at `98e129b` had one `execfail` (`os error 35`) that
+reran green at `--test-threads 1`, recorded in the previous
+subsection.
 
 **Re-verification at `98e129b` (after the serve panic-guard fix).**
 Ran the same command at `98e129b`:
@@ -154,7 +166,7 @@ correct last tag.
 
 ## State
 
-`main` at `98e129b`, seventeen commits past `v0.1.12`:
+`main` at `90e8126`, twenty commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -177,6 +189,10 @@ correct last tag.
 | `4f794fc` | ci: add live-integrations job (rust-analyzer + npx) |
 | `092bc4a` | docs(handoff): gate at `5a005a9`; items #2 and #3 closed |
 | `98e129b` | fix(serve): send an error frame when a spawned engine task panics |
+| `ad05072` | docs(handoff): gate at `98e129b`; bug-hunt section; L37 |
+| `b38b7c2` | refactor(serve): extract `serve_io`; log abnormal connection termination |
+| `7252f61` | chore(deps): Cargo.lock companion for `b38b7c2` |
+| `90e8126` | test(serve): E2E panic-guard through `serve_io` |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -229,6 +245,54 @@ but only because the fix was inside the test body — not because
 production code changed. The reverted stub left no trace; the lesson
 is recorded because the shape is tempting and the check is easy to
 write without noticing it is tautological.
+
+**Followups closed (b38b7c2, 90e8126).** Two items named in the
+fix's own handoff were done in the same session, not deferred:
+
+1. **`serve_io` extraction.** `handle_connection` was a concrete
+   function taking `transport::Stream`; a duplex-driven test could
+   not reach it. `b38b7c2` extracted the dispatch loop into
+   `serve_io<R, W>(engine, reader, writer, shutdown)`, matching the
+   shape `acp.rs::serve_io` already uses. `handle_connection` is
+   now a five-line wrapper. No behavior change: the existing
+   75/75 tests passed after the extraction.
+
+2. **E2E test.** `90e8126` added
+   `process_request_with_panicking_provider_gets_error_frame`: a
+   `PanickingProvider` (panics in `generate_with_tools`) installed
+   on a real engine, one `process` request driven through
+   `serve_io` over a duplex pair, asserting an error frame for
+   that request id arrives within 5s. On the pre-fix shape the
+   caller would wait until its own timeout. This closes the
+   honest-scope caveat the helper-only test carried; the helper
+   test remains as the smaller, faster isolation of the fix.
+
+Both positive controls confirmed: reverting the helper body to
+`let _handle = tokio::spawn(fut); let _ = (out, id);` fails both
+tests; restoring re-greens. The E2E failure is
+"EOF on client side; the guard did not send a frame" — the exact
+wedge the fix addresses, and the same symptom the original
+analysis predicted from reading the code.
+
+**L38, in the followup's own shape.** The honest-scope caveat said
+a duplex test "would need the same `serve_io` extraction `acp.rs`
+got". That was true when written. It was a ~40-line mechanical
+refactor (substitute reader/writer for the concrete halves; keep
+the body). The lesson: before scoping a test down, check whether
+the enabling refactor is actually small. An honest caveat is
+honest only about the code as it stands; a followup that reads
+the extraction target and finds it mechanical should do the
+extraction, not inherit the caveat.
+
+**Companion-file miss, L29 again.** `b38b7c2` added three new
+direct dev-deps to `kod-core-serve`; the `git add` listed two
+files and `Cargo.lock` was left behind (`7252f61` commits it).
+Same shape as `8b4e7f5` earlier in the session: staging a subset
+of the change leaves the companion. The completion check is
+"`git status --porcelain` is empty", not "the tests pass". The
+final commit in this arc (`90e8126`) staged by directory
+(`git add crates/kod-core-serve/ Cargo.lock`) instead of by file
+name; that is the shape that would have avoided both misses.
 
 
 ## What landed before `v0.1.12` in this arc
@@ -323,7 +387,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L37)
+## The lesson index (L20–L38)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -348,6 +412,7 @@ corresponding section in `session-17.md` for the full story.
 | L35 | A strategy whose *range* includes an edge is vacuous if the edge is never *sampled*. `0u64..=i64::MAX` has 2^63 values; P(0) per case ≈ 10⁻¹⁵ even at 10,000 cases. Force the edge with `prop_oneof![Just(v), range]`. |
 | L36 | An item named "CI wiring — a decision" must be checked against `ls .github/` before being rewritten from memory. The handoff claimed `.github/` was absent; it was present and comprehensive since `668e54b`. |
 | L37 | A failing-first test that spawns its own panicking future is tautological: the fix it proves cannot be in production code. Drive the failure through production code, or pin a helper and accept the honest-scope caveat the way `in_flight_release.rs` does. |
+| L38 | An honest-scope caveat is honest only about the current code. "Would need the same `serve_io` extraction `acp.rs` got" was correct on the day it was written and wrong a day later — the extraction was a ~40-line refactor with no behavior change. Before scoping a test down, check whether the enabling refactor is actually small. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -391,7 +456,7 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `98e129b`. Nothing this session started is unfinished.
+   at `90e8126`. Nothing this session started is unfinished.
 
 ## Note on `session-17.md`
 
@@ -427,9 +492,12 @@ kod-config — are property-tested with positive controls, the
 two previously-uncovered live tests run in CI on every push to
 main/develop, and a panicking spawned engine task in the NDJSON
 serve adapter now sends an error frame instead of leaving the
-caller to time out (same class as the ACP fix in aa21bf8).
-Eighteen handoff lessons (L20–L37) that are mostly about the
-*checker* being wrong, not the code. The full workspace gate at
-`98e129b` runs 4443 tests, all green, including nine new
-properties across the three kod-config modules (`config.rs`,
-`policy.rs`, `llm.rs`).
+caller to time out (same class as the ACP fix in aa21bf8). The
+honest-scope caveat from that fix was closed by a
+`serve_io` extraction (`b38b7c2`) and an end-to-end test
+(`90e8126`) that drives a panicking provider through the real
+dispatch loop. Nineteen handoff lessons (L20–L38) that are
+mostly about the *checker* being wrong, not the code. The full
+workspace gate at `90e8126` runs 4444 tests, all green,
+including nine new properties across the three kod-config
+modules (`config.rs`, `policy.rs`, `llm.rs`).
