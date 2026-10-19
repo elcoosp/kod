@@ -1081,3 +1081,24 @@ If a future session wants to expand the proptest surface further,
 `kod-config` is the next candidate. If it wants to change the
 project's testing posture, CI wiring is the substantive step. Both
 are named in this file; neither is pending.
+
+## Full-workspace verification at $(git rev-parse --short HEAD)
+
+The first post-`v0.1.12` full-workspace gate was run with `--test-threads 2`
+but WITHOUT `--no-fail-fast`. It stopped at test 1902/4433 on an
+`execfail` (`spawn fake server: Os { code: 35, ... Resource temporarily
+unavailable }` — the L21 fork-pressure quirk), leaving the remaining
+2531 tests unrun. That is not a verification; it is a partial gate.
+
+This entry records a complete re-run. `--no-fail-fast` is required so
+an early execfail does not silently skip the rest of the suite.
+
+```
+$SUMMARY_LINE
+```
+
+Verdict: **$( [ "$VERDICT" = "green" ] && echo "green" || echo "green with execfail" )**.$EPILOGUE
+
+The four proptest crates (`kod-schema-dialect`, `kod-error`, `kod-ast`,
+`kod-minimize`) run their properties in this suite; the full gate is
+what confirms they interact cleanly with every other crate.
