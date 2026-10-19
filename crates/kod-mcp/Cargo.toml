@@ -17,8 +17,10 @@ sha2 = { workspace = true }
 # Cross-platform cache dir (`~/.cache/kod/mcp` on Linux,
 # `~/Library/Caches/kod/mcp` on macOS).
 dirs = { workspace = true }
+url = "2"
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = "3.8"
 
 [lints]
