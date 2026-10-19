@@ -1478,13 +1478,18 @@ mod panic_guard_tests {
     //! Pins the contract of `spawn_panic_guarded`: a panic in the
     //! spawned future must produce an error frame for the request id.
     //!
-    //! Honest scope: the end-to-end `serve` path is not driven here.
-    //! `handle_connection` takes a concrete `transport::Stream`, not a
-    //! generic reader/writer, so a duplex-driven test would need the
-    //! same `serve_io` extraction `acp.rs` got. That extraction is a
-    //! separate change. What this test pins is the helper the three
-    //! spawn sites share, which is what the fix is. Same honest-scope
-    //! shape `in_flight_release.rs` established for the ACP guard.
+    //! Two layers:
+    //!
+    //! - `panicking_task_produces_an_error_frame` pins the helper in
+    //!   isolation. It is the smallest possible test of the fix and
+    //!   fails if `spawn_panic_guarded` is reverted to a bare spawn.
+    //!
+    //! - `process_request_with_panicking_provider_gets_error_frame`
+    //!   drives the full `serve_io` path: a `process` request routed
+    //!   to a provider that panics in `generate_with_tools`, through
+    //!   the real dispatch loop. This is the E2E the helper test's
+    //!   earlier honest-scope caveat named as a follow-up; the
+    //!   `serve_io` extraction it needed landed in b38b7c2.
     use super::*;
     use std::time::Duration;
 
@@ -1508,5 +1513,159 @@ mod panic_guard_tests {
         };
         assert!(line.contains("\"error\""), "not an error frame: {line}");
         assert!(line.contains("req-1"), "error frame is not for req-1: {line}");
+    }
+
+    // ---------------------------------------------------------------------
+    // End-to-end: a panicking provider must not wedge the caller.
+    // ---------------------------------------------------------------------
+
+    use async_trait::async_trait;
+    use futures::Stream;
+    use kod_core::KodEngine;
+    use kod_core::RouterConfig;
+    use kod_provider::{
+        GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+        ProviderRegistry, StreamChunk,
+    };
+    use kod_types::ToolDefinition;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    /// A provider that panics on `generate_with_tools`. The panic
+    /// propagates into `Engine::process_for`, which is wrapped by
+    /// `spawn_panic_guarded` in the `process` dispatch arm — the
+    /// real code path the fix guards.
+    struct PanickingProvider;
+
+    #[async_trait]
+    impl LlmProvider for PanickingProvider {
+        fn name(&self) -> &str {
+            "panicking"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn generate(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            panic!("simulated provider panic in generate")
+        }
+        async fn generate_with_tools(
+            &self,
+            _prompt: &str,
+            _tools: &[ToolDefinition],
+            _opts: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            panic!("simulated provider panic in generate_with_tools")
+        }
+        fn stream(
+            &self,
+            _prompt: &str,
+            _opts: &GenerationOptions,
+        ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>> {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    /// Build an engine with `PanickingProvider` installed and started.
+    async fn engine_with_panicking_provider(
+        temp: &tempfile::TempDir,
+    ) -> Arc<KodEngine> {
+        let cfg = RouterConfig {
+            embedder: None,
+            skill_threshold: 0.3,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            context_window: 8192,
+            short_term_capacity: 100,
+        };
+        let engine = Arc::new(
+            KodEngine::new(cfg, temp.path().join("serve.redb")).unwrap(),
+        );
+
+        let provider: Arc<dyn LlmProvider> = Arc::new(PanickingProvider);
+        let mut registry = ProviderRegistry::new();
+        registry.insert(
+            "panicking",
+            provider,
+            ProviderCapabilities::conservative(),
+            "panic-model",
+        );
+        let mut routing = kod_config::RoutingConfig::default();
+        routing
+            .by_task
+            .insert("Simple".to_string(), "panicking".to_string());
+        engine
+            .set_registry(
+                Arc::new(registry),
+                ModelRef::new("panicking", "panic-model"),
+                Some(routing),
+            )
+            .await;
+        engine.start().await.unwrap();
+        engine
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn process_request_with_panicking_provider_gets_error_frame() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let engine = engine_with_panicking_provider(&temp).await;
+
+        let (client_w, server_r) = tokio::io::duplex(64 * 1024);
+        let (server_w, client_r) = tokio::io::duplex(64 * 1024);
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        let shutdown_for_serve = shutdown.clone();
+
+        let serve_handle = tokio::spawn(async move {
+            serve_io(engine, server_r, server_w, shutdown_for_serve).await
+        });
+
+        let req = serde_json::json!({
+            "id": "r1",
+            "method": "process",
+            "params": {"input": "hello", "transcript_key": "e2e"}
+        });
+        let mut line = serde_json::to_string(&req).unwrap();
+        line.push('\n');
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut cw = client_w;
+            cw.write_all(line.as_bytes()).await.unwrap();
+            cw.flush().await.unwrap();
+        }
+
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let mut reader = BufReader::new(client_r);
+        let mut buf = String::new();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_line(&mut buf),
+        )
+        .await
+        .expect("no response frame within 5s; the guard did not send one")
+        .expect("read failed");
+        assert!(read > 0, "EOF on client side; the guard did not send a frame");
+
+        let frame: serde_json::Value = serde_json::from_str(buf.trim_end()).unwrap();
+        assert_eq!(
+            frame.get("id").and_then(|v| v.as_str()),
+            Some("r1"),
+            "error frame is not for r1: {frame}",
+        );
+        assert_eq!(
+            frame.get("type").and_then(|v| v.as_str()),
+            Some("error"),
+            "not an error frame: {frame}",
+        );
+
+        shutdown.notify_one();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            serve_handle,
+        )
+        .await;
     }
 }
