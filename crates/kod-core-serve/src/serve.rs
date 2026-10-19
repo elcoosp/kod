@@ -1668,4 +1668,86 @@ mod panic_guard_tests {
         )
         .await;
     }
+
+    // ---------------------------------------------------------------------
+    // Streaming variant: a panicking provider on `process_streaming`.
+    // ---------------------------------------------------------------------
+    //
+    // `run_streaming` already wraps `process_streaming_for` in an
+    // inner `tokio::spawn` and converts `JoinError` to
+    // `KodError::Internal`, so the streaming path was not wedged by
+    // a panicking engine even before `spawn_panic_guarded` landed.
+    // This test pins that fact: it passes with the helper reverted
+    // to a bare spawn (see the positive control in the bug-hunt
+    // followup). `spawn_panic_guarded` at the streaming site is
+    // defense-in-depth (a panic in `run_streaming`'s own body,
+    // rather than the engine's), not the fix for this bug.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn streaming_request_with_panicking_provider_gets_error_frame() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let engine = engine_with_panicking_provider(&temp).await;
+
+        let (client_w, server_r) = tokio::io::duplex(64 * 1024);
+        let (server_w, client_r) = tokio::io::duplex(64 * 1024);
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        let shutdown_for_serve = shutdown.clone();
+
+        let serve_handle = tokio::spawn(async move {
+            serve_io(engine, server_r, server_w, shutdown_for_serve).await
+        });
+
+        let req = serde_json::json!({
+            "id": "s1",
+            "method": "process_streaming",
+            "params": {"input": "hello", "transcript_key": "stream-e2e"}
+        });
+        let mut line = serde_json::to_string(&req).unwrap();
+        line.push('\n');
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut cw = client_w;
+            cw.write_all(line.as_bytes()).await.unwrap();
+            cw.flush().await.unwrap();
+        }
+
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let mut reader = BufReader::new(client_r);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(!remaining.is_zero(), "no error frame within 5s");
+            let mut buf = String::new();
+            let read = tokio::time::timeout(remaining, reader.read_line(&mut buf))
+                .await
+                .expect("read timeout; no error frame arrived")
+                .expect("read failed");
+            assert!(read > 0, "EOF before an error frame arrived");
+            let frame: serde_json::Value = serde_json::from_str(buf.trim_end()).unwrap();
+            match frame.get("type").and_then(|v| v.as_str()) {
+                Some("error") => {
+                    assert_eq!(
+                        frame.get("id").and_then(|v| v.as_str()),
+                        Some("s1"),
+                        "error frame is not for s1: {frame}",
+                    );
+                    shutdown.notify_one();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        serve_handle,
+                    )
+                    .await;
+                    return;
+                }
+                Some("done") => panic!(
+                    "streaming request reported done without an error; \
+                     the panic was swallowed: {frame}"
+                ),
+                _ => {
+                    // Streaming may emit chunks before the error;
+                    // keep reading.
+                    continue;
+                }
+            }
+        }
+    }
 }
