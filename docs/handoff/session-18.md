@@ -3,12 +3,11 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `90e8126` (full-workspace gate green at that
-commit; see "State" below and the five "Re-verification"
-subsections in "What's open" #1). The gate at `90e8126` was clean
-first try (4444/4444); the earlier gate at `98e129b` had one
-`execfail` (`os error 35`), and the execfailed test reran green at
-`--test-threads 1`, confirming L21 host pressure, not a regression.
+**Last verified commit:** `7f6cfd5` (full-workspace gate green at that
+commit; see "State" below and the six "Re-verification"
+subsections in "What's open" #1). 4445/4445 on the first try after
+a disk-full retry; 5 skipped; one test annotated `leaky` by
+nextest (a resource leak within the test, not a failure).
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -25,7 +24,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, and `90e8126`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, and `7f6cfd5`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -59,6 +58,21 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `7f6cfd5` (after the streaming E2E test).**
+First attempt at `7f6cfd5` failed at link time with
+`errno=28 (No space left on device)`, then fork failures
+cascaded. That is not a code failure (L40: the build cache had
+grown to 45 GiB of physical store against a documented cap it
+was not applying, and its auto-gc daemon was silently unable to
+evict). `kache gc --max-age 3d` reclaimed 14 GiB and the
+re-gate was clean:
+
+    4445 tests run: 4445 passed (1 leaky), 5 skipped
+
+Up from 4444 at `90e8126` — exactly the new streaming test. The
+`leaky` annotation is a nextest resource-leak warning inside the
+test, not a failure; the test passes.
 
 **Re-verification at `90e8126` (after the `serve_io` extraction + E2E test).**
 Ran the same command at `90e8126`:
@@ -166,7 +180,7 @@ correct last tag.
 
 ## State
 
-`main` at `90e8126`, twenty commits past `v0.1.12`:
+`main` at `7f6cfd5`, twenty-one commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -193,6 +207,8 @@ correct last tag.
 | `b38b7c2` | refactor(serve): extract `serve_io`; log abnormal connection termination |
 | `7252f61` | chore(deps): Cargo.lock companion for `b38b7c2` |
 | `90e8126` | test(serve): E2E panic-guard through `serve_io` |
+| `5f1f550` | docs(handoff): gate at `90e8126`; followups closed |
+| `7f6cfd5` | test(serve): streaming E2E + finding: only `process` was wedged |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -294,6 +310,37 @@ final commit in this arc (`90e8126`) staged by directory
 (`git add crates/kod-core-serve/ Cargo.lock`) instead of by file
 name; that is the shape that would have avoided both misses.
 
+**A correction to the fix's own scope (L39).** The `98e129b`
+commit message said "three sites wired through a helper," which
+reads as "three bugs of the same class fixed." Reading the code
+again while writing the streaming test showed that is not true:
+
+- `process`: calls `engine.process_for(...)` directly. Panic
+  unwinds past the outer `match ... Err(e)` arm. That was the bug.
+
+- `process_streaming`: `run_streaming` (line 763) already wraps
+  `process_streaming_for` in `let call = tokio::spawn(...)` with
+  `call.await.map_err(|e| KodError::Internal(format!("engine task
+  panicked: {e}")))`. A panic in the engine returned `Err` from
+  `run_streaming` and the outer dispatch arm sent an error frame.
+  Not wedged.
+
+- `swarm`: `run_swarm` has the identical inner-spawn + map_err
+  shape. Not wedged.
+
+The helper at those two sites is **defense-in-depth** (it would
+catch a panic in `run_streaming` / `run_swarm`'s own body, not in
+the engine they call), which is a legitimate reason to keep it,
+but not the same reason as `process`. `7f6cfd5` adds the
+streaming E2E test and the empirical evidence: reverting the
+helper to the pre-fix shape fails `panicking_task_produces_an_error_frame`
+and `process_request_with_panicking_provider_gets_error_frame`,
+but `streaming_request_with_panicking_provider_gets_error_frame`
+**passes** — exactly because `run_streaming` was already safe.
+
+The uniform helper is not wrong. The commit message that implied
+the same bug at three sites was.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -387,7 +434,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L38)
+## The lesson index (L20–L40)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -413,6 +460,8 @@ corresponding section in `session-17.md` for the full story.
 | L36 | An item named "CI wiring — a decision" must be checked against `ls .github/` before being rewritten from memory. The handoff claimed `.github/` was absent; it was present and comprehensive since `668e54b`. |
 | L37 | A failing-first test that spawns its own panicking future is tautological: the fix it proves cannot be in production code. Drive the failure through production code, or pin a helper and accept the honest-scope caveat the way `in_flight_release.rs` does. |
 | L38 | An honest-scope caveat is honest only about the current code. "Would need the same `serve_io` extraction `acp.rs` got" was correct on the day it was written and wrong a day later — the extraction was a ~40-line refactor with no behavior change. Before scoping a test down, check whether the enabling refactor is actually small. |
+| L39 | A commit message that says "three sites wired through a helper" implies three bugs. Read the code at each site before claiming the fix is the same at each. In `serve.rs`, only `process` was wedged; `run_streaming` and `run_swarm` already had the inner-spawn guard. The uniform helper was defense-in-depth, not the fix for the same bug three times. |
+| L40 | A build cache can silently fail in two ways at once. (a) kache's `kache stats` header reports logical-vs-physical sizes and a cap that does not match `~/.config/kache/config.toml`'s `max_cache_size`; `kache gc` with no args is a no-op if physical size is under that (wrong) cap. (b) `auto-gc.log` had hundreds of `skipping eviction ... database is locked` lines, and `gc_stats.json` showed `entries_evicted: 0` — the daemon's LRU was silently broken for at least a day. `kache gc --max-age 3d` reclaimed 14 GiB. Check `kache stats`, `auto-gc.log`, and `gc_stats.json` when a disk-full recurs. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -456,7 +505,10 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `90e8126`. Nothing this session started is unfinished.
+   at `7f6cfd5`. Nothing this session started is unfinished. One
+   known gap, named under "Not fixed": kache's auto-gc daemon
+   was not evicting (L40); a future session that sees disk-full
+   again should check `kache stats` and `auto-gc.log` first.
 
 ## Note on `session-17.md`
 
@@ -495,9 +547,14 @@ serve adapter now sends an error frame instead of leaving the
 caller to time out (same class as the ACP fix in aa21bf8). The
 honest-scope caveat from that fix was closed by a
 `serve_io` extraction (`b38b7c2`) and an end-to-end test
-(`90e8126`) that drives a panicking provider through the real
-dispatch loop. Nineteen handoff lessons (L20–L38) that are
-mostly about the *checker* being wrong, not the code. The full
-workspace gate at `90e8126` runs 4444 tests, all green,
-including nine new properties across the three kod-config
-modules (`config.rs`, `policy.rs`, `llm.rs`).
+(`90e8126`). A follow-up test (`7f6cfd5`) verified the finding
+that only the `process` site was ever wedged; `process_streaming`
+and `swarm` were already protected by inner spawns in
+`run_streaming` / `run_swarm`. The `spawn_panic_guarded` helper
+at those two sites is defense-in-depth, not the same bug fixed
+three times (L39). Twenty-one handoff lessons (L20–L40) that
+are mostly about the *checker* being wrong, not the code; two
+of them (L40) came from a build cache that failed silently.
+The full workspace gate at `7f6cfd5` runs 4445 tests, all
+green, including nine new properties across the three
+kod-config modules (`config.rs`, `policy.rs`, `llm.rs`).
