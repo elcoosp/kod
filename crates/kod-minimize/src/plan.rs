@@ -247,3 +247,147 @@ mod tests {
         assert_eq!(strip_quotes("'abc\""), "'abc\"");
     }
 }
+
+#[cfg(test)]
+mod proptest_classify {
+    //! Property tests for `classify`'s safety and completeness
+    //! contracts.
+    //!
+    //! The module doc states the classifier's safety claim directly:
+    //!
+    //! > False negatives (a `Single` that is actually a pipe) are
+    //! > impossible because the scan is exhaustive on the operator
+    //! > set.
+    //!
+    //! That claim is exactly what a property test can prove
+    //! non-vacuously. The example tests above pin one operator case
+    //! each (bare pipe, quoted pipe, escaped pipe, `&&`, `;`,
+    //! background `&`, leading operator, here-doc, subshell, brace
+    //! compound, unbalanced quote). What they do not prove is that
+    //! the *classification* is complete and safe across generated
+    //! inputs — the claims by name, verified example-only, that
+    //! session 15's P2 hid in.
+    //!
+    //! Session 18 addition. Three of the four properties assert on
+    //! non-empty `Single` outputs; the fourth asserts on operator
+    //! inputs. Every property is non-vacuous by construction (no
+    //! `prop_assume!` over a wide domain — the `prop::sample::select`
+    //! and `prop_filter` generators from the previous rounds'
+    //! lessons).
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Arbitrary ASCII. Used for the totality and safety properties
+    /// (which fire on most inputs).
+    fn any_cmd() -> impl Strategy<Value = String> {
+        ".{0,200}"
+    }
+
+    /// A command with no quote characters. Used by the safety
+    /// property: if `c` has no `'`, `"`, or `\`, then "outside quotes"
+    /// is "the whole string," and the assertion "no `| & ;`" is
+    /// unambiguous.
+    fn quote_free_cmd() -> impl Strategy<Value = String> {
+        ".{0,200}".prop_filter("no quote or escape chars", |s| {
+            !s.contains('\'') && !s.contains('"') && !s.contains('\\')
+        })
+    }
+
+    /// A clean command: no operator chars, no quote chars, non-empty
+    /// after trim. Used by the completeness property: for any such
+    /// input, the classifier must return `Single`.
+    fn clean_cmd() -> impl Strategy<Value = String> {
+        ".{0,100}".prop_filter("clean input", |s| {
+            !s.trim().is_empty()
+                && !s
+                    .chars()
+                    .any(|c| "|&;<>(){}\'\"\\".contains(c))
+        })
+    }
+
+    proptest! {
+        /// `classify` never panics on arbitrary input.
+        #[test]
+        fn prop_classify_never_panics(c in any_cmd()) {
+            let _ = classify(&c);
+        }
+
+        /// `classify` always returns one of the four documented
+        /// variants. Tautological given the enum, but it pins the
+        /// totality of the classifier (no `unreachable!`, no
+        /// fall-through panic).
+        #[test]
+        fn prop_classify_returns_a_variant(c in any_cmd()) {
+            let plan = classify(&c);
+            let _ = match plan {
+                CommandPlan::Single { .. }
+                | CommandPlan::Piped
+                | CommandPlan::Chain
+                | CommandPlan::Unsupported => true,
+            };
+        }
+
+        /// **Conservatism** (non-vacuous). For any `a`, `b`
+        /// alphanumeric and any shell operator `op`, `classify(a op b)`
+        /// is NOT `Single`. The construct guarantees the assertion
+        /// fires; no filter, no reject budget.
+        ///
+        /// This is the doc's "false negatives are impossible" claim in
+        /// its sharpest form. A refactor that dropped a `|`, `&&`, `;`,
+        /// or `&` case from the classifier would let a real pipeline
+        /// through as `Single` — the shape session 15's P2 hid in for
+        /// a different class.
+        #[test]
+        fn prop_operator_implies_not_single(
+            a in "[a-zA-Z0-9 ]{0,15}",
+            b in "[a-zA-Z0-9 ]{0,15}",
+            op in prop::sample::select(vec!["|", "&&", ";", "&"]),
+        ) {
+            let cmd = format!("{a}{op}{b}");
+            let plan = classify(&cmd);
+            prop_assert!(
+                !matches!(plan, CommandPlan::Single { .. }),
+                "operator {:?} in {:?} produced Single {:?} — a real \
+                 pipeline would be rewritten as a single command",
+                op, cmd, plan,
+            );
+        }
+
+        /// **Safety** (the doc's claim, general form). If `classify`
+        /// returns `Single`, the input contains no top-level
+        /// `|`, `&`, or `;`. For quote-free input, "top-level" is
+        /// "anywhere in the string."
+        ///
+        /// Non-vacuity note: most arbitrary inputs are clean and
+        /// classify as `Single`, so the assertion fires on the
+        /// majority. The `prop_operator_implies_not_single` property
+        /// above covers the operator inputs that skip this one.
+        #[test]
+        fn prop_single_implies_no_operator(c in quote_free_cmd()) {
+            let plan = classify(&c);
+            if matches!(plan, CommandPlan::Single { .. }) {
+                prop_assert!(
+                    !c.contains('|') && !c.contains('&') && !c.contains(';'),
+                    "Single classified for quote-free input {:?} \
+                     containing an operator",
+                    c,
+                );
+            }
+        }
+
+        /// **Completeness**. For input with no operator, quote, or
+        /// escape chars, and non-empty after trim, `classify` returns
+        /// `Single`. This is the inverse direction: the classifier
+        /// must not be *too* conservative on clean input.
+        #[test]
+        fn prop_clean_input_is_single(c in clean_cmd()) {
+            let plan = classify(&c);
+            prop_assert!(
+                matches!(plan, CommandPlan::Single { .. }),
+                "clean input {:?} classified as {:?}, expected Single",
+                c, plan,
+            );
+        }
+    }
+}
