@@ -2143,6 +2143,7 @@ dependencies = [
  "kod-error",
  "kod-risk",
  "kod-types",
+ "proptest",
  "rstest",
  "serde",
  "serde_json",
