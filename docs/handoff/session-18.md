@@ -3,11 +3,11 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `7f6cfd5` (full-workspace gate green at that
-commit; see "State" below and the six "Re-verification"
-subsections in "What's open" #1). 4445/4445 on the first try after
-a disk-full retry; 5 skipped; one test annotated `leaky` by
-nextest (a resource leak within the test, not a failure).
+**Last verified commit:** `dac5844` (full-workspace gate green at that
+commit; see "State" below and the seven "Re-verification"
+subsections in "What's open" #1). 4450/4450 on the first try; 5
+skipped; no leaky this run. The commit fixes a wire-input overflow
+in the Anthropic SSE parser and adds five proptests to it.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -24,7 +24,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, and `7f6cfd5`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, and `dac5844`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -58,6 +58,15 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `dac5844` (after the Anthropic SSE overflow fix).**
+Ran the same command at `dac5844`:
+
+    4450 tests run: 4450 passed, 5 skipped
+
+Up from 4445 at `7f6cfd5` — exactly the five new proptests in
+`kod-provider-anthropic/wire.rs`. Clean first try: no execfail,
+no EAGAIN, no leaky.
 
 **Re-verification at `7f6cfd5` (after the streaming E2E test).**
 First attempt at `7f6cfd5` failed at link time with
@@ -180,7 +189,7 @@ correct last tag.
 
 ## State
 
-`main` at `7f6cfd5`, twenty-one commits past `v0.1.12`:
+`main` at `dac5844`, twenty-two commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -209,6 +218,8 @@ correct last tag.
 | `90e8126` | test(serve): E2E panic-guard through `serve_io` |
 | `5f1f550` | docs(handoff): gate at `90e8126`; followups closed |
 | `7f6cfd5` | test(serve): streaming E2E + finding: only `process` was wedged |
+| `34fc35c` | docs(handoff): gate at `7f6cfd5`; scope correction + cache lesson |
+| `dac5844` | fix(anthropic): saturating_add on SSE usage counters; proptests for `parse_sse_line` |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -341,6 +352,58 @@ but `streaming_request_with_panicking_provider_gets_error_frame`
 The uniform helper is not wrong. The commit message that implied
 the same bug at three sites was.
 
+**Third round: the SSE parser overflow (`dac5844`).** After the
+serve fix and its followups closed, a survey of test density
+across the workspace found `kod-provider-anthropic/src/wire.rs`:
+2182 lines, 30 example tests, **zero proptests** — the largest
+untested external-boundary parser in the tree. `parse_sse_line`
+is the byte-level entry for every frame of the Anthropic streaming
+API; a panic there kills the turn, same as the four fixes that
+opened this arc.
+
+Five proptests were written before any fix:
+
+- `prop_parse_sse_line_never_panics` — boundary contract
+- `prop_blocks_only_grow` — state monotone in `blocks.len`
+- `prop_finished_is_sticky` — no second `Done` to a client
+- `prop_stream_error_is_sticky` — TPD-01 mid-stream error not lost
+- `prop_adversarial_message_start_does_not_overflow` — failing-first
+
+The fifth was written to fail: `message_start` does `state.input_tokens
+= base + cache_read + cache_creation`, three `u64`s cast to `usize`
+and summed without a guard. Test/dev profile has `overflow-checks`
+on by default, so wire values near `u64::MAX` panic on the addition.
+The property was written and confirmed red before the fix landed.
+
+**The fix** (`dac5844`): `saturating_add` at both addition sites
+(`message_start` three-way, `message_delta` two-way). Saturating
+is the correct semantic for token counters — a value at
+`usize::MAX` already means the wire carried garbage; clamping
+beats aborting the turn.
+
+**Two independent positive controls** (L27): reverting only the
+`message_start` fix fails the property; reverting only the
+`message_delta` fix fails it too. The property exercises both
+`u64::MAX` cases in one run, so a re-read of the failure message
+tells which site tripped.
+
+**A small detour on the way in (L41):** the first `#[derive(Debug)]`
+insertion produced a duplicate-attribute error because
+`AnthropicStreamState` and `BlockInfo` already carried
+`#[derive(Default)]`. The correct edit is in place
+(`#[derive(Default)]` -> `#[derive(Default, Debug)]`), not a second
+attribute above it. proptest needs `Debug` on the strategy tuple
+types for failure reporting; a struct with only `Default` will
+not compile a proptest that takes it as an input.
+
+**L42, in the survey's own shape.** The prior handoff closed item
+#2 after three custom-parsing modules. The survey this round found
+a fourth — `wire.rs` — with a real bug in it. "The proptest
+surface is closed" is a claim about the *codebase*, not about the
+last three targets. The next same-class target, named under
+"Where to start" item 5, is `kod-memory/src/extract.rs`
+`parse_reply` — parses LLM output, zero proptests.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -434,7 +497,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L40)
+## The lesson index (L20–L42)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -462,6 +525,8 @@ corresponding section in `session-17.md` for the full story.
 | L38 | An honest-scope caveat is honest only about the current code. "Would need the same `serve_io` extraction `acp.rs` got" was correct on the day it was written and wrong a day later — the extraction was a ~40-line refactor with no behavior change. Before scoping a test down, check whether the enabling refactor is actually small. |
 | L39 | A commit message that says "three sites wired through a helper" implies three bugs. Read the code at each site before claiming the fix is the same at each. In `serve.rs`, only `process` was wedged; `run_streaming` and `run_swarm` already had the inner-spawn guard. The uniform helper was defense-in-depth, not the fix for the same bug three times. |
 | L40 | A build cache can silently fail in two ways at once. (a) kache's `kache stats` header reports logical-vs-physical sizes and a cap that does not match `~/.config/kache/config.toml`'s `max_cache_size`; `kache gc` with no args is a no-op if physical size is under that (wrong) cap. (b) `auto-gc.log` had hundreds of `skipping eviction ... database is locked` lines, and `gc_stats.json` showed `entries_evicted: 0` — the daemon's LRU was silently broken for at least a day. `kache gc --max-age 3d` reclaimed 14 GiB. Check `kache stats`, `auto-gc.log`, and `gc_stats.json` when a disk-full recurs. |
+| L41 | proptest's failure reporting needs `Debug` on every type in the strategy tuple. A struct with only `#[derive(Default)]` needs `Debug` added alongside it — and the *first* `#[derive(Debug)]` insertion will collide with the existing derive unless you edit in place (`#[derive(Default)]` -> `#[derive(Default, Debug)]`), not add a second `#[derive(Debug)]` above it. |
+| L42 | "The proptest surface is closed" is a claim about the *codebase*, not about the last three targets. The prior handoff closed item #2 after covering three custom-parsing modules; the survey this round found `parse_sse_line` in `kod-provider-anthropic` — a 2182-line external-boundary parser with 30 example tests and zero proptests, and a real overflow bug in it. Before declaring a surface done, list every parser on a crate boundary and check each one. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -505,10 +570,12 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `7f6cfd5`. Nothing this session started is unfinished. One
-   known gap, named under "Not fixed": kache's auto-gc daemon
-   was not evicting (L40); a future session that sees disk-full
-   again should check `kache stats` and `auto-gc.log` first.
+   at `dac5844`. Nothing this session started is unfinished. Two
+   known gaps: (a) kache's auto-gc daemon was not evicting (L40),
+   check `kache stats` and `auto-gc.log` if disk-full recurs;
+   (b) the parser survey (L42) found `kod-memory/extract.rs`
+   `parse_reply` — parses LLM output, zero proptests — as the
+   next same-class target.
 
 ## Note on `session-17.md`
 
@@ -534,27 +601,29 @@ section in this file, not that one.
 ## Session 18 in one line
 
 Started with a P2 fix plan from session 15 and closed three bug
-classes, a test-surface class, two open items, and one more
-bug found in a follow-up hunt: a panicking third party no longer
-kills a turn (four fixes, each failing-first), a char-named
-truncator no longer miscounts CJK (fourteen sites, one helper,
-one workspace lint), doc-claimed contracts in five crates —
-kod-schema-dialect, kod-error, kod-ast, kod-minimize, and
-kod-config — are property-tested with positive controls, the
-two previously-uncovered live tests run in CI on every push to
-main/develop, and a panicking spawned engine task in the NDJSON
-serve adapter now sends an error frame instead of leaving the
-caller to time out (same class as the ACP fix in aa21bf8). The
-honest-scope caveat from that fix was closed by a
-`serve_io` extraction (`b38b7c2`) and an end-to-end test
-(`90e8126`). A follow-up test (`7f6cfd5`) verified the finding
-that only the `process` site was ever wedged; `process_streaming`
-and `swarm` were already protected by inner spawns in
-`run_streaming` / `run_swarm`. The `spawn_panic_guarded` helper
-at those two sites is defense-in-depth, not the same bug fixed
-three times (L39). Twenty-one handoff lessons (L20–L40) that
-are mostly about the *checker* being wrong, not the code; two
-of them (L40) came from a build cache that failed silently.
-The full workspace gate at `7f6cfd5` runs 4445 tests, all
-green, including nine new properties across the three
-kod-config modules (`config.rs`, `policy.rs`, `llm.rs`).
+classes, a test-surface class, two open items, and four more
+bugs found by extended hunting: a panicking third party no
+longer kills a turn (four fixes, each failing-first), a
+char-named truncator no longer miscounts CJK (fourteen sites,
+one helper, one workspace lint), doc-claimed contracts in five
+crates — kod-schema-dialect, kod-error, kod-ast, kod-minimize,
+and kod-config — are property-tested with positive controls,
+the two previously-uncovered live tests run in CI on every
+push to main/develop, a panicking spawned engine task in the
+NDJSON serve adapter now sends an error frame instead of
+leaving the caller to time out (same class as the ACP fix in
+aa21bf8), and a wire-input `usize` overflow in the Anthropic
+SSE parser (`dac5844`) is now saturated, with five proptests
+pinning the boundary parser's contract. The honest-scope
+caveat from the serve fix was closed by a `serve_io`
+extraction (`b38b7c2`) and an end-to-end test (`90e8126`).
+A follow-up test (`7f6cfd5`) verified the finding that only
+the `process` site was ever wedged (L39). Twenty-three handoff
+lessons (L20–L42) that are mostly about the *checker* being
+wrong, not the code; two (L40) came from a build cache that
+failed silently, and two (L41, L42) came from a parser survey
+that found a real overflow the prior "surface closed" claim
+missed. The full workspace gate at `dac5844` runs 4450 tests,
+all green, including fourteen new properties across four
+modules (`kod-config/config.rs`, `kod-config/policy.rs`,
+`kod-config/llm.rs`, and `kod-provider-anthropic/wire.rs`).
