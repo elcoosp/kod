@@ -128,7 +128,9 @@ async fn panicking_tool_in_a_parallel_batch_does_not_kill_siblings() {
             let reg = Arc::clone(&reg);
             let name = n.to_string();
             async move {
-                let r = reg.execute_tool(&name, &serde_json::json!({}), &ctx()).await;
+                let r = reg
+                    .execute_tool(&name, &serde_json::json!({}), &ctx())
+                    .await;
                 (name, r)
             }
         })

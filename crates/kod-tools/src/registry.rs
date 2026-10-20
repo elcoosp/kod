@@ -1,8 +1,8 @@
 //! Tool registry - manages available tools and their definitions.
 
 use crate::Tool;
-use futures::FutureExt;
 use crate::context::ToolContext;
+use futures::FutureExt;
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition};
 use tokio::sync::RwLock;
@@ -167,10 +167,7 @@ impl ToolRegistry {
             // error the model can read, not a dead session.
             Some(t) => {
                 let fut = t.execute(params, context);
-                match std::panic::AssertUnwindSafe(fut)
-                    .catch_unwind()
-                    .await
-                {
+                match std::panic::AssertUnwindSafe(fut).catch_unwind().await {
                     Ok(result) => result,
                     Err(payload) => {
                         let what = payload

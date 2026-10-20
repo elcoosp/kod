@@ -5,8 +5,8 @@
 //! instead of one per file.
 
 mod minimizer_integration;
+mod panic_isolation;
 mod registry;
 mod sandbox_containment;
 mod tools;
-mod panic_isolation;
 mod truncate_helper_sites;

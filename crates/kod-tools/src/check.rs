@@ -957,7 +957,6 @@ mod coverage_project_detection {
     }
 }
 
-
 #[cfg(test)]
 mod proptests {
     //! Properties of the compiler-output parsers in this module.
@@ -980,9 +979,7 @@ mod proptests {
             prop::sample::select(vec!["error", "warning"]),
             "[a-zA-Z0-9][a-zA-Z0-9 .,;:!?-]{0,59}",
         )
-            .prop_map(|(path, line, col, sev, msg)| {
-                format!("{path}:{line}:{col}: {sev}: {msg}")
-            })
+            .prop_map(|(path, line, col, sev, msg)| format!("{path}:{line}:{col}: {sev}: {msg}"))
     }
 
     proptest! {
