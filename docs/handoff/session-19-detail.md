@@ -326,3 +326,44 @@ One property round with no bug (`render` private helpers, 16
 properties), and one small refactor that closed a duplication
 named in R7's commit message. Neither adds a release-worthy
 change; `v0.1.14` is still the current tag.
+
+## Post-close: the `cap_file_body` perf fix (`e97e344`)
+
+The session-19 close gate at `d6a6671` ran **4813 tests in 291s**
+— 5.3x the 55s gate at `b457ac5`. The regression was traced to a
+single property added in `610b487`:
+`prop_cjk_body_under_char_budget_not_truncated`.
+
+That property built a 133_333-char CJK body and ran proptest's
+default 256 cases against it: 34M char iterations, each of which
+calls `chars().count()` (O(n)). In isolation the property took
+~22s. In the full-workspace gate it held the test binary alive
+long enough that nextest's scheduling stretched the whole run to
+291s.
+
+The fix (`e97e344`) does two things:
+
+1. **66_667 chars, not 133_333.** A CJK char is 3 bytes; 66_667
+   chars = 200_001 bytes, which already trips the byte budget
+   while staying under the char budget. Half the input, same
+   branch exercised.
+2. **`with_cases(16)`, not 256.** The input is a single fixed
+   shape, not a search space. 16 samples is 16 redundant
+   confirmations, not 16 proofs.
+
+Cost after: ~1.07M iterations, 32x fewer. Property time in
+isolation: 22s → 0.5s.
+
+**Verification:** the whole-workspace gate re-ran at `e97e344`
+and the wall time is recorded in the State table of
+`session-19.md`. If a future session finds that gate slow again,
+the first thing to check is whether a new large-input property
+landed with proptest's default case count.
+
+**Shape correction during the fix round (recorded for honesty):**
+the first attempt put `#![proptest_config(...)]` after the doc
+comment inside `proptest! {}`. That parses as an outer attribute
+followed by an inner attribute, which is invalid Rust. The inner
+attribute must be the first item in the macro body. A module
+rewrite with the config at the top fixed it.
+

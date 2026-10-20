@@ -159,7 +159,7 @@ fix or lesson matters; the starting document stays short.
 
 | | |
 |---|---|
-| HEAD | `d6a6671` (`refactor(kod-core): collapse router's truncate_chars into kod-types`) |
+| HEAD | `e97e344` (`perf(kod-stats): shrink cap_file_body's property by 32x`) |
 | tag | **`v0.1.14` at `0980469`** (released in session 19) |
 | previous tag | `v0.1.13` at `087d6e1` |
 | tree | clean |
@@ -167,7 +167,7 @@ fix or lesson matters; the starting document stays short.
 | `session-18-detail.md` | 1618 lines (the narrative) |
 | `session-19-detail.md` | ~320 lines (R1–R6, the v0.1.14 release note) |
 | commits since v0.1.13 | 69 |
-| last full-workspace gate | `d6a6671` — `Summary [ 291.398s] 4813 tests run: 4813 passed (1 leaky), 5 skipped` |
+| last full-workspace gate | `e97e344` — `Summary [  47.800s] 4813 tests run: 4813 passed, 5 skipped` (wall 103s) |
 
 ### Gate verification at session open
 
