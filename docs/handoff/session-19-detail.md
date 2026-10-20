@@ -90,3 +90,40 @@ imports — which is the canonical `goimports` formatting.
   `kod-telemetry::otlp::{turn_payload, tool_payload}`. Pure
   `(&Config, &Record) -> serde_json::Value`; no proptest
   dev-dep yet. Survey pending.
+
+### R3 — `kod-telemetry::otlp` payload properties (`66888e3`)
+
+Nine properties + two controls on `turn_payload` and
+`tool_payload`. **No bug found in the crate.** Five failures on
+the first run, all in the test code:
+
+1. `collect_attribute_keys` walked the entire JSON tree, so it
+   picked up `resource.attributes.service.name` alongside the
+   log-record attributes. Expected counts were off by one. The
+   walker is now scoped to `logRecords` entries only.
+2. `attr_value`'s int probe handled bare numbers and
+   `{"intValue": N}`, but not the OTLP JSON encoding of int64 as
+   a **string** (`{"intValue": "0"}`) — that's how OTLP avoids
+   the JSON 2^53 precision limit. The probe now handles all
+   three forms.
+
+The two controls (`control_populated_turn_has_full_attribute_set`
+and `control_populated_tool_has_three_attributes`) were what
+caught the walker bug: an expected *count* is a more direct
+statement than a set difference, and the count failing told me
+the walker was wrong before the exact-set properties pointed to
+the crate.
+
+This is L58's family one level down: the property was named
+correctly, the crate was correct, and the failure was in the
+*helpers the property used*. I predicted in the round's design
+notes that `prop_turn_attribute_key_set_exact` failing "would be
+real" — it wasn't. The commit message records the correction.
+
+Mechanical: added `proptest = { workspace = true }` to
+`kod-telemetry/[dev-dependencies]`, Cargo.lock companion
+committed separately. The `proptest-regressions/otlp.txt` seed
+the failing first run produced is committed as an adversarial
+input (two seeds: one with `ttft_ms: None`, one with
+`ttft_ms: Some(0)` — both valid cases worth keeping).
+
