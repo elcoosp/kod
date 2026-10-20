@@ -28,8 +28,7 @@ fn read(rel: &str) -> String {
         .parent()
         .unwrap()
         .to_path_buf();
-    std::fs::read_to_string(root.join(rel))
-        .unwrap_or_else(|e| panic!("read {rel}: {e}"))
+    std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
 #[test]

@@ -10,6 +10,6 @@ mod config_migrate;
 mod integration_tests;
 mod policy_explain;
 mod replay;
+mod truncate_helper_sites;
 #[cfg(unix)]
 mod tui_e2e;
-mod truncate_helper_sites;
