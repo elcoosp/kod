@@ -672,3 +672,157 @@ mod tests {
         assert!(corrective.result_summary.contains("invalid regex"));
     }
 }
+
+#[cfg(test)]
+mod tool_loop_guard_proptests {
+    //! Properties for `ToolLoopGuard`.
+    //!
+    //! The guard's state machine: push a fingerprint of the round's
+    //! `ToolCall`s, truncate to `threshold` entries, and fire a
+    //! `Corrective` iff every retained fingerprint equals the newest.
+    //! `reset` clears; an empty `calls` slice clears.
+    //!
+    //! `with_threshold` clamps its argument to `max(2)`, so
+    //! `with_threshold(0)` and `with_threshold(1)` both behave like
+    //! a threshold-2 guard. The clamp lives in the constructor; the
+    //! `expect("len >= threshold >= 2")` in `observe_round` is
+    //! therefore unreachable, not a live panic path. The clamp is
+    //! pinned by `control_threshold_zero_and_one_clamp_to_two`.
+    //!
+    //! The first version of this round's controls probed for a
+    //! panic on `with_threshold(0)` — the survey's pre-check
+    //! output stated the clamp explicitly, and I wrote the test
+    //! against a wrong model anyway. The two controls were rewritten
+    //! after the first targeted run failed. Code was correct; the
+    //! checker was wrong. Same family as L58, but caught by the
+    //! *survey itself* rather than by a property.
+
+    use super::*;
+
+    fn call(name: &str, path: &str) -> ToolCall {
+        ToolCall {
+            id: Some(format!("call-{name}")),
+            tool_name: name.to_string(),
+            arguments: serde_json::json!({ "path": path }),
+        }
+    }
+
+    fn no_results() -> Vec<ToolResult> {
+        Vec::new()
+    }
+
+    // ---- pinning `with_threshold(0)` / `(1)` ---------------------------
+
+    /// Control: `with_threshold(0)` and `with_threshold(1)` both
+    /// clamp to 2. The clamping happens in the constructor
+    /// (`threshold.max(2)`), so `observe_round`'s
+    /// `self.recent.back().expect("len >= threshold >= 2")` cannot
+    /// be reached with an empty deque. This pins the clamp so a
+    /// future change that removed it — bringing back the panic —
+    /// would show up here rather than as a runtime crash.
+    #[test]
+    fn control_threshold_zero_and_one_clamp_to_two() {
+        assert_eq!(
+            ToolLoopGuard::with_threshold(0).threshold(),
+            2,
+            "with_threshold(0) must clamp to 2",
+        );
+        assert_eq!(
+            ToolLoopGuard::with_threshold(1).threshold(),
+            2,
+            "with_threshold(1) must clamp to 2",
+        );
+        // The clamped guard behaves like a threshold-2 guard:
+        // fires on the *second* identical round, not the first.
+        let mut guard = ToolLoopGuard::with_threshold(0);
+        let calls = vec![call("read_file", "src/main.rs")];
+        assert!(
+            guard.observe_round(&calls, &no_results()).is_none(),
+            "clamped threshold-0 guard fired on round 1 (should wait for round 2)",
+        );
+        assert!(
+            guard.observe_round(&calls, &no_results()).is_some(),
+            "clamped threshold-0 guard did not fire on round 2",
+        );
+    }
+
+    // ---- properties on the normal (threshold >= 2) path ---------------
+
+    #[test]
+    fn prop_same_round_for_threshold_rounds_fires() {
+        for threshold in 2usize..=5 {
+            let mut guard = ToolLoopGuard::with_threshold(threshold);
+            let calls = vec![call("read_file", "src/main.rs")];
+            for i in 0..threshold {
+                let verdict = guard.observe_round(&calls, &no_results());
+                if i + 1 < threshold {
+                    assert!(
+                        verdict.is_none(),
+                        "threshold={} fired at round {} (expected None)",
+                        threshold,
+                        i + 1,
+                    );
+                } else {
+                    assert!(
+                        verdict.is_some(),
+                        "threshold={} did not fire at round {}",
+                        threshold,
+                        i + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prop_alternating_rounds_never_fire() {
+        for threshold in 2usize..=5 {
+            let mut guard = ToolLoopGuard::with_threshold(threshold);
+            let a = vec![call("read_file", "a.rs")];
+            let b = vec![call("read_file", "b.rs")];
+            for i in 0..20 {
+                let calls = if i % 2 == 0 { &a } else { &b };
+                let verdict = guard.observe_round(calls, &no_results());
+                assert!(
+                    verdict.is_none(),
+                    "threshold={} fired on alternating round {}",
+                    threshold,
+                    i,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prop_reset_clears_accumulator() {
+        let mut guard = ToolLoopGuard::with_threshold(3);
+        let calls = vec![call("read_file", "src/main.rs")];
+
+        // Two rounds — one short of firing.
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+
+        // Reset, then two more rounds — still should not fire.
+        guard.reset();
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+
+        // Third round after reset fires.
+        assert!(guard.observe_round(&calls, &no_results()).is_some());
+    }
+
+    #[test]
+    fn prop_empty_calls_clears_accumulator() {
+        let mut guard = ToolLoopGuard::with_threshold(3);
+        let calls = vec![call("read_file", "src/main.rs")];
+
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        // Empty round clears.
+        assert!(guard.observe_round(&[], &no_results()).is_none());
+        // Need three more rounds to fire now.
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        assert!(guard.observe_round(&calls, &no_results()).is_none());
+        assert!(guard.observe_round(&calls, &no_results()).is_some());
+    }
+}
