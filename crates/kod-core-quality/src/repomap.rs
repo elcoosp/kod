@@ -1298,3 +1298,149 @@ mod coverage_language_extractors {
         );
     }
 }
+
+#[cfg(test)]
+mod repomap_proptests {
+    //! Properties generalizing the extractor example tests.
+    //!
+    //! The existing tests `the_ast_and_regex_rust_paths_agree`,
+    //! `the_ast_and_regex_paths_agree_for_every_language`, and
+    //! `the_paths_agree_past_the_symbol_cap` are the properties
+    //! written as single examples. They are the right shape; these
+    //! generalize them across an input generator, and add a
+    //! property for `extract_imports` (which has two example tests
+    //! and no generator).
+    //!
+    //! **Scope note:** this is a small round. The example tests
+    //! already cover the AST/regex agreement and the symbol-cap
+    //! behaviour for one hand-written source per language. The
+    //! properties below catch a regression that changes the
+    //! extractor's behaviour on inputs the examples happen not to
+    //! sample; they are not filling a large gap.
+    //!
+    //! Not covered here: `build_repo_map` (needs on-disk fixtures
+    //! via `tempfile`; `build_repo_map_walks_a_tempdir` already
+    //! exists as an example test), `render` (`render_honors_budget`
+    //! already exists), `looks_like_a_repo` (filesystem). Those are
+    //! the L51-flake shape at scale if generalized, and the
+    //! existing example tests are honest about their cost.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Compare two symbol lists by their (kind, name, line) tuples.
+    /// `Symbol` does not derive `PartialEq` (the existing example
+    /// tests compare tuple forms for the same reason), so `sig`
+    /// reduces a list to a comparable shape without changing the
+    /// public type.
+    fn sig(syms: &[Symbol]) -> Vec<(&'static str, String, usize)> {
+        syms.iter()
+            .map(|s| (s.kind, s.name.clone(), s.line))
+            .collect()
+    }
+
+    /// A minimal valid Rust source: one top-level fn.
+    fn arb_rust_fn_src() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,12}".prop_map(|name| format!("fn {name}() {{}}\n"))
+    }
+
+    /// A minimal valid Python source: one top-level def.
+    fn arb_python_def_src() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,12}".prop_map(|name| format!("def {name}():\n    pass\n"))
+    }
+
+    proptest! {
+        // ---- extract_rust --------------------------------------------------
+
+        /// `extract_rust` is deterministic: same input, same symbols.
+        #[test]
+        fn prop_rust_deterministic(s in arb_rust_fn_src()) {
+            prop_assert_eq!(sig(&extract_rust(&s)), sig(&extract_rust(&s)));
+        }
+
+        /// The AST path and the regex path agree on *every* source
+        /// the generator produces, not only on the hand-written
+        /// fixture the existing example test uses.
+        #[test]
+        fn prop_rust_ast_and_regex_agree(s in arb_rust_fn_src()) {
+            let ast = extract_rust_via_ast(&s).expect("valid Rust always parses");
+            let regex = extract_rust(&s);
+            prop_assert_eq!(
+                sig(&ast), sig(&regex),
+                "AST and regex extractors disagreed on {:?}", s,
+            );
+        }
+
+        /// `extract_rust` finds the `fn` it was given. The
+        /// generator constructs exactly one fn; the extractor
+        /// reports exactly one `fn` symbol, and its name matches.
+        #[test]
+        fn prop_rust_finds_the_fn(name in "[a-z][a-z0-9_]{0,12}") {
+            let src = format!("fn {name}() {{}}\n");
+            let syms = extract_rust(&src);
+            let fns: Vec<_> = syms.iter().filter(|s| s.kind == "fn").collect();
+            prop_assert_eq!(fns.len(), 1, "expected exactly one fn symbol in {:?}", src);
+            prop_assert_eq!(&fns[0].name, &name);
+            prop_assert_eq!(fns[0].line, 1);
+        }
+
+        /// The symbol cap (`200`) holds: a source with more than
+        /// 200 fns produces at most 200 symbols. The existing
+        /// `the_paths_agree_past_the_symbol_cap` example test pins
+        /// the AST/regex agreement past the cap; this pins the cap
+        /// itself on the pure regex path.
+        #[test]
+        fn prop_rust_respects_symbol_cap(n in 200usize..=300) {
+            let src: String = (0..n).map(|i| format!("fn f{i}() {{}}\n")).collect();
+            let syms = extract_rust(&src);
+            prop_assert!(
+                syms.len() <= 200,
+                "extractor returned {} symbols for {} fns (cap is 200)", syms.len(), n,
+            );
+        }
+
+        // ---- extract_python ------------------------------------------------
+
+        /// `extract_python` is deterministic. Mirrors the Rust
+        /// property for a second language, confirming the pattern
+        /// across the extractor family.
+        #[test]
+        fn prop_python_deterministic(s in arb_python_def_src()) {
+            prop_assert_eq!(sig(&extract_python(&s)), sig(&extract_python(&s)));
+        }
+
+        /// `extract_python` finds a `def` on line 1 of the source.
+        #[test]
+        fn prop_python_finds_the_def(name in "[a-z][a-z0-9_]{0,12}") {
+            let src = format!("def {name}():\n    pass\n");
+            let syms = extract_python(&src);
+            let defs: Vec<_> = syms.iter().filter(|s| s.kind == "def").collect();
+            prop_assert_eq!(defs.len(), 1, "expected exactly one def symbol in {:?}", src);
+            prop_assert_eq!(&defs[0].name, &name);
+        }
+
+        // ---- extract_imports -----------------------------------------------
+
+        /// An unknown extension produces no imports. The dispatch
+        /// in `extract_imports` matches only a fixed set of
+        /// extensions; everything else falls through to an empty
+        /// Vec.
+        #[test]
+        fn prop_unknown_ext_no_imports(content in "[a-zA-Z0-9 \n]{0,100}") {
+            prop_assert!(extract_imports("no-such-ext", &content).is_empty());
+            prop_assert!(extract_imports("", &content).is_empty());
+        }
+
+        /// A single `use foo::bar;` line at column 0 in Rust source
+        /// produces at least one import.
+        #[test]
+        fn prop_rust_imports_finds_a_use(prefix in "[a-z]{1,10}") {
+            let src = format!("use {prefix}::item;\n");
+            let imports = extract_imports("rs", &src);
+            prop_assert!(
+                !imports.is_empty(),
+                "extract_imports(\"rs\", {:?}) returned empty", src,
+            );
+        }
+    }
+}
