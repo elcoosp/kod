@@ -1924,4 +1924,79 @@ mod plan_shake_protected_paths_proptests {
             "a bash tool result must not be protected by a path match",
         );
     }
+
+    /// Two `read_file` calls on *different* paths, one protected.
+    /// The protected result is skipped; the other is still elided.
+    /// This is the per-message gate behaviour: the check is inside
+    /// the message loop, on the message's own originating call's
+    /// path, not on "any path is protected".
+    ///
+    /// The uniform-transcript property above asserts the fully-
+    /// protected case; this one asserts the mixed case. Without it,
+    /// a refactor that swapped `if config.protected_paths.contains(&pb)
+    /// { continue }` for an `if !config.protected_paths.is_empty()
+    /// { continue }` early-out would pass every existing test in
+    /// this module and silently stop eliding unprotected results.
+    fn mixed_transcript(path_a: &str, path_b: &str) -> Vec<ChatMessage> {
+        let body = "y".repeat(4_000);
+        vec![
+            read_file_call("a1", path_a),
+            tool_result("a1", &body),
+            read_file_call("b1", path_b),
+            tool_result("b1", &body),
+        ]
+    }
+
+    #[test]
+    fn control_mixed_transcript_elides_only_the_unprotected_result() {
+        let transcript = mixed_transcript("src/protected.rs", "src/free.rs");
+        let mut cfg = open_config();
+        cfg.protected_paths
+            .insert(PathBuf::from("src/protected.rs"));
+
+        let plan = plan_shake(&transcript, &cfg, never_protected, false);
+        assert_eq!(
+            plan.actions.len(),
+            1,
+            "exactly one action: the unprotected result, got {:?}",
+            plan.actions,
+        );
+        let action = &plan.actions[0];
+        // The action targets the *second* tool message (the free path).
+        let tool_indices: Vec<usize> = transcript
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == MessageRole::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(tool_indices.len(), 2);
+        let protected_result_id = &transcript[tool_indices[0]].id;
+        let free_result_id = &transcript[tool_indices[1]].id;
+        assert_eq!(
+            &action.message_id, free_result_id,
+            "action should target the free-path result, not the protected one",
+        );
+        assert_ne!(
+            &action.message_id, protected_result_id,
+            "action must not target the protected result",
+        );
+    }
+
+    #[test]
+    fn control_mixed_transcript_with_both_protected_is_empty() {
+        let transcript = mixed_transcript("src/a.rs", "src/b.rs");
+        let mut cfg = open_config();
+        cfg.protected_paths.insert(PathBuf::from("src/a.rs"));
+        cfg.protected_paths.insert(PathBuf::from("src/b.rs"));
+        let plan = plan_shake(&transcript, &cfg, never_protected, false);
+        assert!(plan.is_empty(), "both protected => empty plan");
+    }
+
+    #[test]
+    fn control_mixed_transcript_with_neither_protected_elides_both() {
+        let transcript = mixed_transcript("src/a.rs", "src/b.rs");
+        let cfg = open_config();
+        let plan = plan_shake(&transcript, &cfg, never_protected, false);
+        assert_eq!(plan.actions.len(), 2, "neither protected => both elided");
+    }
 }
