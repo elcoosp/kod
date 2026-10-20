@@ -2342,6 +2342,7 @@ dependencies = [
  "kod-tools",
  "kod-types",
  "parking_lot",
+ "proptest",
  "regex",
  "serde",
  "serde_json",
