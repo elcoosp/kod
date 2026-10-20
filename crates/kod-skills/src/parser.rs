@@ -618,4 +618,114 @@ mod proptests {
             proptest::prop_assert_eq!(a.metadata.description, b.metadata.description);
         }
     }
+
+    // -----------------------------------------------------------------
+    // `## Instructions` / `## Constraints` section extraction.
+    //
+    // `02de4e8` noted honestly that none of the seven properties
+    // exercised `extract_section`. These five pin it through
+    // `parse_content`'s public outputs (`Skill::instructions`,
+    // `Skill::constraints`), because `extract_section` is private.
+    // -----------------------------------------------------------------
+
+    /// Build a valid SKILL.md whose body is `body`.
+    fn build_with_body(body: &str) -> String {
+        let meta = SkillMetadata {
+            name: "test-skill".to_string(),
+            description: "test description".to_string(),
+            version: String::new(),
+            author: None,
+            category: String::new(),
+            tags: Vec::new(),
+            capabilities: Vec::new(),
+            requirements: Vec::new(),
+            triggers: Vec::new(),
+        };
+        let yaml = serde_yaml::to_string(&meta).unwrap();
+        format!("---\n{yaml}---\n{body}")
+    }
+
+    proptest::proptest! {
+        /// A `## Instructions` section is extracted as the
+        /// instructions, and does not run into a following
+        /// `## Other` header. Two non-empty bodies, one as the
+        /// section, one after the next header.
+        #[test]
+        fn prop_instructions_section_does_not_leak_past_next_header(
+            instructions_text in "[a-zA-Z0-9 .]{1,40}",
+            after in "[a-zA-Z0-9 .]{1,40}",
+        ) {
+            let body = format!(
+                "## Instructions\n{instructions_text}\n## Notes\n{after}\n",
+            );
+            let content = build_with_body(&body);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(
+                skill.instructions.trim(),
+                instructions_text.trim(),
+            );
+        }
+
+        /// A body with no `## Instructions` section falls back to
+        /// the whole body as the instructions (the Claude-style
+        /// SKILL.md shape). The body alphabet excludes `#` so no
+        /// section header can appear.
+        #[test]
+        fn prop_no_instructions_section_falls_back_to_body(
+            body_text in "[a-zA-Z0-9 .\n]{1,100}",
+        ) {
+            let content = build_with_body(&body_text);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(
+                skill.instructions.trim(),
+                body_text.trim(),
+            );
+        }
+
+        /// A `## Constraints` section is extracted as
+        /// `Some(text)`.
+        #[test]
+        fn prop_constraints_section_is_extracted(
+            constraints_text in "[a-zA-Z0-9 .]{1,40}",
+        ) {
+            let body = format!("## Constraints\n{constraints_text}\n");
+            let content = build_with_body(&body);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            let got = skill.constraints.expect("constraints section present");
+            proptest::prop_assert_eq!(got.trim(), constraints_text.trim());
+        }
+
+        /// A body with no `## Constraints` section yields `None`.
+        #[test]
+        fn prop_no_constraints_section_yields_none(
+            body_text in "[a-zA-Z0-9 .\n]{1,100}",
+        ) {
+            let content = build_with_body(&body_text);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert!(skill.constraints.is_none());
+        }
+
+        /// Both sections present together: each is extracted
+        /// independently, neither leaks into the other.
+        #[test]
+        fn prop_both_sections_extract_independently(
+            i in "[a-zA-Z0-9 .]{1,30}",
+            c in "[a-zA-Z0-9 .]{1,30}",
+        ) {
+            let body = format!("## Instructions\n{i}\n## Constraints\n{c}\n");
+            let content = build_with_body(&body);
+            let p = parser();
+            let skill = p.parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(skill.instructions.trim(), i.trim());
+            proptest::prop_assert_eq!(
+                skill.constraints.as_deref().map(str::trim),
+                Some(c.trim()),
+            );
+        }
+    }
+
 }
