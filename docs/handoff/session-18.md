@@ -347,6 +347,11 @@ released.
 | `c87eb73` | test(kod-core-quality): property tests for auto-thinking clamping |
 | *this commit* | docs(handoff): L56 — a predicted test count is not a count |
 
+| `7550f78` | test(kod-core-quality): property tests for snapcompact |
+| `eca9d7a` | test(kod-core-quality): property tests for `plan_prune` |
+| `60c1e5e` | fix(kod-core-quality): silence irrefutable if-let in the prune proptest helper |
+| `225309e` | **fix(kod-core-quality): `sanitize_slug` must not truncate onto a dash** (real bug: the take(32) ran after split/join, so a 32-char output could end in `-` and a second pass would strip it — not idempotent. Found by a property written from reading the code, not by an example test) |
+
 ### Gate history (continuation)
 
 - `c9dbd17` — `4503 run / 4500 passed / 3 execfail / 5 skipped`.
