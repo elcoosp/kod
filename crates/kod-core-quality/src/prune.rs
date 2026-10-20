@@ -927,4 +927,223 @@ mod tests {
         let plan = plan_prune(&[], &PruneConfig::default(), const_suffix(0), false);
         assert!(plan.is_empty());
     }
+
+    mod proptests {
+        //! Properties for `plan_prune`.
+        //!
+        //! The example tests in `tests` pin specific cases: the
+        //! supersede chain, path mismatch, a non-read tool, an
+        //! already-blanked result, the protected window, the warm
+        //! prefix band, the savings gate, defaults, and a malformed
+        //! read. What they do not pin is the *general shape* of the
+        //! plan as a function of the config. These properties are
+        //! that shape: closure, idempotence, determinism, and
+        //! monotonicity in each config field.
+        //!
+        //! `test_config` zeroes the numeric gates and raises the
+        //! cache-warm band so a two-read transcript with a shared
+        //! path actually produces a plan. The control test at the
+        //! bottom asserts that shape yields a non-empty plan, so the
+        //! universal properties above are not vacuous (L43).
+        //!
+        //! `protected_paths` has no existing test. Its property is a
+        //! control-pair: the unprotected plan is asserted non-empty,
+        //! so the protected plan's emptiness is the protection, not
+        //! a lack of candidates.
+
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::HashSet;
+
+        fn ids(plan: &PrunePlan) -> HashSet<MessageId> {
+            plan.actions.iter().map(|(id, _)| id.clone()).collect()
+        }
+
+        fn apply(transcript: &[ChatMessage], plan: &PrunePlan) -> Vec<ChatMessage> {
+            let mut out = transcript.to_vec();
+            for (id, action) in &plan.actions {
+                if let PruneAction::Blank { placeholder } = action {
+                    for msg in out.iter_mut() {
+                        if msg.id == *id {
+                            msg.content = placeholder.clone();
+                        }
+                    }
+                }
+            }
+            out
+        }
+
+        fn test_config() -> PruneConfig {
+            PruneConfig {
+                protect_tokens: 0,
+                minimum_savings: 0,
+                min_prune_tokens: 0,
+                cache_warm_suffix_tokens: u64::MAX,
+                protected_paths: HashSet::new(),
+            }
+        }
+
+        fn arb_transcript() -> impl Strategy<Value = Vec<ChatMessage>> {
+            prop::collection::vec(("[a-z]{1,6}", "[a-zA-Z ]{0,200}"), 0..=5).prop_map(|pairs| {
+                let mut out = Vec::new();
+                for (i, (path, body)) in pairs.into_iter().enumerate() {
+                    let cid = format!("call-{i}");
+                    out.push(assistant_with_read(&cid, &path));
+                    out.push(tool_result(&cid, &body));
+                }
+                out
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn prop_actions_target_tool_messages(transcript in arb_transcript()) {
+                let plan = plan_prune(&transcript, &test_config(), const_suffix(100_000), false);
+                let tool_ids: HashSet<_> = transcript
+                    .iter()
+                    .filter(|m| m.role == MessageRole::Tool)
+                    .map(|m| m.id.clone())
+                    .collect();
+                for (id, _) in &plan.actions {
+                    prop_assert!(
+                        tool_ids.contains(id),
+                        "action targets a non-tool message: {:?}",
+                        id,
+                    );
+                }
+            }
+
+            #[test]
+            fn prop_actions_never_target_already_blanked(transcript in arb_transcript()) {
+                let plan = plan_prune(&transcript, &test_config(), const_suffix(100_000), false);
+                let blanked_ids: HashSet<_> = transcript
+                    .iter()
+                    .filter(|m| m.content == SUPERSEDED_PLACEHOLDER)
+                    .map(|m| m.id.clone())
+                    .collect();
+                for (id, _) in &plan.actions {
+                    prop_assert!(
+                        !blanked_ids.contains(id),
+                        "action targets an already-blanked message",
+                    );
+                }
+            }
+
+            #[test]
+            fn prop_idempotent_after_apply(transcript in arb_transcript()) {
+                let config = test_config();
+                let first = plan_prune(&transcript, &config, const_suffix(100_000), false);
+                let mutated = apply(&transcript, &first);
+                let second = plan_prune(&mutated, &config, const_suffix(100_000), false);
+                prop_assert!(
+                    second.is_empty(),
+                    "re-plan after apply produced {} actions",
+                    second.len(),
+                );
+            }
+
+            #[test]
+            fn prop_deterministic(transcript in arb_transcript()) {
+                let config = test_config();
+                let a = plan_prune(&transcript, &config, const_suffix(100_000), false);
+                let b = plan_prune(&transcript, &config, const_suffix(100_000), false);
+                prop_assert_eq!(a.len(), b.len());
+                for (x, y) in a.actions.iter().zip(b.actions.iter()) {
+                    prop_assert_eq!(&x.0, &y.0);
+                }
+            }
+
+            #[test]
+            fn prop_minimum_savings_is_upward_closed(transcript in arb_transcript()) {
+                let low = PruneConfig { minimum_savings: 0, ..test_config() };
+                let high = PruneConfig { minimum_savings: 100_000, ..test_config() };
+                let plan_low = plan_prune(&transcript, &low, const_suffix(100_000), false);
+                let plan_high = plan_prune(&transcript, &high, const_suffix(100_000), false);
+                let low_ids = ids(&plan_low);
+                for (id, _) in &plan_high.actions {
+                    prop_assert!(
+                        low_ids.contains(id),
+                        "raising minimum_savings removed an action, should only add",
+                    );
+                }
+            }
+
+            #[test]
+            fn prop_protect_tokens_is_downward_closed(transcript in arb_transcript()) {
+                let low = PruneConfig { protect_tokens: 0, ..test_config() };
+                let high = PruneConfig { protect_tokens: 100_000, ..test_config() };
+                let plan_low = plan_prune(&transcript, &low, const_suffix(100_000), false);
+                let plan_high = plan_prune(&transcript, &high, const_suffix(100_000), false);
+                let low_ids = ids(&plan_low);
+                for (id, _) in &plan_high.actions {
+                    prop_assert!(
+                        low_ids.contains(id),
+                        "higher protect_tokens must produce a subset of lower",
+                    );
+                }
+            }
+
+            #[test]
+            fn prop_cold_prefix_supersets_warm(transcript in arb_transcript()) {
+                let config = PruneConfig {
+                    protect_tokens: 0,
+                    cache_warm_suffix_tokens: 5_000,
+                    ..test_config()
+                };
+                let suffix = |i: usize| 3_000u64 * (i as u64);
+                let cold = plan_prune(&transcript, &config, suffix, false);
+                let warm = plan_prune(&transcript, &config, suffix, true);
+                let cold_ids = ids(&cold);
+                for (id, _) in &warm.actions {
+                    prop_assert!(
+                        cold_ids.contains(id),
+                        "warm plan must be a subset of cold plan",
+                    );
+                }
+            }
+
+            #[test]
+            fn prop_protected_paths_never_targeted(path in "[a-z]{1,6}") {
+                let mut transcript = Vec::new();
+                transcript.push(assistant_with_read("a", &path));
+                transcript.push(tool_result("a", &big_body()));
+                transcript.push(assistant_with_read("b", &path));
+                transcript.push(tool_result("b", &big_body()));
+
+                let mut config = test_config();
+                config.protected_paths.insert(PathBuf::from(&path));
+                let protected = plan_prune(&transcript, &config, const_suffix(100_000), false);
+
+                config.protected_paths.clear();
+                let unprotected = plan_prune(&transcript, &config, const_suffix(100_000), false);
+
+                prop_assert!(
+                    !unprotected.is_empty(),
+                    "control: without protection the same transcript must yield a plan",
+                );
+                prop_assert!(
+                    protected.is_empty(),
+                    "protected path must not be targeted",
+                );
+            }
+        }
+
+        /// Control: the universal properties above are not vacuous.
+        /// This example transcript under `test_config` yields a
+        /// non-empty plan, so `for action in plan { ... }` above is
+        /// not a check over an empty set.
+        #[test]
+        fn control_transcript_yields_a_non_empty_plan() {
+            let mut transcript = Vec::new();
+            transcript.push(assistant_with_read("a", "src/main.rs"));
+            transcript.push(tool_result("a", &big_body()));
+            transcript.push(assistant_with_read("b", "src/main.rs"));
+            transcript.push(tool_result("b", &big_body()));
+            let plan = plan_prune(&transcript, &test_config(), const_suffix(100_000), false);
+            assert!(
+                !plan.is_empty(),
+                "control transcript must yield a non-empty plan"
+            );
+        }
+    }
 }
