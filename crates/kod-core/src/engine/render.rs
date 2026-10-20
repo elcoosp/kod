@@ -889,3 +889,303 @@ pub(crate) fn strip_conversation_tail(system_text: &str) -> String {
         None => system_text.to_string(),
     }
 }
+
+#[cfg(test)]
+mod render_proptests {
+    //! Properties for the private pure helpers in this module.
+    //!
+    //! `render.rs` has **zero tests**. The four helpers below are
+    //! pure (`&str -> String` and `&str -> bool`), and their
+    //! contracts are exactly what the module doc claims: "nothing
+    //! here touches `KodEngine` state; every item is a free
+    //! function."
+    //!
+    //! **No bug expected.** The one place that *looks* like a
+    //! byte-vs-char bug — `truncate_with_ellipsis`'s
+    //! `if shown.len() < s.len()` — is correct by construction,
+    //! because `truncate_chars(s, max)` returns a strict prefix of
+    //! `s`. `shown.len() < s.len()` iff `shown != s` iff the char
+    //! count was truncated. The properties below pin that
+    //! assumption so a future refactor of `truncate_chars` that
+    //! returns a normalized or padded string is a visible
+    //! decision, not a silent ellipsis bug.
+    //!
+    //! `line_is_goal_marker`'s `stripped.get(..8)` is byte-safe on
+    //! CJK because `str::get(range)` returns `None` when the byte
+    //! index is not a char boundary; the code handles the `None`
+    //! case by skipping the block. A CJK property pins that.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn ascii(s: &str) -> bool {
+        s.is_ascii()
+    }
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    fn cjk_string(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(cjk_char(), 0..=max_len).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    // ---- truncate_with_ellipsis ---------------------------------------
+
+    proptest! {
+        /// Under the char budget, the input is returned verbatim.
+        #[test]
+        fn prop_truncate_under_budget_is_identity(
+            s in "[a-zA-Z]{0,20}",
+            max in 20usize..=30usize,
+        ) {
+            prop_assert_eq!(truncate_with_ellipsis(&s, max, "…"), s);
+        }
+
+        /// Over the char budget, the result ends with the ellipsis.
+        #[test]
+        fn prop_truncate_over_budget_ends_with_ellipsis(
+            s in "[a-zA-Z]{5,20}",
+            max in 0usize..=4usize,
+        ) {
+            let out = truncate_with_ellipsis(&s, max, "…");
+            prop_assert!(
+                out.ends_with('…'),
+                "output {:?} should end with ellipsis (s={:?}, max={})", out, s, max,
+            );
+        }
+
+        /// The result's char count is bounded by `max + ellipsis chars`
+        /// for both ASCII and CJK inputs. This is the char-boundary
+        /// property that `truncate_with_ellipsis` relies on
+        /// `truncate_chars` for.
+        #[test]
+        fn prop_truncate_bound_ascii(
+            s in "[a-zA-Z]{0,30}",
+            max in 0usize..=20usize,
+        ) {
+            let out = truncate_with_ellipsis(&s, max, "…");
+            prop_assert!(
+                out.chars().count() <= max + 1,
+                "output {:?} has {} chars, budget {} + ellipsis 1",
+                out, out.chars().count(), max,
+            );
+        }
+
+        /// Same bound for CJK: a refactor of `truncate_chars` that
+        /// swapped chars for bytes would blow the char budget here.
+        #[test]
+        fn prop_truncate_bound_cjk(
+            s in cjk_string(20),
+            max in 0usize..=10usize,
+        ) {
+            let out = truncate_with_ellipsis(&s, max, "…");
+            prop_assert!(
+                out.chars().count() <= max + 1,
+                "output {:?} has {} chars, budget {} + ellipsis 1",
+                out, out.chars().count(), max,
+            );
+        }
+
+        /// ASCII input: result is always either the original or the
+        /// original prefix plus ellipsis. No byte-level mangling.
+        #[test]
+        fn prop_truncate_result_is_a_prefix_plus_ellipsis(
+            s in "[a-zA-Z]{0,30}",
+            max in 0usize..=20usize,
+        ) {
+            let out = truncate_with_ellipsis(&s, max, "…");
+            let prefix: String = s.chars().take(max).collect();
+            let expected = if prefix.chars().count() < s.chars().count() {
+                format!("{prefix}…")
+            } else {
+                s.clone()
+            };
+            prop_assert_eq!(out, expected);
+        }
+    }
+
+    // ---- shorten_path --------------------------------------------------
+
+    proptest! {
+        /// A path with at most `KEEP + 1` non-empty segments is
+        /// returned verbatim.
+        #[test]
+        fn prop_shorten_short_path_is_identity(seg in "[a-z]{1,8}") {
+            prop_assert_eq!(shorten_path(&seg), seg.clone());
+            let two = format!("{seg}/{seg}");
+            prop_assert_eq!(shorten_path(&two), two);
+            let three = format!("{seg}/{seg}/{seg}");
+            prop_assert_eq!(shorten_path(&three), three);
+        }
+
+        /// A longer path loses its leading segments but keeps the
+        /// last two.
+        #[test]
+        fn prop_shorten_keeps_last_two(
+            segs in prop::collection::vec("[a-z]{1,6}", 4..=8),
+        ) {
+            let path = segs.join("/");
+            let short = shorten_path(&path);
+            prop_assert!(short.starts_with("…/"), "shortened {:?} should start with …/", short);
+            let last_two = segs[segs.len() - 2..].join("/");
+            prop_assert!(
+                short.ends_with(&last_two),
+                "shortened {:?} should end with {:?}", short, last_two,
+            );
+        }
+
+        /// Idempotence: shortening a shortened path is a no-op.
+        #[test]
+        fn prop_shorten_idempotent(segs in prop::collection::vec("[a-z]{1,6}", 1..=8)) {
+            let path = segs.join("/");
+            let once = shorten_path(&path);
+            let twice = shorten_path(&once);
+            prop_assert_eq!(once, twice);
+        }
+    }
+
+    // ---- cap_lines -----------------------------------------------------
+
+    proptest! {
+        /// Under the line limit, input is returned verbatim.
+        #[test]
+        fn prop_cap_lines_under_limit_is_identity(
+            n_lines in 0usize..=4usize,
+            max in 4usize..=10usize,
+        ) {
+            let text: String = (0..n_lines)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prop_assert_eq!(cap_lines(&text, max), text);
+        }
+
+        /// Over the line limit, the result has at most `max + 1` lines
+        /// (the extra line is the "… and N more" marker).
+        #[test]
+        fn prop_cap_lines_bound(
+            n_lines in 5usize..=20usize,
+            max in 1usize..=4usize,
+        ) {
+            let text: String = (0..n_lines)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let out = cap_lines(&text, max);
+            prop_assert!(
+                out.lines().count() <= max + 1,
+                "capped output has {} lines (max {} + 1)", out.lines().count(), max,
+            );
+        }
+    }
+
+    // ---- line_is_goal_marker -------------------------------------------
+
+    #[test]
+    fn prop_goal_met_exact_is_true() {
+        assert!(line_is_goal_marker("GOAL MET"));
+        assert!(line_is_goal_marker("goal met"));
+        assert!(line_is_goal_marker("Goal Met"));
+    }
+
+    #[test]
+    fn prop_goal_met_with_separator_is_true() {
+        for tail in [
+            " - done",
+            ": summary",
+            "# heading",
+            ". done",
+            "! done",
+            "(note)",
+        ] {
+            let line = format!("GOAL MET{tail}");
+            assert!(
+                line_is_goal_marker(&line),
+                "{:?} should match (structural separator after marker)",
+                line,
+            );
+        }
+    }
+
+    #[test]
+    fn prop_goal_met_without_separator_is_false() {
+        for tail in [" is done", "X", "abc", ""] {
+            let line = format!("GOAL MET{tail}");
+            if tail.is_empty() {
+                // Bare "GOAL MET" is caught by the first check.
+                assert!(line_is_goal_marker(&line));
+                continue;
+            }
+            assert!(
+                !line_is_goal_marker(&line),
+                "{:?} should NOT match (no structural separator after marker)",
+                line,
+            );
+        }
+    }
+
+    /// CJK input never panics. A 5-CJK-char string is 15 bytes, so
+    /// `stripped.get(..8)` returns `None` (byte 8 falls inside the
+    /// 3rd character); the code handles that case by skipping the
+    /// suffix check.
+    #[test]
+    fn prop_cjk_never_panics() {
+        for s in ["中文中文中", "GOAL MET中文", "中文GOAL MET", "中"] {
+            let _ = line_is_goal_marker(s);
+        }
+    }
+
+    /// CJK text after the marker is not in the separator set, so the
+    /// marker check returns false. Pins the ASCII-only separator
+    /// contract.
+    #[test]
+    fn prop_cjk_after_marker_is_not_a_separator() {
+        assert!(!line_is_goal_marker("GOAL MET中文"));
+    }
+
+    /// A CJK line with no ASCII marker is never a goal marker.
+    #[test]
+    fn prop_pure_cjk_is_not_goal_marker() {
+        for s in ["中文", "中文中文中", "中文中文中文中文"] {
+            assert!(
+                !line_is_goal_marker(s),
+                "{:?} should not be a goal marker",
+                s
+            );
+        }
+    }
+
+    // ---- format_tool_header --------------------------------------------
+
+    proptest! {
+        /// `format_tool_header` is deterministic.
+        #[test]
+        fn prop_format_tool_header_deterministic(
+            name in "[a-z_]{1,20}",
+            path in "[a-zA-Z0-9/._-]{0,40}",
+        ) {
+            let args = serde_json::json!({ "path": path });
+            prop_assert_eq!(
+                format_tool_header(&name, &args),
+                format_tool_header(&name, &args),
+            );
+        }
+
+        /// The tool name is always the first token.
+        #[test]
+        fn prop_format_tool_header_starts_with_name(
+            name in "[a-z_]{1,20}",
+            path in "[a-zA-Z0-9/._-]{0,40}",
+        ) {
+            let args = serde_json::json!({ "path": path });
+            let out = format_tool_header(&name, &args);
+            prop_assert!(
+                out == name || out.starts_with(&format!("{name} ")),
+                "output {:?} should be the name or start with 'name '", out,
+            );
+        }
+    }
+}
