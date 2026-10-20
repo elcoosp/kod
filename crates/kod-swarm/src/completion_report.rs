@@ -189,8 +189,27 @@ fn strip_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 /// Pull `status=done` out of `<completion-report status=done>`. The
 /// attribute may be quoted (`status="done"`) — models do both.
 fn extract_status(open_line: &str) -> ReportStatus {
-    let Some(eq) = open_line.find("status") else {
-        return ReportStatus::Unknown;
+    // Fix (03bbb7e): require a whitespace boundary before `status`.
+    // The pre-fix `find("status")` matched `xstatus=done`,
+    // `some=status=done`, and `my-status=done` as if they were real
+    // status attributes, so an agent whose tag carried a descriptive
+    // word ending in "status" reported `Done` even though it never
+    // named a status. Attributes are whitespace-separated; "preceded
+    // by whitespace" is the property the parser actually wants.
+    let mut search_at = 0;
+    let eq = loop {
+        let Some(found) = open_line[search_at..].find("status") else {
+            return ReportStatus::Unknown;
+        };
+        let idx = search_at + found;
+        let preceded_by_whitespace = open_line[..idx]
+            .chars()
+            .last()
+            .is_none_or(|c| c.is_whitespace());
+        if preceded_by_whitespace {
+            break idx;
+        }
+        search_at = idx + "status".len();
     };
     let after = &open_line[eq + "status".len()..];
     let after = after.trim_start().strip_prefix('=').map(str::trim_start);
@@ -333,6 +352,151 @@ validation: cargo test  (ok)
             ReportStatus::Unknown,
         ] {
             assert_eq!(ReportStatus::parse(s.as_str()), s);
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of `completion_report::parse`.
+    //!
+    //! `parse` reads the LLM subagent's final message as a tag-delimited
+    //! report. Called from `kod-core/src/swarm_runner.rs:1850` and
+    //! `kod-core/src/overnight.rs:176` — model-authored text, no panics
+    //! permitted.
+    //!
+    //! The `parse` / `extract_status` arithmetic was hand-checked: each
+    //! slice is preceded by a `find` whose result bounds the slice, so
+    //! no panic exists here. The failing-first property is
+    //! `prop_fake_status_attribute_is_unknown`: `extract_status` does
+    //! `open_line.find("status")`, a substring match. An attribute
+    //! like `xstatus=done` or `some=status=done` reports `Done` even
+    //! though the tag has no `status` attribute. Same class as the
+    //! `parse_report` panic (`45aec66`): a boundary parser accepting
+    //! input it should reject.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn valid_block(
+        status: &str,
+        summary: &str,
+        validation: &str,
+        followup1: &str,
+        followup2: &str,
+    ) -> String {
+        format!(
+            "preamble line\n\
+             <completion-report status={status}>\n\
+             summary: {summary}\n\
+             validation: {validation}\n\
+             followups: {followup1}\n\
+             {followup2}\n\
+             </completion-report>",
+        )
+    }
+
+    proptest! {
+        /// Never panics on arbitrary input.
+        #[test]
+        fn prop_parse_never_panics(text in any::<String>()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse(&text);
+            }));
+            prop_assert!(outcome.is_ok());
+        }
+
+        /// A well-formed block round-trips.
+        ///
+        /// The `summary` / `validation` / `f1` / `f2` strategies all
+        /// exclude whitespace on purpose (L46, three occurrences in
+        /// this one round): `summary = " "` trims to `""` in the
+        /// expected value but `parse` keeps the untrimmed string;
+        /// `validation = " "` trims to `""` and `parse` correctly
+        /// treats an empty validation as `None`; `f1 = " "` trims to
+        /// `""` and `parse` correctly drops it. Every whitespace-
+        /// only value the strategy produced exposed a different
+        /// aspect of the same rule: the strategy must not produce a
+        /// value the code's own trim step changes into something the
+        /// assertion treats as different.
+        #[test]
+        fn prop_valid_block_round_trips(
+            status in prop::sample::select(vec!["done", "failed", "blocked"]),
+            summary in "[a-zA-Z0-9]{1,40}",
+            validation in "[a-zA-Z0-9._-]{1,40}",
+            f1 in "[a-zA-Z0-9]{1,30}",
+            f2 in "[a-zA-Z0-9]{1,30}",
+        ) {
+            let text = valid_block(&status, &summary, &validation, &f1, &f2);
+            let r = parse(&text);
+            prop_assert!(r.had_block);
+            prop_assert_eq!(r.status, ReportStatus::parse(&status));
+            prop_assert_eq!(r.summary, summary.trim());
+            prop_assert_eq!(r.validation.as_deref(), Some(validation.trim()));
+            prop_assert_eq!(r.followups.len(), 2);
+            prop_assert_eq!(&r.followups[0], f1.trim());
+            prop_assert_eq!(&r.followups[1], f2.trim());
+        }
+
+        /// Absent block: summary = trimmed text, had_block = false,
+        /// status = Unknown. Text alphabet excludes `<` so the open
+        /// prefix cannot appear.
+        #[test]
+        fn prop_absent_block_falls_back(text in "[a-zA-Z0-9 \n.]{0,200}") {
+            let r = parse(&text);
+            prop_assert!(!r.had_block);
+            prop_assert_eq!(r.status, ReportStatus::Unknown);
+            prop_assert_eq!(r.summary, text.trim());
+            prop_assert!(r.validation.is_none());
+            prop_assert!(r.followups.is_empty());
+        }
+
+        /// A real `status=done` attribute still parses to Done — the
+        /// positive control for the failing-first property below.
+        #[test]
+        fn prop_real_status_attribute_is_honoured(
+            status in prop::sample::select(vec!["done", "failed", "blocked"]),
+        ) {
+            let text = format!(
+                "<completion-report status={status}>\nsummary: x\n</completion-report>",
+            );
+            let r = parse(&text);
+            prop_assert_eq!(r.status, ReportStatus::parse(&status));
+        }
+
+        /// **Failing-first.** An attribute containing the substring
+        /// "status" (but not being a `status=` attribute) must not
+        /// produce a real status. `extract_status` uses
+        /// `find("status")`, so `xstatus=done`, `some=status=done`,
+        /// etc. currently report Done.
+        #[test]
+        fn prop_fake_status_attribute_is_unknown(
+            fake_attr in prop::sample::select(vec![
+                "xstatus=done",
+                "some=status=done",
+                "my-status=done",
+                "anystatus=failed",
+                "sub_status=blocked",
+            ]),
+        ) {
+            let text = format!(
+                "<completion-report {fake_attr}>\nsummary: x\n</completion-report>",
+            );
+            let r = parse(&text);
+            prop_assert_eq!(
+                r.status,
+                ReportStatus::Unknown,
+                "attribute {:?} produced status {:?}; the tag has no \
+                 `status=` attribute",
+                fake_attr,
+                r.status,
+            );
+        }
+
+        /// `had_block` is true iff the open prefix is present.
+        #[test]
+        fn prop_had_block_matches_open_prefix(text in any::<String>()) {
+            let expected = text.contains(OPEN_PREFIX);
+            prop_assert_eq!(parse(&text).had_block, expected);
         }
     }
 }

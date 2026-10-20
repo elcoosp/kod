@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 93f0940a6e88d8f4a53c403f11908d79d0f34fb1131d24a680b0b4a5c4c7fbd6 # shrinks to fake_attr = "xstatus=done"
+cc 989166f5e7c285c40864a00dd54e4ac1c186d32b40857d9118e0d4c738f05359 # shrinks to status = "done", summary = "0", validation = " ", f1 = " ", f2 = " "
+cc 3801b86a6a18d63d81a298a04c4753cffa7595700cee456c381597144a4e8d4f # shrinks to status = "done", summary = " ", validation = "0", f1 = "0", f2 = "A"
