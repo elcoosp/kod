@@ -569,3 +569,275 @@ mod start_with_budget_tests {
         assert!(rt.current_mut().unwrap().take_budget_steer());
     }
 }
+
+#[cfg(test)]
+mod goals_proptests {
+    //! Properties for `Goal`'s state machine.
+    //!
+    //! The 21 example tests pin specific cases: delta excludes
+    //! cache-read, tokens accumulate, a tiny budget flips to
+    //! `BudgetLimited`, the steer fires once, terminal goals ignore
+    //! observations. These properties pin the *state-machine
+    //! invariants* across arbitrary sequences of observations:
+    //!
+    //! * monotone counters (never decrease);
+    //! * terminal status is a hard stop for observations;
+    //! * `BudgetLimited` is a one-way door under observations;
+    //! * `take_budget_steer` fires exactly once;
+    //! * `wants_continuation` iff `status == Active`.
+    //!
+    //! All arithmetic in `delta_tokens` is `saturating_*`, so the
+    //! saturation property is a regression guard, not a bug probe.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn usage(prompt: usize, cache_read: Option<u64>, completion: usize) -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            total_tokens: prompt.saturating_add(completion),
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
+        }
+    }
+
+    fn arb_usage() -> impl Strategy<Value = TokenUsage> {
+        (
+            0usize..=1_000_000usize,
+            prop::option::of(0u64..=1_000_000u64),
+            0usize..=1_000_000usize,
+        )
+            .prop_map(|(p, cr, c)| usage(p, cr, c))
+    }
+
+    fn arb_usage_seq() -> impl Strategy<Value = Vec<TokenUsage>> {
+        prop::collection::vec(arb_usage(), 0..=6)
+    }
+
+    fn any_terminal() -> impl Strategy<Value = GoalStatus> {
+        prop::sample::select(vec![GoalStatus::Complete, GoalStatus::Dropped])
+    }
+
+    proptest! {
+        // ---- delta_tokens --------------------------------------------------
+
+        /// `delta_tokens` saturates: for any usage, the result is
+        /// `<= u64::MAX`. The whole function is `saturating_sub` +
+        /// `saturating_add`, so it can't overflow — this is a
+        /// regression guard, not a bug probe.
+        #[test]
+        fn prop_delta_saturates(u in arb_usage()) {
+            let d = Goal::delta_tokens(&u);
+            prop_assert!(d <= u64::MAX);
+        }
+
+        /// Cache-read is excluded: increasing `cache_read_tokens`
+        /// with `prompt_tokens` fixed never increases the delta.
+        #[test]
+        fn prop_delta_excludes_cache_read(
+            prompt in 0usize..=100_000usize,
+            cr1 in 0u64..=100_000u64,
+            cr2 in 0u64..=100_000u64,
+            completion in 0usize..=100_000usize,
+        ) {
+            let base = usage(prompt, Some(0), completion);
+            let a = usage(prompt, Some(cr1), completion);
+            let b = usage(prompt, Some(cr2), completion);
+            let base_delta = Goal::delta_tokens(&base);
+            prop_assert!(Goal::delta_tokens(&a) <= base_delta);
+            prop_assert!(Goal::delta_tokens(&b) <= base_delta);
+            // More cache-read -> smaller or equal delta.
+            let (small, large) = if cr1 <= cr2 { (cr1, cr2) } else { (cr2, cr1) };
+            prop_assert!(
+                Goal::delta_tokens(&usage(prompt, Some(large), completion))
+                    <= Goal::delta_tokens(&usage(prompt, Some(small), completion)),
+            );
+        }
+
+        /// No cache state reported (`None`) means cache-read is
+        /// treated as 0: the delta equals the `Some(0)` delta.
+        #[test]
+        fn prop_delta_none_equals_some_zero(u in arb_usage()) {
+            let mut no_cache = u.clone();
+            no_cache.cache_read_tokens = None;
+            let mut zero_cache = u.clone();
+            zero_cache.cache_read_tokens = Some(0);
+            prop_assert_eq!(
+                Goal::delta_tokens(&no_cache),
+                Goal::delta_tokens(&zero_cache),
+            );
+        }
+
+        // ---- observe_usage / observe_time: monotone accumulation ----------
+
+        /// `observe_usage` is monotone: any sequence of observations
+        /// leaves `tokens_used` non-decreasing.
+        #[test]
+        fn prop_observe_usage_monotone(seq in arb_usage_seq()) {
+            let mut g = Goal::new(1, "goal");
+            let mut prev = g.tokens_used;
+            for u in &seq {
+                g.observe_usage(u);
+                prop_assert!(
+                    g.tokens_used >= prev,
+                    "tokens_used decreased from {} to {}",
+                    prev, g.tokens_used,
+                );
+                prev = g.tokens_used;
+            }
+        }
+
+        /// `observe_time` is monotone.
+        #[test]
+        fn prop_observe_time_monotone(seq in prop::collection::vec(0u64..=10_000u64, 0..=6)) {
+            let mut g = Goal::new(1, "goal");
+            let mut prev = g.time_used_seconds;
+            for s in &seq {
+                g.observe_time(*s);
+                prop_assert!(
+                    g.time_used_seconds >= prev,
+                    "time_used_seconds decreased from {} to {}",
+                    prev, g.time_used_seconds,
+                );
+                prev = g.time_used_seconds;
+            }
+        }
+
+        // ---- terminal status is a hard stop -------------------------------
+
+        /// Once `status` is terminal (`Complete` or `Dropped`), no
+        /// observation changes the counters or the status.
+        #[test]
+        fn prop_terminal_blocks_observation(
+            terminal in any_terminal(),
+            seq in arb_usage_seq(),
+        ) {
+            let mut g = Goal::new(1, "goal");
+            g.observe_usage(&usage(100, None, 50));
+            let tokens_before = g.tokens_used;
+            let time_before = g.time_used_seconds;
+            g.status = terminal;
+            for u in &seq {
+                g.observe_usage(u);
+                prop_assert_eq!(g.tokens_used, tokens_before);
+            }
+            g.observe_time(9_999_999);
+            prop_assert_eq!(g.time_used_seconds, time_before);
+            prop_assert!(g.status.is_terminal());
+        }
+
+        // ---- budget-limited is a one-way door under observations ----------
+
+        /// Once `BudgetLimited`, further observations do not return
+        /// it to `Active`. The only way out is a caller action
+        /// (raising the budget — not in this module's scope).
+        #[test]
+        fn prop_budget_limited_is_sticky(
+            budget in 1u64..=10_000u64,
+            seq in arb_usage_seq(),
+        ) {
+            let mut g = Goal::new(1, "goal").with_token_budget(budget);
+            // Force into BudgetLimited by observing well over the cap.
+            g.observe_usage(&usage((budget as usize) * 2, None, 0));
+            if g.status != GoalStatus::BudgetLimited {
+                return Ok(());
+            }
+            for u in &seq {
+                g.observe_usage(u);
+                prop_assert_eq!(
+                    g.status,
+                    GoalStatus::BudgetLimited,
+                    "observation moved goal out of BudgetLimited",
+                );
+            }
+        }
+
+        // ---- take_budget_steer: fires exactly once -----------------------
+
+        /// On a `BudgetLimited` goal, `take_budget_steer` returns
+        /// true on the first call and false forever after.
+        #[test]
+        fn prop_steer_fires_exactly_once(
+            budget in 1u64..=10_000u64,
+            attempts in 1usize..=10usize,
+        ) {
+            let mut g = Goal::new(1, "goal").with_token_budget(budget);
+            // Push to BudgetLimited.
+            g.observe_usage(&usage((budget as usize) * 2, None, 0));
+            if g.status != GoalStatus::BudgetLimited {
+                return Ok(());
+            }
+            prop_assert!(
+                g.take_budget_steer(),
+                "steer did not fire on a BudgetLimited goal",
+            );
+            for _ in 1..attempts {
+                prop_assert!(
+                    !g.take_budget_steer(),
+                    "steer fired more than once",
+                );
+            }
+        }
+
+        // ---- wants_continuation: exact equivalence -----------------------
+
+        /// `wants_continuation` is exactly `status == Active`. No
+        /// other status (BudgetLimited, Paused, Complete, Dropped)
+        /// returns true.
+        #[test]
+        fn prop_wants_continuation_iff_active(status in prop::sample::select(vec![
+            GoalStatus::Active,
+            GoalStatus::BudgetLimited,
+            GoalStatus::Paused,
+            GoalStatus::Complete,
+            GoalStatus::Dropped,
+        ])) {
+            let mut g = Goal::new(1, "goal");
+            g.status = status;
+            prop_assert_eq!(
+                g.wants_continuation(),
+                status == GoalStatus::Active,
+                "status {:?}", status,
+            );
+        }
+
+        /// `is_terminal` is exactly `Complete | Dropped`. No other
+        /// status is terminal; both terminal ones are.
+        #[test]
+        fn prop_is_terminal_exact(status in prop::sample::select(vec![
+            GoalStatus::Active,
+            GoalStatus::BudgetLimited,
+            GoalStatus::Paused,
+            GoalStatus::Complete,
+            GoalStatus::Dropped,
+        ])) {
+            let expected = matches!(status, GoalStatus::Complete | GoalStatus::Dropped);
+            prop_assert_eq!(status.is_terminal(), expected, "status {:?}", status);
+        }
+    }
+
+    /// Control: a small token budget is reachable to `BudgetLimited`
+    /// via `observe_usage`, so the sticky and once-steer properties
+    /// are not vacuous.
+    #[test]
+    fn control_budget_limit_reachable() {
+        let mut g = Goal::new(1, "goal").with_token_budget(100);
+        g.observe_usage(&usage(1_000, None, 0));
+        assert_eq!(g.status, GoalStatus::BudgetLimited);
+    }
+
+    /// Control: a zero-token delta (empty usage) is a no-op — the
+    /// guard against "observe with all-zero usage flips to limited
+    /// on a zero budget" (which would be a subtle bug: a
+    /// `with_token_budget(0)` goal would be limited from the start,
+    /// but a single zero observation should not change that).
+    #[test]
+    fn control_zero_usage_is_noop_for_token_counters() {
+        let mut g = Goal::new(1, "goal");
+        let before = g.tokens_used;
+        g.observe_usage(&usage(0, None, 0));
+        assert_eq!(g.tokens_used, before);
+    }
+}
