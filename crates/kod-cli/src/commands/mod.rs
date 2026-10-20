@@ -3928,3 +3928,190 @@ mod coverage_cli_subactions {
 // ---------------------------------------------------------------------------
 // Tier 1.5 — fixture replay and diff
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod parse_kv_args_proptests {
+    //! Properties for `parse_kv_args`.
+    //!
+    //! `parse_kv_args` splits each token on the first `=`, tries
+    //! `serde_json::from_str` on the value, and falls back to a
+    //! `String` on parse failure. The six example tests pin the
+    //! happy path and the two error cases. This round pins the
+    //! contract those tests don't reach: value classification,
+    //! unicode, duplicate keys, and the empty-value edge.
+    //!
+    //! **No bug expected.** No panic paths, no overflow, no
+    //! arithmetic. The interesting documented behaviours are
+    //! pinned as controls.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A word that is safe as a JSON string value AND as a plain
+    /// fallback — no `=`, no quoting, no JSON metacharacters.
+    fn bare_word() -> impl Strategy<Value = String> {
+        "[a-zA-Z][a-zA-Z0-9_.-]{0,20}"
+    }
+
+    /// A key that is safe as a JSON object key.
+    fn bare_key() -> impl Strategy<Value = String> {
+        "[a-zA-Z][a-zA-Z0-9_-]{0,15}"
+    }
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    fn cjk_word(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(cjk_char(), 1..=max_len).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        /// Empty slice -> empty object.
+        #[test]
+        fn prop_empty_slice_empty_object(_dummy in 0u8..1) {
+            let v = parse_kv_args(&[]).expect("empty ok");
+            prop_assert_eq!(v, serde_json::json!({}));
+        }
+
+        /// A single `key=value` where `value` is not valid JSON
+        /// becomes a `String` value verbatim.
+        #[test]
+        fn prop_plain_word_is_string(key in bare_key(), value in bare_word()) {
+            let token = format!("{key}={value}");
+            let v = parse_kv_args(&[token]).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.get(&key), Some(&serde_json::Value::String(value)));
+        }
+
+        /// A numeric value parses as a JSON number, not a string.
+        #[test]
+        fn prop_integer_is_number(key in bare_key(), n in 0i64..=1_000_000i64) {
+            let token = format!("{key}={n}");
+            let v = parse_kv_args(&[token]).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.get(&key), Some(&serde_json::json!(n)));
+        }
+
+        /// A `true`/`false` value parses as a JSON bool, not a
+        /// string.
+        #[test]
+        fn prop_bool_is_bool(key in bare_key(), b in any::<bool>()) {
+            let token = format!("{key}={b}");
+            let v = parse_kv_args(&[token]).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.get(&key), Some(&serde_json::Value::Bool(b)));
+        }
+
+        /// A JSON object value parses as a nested object.
+        #[test]
+        fn prop_nested_object_value(
+            key in bare_key(),
+            inner_key in bare_key(),
+            inner_value in bare_word(),
+        ) {
+            let inner_json = serde_json::json!({ inner_key.clone(): inner_value.clone() });
+            let token = format!("{key}={}", serde_json::to_string(&inner_json).unwrap());
+            let v = parse_kv_args(&[token]).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.get(&key), Some(&inner_json));
+        }
+
+        /// CJK key: the key is the literal unicode string, and
+        /// the value parses normally.
+        #[test]
+        fn prop_cjk_key(key in cjk_word(4), value in bare_word()) {
+            let token = format!("{key}={value}");
+            let v = parse_kv_args(&[token]).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.get(&key), Some(&serde_json::Value::String(value)));
+        }
+
+        /// Multiple distinct keys: all present.
+        #[test]
+        fn prop_multiple_distinct_keys(
+            k1 in bare_key(),
+            k2 in bare_key(),
+            k3 in bare_key(),
+            v1 in bare_word(),
+            v2 in bare_word(),
+            v3 in bare_word(),
+        ) {
+            prop_assume!(k1 != k2 && k2 != k3 && k1 != k3);
+            let args = vec![
+                format!("{k1}={v1}"),
+                format!("{k2}={v2}"),
+                format!("{k3}={v3}"),
+            ];
+            let v = parse_kv_args(&args).expect("ok");
+            let obj = v.as_object().expect("object");
+            prop_assert_eq!(obj.len(), 3);
+            prop_assert_eq!(obj.get(&k1), Some(&serde_json::Value::String(v1)));
+            prop_assert_eq!(obj.get(&k2), Some(&serde_json::Value::String(v2)));
+            prop_assert_eq!(obj.get(&k3), Some(&serde_json::Value::String(v3)));
+        }
+    }
+
+    // ---- controls: documented behaviours, not fixed ----------------
+
+    /// Duplicate keys: last wins. `serde_json::Map::insert`
+    /// overwrites. If a caller passes `a=1 a=2`, the result is
+    /// `{a: 2}`. Pinned so a future error-on-duplicate is a
+    /// visible decision.
+    #[test]
+    fn control_duplicate_key_last_wins() {
+        let args = vec!["a=1".to_string(), "a=2".to_string()];
+        let v = parse_kv_args(&args).expect("ok");
+        assert_eq!(v["a"], 2);
+    }
+
+    /// Empty value: `a=` becomes `String("")`. `serde_json::from_str("")`
+    /// fails, so the fallback preserves the empty string. Pinned.
+    #[test]
+    fn control_empty_value_is_empty_string() {
+        let args = vec!["a=".to_string()];
+        let v = parse_kv_args(&args).expect("ok");
+        assert_eq!(v["a"], serde_json::Value::String(String::new()));
+    }
+
+    /// Bare `=`: split_once gives empty key, so the parser errors.
+    /// This is the same as the existing `parse_kv_args_rejects_an_empty_key`
+    /// test, restated for completeness.
+    #[test]
+    fn control_bare_equals_errors() {
+        let args = vec!["=".to_string()];
+        assert!(parse_kv_args(&args).is_err());
+    }
+
+    /// `a=b=c` splits on the FIRST `=`: `k = "a"`, `v = "b=c"`.
+    /// The value `b=c` is not valid JSON, so it becomes the
+    /// string `"b=c"`. Pinned.
+    #[test]
+    fn control_split_on_first_equals() {
+        let args = vec!["a=b=c".to_string()];
+        let v = parse_kv_args(&args).expect("ok");
+        assert_eq!(v["a"], "b=c");
+    }
+
+    /// `null` is valid JSON, so it parses to `Value::Null`, not to
+    /// the string `"null"`. Pinned as a decision; a user who wants
+    /// the literal string must write `a="null"`.
+    #[test]
+    fn control_null_parses_as_json_null() {
+        let args = vec!["a=null".to_string()];
+        let v = parse_kv_args(&args).expect("ok");
+        assert_eq!(v["a"], serde_json::Value::Null);
+    }
+
+    /// Leading/trailing whitespace in a value: `serde_json` accepts
+    /// it, so `a= 1` parses as the number 1, not the string " 1".
+    /// Pinned so a future strict-JSON change is a visible decision.
+    #[test]
+    fn control_value_whitespace_trimmed_by_json() {
+        let args = vec!["a= 1 ".to_string()];
+        let v = parse_kv_args(&args).expect("ok");
+        assert_eq!(v["a"], 1);
+    }
+}
