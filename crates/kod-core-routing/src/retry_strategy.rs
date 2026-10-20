@@ -54,6 +54,33 @@ pub enum TurnFailure {
     Unknown { raw: String },
 }
 
+/// Whether `haystack` contains `needle` bounded by non-digits
+/// (or at the string's edge). Used for HTTP status detection: a bare
+/// `contains("401")` also matches `"1401"`, `"2401"`, `"14011"`,
+/// and any other digit run that happens to end in `401`, which
+/// classifies a transient failure as an auth error and aborts the
+/// retry chain. A status is a standalone number.
+fn contains_bounded(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let n = needle.len();
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let idx = start + pos;
+        let before_ok = idx
+            .checked_sub(1)
+            .map_or(true, |i| !bytes[i].is_ascii_digit());
+        let after_ok = (idx + n)
+            .checked_sub(1)
+            .and_then(|i| bytes.get(i + 1))
+            .map_or(true, |b| !b.is_ascii_digit());
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
+}
+
 impl TurnFailure {
     /// Classify a raw provider error string. The heuristic covers the
     /// common shapes; a provider that needs finer control exposes its
@@ -70,7 +97,10 @@ impl TurnFailure {
         {
             return TurnFailure::ContextWindowExceeded { over_by: None };
         }
-        if l.contains("rate limit") || l.contains("429") || l.contains("too many requests") {
+        if l.contains("rate limit")
+            || contains_bounded(&l, "429")
+            || l.contains("too many requests")
+        {
             return TurnFailure::TransportRateLimit {
                 retry_after_secs: kod_provider::retry::text_hint_secs(raw),
             };
@@ -99,8 +129,8 @@ impl TurnFailure {
         // while the moved copy used `l.to_string()`, so which `detail`
         // a caller saw depended on which branch fired. Merged into
         // one block, kept the lowercase form.
-        if l.contains("401")
-            || l.contains("403")
+        if contains_bounded(&l, "401")
+            || contains_bounded(&l, "403")
             || l.contains("unauthorized")
             || l.contains("forbidden")
             || l.contains("invalid api key")
@@ -514,6 +544,88 @@ mod tests {
             let s = serde_json::to_string(v).unwrap();
             let back: TurnFailure = serde_json::from_str(&s).unwrap();
             assert_eq!(*v, back);
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of `TurnFailure::classify`.
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_classify_never_panics(text in any::<String>()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = TurnFailure::classify(&text);
+            }));
+            prop_assert!(outcome.is_ok());
+        }
+
+        #[test]
+        fn prop_digit_substring_is_not_a_status(_dummy in any::<u8>()) {
+            let auth_cases = [
+                "request id 1401 failed",
+                "request id 2401 failed",
+                "trace=14011",
+                "id: 1403 unknown",
+                "rfc-1403",
+                "seq 2403",
+                "attempt 1401/3",
+            ];
+            for case in auth_cases {
+                let f = TurnFailure::classify(case);
+                prop_assert!(
+                    !matches!(f, TurnFailure::ProviderAuthError { .. }),
+                    "classify({:?}) = {:?} — a digit run containing \
+                     \"401\"/\"403\" is not an HTTP auth status",
+                    case, f,
+                );
+            }
+            let rate_cases = [
+                "request id 1429 timed out",
+                "tokens: 12429",
+                "attempt 1429/3",
+            ];
+            for case in rate_cases {
+                let f = TurnFailure::classify(case);
+                prop_assert!(
+                    !matches!(f, TurnFailure::TransportRateLimit { .. }),
+                    "classify({:?}) = {:?} — a digit run containing \
+                     \"429\" is not an HTTP rate limit",
+                    case, f,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_bounded_status_is_honoured(_dummy in any::<u8>()) {
+            for case in ["http 401 unauthorized", "status: 401", "http:401", "error 401"] {
+                let f = TurnFailure::classify(case);
+                prop_assert!(
+                    matches!(f, TurnFailure::ProviderAuthError { .. }),
+                    "classify({:?}) = {:?} — a bounded 401 must be auth",
+                    case, f,
+                );
+            }
+            for case in ["http 403 forbidden", "status: 403", "http:403"] {
+                let f = TurnFailure::classify(case);
+                prop_assert!(
+                    matches!(f, TurnFailure::ProviderAuthError { .. }),
+                    "classify({:?}) = {:?} — a bounded 403 must be auth",
+                    case, f,
+                );
+            }
+            for case in ["http 429 rate limit", "(429) too many requests", "http:429"] {
+                let f = TurnFailure::classify(case);
+                prop_assert!(
+                    matches!(f, TurnFailure::TransportRateLimit { .. }),
+                    "classify({:?}) = {:?} — a bounded 429 must be rate limit",
+                    case, f,
+                );
+            }
         }
     }
 }

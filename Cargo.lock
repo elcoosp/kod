@@ -2253,6 +2253,7 @@ dependencies = [
  "kod-provider-openai",
  "kod-types",
  "parking_lot",
+ "proptest",
  "regex",
  "serde",
  "serde_json",
