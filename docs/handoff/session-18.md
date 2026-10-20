@@ -3,15 +3,14 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `767e280` (full-workspace gate green at that
-commit; see "State" below and the sixteen "Re-verification"
-subsections in "What's open" #1). 4495/4495 on the fourth attempt; 5
-skipped; no leaky. The commit fixes a real security bug: the shell
-classifier in `kod-risk/src/classify.rs` returned `Safe` for
-`echo hi; (rm -rf ~)` — a subshell after a command separator escaped
-the leading-`(` heuristic entirely. The three attempts that preceded
-the passing gate were SIGKILLed by a **concurrent process on the host**,
-not OOM; L51 records the corrected diagnosis.
+**Last verified commit:** `56fed90` (full-workspace gate green at that
+commit; see "State" below and the seventeen "Re-verification"
+subsections in "What's open" #1). 4500/4500 on the first try; 5
+skipped; no leaky. The commit fixes two real bugs in
+`kod-core-quality/src/preflight.rs`'s host-probe parsers:
+`parse_loadavg` accepted `NaN`/`inf` (which silently failed the
+`load > cores` pressure check), and `parse_meminfo` panicked on
+`u64` overflow from a hostile `/proc/meminfo` kB value.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -28,7 +27,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, `88ca5f7`, and `767e280`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, `88ca5f7`, `767e280`, and `56fed90`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -62,6 +61,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `56fed90` (after the preflight-parser fix).**
+Ran the same command at `56fed90`:
+
+    4500 tests run: 4500 passed, 5 skipped
+
+Up from 4495 at `767e280` — exactly the five new `kod-core-quality`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `767e280` (after the risk-classifier fix).**
 Ran the same command at `767e280`:
@@ -308,7 +315,7 @@ correct last tag.
 
 ## State
 
-`main` at `767e280`, thirty-two commits past `v0.1.12`:
+`main` at `56fed90`, thirty-three commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -358,6 +365,8 @@ correct last tag.
 | `88ca5f7` | fix(tools): reject zero line/column in compiler-output parsers; proptests + probes |
 | `49b00b5` | docs(handoff): gate at `88ca5f7`; zero-position parser fix + L49 |
 | `767e280` | fix(risk): escalate subshells after command separators (SEC-A-05b) |
+| `fd9e8ce` | docs(handoff): gate at `767e280`; L50, L51, risk-classifier round |
+| `56fed90` | fix(core-quality): finite loadavg; saturating meminfo byte count; proptests |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -1280,6 +1289,67 @@ you check for a concurrent process.
 two positive controls, and a 4495/4495 full-workspace gate.
 
 
+**Fifteenth round: the host-preflight parsers (`56fed90`).**
+The next untested surface from the survey:
+`kod-core-quality/src/preflight.rs` — 232 lines, three `pub`
+parsers (`parse_meminfo`, `parse_loadavg`, `parse_pmset`), 9
+example tests, zero proptests. All three run at startup to
+decide whether the host is under pressure.
+
+**Two real bugs, both in `pub` parsers:**
+
+1. `parse_loadavg` accepted `NaN` and `±inf`. `f64::parse`
+   accepts `"NaN"`, `"inf"`, `"-inf"`, `"Infinity"`. A
+   `NaN` load average silently failed the `load > cores`
+   check in `pressure_reasons` — any comparison with `NaN`
+   is false — so an under-pressure host was reported as
+   safe. Fixed with `.filter(|v| v.is_finite())`.
+
+2. `parse_meminfo` panicked on an out-of-range kB value.
+   `kb * 1024` overflowed under `overflow-checks` (debug and
+   test profiles); a hostile or corrupt `/proc/meminfo` with
+   a huge `MemTotal:` aborted the startup-time probe. Fixed
+   with `kb.saturating_mul(1024)` — saturation at `u64::MAX`
+   is the correct answer for a byte count that cannot fit.
+
+**Five proptests added:**
+
+- `prop_parsers_never_panic` — all three parsers on arbitrary input
+- `meminfo_huge_value_does_not_overflow` — direct probe of
+  out-of-range kB values
+- `loadavg_is_finite` — property over arbitrary input
+- `loadavg_nan_and_inf_are_rejected` — direct probe of
+  `"NaN"`, `"inf"`, `"-inf"`, `"Infinity"`, `"INF"`, and
+  the braced forms
+- `loadavg_parses_a_finite_number` — positive control
+
+**Two failing-first, both were RED on the pre-fix code:**
+
+- `loadavg_nan_and_inf_are_rejected` failed on
+  `parse_loadavg("NaN") = Some(NaN)`.
+- `meminfo_huge_value_does_not_overflow` failed with `attempt
+  to multiply with overflow` at preflight.rs:75.
+
+**Two positive controls:**
+
+- Control A: revert `saturating_mul` to `kb * 1024`.
+  `meminfo_huge_value_does_not_overflow` fails.
+- Control B: revert the `.filter(is_finite)`.
+  `loadavg_nan_and_inf_are_rejected` fails.
+
+Both restored cleanly; suite re-confirmed green.
+
+**The shape.** Both bugs are the same class the arc has been
+finding all session: a boundary parser accepting input it
+should reject (like `Origin::parse` at `31bd1a5`,
+`extract_status` at `af0301f`, `extract_attribute` at
+`1231a4e`) or doing arithmetic on it without a guard (like
+the SSE overflow at `dac5844`, the `parse_report` panic at
+`45aec66`). The preflight parsers read OS-reported text, not
+model-authored text, but the contract is identical: reject
+what you cannot interpret, do not abort on it.
+
+
 ## Where to start
 
 1. **Step 0** — verify tree, HEAD, tag.
@@ -1292,17 +1362,30 @@ two positive controls, and a 4495/4495 full-workspace gate.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified
-   end-to-end at `767e280` (4495/4495 full-workspace). Nothing
+   end-to-end at `56fed90` (4500/4500 full-workspace). Nothing
    this session started is unfinished.
 
-   Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
-   check `kache stats` and `auto-gc.log` if disk-full recurs;
-   `target/` is warm at ~9 GiB — keep it warm, and confirm no
-   other cargo/rustc is running before concluding a SIGKILL is
-   the build's fault (L51). (b) `kod-risk` has more surface
-   (path classification, wrapper-table sync) but every function
-   reached by this arc's survey now has at least one property
-   or probe. (c) `kod-types/effort.rs` is the last remaining
+   **This is a natural stopping point.** The session has
+   accumulated 15 bug-hunting rounds, 8 real production bugs
+   (three security-relevant), 64 new tests across 11 modules,
+   and 30 handoff lessons (L20–L51). The handoff is now 1390+
+   lines; if the next session adds more than a round or two,
+   extract the session-18 rounds into `session-18-detail.md`
+   rather than continue appending.
+
+   Known gaps: (a) kache's auto-gc daemon was not evicting
+   (L40), check `kache stats` and `auto-gc.log` if disk-full
+   recurs; `target/` is warm at ~10 GiB — keep it warm, and
+   confirm no other cargo/rustc is running before concluding
+   a SIGKILL is the build's fault (L51). (b) `kod-core-quality`
+   has 7255 lines total; only `preflight.rs` was surveyed this
+   round. Other modules (`worktree.rs`, `repomap.rs`,
+   `transcript_coherence.rs`) are untested by proptests but the
+   survey did not name them as boundary parsers. (c) The
+   `retry_strategy::classify` ordering contracts (auth-before-
+   timeout, context-window-before-rate-limit) are example-tested
+   only; a property would pin them but the current code is
+   correct. (d) `kod-types/effort.rs` is the last remaining
    parser from the L42 survey; optional.
 
 ## Note on `session-17.md`
@@ -1379,13 +1462,14 @@ from a bare `#[test]` inside `proptest!` whose compile error
 pointed at the wrong line, one (L50) came from the module
 contract demanding `Confirm` where `Catastrophic` looked safer,
 and one (L51) came from a SIGKILL that was another process's
-fault, not OOM. The full workspace gate at `767e280` runs 4495
-tests, all green, including fifty-nine new tests across
-ten modules (`kod-config/config.rs`, `kod-config/policy.rs`,
+fault, not OOM. The full workspace gate at `56fed90` runs 4500
+tests, all green, including sixty-four new tests across
+eleven modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
 `kod-swarm/brief.rs`, `kod-skills/parser.rs` — eighteen there,
 `kod-swarm/completion_report.rs`, `kod-tools/check.rs` — five
-there, `kod-risk/classify.rs` — five there (three pre-existing,
-two added), plus a deterministic test for the jitter-seed
-collision the gate exposed.
+there, `kod-risk/classify.rs` — five there (three pre-existing, two
+added), `kod-core-quality/preflight.rs` — five there, plus a
+deterministic test for the jitter-seed collision the gate
+exposed.
