@@ -506,3 +506,129 @@ mod tests {
         assert!(png_signature_ok(&png));
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    //! Properties for the two pure functions in this module.
+    //!
+    //! `rasterize_to_png` is deterministic by construction: the font is
+    //! a fixed table, the PNG uses stored-mode deflate (no zlib
+    //! randomness), and nothing in the path reads a clock or RNG. That
+    //! makes byte-equality over repeated calls a meaningful assertion.
+    //!
+    //! `base64_encode` is hand-rolled, so its contract is not "matches
+    //! the base64 crate" but "matches RFC 4648's length, padding, and
+    //! alphabet". The known-vector test in `tests` pins the encoding;
+    //! these properties pin the shape.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    // ---- base64_encode ---------------------------------------------------
+
+    proptest! {
+        /// Output length is always 4 * ceil(input/3).
+        #[test]
+        fn prop_base64_length(bytes in prop::collection::vec(any::<u8>(), 0..=100)) {
+            let out = base64_encode(&bytes);
+            prop_assert_eq!(out.len(), bytes.len().div_ceil(3) * 4);
+        }
+
+        /// Padding is `(3 - len % 3) % 3` equals signs at the end.
+        #[test]
+        fn prop_base64_padding_count(bytes in prop::collection::vec(any::<u8>(), 0..=100)) {
+            let out = base64_encode(&bytes);
+            let expected = (3 - bytes.len() % 3) % 3;
+            let actual = out.chars().rev().take_while(|c| *c == '=').count();
+            prop_assert_eq!(actual, expected);
+        }
+
+        /// Every character is in the RFC 4648 alphabet (or padding).
+        #[test]
+        fn prop_base64_alphabet(bytes in prop::collection::vec(any::<u8>(), 0..=100)) {
+            const ALPHABET: &str =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+            let out = base64_encode(&bytes);
+            for c in out.chars() {
+                prop_assert!(ALPHABET.contains(c), "non-alphabet char {:?}", c);
+            }
+        }
+    }
+
+    #[test]
+    fn base64_empty_input_is_empty_output() {
+        assert_eq!(base64_encode(&[]), "");
+    }
+
+    // ---- rasterize_to_png ------------------------------------------------
+
+    /// A line of printable, non-whitespace ASCII. `[!-~]` is 0x21..=0x7E,
+    /// so `trim()` cannot make the line empty.
+    fn arb_nonblank_line() -> impl Strategy<Value = String> {
+        "[!-~]{1,40}"
+    }
+
+    proptest! {
+        /// The PNG is deterministic: same text, same bytes.
+        #[test]
+        fn prop_rasterize_deterministic(
+            lines in prop::collection::vec(arb_nonblank_line(), 1..=5),
+        ) {
+            let text = lines.join("\n");
+            let first = rasterize_to_png(&text).expect("non-empty text renders");
+            let second = rasterize_to_png(&text).expect("non-empty text renders");
+            prop_assert_eq!(first, second);
+        }
+
+        /// Every successful render starts with the PNG signature.
+        #[test]
+        fn prop_rasterize_png_signature(
+            lines in prop::collection::vec(arb_nonblank_line(), 1..=5),
+        ) {
+            let text = lines.join("\n");
+            let png = rasterize_to_png(&text).expect("non-empty text renders");
+            prop_assert!(png.len() >= 8);
+            prop_assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        }
+
+        /// More than MAX_LINES non-empty lines is TooLarge with the
+        /// actual count and the limit both reported.
+        #[test]
+        fn prop_rasterize_too_many_lines(
+            extra in 1usize..=10,
+            line in arb_nonblank_line(),
+        ) {
+            let text = (line + "\n").repeat(MAX_LINES + extra);
+            match rasterize_to_png(&text) {
+                Err(RasterizeError::TooLarge { lines, max }) => {
+                    prop_assert!(lines > max);
+                    prop_assert_eq!(max, MAX_LINES);
+                }
+                Err(other) => prop_assert!(false, "expected TooLarge, got {}", other),
+                Ok(_) => prop_assert!(false, "expected TooLarge, got Ok"),
+            }
+        }
+    }
+
+    /// Control: exactly MAX_LINES non-empty lines renders (the `>`
+    /// comparison in the code is not `>=`).
+    #[test]
+    fn exactly_max_lines_renders() {
+        let text = vec!["hi"; MAX_LINES].join("\n");
+        assert_eq!(text.lines().count(), MAX_LINES);
+        assert!(rasterize_to_png(&text).is_ok());
+    }
+
+    /// Control: the Empty-vs-TooLarge precedence. A text that is both
+    /// too many lines and all-whitespace returns Empty, not TooLarge.
+    /// The module checks Empty first.
+    #[test]
+    fn whitespace_only_many_lines_is_empty_not_too_large() {
+        let text = "\n".repeat(MAX_LINES + 20);
+        assert!(text.lines().count() > MAX_LINES);
+        assert!(matches!(
+            rasterize_to_png(&text),
+            Err(RasterizeError::Empty),
+        ));
+    }
+}
