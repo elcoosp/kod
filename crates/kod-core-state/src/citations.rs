@@ -119,12 +119,11 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
             Some(n) if n > 0 => n,
             _ => continue,
         };
-        let end_line: Option<u32> =
-            match cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                Some(n) if n > 0 && n >= line => Some(n),
-                Some(_) => continue,
-                None => None,
-            };
+        let end_line: Option<u32> = match cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
+            Some(n) if n > 0 && n >= line => Some(n),
+            Some(_) => continue,
+            None => None,
+        };
         if path.is_empty() || ext.is_empty() {
             continue;
         }
