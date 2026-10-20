@@ -1475,3 +1475,144 @@ violation, not security.
    runs are green; a full gate has not been re-run. If a future
    session tags without a full gate, the 55 new tests could hide
    an integration failure the per-module runs cannot see.
+
+## Post-extraction rounds (after `0846399`)
+
+Sixteen commits after the detail-file extraction at `0846399`. Same
+cadence as before: one module per round, properties plus controls,
+targeted `cargo nextest run -p <crate> --lib <module>` (no
+full-workspace gate — the "stop running full gate ate every commit"
+instruction from this session is still in effect). The tag is still
+`v0.1.13` at `087d6e1`; nothing here is released.
+
+### Commits
+
+| Commit | What |
+|---|---|
+| `fc88fe6` | **fix(kod-core-state): validate `end_line` against `line` in `extract_citations`** (real bug: `end_line` was parsed with no guard against `line`, so `file.rs:100-5` produced a citation with end < start; fixed by dropping malformed ranges) |
+| `0ccb0bb` | chore(kod-core-state): apply pending rustfmt drift (proven pre-existing) |
+| `75025e3` | chore(proptest): commit the regression seeds from this session (`kod-config`, `kod-core-quality`, `kod-core-state`; workspace already tracks 12 such files across 9 crates) |
+| `190bd1c` | test(kod-provider): property tests for `text_hint_secs` / `scan_text_hint` |
+| `c4bc150` | test(kod-core-tools): property tests for `extract_path_from_partial` |
+| `3b27bc7` | chore(deps): Cargo.lock companion for `c4bc150` |
+| `bd93afb` | chore(kod-provider-openai): apply pending rustfmt drift |
+| `02952ac` | test(kod-provider-openai): property tests for `normalize_base_url` |
+| `db0b64f` | chore(deps): Cargo.lock companion for `02952ac` |
+| `50a8cda` | chore(kod-core-state): apply pending rustfmt drift |
+| `d9af454` | test(kod-core-state): property tests for `Plan`'s state machine |
+| `66867a0` | chore(deps): Cargo.lock companion for `d9af454` |
+| `8a4eaca` | test(kod-stats): property tests for `score_change` and its keyword table |
+| `48b8d70` | test(kod-stats): robustness properties for `commit::validate` |
+| `26aab8f` | test(kod-provider): property tests for `image_budget` helpers |
+| `f2a922f` | test(kod-provider): property tests for `extract_retry_hints` |
+
+### The one new bug found
+
+**`extract_citations` malformed ranges** (`fc88fe6`). The function
+parsed `line` with a `Some(n) if n > 0` guard but parsed `end_line`
+with no guard at all. A range like `src/a.rs:100-5` or
+`src/a.rs:42-0` therefore produced a `Citation` with
+`end_line = Some(5)` or `Some(0)` — a range whose end is before
+its start, or ends at line zero. The struct doc says `end_line` is
+"the second number of a range"; a range with end < start is not a
+range, and `render_block` would print `100-5` to the user verbatim.
+Found by two properties (`prop_end_line_at_least_line`,
+`prop_end_line_positive`) plus two controls; fixed by dropping the
+whole citation on a malformed range rather than silently
+normalizing to a single-line citation.
+
+Reachability: `extract_citations` is called from
+`kod-core/src/engine/jev.rs:472`; the display path is
+`check_and_annotate`, which appends `render_block` to the reply.
+
+### Fixture bugs found in my own properties
+
+Two, both caught by the compile gate rather than the properties,
+which is the pipeline working:
+
+1. **`image_budget`**: first draft constructed `ImageFrame` without
+   the `media_type` field (four `E0063` errors). The field exists;
+   my survey read the struct in `image_budget.rs` but not the
+   definition in `request.rs`.
+2. **`image_budget` fixtures**: first draft used
+   `format!("{PNG_BASE64_PREFIX}{i:04}")`, giving 15-char frames
+   (11 + 4). 15 % 4 == 3, so `is_likely_png_base64` returned false
+   for every frame and the survivor property would have passed
+   **vacuously** on an empty set (L58). Existing test module uses
+   `:05` for the same reason; fixed to `:05` (16 chars).
+
+### Pinned behaviours, not fixed
+
+- **`Plan::advance` overwrites the current step's status to Done**
+  even when it was Blocked. `advance` marks `steps[current]` done,
+  then searches from index 0 for the first Pending — so the search
+  direction can go backward. Whether that's correct depends on the
+  intended reading of "the next pending step". Pinned as
+  `control_advance_overwrites_current_status_to_done`; the code is
+  not changed.
+- **`apply_image_budget` drops from the front** (`drain(..excess)`).
+  A future front-vs-back policy change is now a visible decision.
+- **`normalize_base_url` double-appends a `/v1` on a path-suffixed
+  input**: `http://x/v1/foo` → `http://x/v1/foo/v1`. Documented as
+  a control; fixing this requires deciding where the fix belongs
+  (the function, `LlmConfig::validate`, or a new validation step).
+- **`is_likely_png_base64` does not validate the base64 alphabet**:
+  an 11-char prefix + 5 invalid chars at a divisible-by-4 length
+  returns true. Named as a "likely" heuristic; tightening is a
+  policy call.
+- **`HINT_CAP` is applied by `extract_retry_hints`, not by
+  `text_hint_secs`**: the two `kod-core-routing::retry_strategy`
+  call sites pass the raw value through uncapped. Caller gap,
+  not a function bug, documented in the `text_hint_secs` commit
+  and again here.
+
+### Correction to an earlier claim
+
+A round's survey output led me to flag "`commit.rs:187` reads
+`proposal.changed_paths[0].clone()` in `format_message`, panics on
+empty" as a real bug. It isn't. The `[0]` is inside `validate`,
+*after* the `changed_paths.is_empty()` check in the same function.
+`format_message` does not touch `changed_paths` at all. The
+`validate` robustness properties in `48b8d70` pin the current
+check order so a reordering cannot introduce the panic, but no bug
+was fixed because none existed. The original survey output labelled
+the file "no panic-shaped calls" because of a bug in the awk
+pipeline that reported the absence unconditionally when the loop
+printed no hits — a lesson shape already in this session (the
+checker is code; L23's family).
+
+### Counting
+
+Five miscounts across the whole session, all in commit messages,
+all historical and not rewritten:
+
+1. `c87eb73` — "Eleven properties plus two controls" (actual: 9 + 2).
+2. `f46c157` — advised a `nextest list | grep -c` command that
+   returned 0 (L57).
+3. `cdd0838` — "Six properties plus one control" (actual: 7 + 1).
+4. `75025e3` — "Nine crates" then listed twelve.
+5. `8a4eaca` — "Four properties plus six controls" (actual: 4 + 5).
+
+The pattern is typing a number I haven't verified against the run
+output. L56 names the discipline; L57 names the recursion; this
+note records that the discipline was applied on the last three
+rounds (`26aab8f`, `f2a922f`, and the current docs commit) but
+not on the earlier ones.
+
+### What's left — new-session shape
+
+- **`repomap.rs`** (1300 lines): AST extraction via `tree-sitter`.
+  Needs on-disk fixture files and slow grammar compiles; a
+  different shape of work than the last twenty rounds.
+- **`worktree.rs`** beyond `sanitize_slug`: every test needs
+  `tempfile` + `git init`, which is the L51 flaky shape at scale.
+- **`worktree_isolation_ownership.rs`**: same `tempfile` cost,
+  plus `libc::kill`-based process-death simulation; `#[cfg(unix)]`
+  either way.
+- **(a) kache's auto-gc**: operational, not code.
+- **`run_structured`**: async, needs a mock provider; the property
+  would test retry budget × parse outcome, which is a different
+  shape from the pure-function rounds.
+
+None of the above fits a one-round script. The session's cadence
+— read, write properties, targeted run, fix only if red — is done.
