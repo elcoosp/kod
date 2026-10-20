@@ -401,3 +401,157 @@ mod tests {
         assert_eq!(m, "feat: add the widget");
     }
 }
+
+#[cfg(test)]
+mod score_change_proptests {
+    //! Properties for `score_change` and the `PRIORITY_WEIGHTS`
+    //! constant table.
+    //!
+    //! `score_change` is five lines: lowercase, then sum the weight
+    //! of every keyword the description contains. The productive
+    //! place to find a real bug is the *table*, not the loop — an
+    //! empty keyword would add a constant to every score; a
+    //! whitespace-containing keyword would fail to match a
+    //! caller-passing description; a negative weight would mean
+    //! adding text lowers the score. Those are pins on the constant,
+    //! and the properties follow from them.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn safe_text() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 ]{0,80}"
+    }
+
+    proptest! {
+        #[test]
+        fn prop_deterministic(s in safe_text()) {
+            prop_assert_eq!(score_change(&s), score_change(&s));
+        }
+
+        /// Case-insensitive: `score_change` calls
+        /// `to_ascii_lowercase()` on the input, so ASCII case does
+        /// not affect the score.
+        #[test]
+        fn prop_case_insensitive_ascii(s in safe_text()) {
+            let lower = s.to_ascii_lowercase();
+            let upper = s.to_ascii_uppercase();
+            prop_assert_eq!(score_change(&lower), score_change(&upper));
+            prop_assert_eq!(score_change(&s), score_change(&lower));
+        }
+
+        /// Upper bound: no input scores more than the sum of the
+        /// positive weights. `score_change` only accumulates table
+        /// weights, so it cannot exceed their sum.
+        #[test]
+        fn prop_subset_of_positive_sum(s in safe_text()) {
+            let total_positive: i32 = PRIORITY_WEIGHTS
+                .iter()
+                .filter(|(_, w)| *w > 0)
+                .map(|(_, w)| *w)
+                .sum();
+            prop_assert!(
+                score_change(&s) <= total_positive,
+                "score {} > positive sum {} for {:?}",
+                score_change(&s), total_positive, s,
+            );
+        }
+
+        /// A description containing a keyword scores at least that
+        /// keyword's weight. The keyword contains itself, so its own
+        /// weight is always in the sum.
+        #[test]
+        fn prop_keyword_contributes_at_least_its_weight(
+            (kw, _w) in prop::sample::select(PRIORITY_WEIGHTS.to_vec()),
+        ) {
+            let own_score = score_change(kw);
+            let own_weight = PRIORITY_WEIGHTS
+                .iter()
+                .find(|(k, _)| *k == kw)
+                .map(|(_, w)| *w)
+                .expect("keyword present");
+            prop_assert!(
+                own_score >= own_weight,
+                "score_change({:?}) = {} < its own weight {}",
+                kw, own_score, own_weight,
+            );
+        }
+    }
+
+    /// Control: every keyword is non-empty. An empty keyword would
+    /// be a substring of every description, adding its weight to
+    /// every score — the constant-match bug in the priority scorer.
+    #[test]
+    fn control_no_empty_keyword() {
+        for (kw, _) in PRIORITY_WEIGHTS {
+            assert!(!kw.is_empty(), "empty keyword in PRIORITY_WEIGHTS");
+        }
+    }
+
+    /// Control: every keyword has no leading or trailing whitespace.
+    /// A keyword like `" security"` would fail to match a description
+    /// that starts with the word.
+    #[test]
+    fn control_no_leading_or_trailing_whitespace_in_keyword() {
+        for (kw, _) in PRIORITY_WEIGHTS {
+            assert_eq!(
+                kw.trim(),
+                *kw,
+                "keyword {:?} has leading/trailing whitespace",
+                kw,
+            );
+        }
+    }
+
+    /// Control: every weight is positive. A negative weight would
+    /// mean adding text to a description can lower the score, which
+    /// contradicts the function's role as a priority signal.
+    #[test]
+    fn control_all_weights_positive() {
+        for (kw, w) in PRIORITY_WEIGHTS {
+            assert!(*w > 0, "keyword {:?} has non-positive weight {}", kw, w);
+        }
+    }
+
+    /// Control: `score_change("")` is `0`. Follows from
+    /// `control_no_empty_keyword`, but stated as its own consequence
+    /// so a future change to either the table or the loop shows up
+    /// here.
+    #[test]
+    fn control_empty_is_zero() {
+        assert_eq!(score_change(""), 0);
+    }
+
+    /// Control: a description containing a superset keyword (e.g.
+    /// "breaking" contains "break") accumulates both weights. This
+    /// is the intended behaviour of a keyword-scoring heuristic —
+    /// the more specific signal scores higher — but pinning it means
+    /// a future change that switches to first-match-wins fails here
+    /// and forces a decision.
+    #[test]
+    fn control_superset_accumulates() {
+        // Find a pair of keywords in the table where one is a
+        // substring of the other.
+        let mut found = false;
+        for (outer, _) in PRIORITY_WEIGHTS {
+            for (inner, _) in PRIORITY_WEIGHTS {
+                if inner != outer && outer.contains(inner) {
+                    let outer_score = score_change(outer);
+                    let inner_score = score_change(inner);
+                    assert!(
+                        outer_score > inner_score,
+                        "superset {:?} scored {} (not > than subset {:?} = {})",
+                        outer,
+                        outer_score,
+                        inner,
+                        inner_score,
+                    );
+                    found = true;
+                }
+            }
+        }
+        // If the table has no substring pairs, this control is a
+        // no-op — that is a valid table shape, not a failure.
+        let _ = found;
+    }
+}
