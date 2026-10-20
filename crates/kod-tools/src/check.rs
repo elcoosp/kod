@@ -32,7 +32,7 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// One structured diagnostic.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// Path as reported by the tool — usually relative to the workspace
     /// root, sometimes absolute. Not canonicalized; the model resolves
@@ -141,6 +141,11 @@ fn parse_tsc_line(line: &str) -> Option<Diagnostic> {
     let mut parts = location.split(',');
     let line_no: u32 = parts.next()?.trim().parse().ok()?;
     let col_no: u32 = parts.next()?.trim().parse().ok()?;
+    // 1-based: same guard as `parse_location_colon`. TSC line
+    // `foo.ts(0,0): error ...` was accepted with zero positions.
+    if line_no == 0 || col_no == 0 {
+        return None;
+    }
     let rest = line[close + 1..].trim_start_matches(':').trim_start();
     let (severity, _code, message) = parse_severity_and_code(rest)?;
     // tsc puts the code (`TS2322`) at the start of the message rather
@@ -285,6 +290,17 @@ fn parse_location_colon(s: &str) -> Option<(String, u32, u32)> {
     let line: u32 = parts.next()?.trim().parse().ok()?;
     let file = parts.next()?.trim().to_string();
     if file.is_empty() {
+        return None;
+    }
+    // Source positions are 1-based. `"0".parse::<u32>()` succeeds,
+    // so without this guard a line like `a.rs:0:0: error: x` produced
+    // a `Diagnostic { line: 0, column: 0 }` — a position no compiler
+    // emits. Downstream consumers that do `line - 1` for 0-based
+    // indexing would underflow. Found by the direct probe in
+    // `zero_position_line_is_rejected`, not by the property that uses
+    // `any::<String>()` (which almost never samples a
+    // well-formed-looking line with `0`).
+    if line == 0 || col == 0 {
         return None;
     }
     Some((file, line, col))
@@ -938,5 +954,115 @@ mod coverage_project_detection {
         assert_eq!(a, b); // Eq + PartialEq
         // Debug formatting works.
         let _ = format!("{a:?}");
+    }
+}
+
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of the compiler-output parsers in this module.
+    //!
+    //! Every `parse_*_line` function parses external tool output
+    //! (cargo, tsc, ruff, go, `rustc`). The contract:
+    //!
+    //! - every parser returns `Option<Diagnostic>` (or
+    //!   `Option<(...)>`) and never panics on arbitrary input;
+    //! - a `Some` result carries `line >= 1` and `column >= 1`;
+    //! - a well-formed `rustc` line parses back to the right fields.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_rustc_line() -> impl Strategy<Value = String> {
+        (
+            "[a-zA-Z0-9_/.-]{1,30}\\.rs",
+            1u32..=5000,
+            1u32..=500,
+            prop::sample::select(vec!["error", "warning"]),
+            "[a-zA-Z0-9][a-zA-Z0-9 .,;:!?-]{0,59}",
+        )
+            .prop_map(|(path, line, col, sev, msg)| {
+                format!("{path}:{line}:{col}: {sev}: {msg}")
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parsers_never_panic(text in any::<String>()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse_rust_line(&text);
+                let _ = parse_tsc_line(&text);
+                let _ = parse_ruff_line(&text);
+                let _ = parse_go_line(&text);
+                let _ = parse_ruff_prefix(&text);
+                let _ = parse_location_colon(&text);
+                let _ = parse_location_colon_prefix(&text);
+                let _ = parse_severity_and_code(&text);
+            }));
+            prop_assert!(outcome.is_ok());
+        }
+
+        #[test]
+        fn prop_diagnostic_positions_are_one_based(text in any::<String>()) {
+            for f in [
+                parse_rust_line as fn(&str) -> Option<Diagnostic>,
+                parse_tsc_line,
+                parse_ruff_line,
+                parse_go_line,
+            ] {
+                if let Some(d) = f(&text) {
+                    prop_assert!(d.line >= 1);
+                    prop_assert!(d.column >= 1);
+                }
+            }
+        }
+
+        #[test]
+        fn prop_well_formed_rustc_line_round_trips(line in arb_rustc_line()) {
+            let d = parse_rust_line(&line)
+                .unwrap_or_else(|| panic!("well-formed rustc line did not parse: {line:?}"));
+            prop_assert!(d.line >= 1);
+            prop_assert!(d.column >= 1);
+            prop_assert!(!d.message.is_empty());
+        }
+    }
+
+    /// Direct probe of the zero-position hypothesis. A `:0:0:` line
+    /// must not produce a `Diagnostic`. A plain `#[test]`, outside
+    /// `proptest!` — a bare test with no `in` clause is not valid
+    /// proptest syntax (L49).
+    #[test]
+    fn zero_position_line_is_rejected() {
+        for case in [
+            "a.rs:0:0: error: x",
+            "a.rs:0:1: error: x",
+            "a.rs:1:0: error: x",
+            "a.rs:0:0: warning: x",
+        ] {
+            assert_eq!(
+                parse_rust_line(case),
+                None,
+                "parser accepted a zero position in {:?}",
+                case,
+            );
+        }
+    }
+
+    /// The same zero-position contract for the tsc parser, which has
+    /// its own `(line,col)` splitting — a fix in `parse_location_colon`
+    /// does not cover it.
+    #[test]
+    fn zero_position_tsc_line_is_rejected() {
+        for case in [
+            "a.ts(0,0): error TS2322: x",
+            "a.ts(0,1): error TS2322: x",
+            "a.ts(1,0): error TS2322: x",
+        ] {
+            assert_eq!(
+                parse_tsc_line(case),
+                None,
+                "tsc parser accepted a zero position in {:?}",
+                case,
+            );
+        }
     }
 }
