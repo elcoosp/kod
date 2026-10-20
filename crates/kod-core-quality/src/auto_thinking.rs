@@ -735,3 +735,231 @@ mod tests {
         assert_eq!(parse_effort_label("unknown"), EffortLevel::Medium);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    //! Properties for the two pure functions in the module's
+    //! "Ceiling and clamping" section.
+    //!
+    //! `parse_effort_label` is a one-line delegation to
+    //! `EffortLevel::parse`, which has its own property suite in
+    //! `kod-types`; a property here would just re-test that. The
+    //! `classify` methods are example-tested with mock judges and
+    //! their contract is about the async journey, not a per-function
+    //! invariant.
+    //!
+    //! `supported` is documented as "ascending" in the
+    //! `clamp_to_supported` doc, but the implementation does not
+    //! require it: the loop compares each element against `level`,
+    //! not against its neighbour. The order-independence properties
+    //! below pin the weaker contract the implementation actually
+    //! provides. If the doc is right, the properties are still true
+    //! (order-independent is a superset of ascending-only); if the
+    //! code is right, the doc is over-specified.
+    //!
+    //! The controls are the two empty-`supported` cases: each
+    //! function has its own explicit `Medium`-for-empty contract, and
+    //! a control per function proves the "non-empty" branch below is
+    //! not silently the empty one (L43).
+
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    /// Any of the seven levels, uniformly.
+    fn level() -> impl Strategy<Value = EffortLevel> {
+        select(vec![
+            EffortLevel::None,
+            EffortLevel::Minimal,
+            EffortLevel::Low,
+            EffortLevel::Medium,
+            EffortLevel::High,
+            EffortLevel::Xhigh,
+            EffortLevel::Max,
+        ])
+    }
+
+    /// Any list of 0..=5 levels, with duplicates.
+    fn supported() -> impl Strategy<Value = Vec<EffortLevel>> {
+        prop::collection::vec(level(), 0..=5)
+    }
+
+    proptest! {
+        // ---- clamp_to_supported --------------------------------------------
+
+        /// Control: the documented empty-list fallback.
+        #[test]
+        fn prop_clamp_empty_returns_medium(level in level()) {
+            prop_assert_eq!(clamp_to_supported(level, &[]), EffortLevel::Medium);
+        }
+
+        /// Closure: a non-empty `supported` always yields an element of
+        /// itself. This is the invariant a caller depends on — the
+        /// result is a level the model actually declared.
+        #[test]
+        fn prop_clamp_result_is_in_supported(
+            level in level(),
+            supported in supported(),
+        ) {
+            prop_assume!(!supported.is_empty());
+            let result = clamp_to_supported(level, &supported);
+            prop_assert!(
+                supported.contains(&result),
+                "clamp({:?}, {:?}) = {:?}, not in supported",
+                level, supported, result,
+            );
+        }
+
+        /// Spec: the result is the largest supported level at or below
+        /// `level`, or the smallest supported level if none qualifies.
+        /// Declarative, not a re-run of the loop (L23): it says what
+        /// the function *means*, not how it computes.
+        #[test]
+        fn prop_clamp_matches_max_at_or_below_level(
+            level in level(),
+            supported in supported(),
+        ) {
+            prop_assume!(!supported.is_empty());
+            let expected = supported
+                .iter()
+                .filter(|s| **s <= level)
+                .max()
+                .copied()
+                .unwrap_or_else(|| *supported.iter().min().unwrap());
+            prop_assert_eq!(
+                clamp_to_supported(level, &supported),
+                expected,
+                "level={:?} supported={:?}",
+                level, supported,
+            );
+        }
+
+        /// Permuting `supported` must not change the result. The doc
+        /// says "ascending"; the code does not require it. This is the
+        /// property that decides which one is true.
+        #[test]
+        fn prop_clamp_is_order_independent(
+            level in level(),
+            supported in supported(),
+        ) {
+            let result = clamp_to_supported(level, &supported);
+            let mut sorted = supported.clone();
+            sorted.sort();
+            let mut reversed = supported.clone();
+            reversed.reverse();
+            prop_assert_eq!(result, clamp_to_supported(level, &sorted));
+            prop_assert_eq!(result, clamp_to_supported(level, &reversed));
+        }
+
+        /// Idempotence: clamping a clamped level is a no-op. A caller
+        /// that clamps at two layers (config load, request build) must
+        /// not see a second clamp change the answer.
+        #[test]
+        fn prop_clamp_is_idempotent(
+            level in level(),
+            supported in supported(),
+        ) {
+            let once = clamp_to_supported(level, &supported);
+            prop_assert_eq!(
+                clamp_to_supported(once, &supported),
+                once,
+                "level={:?} supported={:?}",
+                level, supported,
+            );
+        }
+
+        /// When the request's level is at or above the supported floor,
+        /// clamping never *raises* it: it either matches or drops.
+        #[test]
+        fn prop_clamp_is_at_most_level_when_level_is_at_least_floor(
+            level in level(),
+            supported in supported(),
+        ) {
+            prop_assume!(!supported.is_empty());
+            let floor = *supported.iter().min().unwrap();
+            prop_assume!(level >= floor);
+            prop_assert!(clamp_to_supported(level, &supported) <= level);
+        }
+
+        // ---- ceiling_for_auto ----------------------------------------------
+
+        /// Control: the documented empty-list fallback.
+        #[test]
+        fn prop_ceiling_empty_returns_medium(level in level()) {
+            prop_assert_eq!(ceiling_for_auto(level, &[]), EffortLevel::Medium);
+        }
+
+        /// Spec: `min(level, second-from-top-of-sorted-deduped-S)`, or
+        /// the only element when the deduped set is a singleton.
+        #[test]
+        fn prop_ceiling_is_second_from_top_or_only(
+            level in level(),
+            supported in supported(),
+        ) {
+            prop_assume!(!supported.is_empty());
+            let mut deduped: Vec<EffortLevel> = supported.to_vec();
+            deduped.sort();
+            deduped.dedup();
+            let top = if deduped.len() >= 2 {
+                deduped[deduped.len() - 2]
+            } else {
+                deduped[0]
+            };
+            let expected = if level > top { top } else { level };
+            prop_assert_eq!(
+                ceiling_for_auto(level, &supported),
+                expected,
+                "level={:?} supported={:?}",
+                level, supported,
+            );
+        }
+
+        /// The ceiling never exceeds the model's own top. This is the
+        /// module doc's claim — "auto never returns the top" is a
+        /// stronger statement about the *classifier*, but the ceiling
+        /// function itself must at least not exceed the top.
+        #[test]
+        fn prop_ceiling_is_at_most_top(
+            level in level(),
+            supported in supported(),
+        ) {
+            prop_assume!(!supported.is_empty());
+            let top = *supported.iter().max().unwrap();
+            prop_assert!(ceiling_for_auto(level, &supported) <= top);
+        }
+
+        /// Permuting `supported` must not change the result. The
+        /// implementation sorts internally, so this should hold by
+        /// construction — but pinning it catches an accidental
+        /// `sorted[len-1]` (which is the top, not the second-from-top).
+        #[test]
+        fn prop_ceiling_is_order_independent(
+            level in level(),
+            supported in supported(),
+        ) {
+            let result = ceiling_for_auto(level, &supported);
+            let mut sorted = supported.clone();
+            sorted.sort();
+            let mut reversed = supported.clone();
+            reversed.reverse();
+            prop_assert_eq!(result, ceiling_for_auto(level, &sorted));
+            prop_assert_eq!(result, ceiling_for_auto(level, &reversed));
+        }
+
+        /// Idempotence: the ceiling, once applied, does not move on a
+        /// second application. `min(min(l, c), c) == min(l, c)`.
+        #[test]
+        fn prop_ceiling_is_idempotent(
+            level in level(),
+            supported in supported(),
+        ) {
+            let once = ceiling_for_auto(level, &supported);
+            prop_assert_eq!(
+                ceiling_for_auto(once, &supported),
+                once,
+                "level={:?} supported={:?}",
+                level, supported,
+            );
+        }
+    }
+}
