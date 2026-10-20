@@ -22,10 +22,7 @@ use std::time::Instant;
 /// examples the byte cap silently returned ~1/3 of the requested
 /// character count. See `docs/BUG_REPORT_TRUNCATE_CHARS.md`.
 fn truncate_chars(s: &str, max: usize) -> &str {
-    match s.char_indices().nth(max) {
-        Some((i, _)) => &s[..i],
-        None => s,
-    }
+    kod_types::strutil::truncate_chars(s, max)
 }
 
 /// Types of tasks that can be routed
