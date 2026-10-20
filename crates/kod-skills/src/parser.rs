@@ -207,10 +207,7 @@ impl SkillParser {
                 break;
             };
             let idx = search_at + found;
-            let preceded_ok = tag[..idx]
-                .chars()
-                .last()
-                .is_none_or(|c| c.is_whitespace());
+            let preceded_ok = tag[..idx].chars().last().is_none_or(|c| c.is_whitespace());
             if preceded_ok {
                 let rest = &tag[idx + pattern.len()..];
                 let end = rest.find('"')?;
@@ -225,10 +222,7 @@ impl SkillParser {
                 return None;
             };
             let idx = search_at + found;
-            let preceded_ok = tag[..idx]
-                .chars()
-                .last()
-                .is_none_or(|c| c.is_whitespace());
+            let preceded_ok = tag[..idx].chars().last().is_none_or(|c| c.is_whitespace());
             if preceded_ok {
                 let content_start = idx + pattern.len();
                 let end = tag[content_start..].find('\'')? + content_start;
@@ -767,7 +761,6 @@ mod proptests {
         }
     }
 
-
     // -----------------------------------------------------------------
     // `<example input="...">` attribute extraction.
     //
@@ -884,5 +877,4 @@ mod proptests {
             proptest::prop_assert!(outcome.is_ok());
         }
     }
-
 }
