@@ -8894,7 +8894,6 @@ mod duration_parser_proptests {
     //! pass after (`checked_mul` + `checked_add` return `None`).
 
     use super::*;
-    use proptest::prelude::*;
 
     // ---- parse_duration_secs: regression guards ------------------------
 
@@ -9048,5 +9047,173 @@ mod duration_parser_proptests {
         let huge = format!("{}m", i64::MAX);
         let r = parse_overnight_duration(&huge);
         assert!(r.is_none(), "expected None for overflow, got {:?}", r);
+    }
+}
+
+#[cfg(test)]
+mod goal_flags_proptests {
+    //! Properties for `TuiLoop::parse_goal_flags`.
+    //!
+    //! The method splits on whitespace, treats `--budget` and
+    //! `--time` as flags with either an inline value
+    //! (`--budget=100`) or the next token (`--budget 100`), errors
+    //! on `--`-prefixed unknowns, and joins the rest as goal text.
+    //!
+    //! **No bug expected.** The body is a token loop with
+    //! `?`-based error propagation; `parse_duration_secs` (the
+    //! `--time` value parser) is already property-pinned in
+    //! `duration_parser_proptests`. The properties here pin the
+    //! flag-parsing contract the file had no tests for.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn budget(tokens: u64, secs: u64) -> kod_core::GoalBudget {
+        kod_core::GoalBudget {
+            token: if tokens > 0 { Some(tokens) } else { None },
+            time_seconds: if secs > 0 { Some(secs) } else { None },
+        }
+    }
+
+    proptest! {
+        /// Empty input: no flags, empty goal text.
+        #[test]
+        fn prop_empty_input(_dummy in 0u8..1) {
+            let (b, text) = TuiLoop::parse_goal_flags("").expect("empty ok");
+            prop_assert_eq!(b, budget(0, 0));
+            prop_assert_eq!(text, "");
+        }
+
+        /// Goal text with no flags: passes through verbatim.
+        #[test]
+        fn prop_goal_text_only(
+            words in prop::collection::vec("[a-z]{1,6}", 1..=6),
+        ) {
+            let input = words.join(" ");
+            let (b, text) = TuiLoop::parse_goal_flags(&input).expect("no flags");
+            prop_assert_eq!(b, budget(0, 0));
+            prop_assert_eq!(text, input);
+        }
+
+        /// `--budget N` (space-separated) sets the token cap.
+        #[test]
+        fn prop_budget_space_form(n in 1u64..=1_000_000u64) {
+            let (b, text) = TuiLoop::parse_goal_flags(&format!("--budget {n}")).expect("ok");
+            prop_assert_eq!(b, budget(n, 0));
+            prop_assert_eq!(text, "");
+        }
+
+        /// `--budget=N` (inline) is identical to `--budget N`.
+        #[test]
+        fn prop_budget_inline_form(n in 1u64..=1_000_000u64) {
+            let (b, text) = TuiLoop::parse_goal_flags(&format!("--budget={n}")).expect("ok");
+            prop_assert_eq!(b, budget(n, 0));
+            prop_assert_eq!(text, "");
+        }
+
+        /// `--time Ns` (space form) sets the time cap.
+        #[test]
+        fn prop_time_space_form(n in 1u64..=10_000u64) {
+            let (b, text) = TuiLoop::parse_goal_flags(&format!("--time {n}s")).expect("ok");
+            prop_assert_eq!(b, budget(0, n));
+            prop_assert_eq!(text, "");
+        }
+
+        /// Both flags, in either order, produce the same result.
+        #[test]
+        fn prop_flag_order_irrelevant(
+            t in 1u64..=1_000_000u64,
+            s in 1u64..=10_000u64,
+            goal in "[a-z ]{0,40}",
+        ) {
+            let a = format!("--budget {t} --time {s}s {goal}");
+            let b = format!("--time {s}s --budget {t} {goal}");
+            let (ra, ta) = TuiLoop::parse_goal_flags(&a).expect("a ok");
+            let (rb, tb) = TuiLoop::parse_goal_flags(&b).expect("b ok");
+            prop_assert_eq!(ra, rb);
+            prop_assert_eq!(ta, tb);
+        }
+
+        /// Flags can appear before, after, or interleaved with goal
+        /// text.
+        #[test]
+        fn prop_flags_anywhere(
+            t in 1u64..=1_000_000u64,
+            before in "[a-z ]{0,20}",
+            after in "[a-z ]{0,20}",
+        ) {
+            let input = format!("{before} --budget {t} {after}");
+            let (b, text) = TuiLoop::parse_goal_flags(&input).expect("ok");
+            prop_assert_eq!(b, budget(t, 0));
+            // The parser splits the whole input on whitespace, so
+            // any run of spaces in `before` or `after` collapses to
+            // a single space in the joined result. Compute the
+            // expected text the same way.
+            let expected: String = [before.as_str(), after.as_str()]
+                .iter()
+                .flat_map(|s| s.split_whitespace())
+                .collect::<Vec<_>>()
+                .join(" ");
+            prop_assert_eq!(text, expected);
+        }
+    }
+
+    /// `--budget 0` is rejected. A zero budget is unsatisfiable; the
+    /// caller must omit the flag for "no cap".
+    #[test]
+    fn control_budget_zero_rejected() {
+        let e = TuiLoop::parse_goal_flags("--budget 0").unwrap_err();
+        assert!(e.contains("--budget 0"), "got: {e}");
+    }
+
+    /// `--time 0` (or `--time 0s`) is rejected, same reason.
+    #[test]
+    fn control_time_zero_rejected() {
+        assert!(TuiLoop::parse_goal_flags("--time 0").is_err());
+        assert!(TuiLoop::parse_goal_flags("--time 0s").is_err());
+    }
+
+    /// Unknown `--flag` errors. A lone `--` is treated as an unknown
+    /// flag; there is no `--` terminator.
+    #[test]
+    fn control_unknown_flag_rejected() {
+        assert!(TuiLoop::parse_goal_flags("--nope").is_err());
+        assert!(TuiLoop::parse_goal_flags("--").is_err());
+        assert!(TuiLoop::parse_goal_flags("--budget 100 --nope").is_err());
+    }
+
+    /// Repeated `--budget`: last wins. The loop overwrites
+    /// `budget.token` on each match.
+    #[test]
+    fn control_repeated_budget_last_wins() {
+        let (b, _) = TuiLoop::parse_goal_flags("--budget 100 --budget 200").expect("ok");
+        assert_eq!(b.token, Some(200));
+    }
+
+    /// `--time` accepts `N[s|m|h]` only — no compound form. This is
+    /// a deliberate difference from `/overnight`'s
+    /// `parse_overnight_duration`, which accepts `1h30m`. Pinned so
+    /// a future leniency is a decision.
+    #[test]
+    fn control_time_compound_not_supported() {
+        assert!(TuiLoop::parse_goal_flags("--time 1h30m").is_err());
+        assert!(TuiLoop::parse_goal_flags("--time 90m").is_ok());
+    }
+
+    /// Spaces around `=` are not supported (`--budget = 100` errors).
+    #[test]
+    fn control_spaces_around_equals_rejected() {
+        assert!(TuiLoop::parse_goal_flags("--budget = 100").is_err());
+        assert!(TuiLoop::parse_goal_flags("--budget= 100").is_err());
+        assert!(TuiLoop::parse_goal_flags("--budget =100").is_err());
+    }
+
+    /// A single-dash token (`-` or `-x`) is goal text, not a flag.
+    /// Only `--`-prefixed tokens are treated as flags.
+    #[test]
+    fn control_single_dash_is_text() {
+        let (b, text) = TuiLoop::parse_goal_flags("do the thing -x").expect("ok");
+        assert_eq!(b.token, None);
+        assert_eq!(text, "do the thing -x");
     }
 }
