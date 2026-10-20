@@ -933,6 +933,8 @@ corresponding section in `session-17.md` for the full story.
 
 | L55 | An ordering contract needs a *triple*, not a pair. Two branches co-existing in one input only proves precedence if each half is first shown to reach its own branch on its own — otherwise the concatenation could classify as the winner because *both* halves would have, and the test passes under any order. This is L45's lesson applied to `if`-chain precedence: write `assert(classify(a) == X)`, `assert(classify(b) == Y)`, `assert(classify(a + "; " + b) == X)`. The first two lines are load-bearing, not setup. The `classify` ordering tests use this shape for context-window-before-auth/rate-limit, server-busy-before-timeout/auth, and auth-before-timeout (BUG-C-10). |
 
+| L56 | A predicted test count is not a count. Before committing the auto-thinking properties I predicted `4518 + 13 = 4531` and wrote "Eleven properties plus two controls" in the message; the module was 9 properties + 2 controls = 11, the per-file run reported `41 = 30 + 11`, and the workspace gate reported `4529 = 4518 + 11`. The run and the gate agreed with each other and disagreed with my arithmetic — L26's shape applied to counting instead of grepping. Verify a delta with `cargo nextest list <filter> | grep -c` before and after, not by adding up a bullet list. The miscount is in commit c87eb73's message; the tree is correct, history is not rewritten. |
+
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
 checker-vs-code failures and zero code failures. The proptests

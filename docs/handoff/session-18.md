@@ -329,3 +329,58 @@ If a future session finds the split unhelpful, extract
 `session-18-detail.md` and leave `session-17.md` as a coherent
 session-17 record.
 
+
+## Continuation after v0.1.13
+
+Work landed after the release tag, on top of `c9dbd17` (the
+session-18 starting doc). The tag is unchanged; nothing here is
+released.
+
+| Commit | What |
+|---|---|
+| `1350790` | chore(kod-types): apply pending rustfmt drift (proven pre-existing) |
+| `661c689` | test(kod-types): property tests for `EffortLevel::parse`; reconcile the contradictory fallback docs |
+| `ae25ef7` | docs(handoff): v0.1.13 tag line, L53, L54 |
+| `b5e8474` | test(kod-core-routing): pin `classify`'s precedence contracts (ordering triples) |
+| `b9f32db` | docs(handoff): L55 — an ordering contract needs a triple, not a pair |
+| `bd1cabb` | chore(kod-core-quality): apply pending rustfmt drift (proven pre-existing) |
+| `c87eb73` | test(kod-core-quality): property tests for auto-thinking clamping |
+| *this commit* | docs(handoff): L56 — a predicted test count is not a count |
+
+### Gate history (continuation)
+
+- `c9dbd17` — `4503 run / 4500 passed / 3 execfail / 5 skipped`.
+  The three `execfail` were `EAGAIN` at `fork` (os error 35), not
+  code: a concurrent `nextest run --workspace --test-threads=2`
+  was alive on the same host (PID 66595, not ours). The same 22
+  LSP tests passed in isolation under both nextest and
+  `cargo test`.
+- `ae25ef7` — `4510 / 4510 passed (1 leaky) / 5 skipped`. The
+  `LEAK` was `kod-core engine::prop_tests::prop_arbitrary_text_is_not_a_done_marker`,
+  0/5 on isolated re-run: flaky straggler, not this test.
+- `b9f32db` — `4518 / 4518 passed / 5 skipped`.
+- `c87eb73` — `4529 / 4529 passed / 5 skipped`. Predicted 4531;
+  the counter was wrong (L56).
+
+### Gaps closed
+
+- (c) `retry_strategy::classify` ordering contracts — `b5e8474`,
+  six precedence triples plus three `contains_bounded` properties.
+- (d) `kod-types/effort.rs` — `661c689`, seven properties plus
+  two plain tests.
+
+### Remaining
+
+- (a) kache's auto-gc daemon was not evicting (L40). Operational,
+  not code.
+- (b) `kod-core-quality` survey — `auto_thinking.rs` done
+  (`c87eb73`). Still example-only: `shake.rs` (1289 lines),
+  `repomap.rs` (1300), `worktree.rs` (1146), `prune.rs` (930),
+  `transcript_coherence.rs` (734), `snapcompact.rs` (508),
+  `worktree_isolation_ownership.rs` (364). `preflight.rs` already
+  has properties. Highest-value next targets, in order:
+  `transcript_coherence::sync_messages` (a diff/merge over message
+  logs, natural idempotence + closure properties),
+  `prune::plan_prune` / `shake::plan_shake` (pure planners returning
+  action sets), `worktree::sanitize_slug` (a string normalizer with
+  a documented contract).
