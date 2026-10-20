@@ -721,10 +721,7 @@ fn tool_calls_are_canonicalized_at_parse() {
 
 fn is_test_flavored_file(path: &Path) -> bool {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     name == "tests.rs"
         || name == "prop_tests.rs"
         || stem.ends_with("_tests")
@@ -784,8 +781,7 @@ fn truncate_lint_scan() -> Vec<(PathBuf, usize, String)> {
 
         // --- Scan 2: call-site budgets ---
         // Budget tokens that indicate a byte budget (mismatched with chars).
-        let byte_budget_tokens: &[&str] =
-            &["_BYTES", "_BYTE", "STRUCTURED_TOOL_MSG_CAP"];
+        let byte_budget_tokens: &[&str] = &["_BYTES", "_BYTE", "STRUCTURED_TOOL_MSG_CAP"];
         // Budget tokens that indicate a char budget (mismatched with bytes).
         let char_budget_tokens: &[&str] = &["_CHARS", "_CHAR"];
         for (lineno, line) in &lines {

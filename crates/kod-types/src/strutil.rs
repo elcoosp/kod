@@ -273,8 +273,11 @@ mod truncate_with_ellipsis_tests {
         // appends an ellipsis anyway.
         let s = "你好世界呀";
         assert_eq!(s.chars().count(), 5);
-        assert!(s.len() > 5, "fixture must be >5 bytes to trigger a \
-                              byte-based guard");
+        assert!(
+            s.len() > 5,
+            "fixture must be >5 bytes to trigger a \
+                              byte-based guard"
+        );
         assert_eq!(
             truncate_with_ellipsis(s, 5, "…"),
             s,
