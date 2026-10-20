@@ -3,14 +3,13 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `016c43b` (full-workspace gate green at that
-commit; see "State" below and the fourteen "Re-verification"
-subsections in "What's open" #1). 4488/4488 on the first try; 5
-skipped; no leaky. The commit fixes a real bug the previous gate
-exposed as a flake: `jitter_for` was producing identical values for
-identical wall-clock nanos, which is the lockstep-retry problem
-jitter exists to prevent. Two commits in this round; see the gate
-record for the count correction.
+**Last verified commit:** `88ca5f7` (full-workspace gate green at that
+commit; see "State" below and the fifteen "Re-verification"
+subsections in "What's open" #1). 4493/4493 on the first try; 5
+skipped; no leaky. The commit fixes a real bug: the compiler-output
+parsers in `kod-tools/src/check.rs` accepted `line = 0`/`column = 0`,
+which no compiler emits — found by a **direct probe**, not by the
+`any::<String>()` property that was almost vacuous on that shape.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -27,7 +26,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, and `016c43b`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, and `88ca5f7`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -61,6 +60,21 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `88ca5f7` (after the zero-position parser fix).**
+Ran the same command at `88ca5f7`:
+
+    4493 tests run: 4493 passed, 5 skipped
+
+Up from 4488 at `016c43b` — exactly the five new `kod-tools`
+tests. Clean first try: no execfail, no EAGAIN, no leaky.
+
+**Commit message count note.** The `88ca5f7` message says
+"444/444 kod-tools (439 prior + 5 new)"; the crate suite actually
+ran 441 passed + 3 skipped = 444 total. The "prior" count in the
+message was slightly off (440 not 439) — the gate's actual count
+(4493) is correct. Minor; recorded here so a future count-audit
+does not chase a ghost.
 
 **Re-verification at `016c43b` (after the jitter-seed fix).**
 Ran the same command at `016c43b`:
@@ -264,7 +278,7 @@ correct last tag.
 
 ## State
 
-`main` at `016c43b`, twenty-nine commits past `v0.1.12`:
+`main` at `88ca5f7`, thirty-one commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -310,6 +324,8 @@ correct last tag.
 | `216a7c1` | docs(handoff): gate at `4600d40`; section-extraction properties |
 | `1231a4e` | fix(skills): whitespace boundary before attribute names; proptests for `extract_attribute` |
 | `016c43b` | fix(provider): mix a counter into the jitter seed; deterministic test |
+| `060fc9d` | docs(handoff): gate at `016c43b`; jitter-seed fix + L48 |
+| `88ca5f7` | fix(tools): reject zero line/column in compiler-output parsers; proptests + probes |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -930,7 +946,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L48)
+## The lesson index (L20–L49)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -966,6 +982,7 @@ corresponding section in `session-17.md` for the full story.
 | L46 | A strategy that admits whitespace-only strings passes a property that trims. `parse_content`'s example extractor trims the output; a strategy of `"[a-zA-Z0-9 ]{1,40}"` produced `" "`, which trimmed to `""`, and the assert compared `""` to `" "`. The same round's `build` helper hit the same shape on the YAML side: an unquoted `" "` normalizes to `""`, `validate_metadata` rejects it, and the test's `expect("must parse")` panics. Rule: the strategy must not produce a value the code's own trim/normalize step changes into something the assertion treats as different. Six occurrences across three rounds (`1ce1bb6` ×1, `02de4e8` ×2, `af0301f` ×3) — the class is real and the checklist rule is cheap. |
 | L47 | When verifying a literal string that contains regex metacharacters, use `grep -F` (fixed string), not `grep -E` with hand-escaped metacharacters. A pattern like `'[a-zA-Z0-9]{1,40}'` in ERE binds the `{1,40}` to the closing `]`, not the class — the escaped pattern looks correct and can never match. The patch was right; the check was wrong. Same family as L23 but distinct: the check *logic* was fine, the *pattern* was wrong. |
 | L48 | A flake is a test whose *assumption* fails, not a test that is wrong. `jitter_is_centered_and_signed` asserts `min < 900 and max > 1100` across 1000 samples; that cannot hold if all 1000 samples are identical. The identical samples were the bug (`jitter_for` seeded only from wall-clock nanos, which does not advance on fast hardware), not the test. Reduce the flake to a deterministic test (`jitter_for(12345)` twice) and it becomes a failing-first property for the fix. A flake that reduces deterministically is a bug report, not noise. |
+| L49 | `proptest!` requires every `#[test]` inside it to be `fn name(args in strategy)`. A bare `#[test]` with no `in` clause fails to parse, and the compile error is reported at the block's *first* item, not the offending one — an error message pointing at property #1 that is actually property #4. A bare `#[test]` belongs at module level; doc comments on items inside `proptest!` are line comments (`//`) in this version, not `///`. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -1081,6 +1098,88 @@ animal — that one is environmental. The distinction is whether
 the failure survives a from-scratch reduction.
 
 
+**Twelfth round: the SKILL.md attribute fix (`1231a4e`).** The
+gap `4600d40` named honestly — `extract_attribute` — turned out
+to have the same bug shape as `completion_report::extract_status`
+(`af0301f`): a substring match. `<example data-input="wrong">`
+produced `input = "wrong"`; `<example xinput="wrong">` did too;
+`<example data-input="wrong" input="A">` returned `"wrong"`
+instead of `"A"`. `SkillExample.input` flows into the router's
+prompt, so a fake attribute landed in the model's input. Fixed
+by requiring a whitespace boundary before the attribute name
+in both quote branches. Six proptests; two failing-first. Two
+controls: revert the fix; break only the single-quote branch
+(independent coverage confirmed).
+
+**Thirteenth round: the compiler-output zero-position fix
+(`88ca5f7`).** `kod-tools/src/check.rs` parses external tool
+output (cargo, tsc, ruff, go, `rustc`). Eight `parse_*_line`
+free functions, 29 example tests, zero proptests — an
+external boundary where a panic takes down the whole diagnostic
+pass.
+
+**The bug.** `.parse::<u32>()` accepts `"0"`, so a diagnostic
+line like `a.rs:0:0: error: x` produced
+`Diagnostic { line: 0, column: 0 }`. No compiler emits position
+0; a downstream consumer doing `line - 1` for 0-based indexing
+would underflow. Two independent paths accept zero:
+`parse_location_colon` (shared by rustc and ruff) and
+`parse_tsc_line` (its own `(line,col)` split). Both fixed with
+an explicit `if line == 0 || col == 0 { return None; }`.
+
+**The finding method matters.** `prop_diagnostic_positions_are_one_based`
+(`text in any::<String>()`) **passed** on the pre-fix code. In
+256 cases it did not sample a well-formed-looking line with
+`0` — `any::<String>()` produces a diagnostic-shaped string so
+rarely that the shape is unreachable. The
+`zero_position_line_is_rejected` **direct probe** — a plain
+`#[test]` with hand-picked inputs — found the bug immediately.
+The property was not vacuous by construction; it was vacuous
+by corpus. That is the same lesson L48's flake reduction
+taught, in the opposite direction: a hand-picked input that
+reaches the shape beats a property whose strategy cannot.
+
+**Two positive controls:**
+
+- Control A: revert the `parse_location_colon` guard.
+  `zero_position_line_is_rejected` fails.
+- Control B: revert *only* the `parse_tsc_line` guard.
+  `zero_position_tsc_line_is_rejected` fails; the rustc probe
+  stays green, so the two paths are covered independently.
+
+**Three checker bugs during the write (L23, L46, L49).**
+
+1. Round-trip strategy initially included `note`/`help`
+   severities. The parser scopes to `error`/`warning` via
+   `split_at_severity`; note/help correctly return `None`.
+   Strategy's "well-formed" was wrong; parser was right (L23).
+
+2. The message alphabet allowed messages that are only colons.
+   `parse_severity_and_code` does `trim_start_matches(':')`, so
+   a `":"` message collapses to empty and is correctly
+   rejected. First char must be non-colon (L46 — strategy must
+   not produce a value the code's trim step empties out).
+
+3. The bare `#[test] zero_position_line_is_rejected` was first
+   written inside `proptest!`. `proptest!` requires every
+   `#[test]` inside it to be `fn name(args in strategy)`; a
+   bare test fails to parse, and the compile error is reported
+   at the block's *first* item, not the offending one — the
+   message "expected expression, found keyword `fn`" pointed at
+   the first property while the real problem was a bare test
+   later in the block (L49). Also: `///` doc comments inside
+   `proptest!` are not consumed by the macro in this version —
+   `//` line comments are.
+
+**Disk pressure note.** The gate ran with 25 GiB free (down
+from 81 GiB after the first kache cleanup this session); the
+run completed normally, no execfail, but the next gate should
+`rm -rf target` first if free space drops below ~20 GiB. L21's
+fork-pressure signal (`execfail` + `os error 35`) has not
+recurred since the kache cleanup; the disk-full failure earlier
+in the session was a different signal (`errno=28`).
+
+
 ## Where to start
 
 1. **Step 0** — verify tree, HEAD, tag.
@@ -1093,15 +1192,18 @@ the failure survives a from-scratch reduction.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `016c43b`. Nothing this session started is unfinished.
+   at `88ca5f7`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
-   check `kache stats` and `auto-gc.log` if disk-full recurs.
-   (b) The last remaining parser from the L42 survey:
-   `kod-types/effort.rs` (a tiny `parse` over an enum's five
-   string forms — smallest target, no wire input). Optional.
-   (c) `extract_attribute` is now covered (`1231a4e`). Every
-   public method of the SKILL.md parser now has a property or a
-   direct test.
+   check `kache stats` and `auto-gc.log` if disk-full recurs;
+   free space is at ~19 GiB after this gate, so a `rm -rf target`
+   before the next one is prudent. (b) The last remaining parser
+   from the L42 survey: `kod-types/effort.rs` (a tiny `parse`
+   over an enum's five string forms — smallest target, no wire
+   input). Optional. (c) Every parser reached by this arc's
+   survey now has at least one property or probe; the surface
+   named "closed" in prior handoffs is genuinely closed for the
+   parsers a survey can find, not just for the last three
+   targets (L42, satisfied).
 
 ## Note on `session-17.md`
 
@@ -1157,8 +1259,8 @@ normalization, in the same round. The honest-scope caveat
 from the serve fix was closed by a `serve_io` extraction
 (`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
 test (`7f6cfd5`) verified the finding that only the `process`
-site was ever wedged (L39). Twenty-nine handoff lessons
-(L20–L48) that are mostly about the *checker* being wrong,
+site was ever wedged (L39). Thirty handoff lessons
+(L20–L49) that are mostly about the *checker* being wrong,
 not the code; two (L40) came from a build cache that failed
 silently, two (L41, L42) came from a parser survey that found
 a real overflow the prior "surface closed" claim missed, one
@@ -1172,11 +1274,14 @@ occurrences across three rounds), and one (L47) came from a
 `grep -E` pattern whose interval quantifier bound to the
 wrong atom, and one (L48) came from a **flake** that reduced
 to a deterministic failing-first test and turned out to be a
-real lockstep-retry bug (not a test bug). The full workspace gate at `016c43b` runs 4488
-tests, all green, including fifty-two new properties across
-nine modules (`kod-config/config.rs`, `kod-config/policy.rs`,
+real lockstep-retry bug (not a test bug), and one (L49) came
+from a bare `#[test]` inside `proptest!` whose compile error
+pointed at the wrong line. The full workspace gate at `88ca5f7` runs 4493
+tests, all green, including fifty-seven new tests across
+ten modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
 `kod-swarm/brief.rs`, `kod-skills/parser.rs` — eighteen there,
-`kod-swarm/completion_report.rs`), plus a deterministic test
-for the jitter-seed collision the gate exposed.
+`kod-swarm/completion_report.rs`, `kod-tools/check.rs` — five
+there, plus a deterministic test for the jitter-seed collision
+the gate exposed.
