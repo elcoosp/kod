@@ -2,7 +2,7 @@
 
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
-**Last tag:** `v0.1.12` (`59e6951`).
+**Last tag:** `v0.1.13` (`087d6e1`).
 **Last verified commit:** `087d6e1` (the released state). **Released
 as `v0.1.13`** — tag points at `087d6e1`. Nine production bugs,
 three security-relevant; the kache wrapper removed from the tracked
