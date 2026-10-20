@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 01095fcd764aa781cbd27074d02e8c3af8382dc61a596ce783937b032aead0ac # shrinks to cfg = TelemetryConfig { endpoint: None, service_name: "a", headers: [] }, r = ToolRecord { name: "a", status: "ok", duration_ms: 0 }
+cc 15b0527f2cc17144be93090d40466a56e98e822bc5b52b3ee560aa2494d05edd # shrinks to cfg = TelemetryConfig { endpoint: None, service_name: "a", headers: [] }, r = TurnRecord { system: "a", model: "a", endpoint: "a", prompt_tokens: 0, completion_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, ttft_ms: None, duration_ms: 0, stop_reason: None, error: false }
+cc 8673c3761de404a8c2dd0c6dd8657c8687ed78dc44371e0d874c7ccc08f6b6f3 # shrinks to cfg = TelemetryConfig { endpoint: None, service_name: "a", headers: [] }, r = TurnRecord { system: "a", model: "a", endpoint: "a", prompt_tokens: 0, completion_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, ttft_ms: Some(0), duration_ms: 0, stop_reason: None, error: false }

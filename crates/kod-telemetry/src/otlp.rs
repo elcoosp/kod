@@ -278,3 +278,409 @@ mod tests {
         assert!(tool.contains("resourceLogs"));
     }
 }
+
+#[cfg(test)]
+mod otlp_proptests {
+    //! Properties for `turn_payload` and `tool_payload`.
+    //!
+    //! Both functions build a nested OTLP-shaped `serde_json::Value`
+    //! from a config and a record, with `now_nanos()` embedded at
+    //! the log-record level. That timestamp makes two calls
+    //! trivially unequal, so the determinism properties normalize
+    //! every `"timeUnixNano"` key to `"0"` before comparing.
+    //!
+    //! The example tests use `.any()`-style "contains at least this
+    //! attribute" checks. The properties here use **exact key sets**,
+    //! which is a strictly stronger check: it catches a copy-paste
+    //! bug where a field is emitted twice or not at all, both of
+    //! which pass a "contains" test.
+    //!
+    //! Helpers (`collect_attribute_keys`, `attr_value`,
+    //! `normalize_timestamps`) walk the tree rather than assert a
+    //! specific nesting. `scope_logs` and `log_record` are
+    //! file-private; if their shape changes, these properties follow
+    //! without edits. `collect_attribute_keys` deliberately walks
+    //! only `logRecords` entries — the resource block's
+    //! `service.name` has its own property.
+
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+
+    // ---- tree-walking helpers -------------------------------------------
+
+    /// Every attribute key inside a `logRecords` entry anywhere in
+    /// the tree. The `resource` block's `service.name` is deliberately
+    /// **excluded** — the exact-set properties below are about the
+    /// log record's attributes, and `service.name` has its own
+    /// property (`prop_service_name_is_carried`). Walking the whole
+    /// tree over-counts: a populated turn has 11 log-record
+    /// attributes and 1 resource attribute, not 11 total.
+    fn collect_attribute_keys(v: &Value, out: &mut BTreeSet<String>) {
+        match v {
+            Value::Object(map) => {
+                if let Some(records) = map.get("logRecords").and_then(|lr| lr.as_array()) {
+                    for record in records {
+                        if let Some(arr) = record.get("attributes").and_then(|a| a.as_array()) {
+                            for attr in arr {
+                                if let Some(k) = attr.get("key").and_then(|k| k.as_str()) {
+                                    out.insert(k.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                for v in map.values() {
+                    collect_attribute_keys(v, out);
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    collect_attribute_keys(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Replace every `"timeUnixNano"` value with `"0"` so two calls
+    /// made at different wall-clock instants compare equal.
+    fn normalize_timestamps(v: &mut Value) {
+        match v {
+            Value::Object(map) => {
+                for (k, val) in map.iter_mut() {
+                    if k == "timeUnixNano" {
+                        *val = Value::String("0".to_string());
+                    } else {
+                        normalize_timestamps(val);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    normalize_timestamps(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Find the first attribute value for `key` anywhere in the tree.
+    /// Used to pin a specific field's value without asserting a path.
+    fn attr_value<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+        match v {
+            Value::Object(map) => {
+                if let Some(arr) = map.get("attributes").and_then(|a| a.as_array()) {
+                    for attr in arr {
+                        if attr.get("key").and_then(|k| k.as_str()) == Some(key) {
+                            return attr.get("value");
+                        }
+                    }
+                }
+                map.values().find_map(|v| attr_value(v, key))
+            }
+            Value::Array(arr) => arr.iter().find_map(|v| attr_value(v, key)),
+            _ => None,
+        }
+    }
+
+    /// Find the first `severityNumber` in the tree.
+    fn severity_number(v: &Value) -> Option<u64> {
+        match v {
+            Value::Object(map) => {
+                if let Some(n) = map.get("severityNumber").and_then(|n| n.as_u64()) {
+                    return Some(n);
+                }
+                map.values().find_map(severity_number)
+            }
+            Value::Array(arr) => arr.iter().find_map(severity_number),
+            _ => None,
+        }
+    }
+
+    // ---- generators ----------------------------------------------------
+
+    fn arb_cfg() -> impl Strategy<Value = TelemetryConfig> {
+        (
+            "[a-z][a-z0-9.-]{0,20}",
+            prop::option::of("[a-z][a-z0-9.-]{0,20}"),
+        )
+            .prop_map(|(service_name, endpoint)| TelemetryConfig {
+                endpoint,
+                service_name,
+                headers: Vec::new(),
+            })
+    }
+
+    fn arb_turn() -> impl Strategy<Value = TurnRecord> {
+        (
+            "[a-z][a-z0-9-]{0,20}",
+            "[a-z][a-z0-9.-]{0,20}",
+            "[a-z][a-z0-9-]{0,20}",
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            prop::option::of(any::<u64>()),
+            any::<u64>(),
+            prop::option::of("[a-z_]{0,20}"),
+            any::<bool>(),
+        )
+            .prop_map(
+                |(
+                    system,
+                    model,
+                    endpoint,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    ttft_ms,
+                    duration_ms,
+                    stop_reason,
+                    error,
+                )| TurnRecord {
+                    system,
+                    model,
+                    endpoint,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    ttft_ms,
+                    duration_ms,
+                    stop_reason,
+                    error,
+                },
+            )
+    }
+
+    fn arb_tool() -> impl Strategy<Value = ToolRecord> {
+        (
+            "[a-z_]{1,20}",
+            prop::sample::select(vec![
+                "ok".to_string(),
+                "error".to_string(),
+                "skipped".to_string(),
+                "aborted".to_string(),
+            ]),
+            any::<u64>(),
+        )
+            .prop_map(|(name, status, duration_ms)| ToolRecord {
+                name,
+                status,
+                duration_ms,
+            })
+    }
+
+    // ---- properties ----------------------------------------------------
+
+    proptest! {
+        /// `turn_payload` is deterministic modulo the embedded
+        /// timestamp. Two calls with the same inputs produce the
+        /// same JSON after `timeUnixNano` is zeroed.
+        #[test]
+        fn prop_turn_deterministic(cfg in arb_cfg(), r in arb_turn()) {
+            let mut a = turn_payload(&cfg, &r);
+            let mut b = turn_payload(&cfg, &r);
+            normalize_timestamps(&mut a);
+            normalize_timestamps(&mut b);
+            prop_assert_eq!(a, b);
+        }
+
+        /// The attribute key set is exactly the expected set:
+        /// nine fixed keys, plus `time_to_first_token_ms` if the
+        /// record has `ttft_ms`, plus `finish_reasons` if it has
+        /// `stop_reason`. No extra keys, no missing keys.
+        ///
+        /// This is the property that would catch a copy-paste bug
+        /// (a field emitted twice) or a forgotten field (a new
+        /// `TurnRecord` field never added to the payload).
+        #[test]
+        fn prop_turn_attribute_key_set_exact(cfg in arb_cfg(), r in arb_turn()) {
+            let payload = turn_payload(&cfg, &r);
+            let mut keys = BTreeSet::new();
+            collect_attribute_keys(&payload, &mut keys);
+
+            let mut expected: BTreeSet<String> = [
+                "gen_ai.system",
+                "gen_ai.request.model",
+                "gen_ai.endpoint",
+                "gen_ai.usage.input_tokens",
+                "gen_ai.usage.output_tokens",
+                "gen_ai.usage.cache_read_tokens",
+                "gen_ai.usage.cache_creation_tokens",
+                "kod.turn.duration_ms",
+                "kod.turn.error",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            if r.ttft_ms.is_some() {
+                expected.insert("gen_ai.server.time_to_first_token_ms".to_string());
+            }
+            if r.stop_reason.is_some() {
+                expected.insert("gen_ai.response.finish_reasons".to_string());
+            }
+
+            prop_assert_eq!(keys, expected);
+        }
+
+        /// `ttft_ms: Some(x)` and the `time_to_first_token_ms`
+        /// attribute agree: present iff `Some`, value matches `x`.
+        /// `ttft_ms: None` means the attribute is absent.
+        #[test]
+        fn prop_ttft_presence_matches_option(cfg in arb_cfg(), r in arb_turn()) {
+            let payload = turn_payload(&cfg, &r);
+            let key = "gen_ai.server.time_to_first_token_ms";
+            match r.ttft_ms {
+                Some(x) => {
+                    let v = attr_value(&payload, key)
+                        .expect("ttft_ms is Some but attribute absent");
+                    // OTLP JSON encodes int64 as a *string* in
+                    // `intValue` because JSON numbers lose
+                    // precision above 2^53. Handle bare number,
+                    // intValue-as-number, and intValue-as-string.
+                    let as_u64 = v
+                        .as_u64()
+                        .or_else(|| v.get("intValue").and_then(|iv| iv.as_u64()))
+                        .or_else(|| {
+                            v.get("intValue")
+                                .and_then(|iv| iv.as_str())
+                                .and_then(|s| s.parse::<u64>().ok())
+                        })
+                        .expect("attribute value not an integer");
+                    prop_assert_eq!(as_u64, x);
+                }
+                None => {
+                    prop_assert!(
+                        attr_value(&payload, key).is_none(),
+                        "ttft_ms is None but attribute present",
+                    );
+                }
+            }
+        }
+
+        /// Error severity: `error == true` maps to severity 17
+        /// (`ERROR`), `false` to 9 (`INFO`).
+        #[test]
+        fn prop_turn_severity_reflects_error(cfg in arb_cfg(), r in arb_turn()) {
+            let payload = turn_payload(&cfg, &r);
+            let s = severity_number(&payload).expect("no severityNumber in payload");
+            let expected = if r.error { 17 } else { 9 };
+            prop_assert_eq!(s, expected);
+        }
+
+        /// `tool_payload` is deterministic modulo the timestamp.
+        #[test]
+        fn prop_tool_deterministic(cfg in arb_cfg(), r in arb_tool()) {
+            let mut a = tool_payload(&cfg, &r);
+            let mut b = tool_payload(&cfg, &r);
+            normalize_timestamps(&mut a);
+            normalize_timestamps(&mut b);
+            prop_assert_eq!(a, b);
+        }
+
+        /// The tool attribute key set is exactly three keys — name,
+        /// status, duration. No extra, no missing.
+        #[test]
+        fn prop_tool_attribute_key_set_exact(cfg in arb_cfg(), r in arb_tool()) {
+            let payload = tool_payload(&cfg, &r);
+            let mut keys = BTreeSet::new();
+            collect_attribute_keys(&payload, &mut keys);
+
+            let expected: BTreeSet<String> = ["gen_ai.tool.name", "kod.tool.status", "kod.tool.duration_ms"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            prop_assert_eq!(keys, expected);
+        }
+
+        /// Tool severity: `status in {"error", "aborted"}` -> 17,
+        /// everything else -> 9. Pins the current status list; a
+        /// caller introducing a new error-class status without
+        /// adding it here is a visible decision, not a silent
+        /// behaviour change.
+        #[test]
+        fn prop_tool_severity_reflects_status(cfg in arb_cfg(), r in arb_tool()) {
+            let payload = tool_payload(&cfg, &r);
+            let s = severity_number(&payload).expect("no severityNumber in payload");
+            let expected = if r.status == "error" || r.status == "aborted" { 17 } else { 9 };
+            prop_assert_eq!(s, expected, "status {:?}", r.status);
+        }
+
+        /// `service_name` is carried through to the resource block.
+        /// Same service name in, same service name out — the whole
+        /// point of `TelemetryConfig::service_name`.
+        #[test]
+        fn prop_service_name_is_carried(
+            service_name in "[a-zA-Z][a-zA-Z0-9.-]{0,20}",
+            r in arb_turn(),
+        ) {
+            let cfg = TelemetryConfig {
+                endpoint: None,
+                service_name: service_name.clone(),
+                headers: Vec::new(),
+            };
+            let payload = turn_payload(&cfg, &r);
+            let v = attr_value(&payload, "service.name")
+                .expect("service.name attribute absent from resource");
+            let s = v.as_str()
+                .or_else(|| v.get("stringValue").and_then(|sv| sv.as_str()))
+                .expect("service.name not a string");
+            prop_assert_eq!(s, service_name.as_str());
+        }
+    }
+
+    /// Control (L43): the populated-turn case has all eleven
+    /// attribute keys, so the exact-set property above is not
+    /// checking an empty set.
+    #[test]
+    fn control_populated_turn_has_full_attribute_set() {
+        let cfg = TelemetryConfig {
+            endpoint: None,
+            service_name: "test".to_string(),
+            headers: Vec::new(),
+        };
+        let r = TurnRecord {
+            system: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            endpoint: "default".to_string(),
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            cache_read_tokens: 20,
+            cache_creation_tokens: 0,
+            ttft_ms: Some(150),
+            duration_ms: 1200,
+            stop_reason: Some("end_turn".to_string()),
+            error: false,
+        };
+        let payload = turn_payload(&cfg, &r);
+        let mut keys = BTreeSet::new();
+        collect_attribute_keys(&payload, &mut keys);
+        assert_eq!(keys.len(), 11, "expected 11 attributes, got {:?}", keys);
+    }
+
+    /// Control: the tool payload always has exactly three
+    /// attributes. If a future change adds a conditional attribute,
+    /// this fails and the exact-set property above becomes a
+    /// decision point.
+    #[test]
+    fn control_populated_tool_has_three_attributes() {
+        let cfg = TelemetryConfig {
+            endpoint: None,
+            service_name: "test".to_string(),
+            headers: Vec::new(),
+        };
+        let r = ToolRecord {
+            name: "read_file".to_string(),
+            status: "ok".to_string(),
+            duration_ms: 42,
+        };
+        let payload = tool_payload(&cfg, &r);
+        let mut keys = BTreeSet::new();
+        collect_attribute_keys(&payload, &mut keys);
+        assert_eq!(keys.len(), 3, "expected 3 attributes, got {:?}", keys);
+    }
+}
