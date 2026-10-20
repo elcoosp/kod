@@ -1751,3 +1751,177 @@ mod plan_shake_proptests {
         );
     }
 }
+
+#[cfg(test)]
+mod plan_shake_protected_paths_proptests {
+    //! Properties for `plan_shake`'s `protected_paths` gate.
+    //!
+    //! `plan_shake` skips a `tool` message whose originating call is
+    //! `read_file` and whose `arguments.path` is in
+    //! `config.protected_paths`. The gate has no existing test. The
+    //! pair-property here is the L44 shape: the unprotected plan is
+    //! asserted non-empty on the same transcript, so the protected
+    //! plan's emptiness is the protection, not a lack of candidates.
+    //!
+    //! Helpers are local, not borrowed from `mod tests`:
+    //! `prune::tests::{assistant_with_read, tool_result}` are private
+    //! to their module and not reachable from here.
+    //!
+    //! The config zeroes every threshold (`tool_body_min_tokens`,
+    //! `fence_min_tokens`, `xml_min_tokens`, `minimum_savings`,
+    //! `protect_tokens`) and opens the cache-warm band, so the only
+    //! reason an action disappears is `protected_paths`.
+
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn read_file_call(call_id: &str, path: &str) -> ChatMessage {
+        let mut m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            "",
+            time::OffsetDateTime::now_utc(),
+        );
+        m.tool_calls.push(kod_types::ToolCall {
+            id: Some(call_id.to_string()),
+            tool_name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": path }),
+        });
+        m
+    }
+
+    fn tool_result(call_id: &str, body: &str) -> ChatMessage {
+        let mut m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Tool,
+            body,
+            time::OffsetDateTime::now_utc(),
+        );
+        m.tool_call_id = Some(call_id.to_string());
+        m
+    }
+
+    /// Two `read_file` call-result pairs sharing one body size, so a
+    /// plan has exactly two candidate tool messages before the gate.
+    fn two_read_transcript(path: &str) -> Vec<ChatMessage> {
+        let body = "y".repeat(4_000);
+        vec![
+            read_file_call("c1", path),
+            tool_result("c1", &body),
+            read_file_call("c2", path),
+            tool_result("c2", &body),
+        ]
+    }
+
+    /// Every threshold zeroed; the only config signal a test in this
+    /// module varies is `protected_paths`.
+    fn open_config() -> ShakeConfig {
+        ShakeConfig {
+            fence_min_tokens: 0,
+            xml_min_tokens: 0,
+            tool_body_min_tokens: 0,
+            protect_tokens: 0,
+            minimum_savings: 0,
+            cache_warm_suffix_tokens: u64::MAX,
+            ..ShakeConfig::default()
+        }
+    }
+
+    fn never_protected(_i: usize) -> u64 {
+        1_000_000
+    }
+
+    proptest! {
+        /// Pair-property (L44): with a path in `protected_paths`, the
+        /// plan is empty; with the same transcript and no protection,
+        /// the plan is non-empty. The first assertion is the control.
+        #[test]
+        fn prop_protected_paths_never_targeted(path in "[a-z][a-z0-9_]{0,6}") {
+            let transcript = two_read_transcript(&path);
+            let mut cfg = open_config();
+
+            let unprotected = plan_shake(&transcript, &cfg, never_protected, false);
+            prop_assert!(
+                !unprotected.is_empty(),
+                "control: without protection the same transcript must yield a plan",
+            );
+
+            cfg.protected_paths.insert(PathBuf::from(&path));
+            let protected = plan_shake(&transcript, &cfg, never_protected, false);
+            prop_assert!(
+                protected.is_empty(),
+                "protected path must not be targeted, got {} actions",
+                protected.len(),
+            );
+        }
+
+        /// Protecting a *different* path leaves the plan unchanged.
+        /// The gate matches on `arguments.path`, not on "some path is
+        /// protected".
+        #[test]
+        fn prop_other_paths_do_not_protect(
+            path in "[a-z][a-z0-9_]{0,6}",
+            other in "[a-z][a-z0-9_]{0,6}",
+        ) {
+            prop_assume!(path != other);
+            let transcript = two_read_transcript(&path);
+            let mut cfg = open_config();
+
+            let baseline = plan_shake(&transcript, &cfg, never_protected, false);
+            prop_assert!(!baseline.is_empty(), "control: baseline must be non-empty");
+
+            cfg.protected_paths.insert(PathBuf::from(&other));
+            let other_protected = plan_shake(&transcript, &cfg, never_protected, false);
+
+            let a: HashSet<_> = baseline.actions.iter().map(|x| x.message_id.clone()).collect();
+            let b: HashSet<_> =
+                other_protected.actions.iter().map(|x| x.message_id.clone()).collect();
+            prop_assert_eq!(a, b, "protecting an unrelated path changed the plan");
+        }
+    }
+
+    /// Control (L43): the two_read_transcript under `open_config()`
+    /// does yield a non-empty plan, so the universal properties above
+    /// are not checks over an empty set.
+    #[test]
+    fn control_two_read_transcript_yields_a_plan() {
+        let transcript = two_read_transcript("src/main.rs");
+        let plan = plan_shake(&transcript, &open_config(), never_protected, false);
+        assert!(
+            !plan.is_empty(),
+            "control transcript must yield a non-empty plan"
+        );
+    }
+
+    /// The gate applies only to `read_file`. A `bash`-tool result
+    /// whose arguments happen to contain the protected path as a
+    /// string does not get protected, because the gate matches on
+    /// `call.tool_name == "read_file"` **and** `arguments.path`.
+    #[test]
+    fn control_non_read_file_is_not_protected() {
+        let body = "y".repeat(4_000);
+        let mut call = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            "",
+            time::OffsetDateTime::now_utc(),
+        );
+        call.tool_calls.push(kod_types::ToolCall {
+            id: Some("c1".to_string()),
+            tool_name: "bash".to_string(),
+            arguments: serde_json::json!({ "path": "/protected/file" }),
+        });
+        let result = tool_result("c1", &body);
+        let transcript = vec![call, result];
+
+        let mut cfg = open_config();
+        cfg.protected_paths.insert(PathBuf::from("/protected/file"));
+        let plan = plan_shake(&transcript, &cfg, never_protected, false);
+        assert!(
+            !plan.is_empty(),
+            "a bash tool result must not be protected by a path match",
+        );
+    }
+}
