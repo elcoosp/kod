@@ -1287,3 +1287,196 @@ mod tests {
         assert!(p.contains("re-read the file"), "recovery hint missing: {p}");
     }
 }
+
+#[cfg(test)]
+mod shake_parser_proptests {
+    //! Properties for the three text-scanning helpers in this module.
+    //!
+    //! `scan_regions`, `parse_open_tag`, and `find_close_tag` are
+    //! file-private, byte-indexed scanners. The example tests pin
+    //! specific documents (`fence_markers_below_three_characters_are_not_fences`,
+    //! `xml_with_attributes_is_skipped`, etc). What they do not pin is
+    //! the *general shape* of a parsed result:
+    //!
+    //! * `scan_regions` returns disjoint, in-bounds, non-empty ranges.
+    //! * `parse_open_tag` returns `Some` only for a well-formed
+    //!   `<name>` with no attributes and no whitespace before `>`.
+    //! * `find_close_tag` returns `Some(end)` only when `content[..end]`
+    //!   ends with `</{name}>` and the closer starts at line-start.
+    //!
+    //! All strategies are ASCII, so `start` / `from` are valid byte
+    //! boundaries for the parsers' `&content[i..]` slices without
+    //! extra guarding (L46's trap in its byte-indexed form).
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A valid XML tag name: `[a-zA-Z_][a-zA-Z0-9_-]*`.
+    fn arb_tag_name() -> impl Strategy<Value = String> {
+        "[a-zA-Z_][a-zA-Z0-9_-]{0,10}"
+    }
+
+    /// Arbitrary ASCII content for the scanner invariants.
+    fn arb_content() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 \t\n<>/._~-]{0,120}"
+    }
+
+    proptest! {
+        /// The regions `scan_regions` produces are pairwise disjoint
+        /// and sorted by start. The doc's "overlap is containment"
+        /// rule names this: a fence that contains an XML block
+        /// produces one region, not two.
+        #[test]
+        fn prop_scan_regions_disjoint_and_sorted(content in arb_content()) {
+            let regions = scan_regions(&content);
+            for i in 0..regions.len() {
+                prop_assert!(
+                    regions[i].range.start < regions[i].range.end,
+                    "empty or reversed region: {:?}", regions[i],
+                );
+                if i + 1 < regions.len() {
+                    prop_assert!(
+                        regions[i].range.end <= regions[i + 1].range.start,
+                        "regions overlap or out of order: {:?} {:?}",
+                        regions[i], regions[i + 1],
+                    );
+                }
+            }
+        }
+
+        /// Every region's range is inside the content.
+        #[test]
+        fn prop_scan_regions_in_bounds(content in arb_content()) {
+            let regions = scan_regions(&content);
+            for r in &regions {
+                prop_assert!(
+                    r.range.end <= content.len(),
+                    "region {:?} end past content len {}",
+                    r, content.len(),
+                );
+            }
+        }
+
+        /// `parse_open_tag`'s `Some` is well-formed: `<name>` with no
+        /// attributes, no whitespace before `>`, and `name` matching
+        /// `[a-zA-Z_][a-zA-Z0-9_-]*`.
+        #[test]
+        fn prop_parse_open_tag_soundness(content in arb_content(), start in 0usize..120) {
+            prop_assume!(start < content.len() || start == content.len());
+            let Some((name, end)) = parse_open_tag(&content, start) else {
+                return Ok(());
+            };
+            prop_assert!(end > start + 1, "end {:?} too small for start {:?}", end, start);
+            prop_assert!(end <= content.len(), "end {:?} past content", end);
+            prop_assert_eq!(&content[start..start + 1], "<", "opener");
+            prop_assert_eq!(&content[end - 1..end], ">", "closer");
+            prop_assert!(!name.is_empty(), "empty name");
+            prop_assert!(
+                name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false),
+                "name lead {:?}", name.chars().next(),
+            );
+            for c in name.chars() {
+                prop_assert!(
+                    c.is_ascii_alphanumeric() || c == '_' || c == '-',
+                    "invalid name char {:?} in {:?}", c, name,
+                );
+            }
+        }
+
+        /// `<` followed by anything but `[a-zA-Z_]` returns `None`.
+        /// `<` at end-of-string returns `None`.
+        #[test]
+        fn prop_parse_open_tag_rejects_bad_lead(
+            lead in "[^a-zA-Z_<]",
+            tail in "[a-zA-Z0-9]{0,20}",
+        ) {
+            let content = format!("<{}{}>", lead, tail);
+            prop_assert!(
+                parse_open_tag(&content, 0).is_none(),
+                "bad lead {:?} accepted: {:?}", lead, content,
+            );
+        }
+
+        /// A name followed by whitespace before `>` is not a valid
+        /// opener (the "no attributes" rule).
+        #[test]
+        fn prop_parse_open_tag_rejects_whitespace_before_gt(
+            name in arb_tag_name(),
+            ws in "[ \t]{1,3}",
+        ) {
+            let content = format!("<{} {}>", name, ws);
+            // The whitespace here separates `<name ` from `>`; the
+            // parser must stop at the whitespace and reject.
+            prop_assert!(
+                parse_open_tag(&content, 0).is_none(),
+                "whitespace before > accepted: {:?}", content,
+            );
+        }
+
+        /// `find_close_tag`'s `Some` is well-formed: `content[..end]`
+        /// ends with `</{name}>` and the closer starts at line-start
+        /// after only whitespace.
+        #[test]
+        fn prop_find_close_tag_soundness(
+            prefix in "[a-zA-Z0-9 ]{0,40}",
+            name in arb_tag_name(),
+            suffix in "[a-zA-Z0-9 ]{0,20}",
+        ) {
+            let content = format!("{}\n</{}>{}\n", prefix, name, suffix);
+            let Some(end) = find_close_tag(&content, 0, &name) else {
+                prop_assert!(false, "expected Some on {:?} for name {:?}", content, name);
+                return Ok(());
+            };
+            let needle = format!("</{}>", name);
+            prop_assert_eq!(
+                &content[end - needle.len()..end],
+                needle.as_str(),
+                "close-tag slice",
+            );
+            let abs = end - needle.len();
+            let line_start = content[..abs].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            prop_assert!(
+                content[line_start..abs].chars().all(|c| c == ' ' || c == '\t'),
+                "close-tag not at line-start: before={:?}",
+                &content[line_start..abs],
+            );
+        }
+
+        /// `find_close_tag` returns `None` when the content does not
+        /// contain `</{name}>` at all.
+        #[test]
+        fn prop_find_close_tag_none_when_absent(
+            prefix in "[a-zA-Z0-9 ]{0,40}",
+            name in arb_tag_name(),
+        ) {
+            let content = format!("{}\n<{}>body</other>\n", prefix, name);
+            prop_assert!(
+                find_close_tag(&content, 0, &name).is_none(),
+                "found a close-tag that is not </{}>: {:?}", name, content,
+            );
+        }
+    }
+
+    /// Control: `parse_open_tag` on a minimal valid opener.
+    #[test]
+    fn control_parse_open_tag_accepts_simple_name() {
+        let (name, end) = parse_open_tag("<context>", 0).expect("valid opener");
+        assert_eq!(name, "context");
+        assert_eq!(end, 9);
+    }
+
+    /// Control: `find_close_tag` on a well-formed pair.
+    #[test]
+    fn control_find_close_tag_finds_simple_pair() {
+        let content = "<context>\nbody\n</context>\n";
+        let end = find_close_tag(content, 0, "context").expect("valid pair");
+        assert_eq!(&content[..end], "<context>\nbody\n</context>");
+    }
+
+    /// Control: `scan_regions` on plain prose is empty (the existing
+    /// example test, restated to keep the property not-vacuous).
+    #[test]
+    fn control_scan_regions_plain_prose_is_empty() {
+        assert!(scan_regions("just prose, no markers").is_empty());
+    }
+}
