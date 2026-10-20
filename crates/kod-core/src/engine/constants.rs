@@ -36,7 +36,22 @@ pub(crate) const MIN_INLINE_IMAGE_TOKENS: u64 = 3_000;
 pub(crate) const TOOL_ROUNDS_EXHAUSTED_NOTE: &str = "\n\n[tool-round limit reached — no further tool calls will run this turn. \
      Summarize what has been done so far and what remains.]";
 /// Max turns of the `/goal` loop before it stops and reports progress.
-pub(crate) const MAX_GOAL_TURNS: usize = 6;
+///
+/// The turn cap is a **safety valve**, not the loop's normal exit.
+/// The normal exits are: the model declares `GOAL MET`, the user
+/// cancels, or the `GoalBudget` (token or wall-clock) is spent. The
+/// budget check runs every turn and is the primary bound for a
+/// long-running goal.
+///
+/// This constant only fires when *no* budget was configured, or when
+/// the model keeps producing progress and never declares the goal
+/// met. 6 was too low: a real `/goal` for a non-trivial task (a
+/// refactor, a migration, a multi-file test drive) hit the cap
+/// mid-progress, and the stop message named "maximum turns" while
+/// the work was still moving. 20 gives one goal room to finish
+/// without the cap becoming the de-facto limit — a genuinely stuck
+/// loop reaches the budget first.
+pub(crate) const MAX_GOAL_TURNS: usize = 20;
 /// How long a write approval waits for an answer before defaulting to
 /// deny. A dialog nobody answers — the user closed the terminal, walked
 /// away, or a script that cannot answer ran unattended — must not hang
