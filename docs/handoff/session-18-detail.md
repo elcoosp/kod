@@ -10,7 +10,8 @@ lesson, a fix, or a gate run.
   `a23bce7` through `fca3c8b`
 - Bug hunt — sixteen rounds of bug finding, from the
   panicking serve task through the retry-classifier
-  digit-substring fix
+  digit-substring fix (see the numbering note at the top of
+  that section)
 - What landed before `v0.1.12` in this arc
 - Operational quirks (watcher, heredoc limits, Bash 3.2,
   kache disk pressure, `--` in `git commit -m`)
@@ -252,7 +253,25 @@ The count went from 4436 to 4439 — exactly the three new `policy.rs`
 properties. No execfail, no EAGAIN. This is the last-verified state.
 
 
-## Bug hunt — the panicking serve task (session 18, continuation)
+## Bug hunt — sixteen rounds, 9 production bugs
+
+**Numbering note.** Rounds are numbered as they were written, not
+renumbered after later edits. Two consequences:
+
+- **First** and **Second** were never explicitly labelled — the
+  section header above (originally "Bug hunt — the panicking
+  serve task") stood in for round one, and the follow-up
+  (`serve_io` extraction + E2E test) for round two. The narrative
+  in that section covers both.
+
+- **Twelfth** was a duplicate of **Tenth** (same commit `1231a4e`,
+  same text) and was removed during the split. There is no round
+  numbered 12 below; rounds go Third → … → Eleventh →
+  Thirteenth → … → Sixteenth.
+
+The commit hash is the load-bearing identifier, not the ordinal.
+
+---
 
 After the two open items closed, a fresh hunt explored the panic-isolation
 class — the same class as the four prior fixes (`1dbf8cc`, `69c94aa`,

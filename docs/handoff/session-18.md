@@ -4,10 +4,10 @@
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
 **Last verified commit:** `fca3c8b` (full-workspace gate green at that
-commit; see "State" below and the eighteen "Re-verification"
-subsections in "What's open" #1). 4503/4503 on the first try; 5
-skipped; no leaky. The commit fixes another substring-match bug,
-in `kod-core-routing/src/retry_strategy.rs::classify`:
+commit; see "State" below and "Gate re-verification history" in
+`session-18-detail.md`). 4503/4503 on the first try; 5 skipped;
+no leaky. The commit fixes another substring-match bug, in
+`kod-core-routing/src/retry_strategy.rs::classify`:
 `"request id 1401 failed"` was classified as `ProviderAuthError`
 because the digit run contains `"401"`, aborting the retry chain
 on a transient failure.
