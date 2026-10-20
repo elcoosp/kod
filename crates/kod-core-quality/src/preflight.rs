@@ -246,7 +246,6 @@ SwapFree:        4000000 kB
     }
 }
 
-
 #[cfg(test)]
 mod proptests {
     //! Properties of the host-preflight parsers.
