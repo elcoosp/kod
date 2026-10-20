@@ -931,6 +931,8 @@ corresponding section in `session-17.md` for the full story.
 
 | L54 | `cargo fmt -p <crate>` reformats the whole crate, not just your edit. A single edit to `kod-types/effort.rs` + `cargo fmt -p kod-types` pulled two pre-existing drift hunks in `strutil.rs` and `tests/it/source_lints.rs` into the diff — both reproduced by `rustfmt --check` on `git show HEAD:<file>`. Left in one commit, the test commit carries unrelated layout churn and the review has to separate "what this change did" from "what the formatter had queued". Prove the drift predates the edit (`rustfmt --check` on the HEAD copy), then commit it separately: `chore(crate): apply pending rustfmt drift`. |
 
+| L55 | An ordering contract needs a *triple*, not a pair. Two branches co-existing in one input only proves precedence if each half is first shown to reach its own branch on its own — otherwise the concatenation could classify as the winner because *both* halves would have, and the test passes under any order. This is L45's lesson applied to `if`-chain precedence: write `assert(classify(a) == X)`, `assert(classify(b) == Y)`, `assert(classify(a + "; " + b) == X)`. The first two lines are load-bearing, not setup. The `classify` ordering tests use this shape for context-window-before-auth/rate-limit, server-busy-before-timeout/auth, and auth-before-timeout (BUG-C-10). |
+
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
 checker-vs-code failures and zero code failures. The proptests
