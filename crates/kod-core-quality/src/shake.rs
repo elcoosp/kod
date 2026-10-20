@@ -1323,22 +1323,33 @@ mod shake_parser_proptests {
 
     proptest! {
         /// The regions `scan_regions` produces are pairwise disjoint
-        /// and sorted by start. The doc's "overlap is containment"
-        /// rule names this: a fence that contains an XML block
-        /// produces one region, not two.
+        /// and in-bounds. **Not** sorted by start: the function builds
+        /// `out = fences ++ xml`, so when an XML block precedes a
+        /// fence in the document, the returned Vec lists the fence
+        /// first. The example `control_xml_before_fence_is_not_document_ordered`
+        /// pins that specific case.
+        ///
+        /// An earlier version of this property was named
+        /// `prop_scan_regions_disjoint_and_sorted` and asserted
+        /// `regions[i].end <= regions[i+1].start` — which is exactly
+        /// the sorted claim, and is false on the XML-before-fence
+        /// case. The property passed only because the generator
+        /// rarely produced that layout. The control test is the
+        /// counterexample.
         #[test]
-        fn prop_scan_regions_disjoint_and_sorted(content in arb_content()) {
+        fn prop_scan_regions_disjoint(content in arb_content()) {
             let regions = scan_regions(&content);
             for i in 0..regions.len() {
                 prop_assert!(
                     regions[i].range.start < regions[i].range.end,
                     "empty or reversed region: {:?}", regions[i],
                 );
-                if i + 1 < regions.len() {
+                for j in (i + 1)..regions.len() {
                     prop_assert!(
-                        regions[i].range.end <= regions[i + 1].range.start,
-                        "regions overlap or out of order: {:?} {:?}",
-                        regions[i], regions[i + 1],
+                        regions[i].range.end <= regions[j].range.start
+                            || regions[j].range.end <= regions[i].range.start,
+                        "regions overlap: {:?} vs {:?}",
+                        regions[i], regions[j],
                     );
                 }
             }
