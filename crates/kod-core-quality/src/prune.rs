@@ -962,11 +962,10 @@ mod tests {
         fn apply(transcript: &[ChatMessage], plan: &PrunePlan) -> Vec<ChatMessage> {
             let mut out = transcript.to_vec();
             for (id, action) in &plan.actions {
-                if let PruneAction::Blank { placeholder } = action {
-                    for msg in out.iter_mut() {
-                        if msg.id == *id {
-                            msg.content = placeholder.clone();
-                        }
+                let PruneAction::Blank { placeholder } = action;
+                for msg in out.iter_mut() {
+                    if msg.id == *id {
+                        msg.content = placeholder.clone();
                     }
                 }
             }
