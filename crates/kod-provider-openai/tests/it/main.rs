@@ -5,6 +5,6 @@
 //! instead of one per file.
 
 mod contracts;
+mod malformed_sse;
 mod provider;
 mod stream_retry;
-mod malformed_sse;
