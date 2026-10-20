@@ -27,10 +27,9 @@
 # workflows set `RUSTC_WRAPPER: ""` so a runner-side value cannot
 # affect a project build either way).
 #
-# If TPD-13's reasoning is to be revisited, the trigger is not
-# "measure the rebuild time" — it is "make the release workflow
-# install kache, or take it out of the tracked config". Committing
-# the wrapper without one of those is the shape that failed here.
+# If the tracked wrapper is ever re-added, the release workflow must
+# install kache on every target. Removing the `RUSTC_WRAPPER: ""`
+# guard without installing kache is the shape that broke v0.1.13.
 
 # target-cpu=native was removed from the default build config: it
 # caused CI release binaries to require the exact CPU features of
