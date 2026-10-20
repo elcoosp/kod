@@ -548,7 +548,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod proptests {
     //! Properties of `TurnFailure::classify`.
@@ -627,5 +626,130 @@ mod proptests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ordering_contracts {
+    //! Precedence contracts `classify` documents but did not pin.
+    //!
+    //! The example tests in `tests` each exercise one branch in
+    //! isolation. None builds a string that would fire *two* branches,
+    //! so reordering the `if` chain would leave the suite green. Each
+    //! ordering test here asserts a triple (L55): the first half alone
+    //! reaches its own branch, the second half alone reaches its own,
+    //! and the concatenation reaches the earlier one. The first two
+    //! assertions are load-bearing — without them the pair proves
+    //! nothing, because both halves could already classify as the
+    //! winner (L45).
+    //!
+    //! The `contains_bounded` properties are the mechanism the auth and
+    //! rate-limit branches depend on. The bare-status control (L43)
+    //! proves the digit-flanked rejection is not achieved by disabling
+    //! status detection altogether.
+
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    /// Classify and compare by variant name. `class_name` has its own
+    /// exhaustive test, and for a precedence assertion the variant is
+    /// the whole question — the payload is not.
+    fn name(raw: &str) -> &'static str {
+        TurnFailure::classify(raw).class_name()
+    }
+
+    #[test]
+    fn ordering_context_window_beats_auth() {
+        assert_eq!(
+            name("maximum context length is 128000"),
+            "ContextWindowExceeded"
+        );
+        assert_eq!(name("401 unauthorized"), "ProviderAuthError");
+        assert_eq!(
+            name("maximum context length is 128000; 401 unauthorized"),
+            "ContextWindowExceeded",
+        );
+    }
+
+    #[test]
+    fn ordering_context_window_beats_rate_limit() {
+        assert_eq!(name("too many tokens"), "ContextWindowExceeded");
+        assert_eq!(name("rate limit exceeded, HTTP 429"), "TransportRateLimit");
+        assert_eq!(
+            name("too many tokens; rate limit exceeded, HTTP 429"),
+            "ContextWindowExceeded",
+        );
+    }
+
+    #[test]
+    fn ordering_server_busy_beats_timeout() {
+        assert_eq!(name("server busy"), "TransportServerBusy");
+        assert_eq!(name("request timed out"), "TransportTimeout");
+        assert_eq!(
+            name("server busy; request timed out"),
+            "TransportServerBusy",
+        );
+    }
+
+    #[test]
+    fn ordering_server_busy_beats_auth() {
+        assert_eq!(name("server_busy"), "TransportServerBusy");
+        assert_eq!(name("403 forbidden"), "ProviderAuthError");
+        assert_eq!(name("server_busy; 403 forbidden"), "TransportServerBusy",);
+    }
+
+    #[test]
+    fn ordering_auth_beats_timeout() {
+        // BUG-C-10: auth is permanent and must be checked before the
+        // substring timeout test, or "401 unauthorized: request timed
+        // out" burns the retry chain on a non-recoverable failure.
+        assert_eq!(name("401 unauthorized"), "ProviderAuthError");
+        assert_eq!(name("request timed out"), "TransportTimeout");
+        assert_eq!(
+            name("401 unauthorized: request timed out"),
+            "ProviderAuthError",
+        );
+        assert_eq!(name("timed out: 403 forbidden"), "ProviderAuthError");
+    }
+
+    proptest! {
+        /// A needle flanked by digits on both sides is not a bounded
+        /// status. This is the property `contains_bounded` exists for:
+        /// a digit run ending in `401` is not an auth status.
+        #[test]
+        fn prop_bounded_rejects_digit_flanked(
+            before in "[0-9]{1,6}",
+            after in "[0-9]{1,6}",
+            needle in select(vec!["401", "403", "429"]),
+        ) {
+            let s = format!("{before}{needle}{after}");
+            prop_assert!(!contains_bounded(&s, needle), "{:?}", s);
+        }
+
+        /// A needle at the string's edge, or flanked by non-digits, is
+        /// bounded. The alphabet excludes ASCII digits, so it cannot
+        /// create a competing match; non-ASCII digits are allowed and
+        /// must not count, because the check is `is_ascii_digit`.
+        #[test]
+        fn prop_bounded_accepts_edge_and_separated(
+            before in "[^0-9]{0,4}",
+            after in "[^0-9]{0,4}",
+            needle in select(vec!["401", "403", "429"]),
+        ) {
+            let s = format!("{before}{needle}{after}");
+            prop_assert!(contains_bounded(&s, needle), "{:?}", s);
+        }
+    }
+
+    /// Control (L43): a bare status is still a status. If the two
+    /// properties above were satisfied by making `contains_bounded`
+    /// always return false, the auth and rate-limit branches would
+    /// silently stop firing on real HTTP errors.
+    #[test]
+    fn bare_status_is_still_classified() {
+        assert_eq!(name("401"), "ProviderAuthError");
+        assert_eq!(name("403"), "ProviderAuthError");
+        assert_eq!(name("429"), "TransportRateLimit");
     }
 }
