@@ -3,14 +3,14 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `56fed90` (full-workspace gate green at that
-commit; see "State" below and the seventeen "Re-verification"
-subsections in "What's open" #1). 4500/4500 on the first try; 5
-skipped; no leaky. The commit fixes two real bugs in
-`kod-core-quality/src/preflight.rs`'s host-probe parsers:
-`parse_loadavg` accepted `NaN`/`inf` (which silently failed the
-`load > cores` pressure check), and `parse_meminfo` panicked on
-`u64` overflow from a hostile `/proc/meminfo` kB value.
+**Last verified commit:** `fca3c8b` (full-workspace gate green at that
+commit; see "State" below and the eighteen "Re-verification"
+subsections in "What's open" #1). 4503/4503 on the first try; 5
+skipped; no leaky. The commit fixes another substring-match bug,
+in `kod-core-routing/src/retry_strategy.rs::classify`:
+`"request id 1401 failed"` was classified as `ProviderAuthError`
+because the digit run contains `"401"`, aborting the retry chain
+on a transient failure.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -27,7 +27,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, `88ca5f7`, `767e280`, and `56fed90`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, `88ca5f7`, `767e280`, `56fed90`, and `fca3c8b`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -61,6 +61,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `fca3c8b` (after the classify boundary fix).**
+Ran the same command at `fca3c8b`:
+
+    4503 tests run: 4503 passed, 5 skipped
+
+Up from 4500 at `56fed90` — exactly the three new `kod-core-routing`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `56fed90` (after the preflight-parser fix).**
 Ran the same command at `56fed90`:
@@ -315,7 +323,7 @@ correct last tag.
 
 ## State
 
-`main` at `56fed90`, thirty-three commits past `v0.1.12`:
+`main` at `fca3c8b`, thirty-four commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -367,6 +375,8 @@ correct last tag.
 | `767e280` | fix(risk): escalate subshells after command separators (SEC-A-05b) |
 | `fd9e8ce` | docs(handoff): gate at `767e280`; L50, L51, risk-classifier round |
 | `56fed90` | fix(core-quality): finite loadavg; saturating meminfo byte count; proptests |
+| `12da1a0` | docs(handoff): gate at `56fed90`; preflight parsers fixed |
+| `fca3c8b` | fix(routing): bounded-digit status detection in `TurnFailure::classify` |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -1026,6 +1036,7 @@ corresponding section in `session-17.md` for the full story.
 | L49 | `proptest!` requires every `#[test]` inside it to be `fn name(args in strategy)`. A bare `#[test]` with no `in` clause fails to parse, and the compile error is reported at the block's *first* item, not the offending one — an error message pointing at property #1 that is actually property #4. A bare `#[test]` belongs at module level; doc comments on items inside `proptest!` are line comments (`//`) in this version, not `///`. |
 | L50 | A security classifier's escalation level is part of its contract. The `kod-risk` module doc says "never refuses; escalates" — `Confirm`, not `Catastrophic`, for a construct the classifier cannot statically inspect. Escalating to `Catastrophic` (refused outright, no path through) would violate the contract even though it looks safer. The fix for the subshell-after-separator bug used `Confirm` because the module contract demands it, not because `Catastrophic` would have failed a test. |
 | L51 | A SIGKILL (exit 137) during `cargo nextest run` is not the build's fault until you check for a concurrent process on the host. Two `767e280` gate attempts died at ~90s with `broken pipe` from a killed `rustc`; the first pass diagnosed OOM on a 16 GiB host and fell back to per-crate verification (1476 tests across 5 crates). A fourth attempt — after the user reported the kill was another script — passed clean at 4495/4495 in 140s. Before concluding a build failure is OOM, run `pgrep -fl 'cargo\|rustc\|nextest'` and check for a concurrent process. The per-crate fallback was correct but insufficient: it proves the change's blast radius, not the whole workspace. |
+| L52 | Before fixing a bug a property found, check the call sites: is the failing shape reachable from a real caller? A property can construct input that production never produces; fixing that case hardens an unreachable path and ships a change for no reason. The `classify` digit-substring fix passed the check (`engine::control` classifies `e.to_string()`, which can contain a request id, attempt counter, or token count in the same string as a status). If it had failed the check, the honest response would have been to record the property as a regression guard and move on. Reachability is one grep: `grep -rn 'Fn::name\|fn_name(' crates/ --include='*.rs'`. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -1350,6 +1361,69 @@ model-authored text, but the contract is identical: reject
 what you cannot interpret, do not abort on it.
 
 
+**Sixteenth round: the retry-classifier digit-substring bug
+(`fca3c8b`).** The next untested surface from the survey:
+`kod-core-routing/src/retry_strategy.rs::classify` — 11
+`l.contains("...")` checks that map provider error text to a
+retry class. Three of them are bare digit sequences (`"401"`,
+`"403"`, `"429"`), a substring match where the needle is
+supposed to be a whole token.
+
+**The bug.** `classify("request id 1401 failed")` returned
+`ProviderAuthError` because the string contains `"401"`. Same
+for `"tokens: 12429"` → `TransportRateLimit`. `ProviderAuthError`
+is terminal — it aborts the retry chain — so a transient
+failure whose error text contains a request id, an attempt
+counter, or a token count with those three digits in it becomes
+a permanent failure. `TransportRateLimit` sleeps; a transient
+failure whose text contains `429` in a token count burns the
+wait window on a request that cannot succeed.
+
+Same class as `extract_status` (`af0301f`), `extract_attribute`
+(`1231a4e`), and `Origin::parse` (`31bd1a5`) — a substring match
+where the needle is a whole token.
+
+**Found by a property.** `prop_digit_substring_is_not_a_status`
+generated the false-positive shapes and asserted no auth or
+rate-limit classification. On the pre-fix code it failed on the
+first case with `ProviderAuthError { detail: "request id 1401
+failed" }`.
+
+**The positive-direction property kept the fix honest.**
+`prop_bounded_status_is_honoured` asserts that a real
+`"http 401"`, `"(429)"`, `"http:401"` still classifies. A naive
+fix like requiring whitespace before the digits would have
+broken `"http:401"` and `"(429)"`. `contains_bounded` allows
+any non-digit before and after, so both still match.
+
+**Reachability check.** Before writing the fix, I checked the
+call sites: `classify` is called from `engine::control` and
+`engine::process` on `e.to_string()`. Provider error `Display`
+output can include a request id (`req_1401`), an attempt
+counter, or a token count in the same string as the status —
+none of which are guaranteed to be non-digit-bounded. The
+false positive is reachable. If it were not, the fix would
+have been hardening an unreachable path and the honest response
+would have been to say so in the commit message instead of
+shipping a change. The reachability check is now part of the
+drill; L52 records it.
+
+**The fix.** A `contains_bounded(haystack, needle)` helper: the
+needle matches only when bounded by non-digits (or at the
+string's edge). Text needles (`"rate limit"`, `"unauthorized"`,
+`"too many requests"`) stay on plain `contains` — only the
+three bare-digit checks were touched.
+
+**Two positive controls:**
+
+- Control A: revert only the 401 boundary
+  (`contains_bounded` → `contains`).
+  `prop_digit_substring_is_not_a_status` fails.
+- Control B: revert only the 429 boundary. Same property fails.
+
+Both restored cleanly; suite re-confirmed green.
+
+
 ## Where to start
 
 1. **Step 0** — verify tree, HEAD, tag.
@@ -1362,31 +1436,23 @@ what you cannot interpret, do not abort on it.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified
-   end-to-end at `56fed90` (4500/4500 full-workspace). Nothing
+   end-to-end at `fca3c8b` (4503/4503 full-workspace). Nothing
    this session started is unfinished.
 
    **This is a natural stopping point.** The session has
-   accumulated 15 bug-hunting rounds, 8 real production bugs
-   (three security-relevant), 64 new tests across 11 modules,
-   and 30 handoff lessons (L20–L51). The handoff is now 1390+
-   lines; if the next session adds more than a round or two,
-   extract the session-18 rounds into `session-18-detail.md`
-   rather than continue appending.
+   accumulated 16 bug-hunting rounds, 9 real production bugs
+   (three security-relevant), 67 new tests across 12 modules,
+   and 32 handoff lessons (L20–L52). The handoff is now 1500+
+   lines; extract the session-18 rounds into
+   `session-18-detail.md` before adding another round.
 
    Known gaps: (a) kache's auto-gc daemon was not evicting
-   (L40), check `kache stats` and `auto-gc.log` if disk-full
-   recurs; `target/` is warm at ~10 GiB — keep it warm, and
-   confirm no other cargo/rustc is running before concluding
-   a SIGKILL is the build's fault (L51). (b) `kod-core-quality`
-   has 7255 lines total; only `preflight.rs` was surveyed this
-   round. Other modules (`worktree.rs`, `repomap.rs`,
-   `transcript_coherence.rs`) are untested by proptests but the
-   survey did not name them as boundary parsers. (c) The
-   `retry_strategy::classify` ordering contracts (auth-before-
-   timeout, context-window-before-rate-limit) are example-tested
-   only; a property would pin them but the current code is
-   correct. (d) `kod-types/effort.rs` is the last remaining
-   parser from the L42 survey; optional.
+   (L40). (b) `kod-core-quality` has 7255 lines; only
+   `preflight.rs` surveyed. (c) `retry_strategy::classify`'s
+   ordering contracts (auth-before-timeout, context-window-
+   before-rate-limit) are example-tested only. (d)
+   `kod-types/effort.rs` is the last remaining parser from the
+   L42 survey; optional.
 
 ## Note on `session-17.md`
 
@@ -1442,8 +1508,8 @@ normalization, in the same round. The honest-scope caveat
 from the serve fix was closed by a `serve_io` extraction
 (`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
 test (`7f6cfd5`) verified the finding that only the `process`
-site was ever wedged (L39). Thirty-two handoff lessons
-(L20–L51) that are mostly about the *checker* being wrong,
+site was ever wedged (L39). Thirty-three handoff lessons
+(L20–L52) that are mostly about the *checker* being wrong,
 not the code; two (L40) came from a build cache that failed
 silently, two (L41, L42) came from a parser survey that found
 a real overflow the prior "surface closed" claim missed, one
@@ -1462,14 +1528,15 @@ from a bare `#[test]` inside `proptest!` whose compile error
 pointed at the wrong line, one (L50) came from the module
 contract demanding `Confirm` where `Catastrophic` looked safer,
 and one (L51) came from a SIGKILL that was another process's
-fault, not OOM. The full workspace gate at `56fed90` runs 4500
-tests, all green, including sixty-four new tests across
-eleven modules (`kod-config/config.rs`, `kod-config/policy.rs`,
+fault, not OOM. The full workspace gate at `fca3c8b` runs 4503
+tests, all green, including sixty-seven new tests across
+twelve modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
 `kod-swarm/brief.rs`, `kod-skills/parser.rs` — eighteen there,
 `kod-swarm/completion_report.rs`, `kod-tools/check.rs` — five
 there, `kod-risk/classify.rs` — five there (three pre-existing, two
-added), `kod-core-quality/preflight.rs` — five there, plus a
+added), `kod-core-quality/preflight.rs` — five there,
+`kod-core-routing/retry_strategy.rs` — three there, plus a
 deterministic test for the jitter-seed collision the gate
 exposed.
