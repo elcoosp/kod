@@ -159,7 +159,24 @@ the new round becomes ambiguous.
 | `session-18.md` | 340 lines (the starting document) |
 | `session-18-detail.md` | 1618 lines (the narrative) |
 | commits since tag | 41 |
-| last full-workspace gate | `06d97d0` — `4529/4529`, 5 skipped |
+| last full-workspace gate | `61536ba` — **`4692/4692`, 5 skipped, 0 leaks** |
+
+### Gate verification at session open
+
+The first task in the starting document (the full-workspace gate
+that had not been run since `06d97d0`) was run at `61536ba`, the
+session-open commit:
+
+    Summary [  49.501s] 4692 tests run: 4692 passed, 5 skipped
+
+Clean first try: no failures, no timeouts, no leaks. Delta from
+`06d97d0`: +163 tests — larger than the "~55" estimate in this
+document's "What session 18 left" section. That estimate was
+based on the property rounds' *own* counts; it missed the
+`#[cfg(test)]` helpers in each module's proptest file, the
+`control_*` functions that are separate tests, and the Cargo.toml
+companion test count changes. The number that matters is the
+`Summary` line, not the estimate.
 
 
 ## Session 19 in one line
