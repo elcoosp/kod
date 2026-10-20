@@ -555,3 +555,148 @@ mod score_change_proptests {
         let _ = found;
     }
 }
+
+#[cfg(test)]
+mod validate_proptests {
+    //! Properties for `validate`.
+    //!
+    //! The single interesting invariant is **no panic on any
+    //! proposal**. The function indexes `changed_paths[0]` inside
+    //! the `TypePathMismatch` construction, which is safe only
+    //! because `changed_paths.is_empty()` is checked earlier in the
+    //! same function. A reordering makes that `[0]` panic on an
+    //! empty-paths proposal whose type has a non-empty path rule.
+    //!
+    //! The properties below pin:
+    //! * `validate` never panics on any proposal.
+    //! * A proposal with empty `changed_paths` returns
+    //!   `Err(NoPaths)` for every type in `TYPES` — including
+    //!   types whose `type_path_rule` is non-empty. That is the
+    //!   exact case that would panic under reordering.
+    //!
+    //! The example tests pin the accept/reject decisions on
+    //! well-formed proposals. These properties pin the *robustness*
+    //! of the function to inputs the model can produce.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_type() -> impl Strategy<Value = String> {
+        prop::sample::select(TYPES.to_vec()).prop_map(|s| s.to_string())
+    }
+
+    fn arb_unknown_type() -> impl Strategy<Value = String> {
+        "[a-z]{1,10}".prop_filter("not a known type", |s| !TYPES.contains(&s.as_str()))
+    }
+
+    fn arb_paths(max: usize) -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec("[a-zA-Z0-9/._-]{0,40}", 0..=max)
+    }
+
+    fn arb_details(max: usize) -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec("[a-zA-Z0-9 .,]{0,60}", 0..=max)
+    }
+
+    fn arb_proposal() -> impl Strategy<Value = CommitProposal> {
+        let t = prop_oneof![arb_type(), arb_unknown_type()];
+        (
+            t,
+            prop::option::of("[a-z]{0,10}"),
+            "[a-zA-Z0-9 .,]{0,100}",
+            arb_details(10),
+            arb_paths(6),
+        )
+            .prop_map(
+                |(r#type, scope, summary, details, changed_paths)| CommitProposal {
+                    r#type,
+                    scope,
+                    summary,
+                    details,
+                    changed_paths,
+                    priority_changes: Vec::new(),
+                },
+            )
+    }
+
+    proptest! {
+        /// `validate` never panics on any well-formed
+        /// `CommitProposal`. This is the property that would fail if
+        /// the `changed_paths.is_empty()` check were reordered after
+        /// the mismatch construction: the `changed_paths[0]` index
+        /// would panic on empty.
+        #[test]
+        fn prop_validate_never_panics(proposal in arb_proposal()) {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                validate(&proposal)
+            }));
+            prop_assert!(result.is_ok(), "validate panicked on {:?}", proposal);
+        }
+
+        /// A proposal with `changed_paths: []` returns `Err(NoPaths)`
+        /// for every type in `TYPES`, regardless of `type_path_rule`.
+        /// This is the case that would panic under reordering: for a
+        /// type with a non-empty path rule, the mismatch branch
+        /// would index `[0]` and panic.
+        #[test]
+        fn prop_empty_paths_is_no_paths(r#type in arb_type()) {
+            let p = CommitProposal {
+                r#type,
+                scope: None,
+                summary: "ok summary".to_string(),
+                details: vec![],
+                changed_paths: vec![],
+                priority_changes: vec![],
+            };
+            prop_assert_eq!(validate(&p), Err(RejectReason::NoPaths));
+        }
+    }
+
+    /// Control: the exact scenario that would panic if the check
+    /// were reordered. For every type whose `type_path_rule` is
+    /// non-empty, an empty-`changed_paths` proposal must still
+    /// return `NoPaths` (not panic, and not `TypePathMismatch`).
+    #[test]
+    fn control_empty_paths_does_not_reach_mismatch_branch() {
+        let mut triggered_at_least_once = false;
+        for t in TYPES {
+            if type_path_rule(t).is_empty() {
+                continue;
+            }
+            triggered_at_least_once = true;
+            let p = CommitProposal {
+                r#type: t.to_string(),
+                scope: None,
+                summary: "ok summary".to_string(),
+                details: vec![],
+                changed_paths: vec![],
+                priority_changes: vec![],
+            };
+            assert_eq!(
+                validate(&p),
+                Err(RejectReason::NoPaths),
+                "type {:?} with empty changed_paths must return NoPaths, not panic or mismatch",
+                t,
+            );
+        }
+        assert!(
+            triggered_at_least_once,
+            "no type in TYPES has a non-empty type_path_rule; this control is vacuous",
+        );
+    }
+
+    /// Control: a *valid* proposal is accepted. Without this, the
+    /// "never panics" property could pass on a `validate` that
+    /// returned `Err` unconditionally.
+    #[test]
+    fn control_valid_proposal_is_accepted() {
+        let p = CommitProposal {
+            r#type: "feat".to_string(),
+            scope: None,
+            summary: "add a widget".to_string(),
+            details: vec!["the widget does X".to_string()],
+            changed_paths: vec!["src/widget.rs".to_string()],
+            priority_changes: vec![],
+        };
+        assert!(validate(&p).is_ok(), "expected Ok, got {:?}", validate(&p));
+    }
+}
