@@ -2540,6 +2540,7 @@ dependencies = [
 name = "kod-stats"
 version = "0.1.13"
 dependencies = [
+ "proptest",
  "serde",
 ]
 
