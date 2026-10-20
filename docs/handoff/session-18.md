@@ -3,12 +3,14 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `4600d40` (full-workspace gate green at that
-commit; see "State" below and the thirteen "Re-verification"
-subsections in "What's open" #1). 4481/4481 on the first try; 5
-skipped; no leaky. The commit adds five section-extraction
-properties to `kod-skills/parser.rs`, closing the gap
-`02de4e8` named honestly.
+**Last verified commit:** `016c43b` (full-workspace gate green at that
+commit; see "State" below and the fourteen "Re-verification"
+subsections in "What's open" #1). 4488/4488 on the first try; 5
+skipped; no leaky. The commit fixes a real bug the previous gate
+exposed as a flake: `jitter_for` was producing identical values for
+identical wall-clock nanos, which is the lockstep-retry problem
+jitter exists to prevent. Two commits in this round; see the gate
+record for the count correction.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -25,7 +27,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, and `4600d40`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, and `016c43b`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -59,6 +61,24 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `016c43b` (after the jitter-seed fix).**
+Ran the same command at `016c43b`:
+
+    4488 tests run: 4488 passed, 5 skipped
+
+Clean first try: no execfail, no EAGAIN, no leaky.
+
+**Count correction.** The `1231a4e` commit (whitespace boundary
+before attribute names + 6 proptests) was gated at 4487 tests
+and *failed* on one flake — `kod-provider retry::tests::jitter_is_centered_and_signed`.
+That gate never got a clean pass. The `016c43b` commit fixed the
+underlying bug and added 1 test, so this gate covers both rounds:
+4488 = 4481 (`4600d40`) + 6 (`1231a4e`) + 1 (`016c43b`). The
+"expected 4482" the gate script printed was my arithmetic error
+— I forgot the six tests from the extract_attribute round. The
+gate's actual count (4488) is correct and matches the test
+progression; the "expected" warning is stale.
 
 **Re-verification at `4600d40` (after the section-extraction
 properties).** Ran the same command at `4600d40`:
@@ -244,7 +264,7 @@ correct last tag.
 
 ## State
 
-`main` at `4600d40`, twenty-eight commits past `v0.1.12`:
+`main` at `016c43b`, twenty-nine commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -287,6 +307,9 @@ correct last tag.
 | `af0301f` | fix(swarm): whitespace boundary before `status`; proptests for `completion_report::parse` |
 | `4a622fe` | docs(handoff): gate at `af0301f`; `completion_report` fix + L47 |
 | `4600d40` | test(skills): section-extraction properties for `parse_content` (5 properties, 2 controls) |
+| `216a7c1` | docs(handoff): gate at `4600d40`; section-extraction properties |
+| `1231a4e` | fix(skills): whitespace boundary before attribute names; proptests for `extract_attribute` |
+| `016c43b` | fix(provider): mix a counter into the jitter seed; deterministic test |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -907,7 +930,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L47)
+## The lesson index (L20–L48)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -942,6 +965,7 @@ corresponding section in `session-17.md` for the full story.
 | L45 | A **relational** property ("A parses identically to B") is blind to any mutation that changes both sides identically. `prop_fenced_block_strips_to_bare_json` compares the fenced parse to the bare parse; a control that overwrote both with the same wrong value would pass it. The property that anchors to *external truth* — `prop_valid_report_round_trips` comparing against `serde_json::to_string` — is what caught the mutation. Relational properties need a companion that pins one side to something outside the pair. |
 | L46 | A strategy that admits whitespace-only strings passes a property that trims. `parse_content`'s example extractor trims the output; a strategy of `"[a-zA-Z0-9 ]{1,40}"` produced `" "`, which trimmed to `""`, and the assert compared `""` to `" "`. The same round's `build` helper hit the same shape on the YAML side: an unquoted `" "` normalizes to `""`, `validate_metadata` rejects it, and the test's `expect("must parse")` panics. Rule: the strategy must not produce a value the code's own trim/normalize step changes into something the assertion treats as different. Six occurrences across three rounds (`1ce1bb6` ×1, `02de4e8` ×2, `af0301f` ×3) — the class is real and the checklist rule is cheap. |
 | L47 | When verifying a literal string that contains regex metacharacters, use `grep -F` (fixed string), not `grep -E` with hand-escaped metacharacters. A pattern like `'[a-zA-Z0-9]{1,40}'` in ERE binds the `{1,40}` to the closing `]`, not the class — the escaped pattern looks correct and can never match. The patch was right; the check was wrong. Same family as L23 but distinct: the check *logic* was fine, the *pattern* was wrong. |
+| L48 | A flake is a test whose *assumption* fails, not a test that is wrong. `jitter_is_centered_and_signed` asserts `min < 900 and max > 1100` across 1000 samples; that cannot hold if all 1000 samples are identical. The identical samples were the bug (`jitter_for` seeded only from wall-clock nanos, which does not advance on fast hardware), not the test. Reduce the flake to a deterministic test (`jitter_for(12345)` twice) and it becomes a failing-first property for the fix. A flake that reduces deterministically is a bug report, not noise. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -973,6 +997,90 @@ the test is easy; proving it has teeth is the hard part.
   "gap" was named from memory and reading the tests showed it
   covered. Read the test file first.
 
+**Tenth round: the SKILL.md attribute fix (`1231a4e`).** The gap
+`4600d40` named honestly — `extract_attribute` — turned out to
+have the same bug shape as `completion_report::extract_status`
+(`af0301f`): a substring match. `<example data-input="wrong">`
+produced `input = "wrong"`; `<example xinput="wrong">` did too;
+`<example data-input="wrong" input="A">` returned `"wrong"`
+instead of `"A"`. `SkillExample.input` flows into the router's
+prompt, so a fake attribute landed in the model's input.
+
+Fixed by requiring a whitespace boundary before the attribute
+name in both quote branches (double and single), looping past
+non-boundary matches. Six proptests; two of them failing-first.
+Two positive controls: revert the fix (both failing-first
+properties fire); break only the single-quote branch
+(`prop_single_quote_form_is_honoured` fires, the double-quote
+properties stay green, so the two branches are covered
+independently).
+
+**A structural-check failure, caught during the write (L23 again).**
+The first verification counted `preceded_ok` expecting 2; the
+actual count was 4 — two per branch (a `let` and an `if`). The
+patch was right; the check was wrong.
+
+**Eleventh round: the jitter seed (`016c43b`).** The `1231a4e`
+gate failed on a test I had not touched —
+`kod-provider retry::tests::jitter_is_centered_and_signed`,
+`sample min must be below base (some -jitter); got 997`. 5/5
+standalone re-runs passed. That looked like a flake; it was a
+bug.
+
+**The reduction (L48).** The test asserts `min < 900 and max >
+1100` across 1000 `delay_for(1)` calls. Those conditions cannot
+both hold if all 1000 samples are identical — the assertion
+therefore encodes "the samples differ", which is exactly what
+jitter is supposed to guarantee. Reducing to a deterministic
+form (`jitter_for(12345)` twice → differ) made the bug
+reproducible: two calls returned the same `f64`, every time.
+
+**Root cause.** `jitter_for` seeded from `nanos ^ tid ^ pid`. Both
+`tid` and `pid` are constant within a test run, and
+`SystemTime::now()` (microsecond resolution on macOS) does not
+advance between back-to-back calls — so a 1000-call burst saw
+one nanos, one seed, one jitter. The 997 ms min was the sample
+value; it happened to fall below 900, but the max could not
+rise above 1100 because every sample was the same 997.
+
+**Why it matters in production, not just in tests.** Jitter
+exists to spread concurrent retries and avoid thundering herds.
+If every retry on a fast host computes the same jitter, the
+herd is back — silently. The bug was making the backoff
+deterministic on fast hardware, which is the exact shape the
+T2-H11 fix (`8f801fb`) tried to address.
+
+**The fix.** Mix a global monotonic counter into the seed:
+`nanos ^ tid ^ pid ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15)`.
+Global (not per-instance) so two `RetryPolicy` values that share
+a nanos do not collide; the golden-ratio multiplier spreads
+adjacent counters across the u64 bit-space. `delay_for` was
+refactored to call `Self::jitter_for(nanos)` so the seed
+derivation is testable without a clock dependency.
+
+**Failing-first (L27) and two controls:**
+
+- `jitter_for_identical_nanos_differs_per_call` written and run
+  against the pre-fix code: RED, both calls `-0.19256941508501768`.
+- Control A: keep `SEQ` but drop the mix from the XOR — test
+  fails. The counter is load-bearing.
+- Control B: `seq.wrapping_mul(0)` — test fails. The multiplier
+  itself is load-bearing.
+
+**Verification that the flake is gone.** `jitter_is_centered_and_signed`
+re-run 10 times back-to-back: 10/10 pass. With 1000 distinct
+seeds, the probability that all 1000 land below 900 or all land
+above 1100 is ~10⁻¹⁵⁵. The test is deterministic in practice
+now; if it ever fires again, the fix itself regressed.
+
+The honest shape: a flake reduced to a deterministic failing-
+first test is a bug report, not noise (L48). A flake that does
+not reduce deterministically, and that only reproduces under
+host pressure (L21's `execfail` + `os error 35`), is a different
+animal — that one is environmental. The distinction is whether
+the failure survives a from-scratch reduction.
+
+
 ## Where to start
 
 1. **Step 0** — verify tree, HEAD, tag.
@@ -985,20 +1093,15 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `af0301f`. Nothing this session started is unfinished.
+   at `016c43b`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs.
    (b) The last remaining parser from the L42 survey:
    `kod-types/effort.rs` (a tiny `parse` over an enum's five
    string forms — smallest target, no wire input). Optional.
-   (c) The `## Instructions` / `## Constraints` extractors are
-   now covered (`4600d40`). The only remaining gap in
-   `kod-skills/parser.rs` is `extract_attribute`
-   (`input="..."` / `input='...'`), exercised indirectly by
-   `prop_example_blocks_are_captured_in_order` (no attributes)
-   but not pinned directly. Same shape as the section
-   extractor: small `find`-and-slice, no arithmetic hazard. A
-   future round if it becomes worth the surface.
+   (c) `extract_attribute` is now covered (`1231a4e`). Every
+   public method of the SKILL.md parser now has a property or a
+   direct test.
 
 ## Note on `session-17.md`
 
@@ -1054,8 +1157,8 @@ normalization, in the same round. The honest-scope caveat
 from the serve fix was closed by a `serve_io` extraction
 (`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
 test (`7f6cfd5`) verified the finding that only the `process`
-site was ever wedged (L39). Twenty-eight handoff lessons
-(L20–L47) that are mostly about the *checker* being wrong,
+site was ever wedged (L39). Twenty-nine handoff lessons
+(L20–L48) that are mostly about the *checker* being wrong,
 not the code; two (L40) came from a build cache that failed
 silently, two (L41, L42) came from a parser survey that found
 a real overflow the prior "surface closed" claim missed, one
@@ -1067,10 +1170,13 @@ under the control, one (L46) came from a strategy that
 admitted whitespace-only strings the parser trims (six
 occurrences across three rounds), and one (L47) came from a
 `grep -E` pattern whose interval quantifier bound to the
-wrong atom. The full workspace gate at `4600d40` runs 4481
-tests, all green, including forty-five new properties across
+wrong atom, and one (L48) came from a **flake** that reduced
+to a deterministic failing-first test and turned out to be a
+real lockstep-retry bug (not a test bug). The full workspace gate at `016c43b` runs 4488
+tests, all green, including fifty-two new properties across
 nine modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
-`kod-swarm/brief.rs`, `kod-skills/parser.rs` — twelve there,
-`kod-swarm/completion_report.rs`).
+`kod-swarm/brief.rs`, `kod-skills/parser.rs` — eighteen there,
+`kod-swarm/completion_report.rs`), plus a deterministic test
+for the jitter-seed collision the gate exposed.
