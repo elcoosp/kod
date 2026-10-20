@@ -731,4 +731,213 @@ mod tests {
         assert_eq!(len_after_first, 3);
         assert_eq!(len_after_second, 3);
     }
+
+    mod proptests {
+        //! Properties for the transcript-coherence primitives.
+        //!
+        //! `MessageDigest::of` is documented as hashing exactly the
+        //! fields that reach the wire: role, content, tool_calls (id,
+        //! name, args), and tool_call_id. The example tests pin each
+        //! field case-by-case. The properties below are the generic
+        //! form of that claim: either a field is wire-relevant and
+        //! the digest must separate two values that differ in it, or
+        //! it is not and two messages that differ only in it must
+        //! digest the same.
+        //!
+        //! `sync_messages` has one big invariant: after any call, the
+        //! memo describes the log. The three outcomes (`Append`,
+        //! `Compaction`, `InPlaceRewrite`) are three ways the call got
+        //! there.
+        //!
+        //! Reachability note (L52): no production call sites for
+        //! `sync_messages` or `DigestMemo` at the time of writing.
+        //! The module is explicitly a primitive awaiting wiring. The
+        //! properties are the spec future wiring will depend on.
+
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::sample::select;
+
+        fn arb_role() -> impl Strategy<Value = MessageRole> {
+            select(vec![
+                MessageRole::User,
+                MessageRole::Assistant,
+                MessageRole::Tool,
+            ])
+        }
+
+        fn arb_content() -> impl Strategy<Value = String> {
+            "[a-zA-Z0-9 .,:;!?]{0,80}"
+        }
+
+        fn arb_simple_message() -> impl Strategy<Value = ChatMessage> {
+            (0u8..2, arb_content()).prop_map(|(which, content)| match which {
+                0 => user(&content),
+                _ => assistant(&content),
+            })
+        }
+
+        fn arb_log() -> impl Strategy<Value = Vec<ChatMessage>> {
+            prop::collection::vec(arb_simple_message(), 0..=6)
+        }
+
+        fn arb_log_with_mutation() -> impl Strategy<Value = (Vec<ChatMessage>, usize)> {
+            prop::collection::vec(arb_simple_message(), 1..=6).prop_flat_map(|head| {
+                let n = head.len();
+                (Just(head), 0..n)
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn prop_digest_is_deterministic(m in arb_simple_message()) {
+                prop_assert_eq!(MessageDigest::of(&m), MessageDigest::of(&m));
+            }
+
+            #[test]
+            fn prop_digest_separates_content(
+                role in arb_role(),
+                a in arb_content(),
+                b in arb_content(),
+            ) {
+                prop_assume!(a != b);
+                let mut m1 = user(&a);
+                m1.role = role.clone();
+                let mut m2 = user(&b);
+                m2.role = role;
+                prop_assert_ne!(MessageDigest::of(&m1), MessageDigest::of(&m2));
+            }
+
+            #[test]
+            fn prop_digest_separates_role(
+                a in arb_role(),
+                b in arb_role(),
+                content in arb_content(),
+            ) {
+                prop_assume!(a != b);
+                let mut m1 = user(&content);
+                m1.role = a;
+                let mut m2 = user(&content);
+                m2.role = b;
+                prop_assert_ne!(MessageDigest::of(&m1), MessageDigest::of(&m2));
+            }
+
+            #[test]
+            fn prop_digest_respects_field_boundaries(
+                x in "[a-z]{0,8}",
+                y in "[a-z]{0,8}",
+                z in "[a-z]{0,8}",
+            ) {
+                prop_assume!(!y.is_empty());
+                let m1 = assistant_with_call(&x, &format!("{y}{z}"), serde_json::json!({}));
+                let m2 = assistant_with_call(&format!("{x}{y}"), &z, serde_json::json!({}));
+                prop_assert_ne!(
+                    MessageDigest::of(&m1),
+                    MessageDigest::of(&m2),
+                    "x={:?} y={:?} z={:?}", x, y, z,
+                );
+            }
+
+            #[test]
+            fn prop_record_length_matches_log(log in arb_log()) {
+                let mut memo = DigestMemo::new();
+                memo.record(&log);
+                prop_assert_eq!(memo.len(), log.len());
+            }
+
+            #[test]
+            fn prop_record_digest_readback(log in arb_log()) {
+                let mut memo = DigestMemo::new();
+                memo.record(&log);
+                for (i, msg) in log.iter().enumerate() {
+                    let (id, digest) = memo.digest_at(i).unwrap();
+                    prop_assert_eq!(id, msg.id.clone());
+                    prop_assert_eq!(digest, MessageDigest::of(msg));
+                }
+            }
+
+            #[test]
+            fn prop_clear_empties(log in arb_log()) {
+                let mut memo = DigestMemo::new();
+                memo.record(&log);
+                memo.clear();
+                prop_assert!(memo.is_empty());
+                prop_assert_eq!(memo.len(), 0);
+            }
+
+            #[test]
+            fn prop_sync_leaves_memo_consistent(log in arb_log()) {
+                let mut memo = DigestMemo::new();
+                let _ = sync_messages(&log, &mut memo);
+                prop_assert_eq!(memo.len(), log.len());
+                for (i, msg) in log.iter().enumerate() {
+                    let (_, d) = memo.digest_at(i).unwrap();
+                    prop_assert_eq!(d, MessageDigest::of(msg));
+                }
+            }
+
+            #[test]
+            fn prop_sync_of_same_log_is_append_the_second_time(log in arb_log()) {
+                let mut memo = DigestMemo::new();
+                let _ = sync_messages(&log, &mut memo);
+                let second = sync_messages(&log, &mut memo);
+                prop_assert!(matches!(second, SyncOutcome::Append));
+            }
+
+            #[test]
+            fn prop_shorter_log_is_compaction(pair in arb_log_with_mutation()) {
+                let (long, cut) = pair;
+                let mut memo = DigestMemo::new();
+                memo.record(&long);
+                let short = &long[..cut];
+                let outcome = sync_messages(short, &mut memo);
+                prop_assert!(matches!(outcome, SyncOutcome::Compaction));
+            }
+
+            #[test]
+            fn prop_append_preserves_synced_prefix(
+                head in arb_log(),
+                tail in arb_log(),
+            ) {
+                let mut memo = DigestMemo::new();
+                let _ = sync_messages(&head, &mut memo);
+                let mut extended = head;
+                extended.extend(tail);
+                let outcome = sync_messages(&extended, &mut memo);
+                prop_assert!(matches!(outcome, SyncOutcome::Append));
+            }
+
+            #[test]
+            fn prop_in_place_rewrite_prefix_is_true(pair in arb_log_with_mutation()) {
+                let (head, mutate_at) = pair;
+                let mut memo = DigestMemo::new();
+                let _ = sync_messages(&head, &mut memo);
+
+                let mut mutated = head.clone();
+                let original = mutated[mutate_at].content.clone();
+                mutated[mutate_at].content = format!("{original}-mutated");
+
+                let memo_len_before = memo.len();
+                let outcome = sync_messages(&mutated, &mut memo);
+
+                match outcome {
+                    SyncOutcome::InPlaceRewrite { stable_prefix } => {
+                        prop_assert_eq!(stable_prefix, mutate_at);
+                        prop_assert!(stable_prefix < memo_len_before);
+                        for i in 0..stable_prefix {
+                            prop_assert_eq!(
+                                MessageDigest::of(&head[i]),
+                                MessageDigest::of(&mutated[i]),
+                            );
+                        }
+                        prop_assert_ne!(
+                            MessageDigest::of(&head[mutate_at]),
+                            MessageDigest::of(&mutated[mutate_at]),
+                        );
+                    }
+                    other => prop_assert!(false, "expected InPlaceRewrite, got {:?}", other),
+                }
+            }
+        }
+    }
 }
