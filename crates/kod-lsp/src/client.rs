@@ -1683,3 +1683,155 @@ mod lsp_document_cap_regression {
         );
     }
 }
+
+#[cfg(test)]
+mod try_parse_frame_proptests {
+    //! Properties for `try_parse_frame`, the LSP `Content-Length`
+    //! framing parser.
+    //!
+    //! The parser is private; the outer `tests` module already
+    //! exercises it with six example tests. This module pins the
+    //! contract those examples don't reach: header-name casing,
+    //! optional whitespace after the colon, duplicate headers,
+    //! malformed Content-Length values, and the strictness of
+    //! `\r\n\r\n` as the header/body separator.
+    //!
+    //! **No bug expected.** Every fallible step returns an
+    //! `LspError`; there is no panic path in the body.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    const HDR_CAP: usize = 256;
+    const MSG_CAP: usize = 1024;
+
+    fn framed(body: &str) -> Vec<u8> {
+        let mut v = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+        v.extend_from_slice(body.as_bytes());
+        v
+    }
+
+    fn safe_body() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 .,:;!?]{0,64}"
+    }
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    fn cjk_body(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(cjk_char(), 0..=max_len).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #[test]
+        fn prop_round_trip_ascii(body in safe_body()) {
+            let json = serde_json::json!({ "content": body });
+            let frame = framed(&serde_json::to_string(&json).unwrap());
+            let (value, consumed) = try_parse_frame(&frame, HDR_CAP, MSG_CAP)
+                .expect("well-formed frame")
+                .expect("complete");
+            prop_assert_eq!(value, json);
+            prop_assert_eq!(consumed, frame.len());
+        }
+
+        #[test]
+        fn prop_round_trip_cjk(body in cjk_body(20)) {
+            let json = serde_json::json!({ "content": body });
+            let frame = framed(&serde_json::to_string(&json).unwrap());
+            let (value, consumed) = try_parse_frame(&frame, HDR_CAP, MSG_CAP)
+                .expect("well-formed frame")
+                .expect("complete");
+            prop_assert_eq!(value, json);
+            prop_assert_eq!(consumed, frame.len());
+        }
+
+        #[test]
+        fn prop_two_frames_consumed_is_first(a in safe_body(), b in safe_body()) {
+            let first = framed(&serde_json::to_string(&serde_json::json!({ "n": a })).unwrap());
+            let second = framed(&serde_json::to_string(&serde_json::json!({ "n": b })).unwrap());
+            let mut buf = first.clone();
+            buf.extend_from_slice(&second);
+            let (_, consumed) = try_parse_frame(&buf, HDR_CAP, MSG_CAP)
+                .expect("first well-formed").expect("first complete");
+            prop_assert_eq!(consumed, first.len());
+            let (_, consumed2) = try_parse_frame(&buf[consumed..], HDR_CAP, MSG_CAP)
+                .expect("second well-formed").expect("second complete");
+            prop_assert_eq!(consumed2, second.len());
+        }
+
+        #[test]
+        fn prop_partial_header_is_none(header in "Content-Length: [0-9]{1,4}\r\n") {
+            let buf = header.as_bytes();
+            if buf.len() > HDR_CAP { return Ok(()); }
+            let r = try_parse_frame(buf, HDR_CAP, MSG_CAP)
+                .expect("header parse is not an error");
+            prop_assert!(r.is_none(), "partial header {:?} should be None", header);
+        }
+
+        #[test]
+        fn prop_no_space_after_colon_parses(body in safe_body()) {
+            let json = serde_json::to_string(&serde_json::json!({ "x": body })).unwrap();
+            let with_space = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+            let no_space = format!("Content-Length:{}\r\n\r\n{}", json.len(), json);
+            let a = try_parse_frame(with_space.as_bytes(), HDR_CAP, MSG_CAP)
+                .expect("with space").expect("complete");
+            let b = try_parse_frame(no_space.as_bytes(), HDR_CAP, MSG_CAP)
+                .expect("no space").expect("complete");
+            // Same parsed value. The consumed byte counts differ by
+            // one (the optional space in the header), so they are
+            // not comparable.
+            prop_assert_eq!(a.0, b.0);
+        }
+    }
+
+    #[test]
+    fn control_lf_only_terminator_returns_none() {
+        let buf = b"Content-Length: 2\n\n{}";
+        let r = try_parse_frame(buf, HDR_CAP, MSG_CAP).expect("no error, just incomplete");
+        assert!(
+            r.is_none(),
+            "\\n\\n-only frame must be treated as incomplete"
+        );
+    }
+
+    #[test]
+    fn control_duplicate_content_length_last_wins() {
+        let buf = b"Content-Length: 99\r\nContent-Length: 2\r\n\r\n{}";
+        let r = try_parse_frame(buf, HDR_CAP, MSG_CAP)
+            .expect("well-formed")
+            .expect("complete");
+        assert_eq!(r.0, serde_json::json!({}));
+        assert_eq!(r.1, buf.len());
+
+        let buf = b"Content-Length: 2\r\nContent-Length: 3\r\n\r\n{}";
+        let r = try_parse_frame(buf, HDR_CAP, MSG_CAP).expect("well-formed header");
+        assert!(r.is_none(), "last Content-Length wins; body too short");
+    }
+
+    #[test]
+    fn control_lowercase_header_is_missing() {
+        let buf = b"content-length: 2\r\n\r\n{}";
+        let err = try_parse_frame(buf, HDR_CAP, MSG_CAP).unwrap_err();
+        assert!(
+            err.to_string().contains("missing Content-Length"),
+            "lowercase header should be treated as missing, got: {err}",
+        );
+    }
+
+    #[test]
+    fn control_negative_content_length_errors() {
+        let buf = b"Content-Length: -1\r\n\r\n";
+        let err = try_parse_frame(buf, HDR_CAP, MSG_CAP).unwrap_err();
+        assert!(err.to_string().contains("bad Content-Length"), "got: {err}");
+    }
+
+    #[test]
+    fn control_float_content_length_errors() {
+        let buf = b"Content-Length: 42.5\r\n\r\n";
+        let err = try_parse_frame(buf, HDR_CAP, MSG_CAP).unwrap_err();
+        assert!(err.to_string().contains("bad Content-Length"), "got: {err}");
+    }
+}
