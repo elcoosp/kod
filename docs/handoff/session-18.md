@@ -3,13 +3,13 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `45aec66` (full-workspace gate green at that
-commit; see "State" below and the ten "Re-verification"
-subsections in "What's open" #1). 4463/4463 on the first try; 5
-skipped; no leaky. The commit fixes a **panic** in
-`kod-swarm/src/brief.rs::parse_report` — a `}` before the first
-`{` in LLM subagent text sliced `&trimmed[start..=end]` with
-`start > end` and panicked mid-wave.
+**Last verified commit:** `02de4e8` (full-workspace gate green at that
+commit; see "State" below and the eleven "Re-verification"
+subsections in "What's open" #1). 4470/4470 on the first try; 5
+skipped; no leaky. The commit adds seven proptests to
+`kod-skills/src/parser.rs::parse_content` (the SKILL.md boundary).
+No bug was found; two checker bugs were caught by the property
+drill.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -26,7 +26,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, and `45aec66`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, and `02de4e8`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -60,6 +60,20 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `02de4e8` (after the SKILL.md proptests).**
+Ran the same command at `02de4e8`:
+
+    4470 tests run: 4470 passed, 5 skipped
+
+Up from 4463 at `45aec66` — exactly the seven new `kod-skills`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
+
+**Count correction.** The `02de4e8` commit message says "89/89
+kod-skills (82 prior + 7 new)". That count was wrong — I wrote
+it from an earlier estimate. The crate suite actually ran
+116/116 (109 prior + 7 new). The gate-level count above (4463 →
+4470, +7) is correct and is the number that matters.
 
 **Re-verification at `45aec66` (after the `parse_report` panic fix).**
 Ran the same command at `45aec66`:
@@ -215,7 +229,7 @@ correct last tag.
 
 ## State
 
-`main` at `45aec66`, twenty-five commits past `v0.1.12`:
+`main` at `02de4e8`, twenty-six commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -252,6 +266,8 @@ correct last tag.
 | `31bd1a5` | fix(mcp): use `url::Url` for `Origin::parse`; proptests for the redirect policy |
 | `5f03d2c` | docs(handoff): gate at `31bd1a5`; MCP origin fix + L44 |
 | `45aec66` | fix(swarm): guard `start <= end` in `parse_report`; proptests for the report parser |
+| `a79c99d` | docs(handoff): gate at `45aec66`; `parse_report` panic fix + L45 |
+| `02de4e8` | test(skills): proptests for `SkillParser::parse_content` (7 properties, 2 controls) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -632,6 +648,55 @@ vacuous on unsampled pair), L45 (relational blind to symmetric
 mutation). The control drill keeps producing lessons that are
 about the shape of the check, not the shape of the code.
 
+**Seventh round: the SKILL.md parser (`02de4e8`).** The next
+target from the L42 survey: `kod-skills/src/parser.rs::parse_content`,
+which splits YAML front matter from a markdown body, deserializes
+the metadata, and extracts sections and `<example>` blocks. 464
+lines, 15 example tests, zero proptests.
+
+**No parser bug found.** The `split_front_matter` /
+`extract_section` / `extract_examples` arithmetic was hand-checked
+first: each slice is preceded by a `find` whose result bounds the
+slice, so no `start > end` panic exists here (unlike
+`parse_report` at `45aec66`). The seven properties are a
+regression guard, not a fix.
+
+**Two checker bugs caught during the write (L23 twice, same
+shape, in one round).** Both are L46:
+
+1. The test's `build` helper interpolated name/description
+   unquoted into the front matter. A description of `" "` (one
+   space) becomes YAML's `""` after normalization;
+   `validate_metadata` correctly rejects it; the test's
+   `expect("must parse")` panicked on five properties at once.
+   Fixed by serializing through `serde_yaml::to_string`.
+
+2. The example output strategy allowed whitespace-only strings
+   (`"[a-zA-Z0-9 ]{1,40}"`). A value of `" "` gets trimmed to
+   `""` by `extract_examples`'s `content.trim()`; the assertion
+   compared `""` (actual) to `" "` (expected). Fixed by
+   dropping spaces from the output strategy.
+
+Neither was a parser bug; the parser correctly trims and
+correctly rejects empty descriptions. Same root cause as the
+`parse_reply` round (`1ce1bb6`) — the test input was not what
+the assertion assumed. L46 names the rule: the strategy must not
+produce a value the code's own trim/normalize step changes into
+something the assertion treats as different.
+
+**Two positive controls (L27):**
+
+- Control A: `find("<example")` -> `find("<exampleXX")`.
+  `prop_example_blocks_are_captured_in_order` fails.
+- Control B: `starts_with("---")` -> `starts_with("__x__")`.
+  Five of seven properties fail (front matter no longer found).
+
+**Not covered, named honestly:** none of the seven properties
+exercises `## Instructions` / `## Constraints` extraction. That
+extractor is a small `find`-and-slice with no arithmetic hazard
+and no security relevance; a future round can add a property if
+it becomes worth the surface.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -725,7 +790,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L45)
+## The lesson index (L20–L46)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -758,6 +823,7 @@ corresponding section in `session-17.md` for the full story.
 | L43 | A proptest's strategy can be non-vacuous and still blind to a control. When the drill reverted the `>= 12` content-length filter and the property still passed, the cause was the strategy: it only generated 12–40-byte content, so the filter never fired. Force every edge the code branches on into the corpus with `prop_oneof![Just(edge), range]`. L35's companion — same failure shape, on the guard's own invariant. |
 | L44 | A **pair** property can be semantically correct and pragmatically vacuous. `prop_same_as_implies_url_same_origin` draws two URLs independently; the specific adversarial pair (e.g. `evil\@example.com` vs `example.com`) is one out of 2^128 possible pairs and is never sampled. Pair properties need either a derived second side (mutate `a` to get `b`), or a direct control that forces `same_as` to return the wrong answer. Proving a pair property has teeth is the same shape as proving a unit property has teeth — the control is the proof, not the corpus. |
 | L45 | A **relational** property ("A parses identically to B") is blind to any mutation that changes both sides identically. `prop_fenced_block_strips_to_bare_json` compares the fenced parse to the bare parse; a control that overwrote both with the same wrong value would pass it. The property that anchors to *external truth* — `prop_valid_report_round_trips` comparing against `serde_json::to_string` — is what caught the mutation. Relational properties need a companion that pins one side to something outside the pair. |
+| L46 | A strategy that admits whitespace-only strings passes a property that trims. `parse_content`'s example extractor trims the output; a strategy of `"[a-zA-Z0-9 ]{1,40}"` produced `" "`, which trimmed to `""`, and the assert compared `""` to `" "`. The same round's `build` helper hit the same shape on the YAML side: an unquoted `" "` normalizes to `""`, `validate_metadata` rejects it, and the test's `expect("must parse")` panics. Rule: the strategy must not produce a value the code's own trim/normalize step changes into something the assertion treats as different. Three occurrences in three rounds (`1ce1bb6`, `1ce1bb6`, and this one) — the class is real. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -801,13 +867,18 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `45aec66`. Nothing this session started is unfinished.
+   at `02de4e8`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs.
-   (b) Remaining same-class parsers from the survey (L42), none
-   with a real bug found yet: `kod-skills/parser.rs`,
-   `kod-swarm/completion_report.rs`, `kod-types/effort.rs`.
-   Each is a small read-then-write round; none is urgent.
+   (b) Remaining same-class parsers from the survey (L42):
+   `kod-swarm/completion_report.rs` and `kod-types/effort.rs`.
+   Neither has a real bug found yet. Each is a small
+   read-then-write round; none is urgent.
+   (c) The `## Instructions` / `## Constraints` extractors in
+   `kod-skills/parser.rs` are not covered by the new properties
+   (`02de4e8` says so explicitly). A small, defensive
+   find-and-slice with no arithmetic hazard; adding a property
+   is a future round if it becomes worth the surface.
 
 ## Note on `session-17.md`
 
@@ -853,25 +924,30 @@ redirect's `Origin::parse` (`31bd1a5`) now delegates to
 `url::Url` — the hand-rolled parser accepted URLs reqwest
 rejects, including one where the two parsers disagreed on the
 host, which `same_as` would have reported as same-origin and
-forwarded the auth header to the wrong host — and the swarm
+forwarded the auth header to the wrong host — the swarm
 report parser (`parse_report`, `45aec66`) now guards
 `start <= end` before slicing, fixing a panic on LLM text with
-a `}` before the first `{`. The honest-scope caveat from the
-serve fix was closed by a `serve_io` extraction (`b38b7c2`)
-and an end-to-end test (`90e8126`). A follow-up test
-(`7f6cfd5`) verified the finding that only the `process` site
-was ever wedged (L39). Twenty-six handoff lessons (L20–L45)
-that are mostly about the *checker* being wrong, not the code;
-two (L40) came from a build cache that failed silently, two
-(L41, L42) came from a parser survey that found a real
-overflow the prior "surface closed" claim missed, one (L43)
-came from a control that ran blind to the edge the guard
-branches on, one (L44) came from a **pair** property whose
-adversarial pair was never sampled, and one (L45) came from a
-**relational** property that changed both sides identically
-under the control. The full workspace gate at `45aec66` runs
-4463 tests, all green, including twenty-seven new properties
-across seven modules (`kod-config/config.rs`,
-`kod-config/policy.rs`, `kod-config/llm.rs`,
-`kod-provider-anthropic/wire.rs`, `kod-memory/extract.rs`,
-`kod-mcp/http_policy.rs`, `kod-swarm/brief.rs`).
+a `}` before the first `{`, and the SKILL.md parser
+(`parse_content`, `02de4e8`) is pinned by seven properties
+whose drill caught two checker bugs (L46) — trim and YAML
+normalization, in the same round. The honest-scope caveat
+from the serve fix was closed by a `serve_io` extraction
+(`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
+test (`7f6cfd5`) verified the finding that only the `process`
+site was ever wedged (L39). Twenty-seven handoff lessons
+(L20–L46) that are mostly about the *checker* being wrong,
+not the code; two (L40) came from a build cache that failed
+silently, two (L41, L42) came from a parser survey that found
+a real overflow the prior "surface closed" claim missed, one
+(L43) came from a control that ran blind to the edge the
+guard branches on, one (L44) came from a **pair** property
+whose adversarial pair was never sampled, one (L45) came from
+a **relational** property that changed both sides identically
+under the control, and one (L46) came from a strategy that
+admitted whitespace-only strings the parser trims. The full
+workspace gate at `02de4e8` runs 4470 tests, all green,
+including thirty-four new properties across eight modules
+(`kod-config/config.rs`, `kod-config/policy.rs`,
+`kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
+`kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
+`kod-swarm/brief.rs`, `kod-skills/parser.rs`).
