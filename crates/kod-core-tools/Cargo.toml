@@ -36,6 +36,7 @@ kod-core-routing = { path = "../kod-core-routing" }
 kod-core-quality = { path = "../kod-core-quality" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = "3.8"
 tokio = { workspace = true }
 serial_test = { workspace = true }

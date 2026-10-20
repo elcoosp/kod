@@ -515,3 +515,135 @@ mod partial_json_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod speculation_proptests {
+    //! Properties for `extract_path_from_partial`.
+    //!
+    //! The function has two paths: a fast path through
+    //! `serde_json::from_str` when the args parse cleanly, and a slow
+    //! path that scans for the literal `"path"` followed by `:` and a
+    //! quoted value. The example tests pin specific cases; these
+    //! properties pin the shape.
+    //!
+    //! **Surprising behaviour, pinned not fixed:** the fast path
+    //! prefers the *top-level* `path` field, while the slow path
+    //! finds the *first* `"path"` anywhere in the args. For
+    //! `{"note":{"path":"nested"},"path":"top"}` — valid JSON, so
+    //! the fast path wins — the result is `Some("top")`. For the
+    //! same input with the closing brace stripped (invalid JSON, so
+    //! the slow path wins), the result is `Some("nested")`. The
+    //! `control_top_level_wins_over_nested` test pins the valid-JSON
+    //! case; the invalid-JSON case is not pinned because which
+    //! `"path"` appears first is a property of the malformed input,
+    //! not of the function.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Path alphabet with no character that would need JSON escaping
+    /// (no quote, no backslash, no newline, no control char).
+    fn safe_path() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9/_.-]{0,60}"
+    }
+
+    proptest! {
+        /// Empty input has no `"path"`, so no result.
+        #[test]
+        fn prop_empty_is_none(_dummy in 0u8..1) {
+            prop_assert_eq!(extract_path_from_partial(""), None);
+        }
+
+        /// Input with no `"path"` token returns `None`, regardless of
+        /// what else it contains (numbers, other JSON keys, colons).
+        #[test]
+        fn prop_no_path_token_is_none(s in "[a-zA-Z0-9 :{}\",.-]{0,60}") {
+            prop_assume!(!s.contains("\"path\""));
+            prop_assert_eq!(extract_path_from_partial(&s), None);
+        }
+
+        /// Round-trip through well-formed JSON with a safe path.
+        #[test]
+        fn prop_simple_round_trip(s in safe_path()) {
+            let json = format!(r#"{{"path":"{}"}}"#, s);
+            prop_assert_eq!(extract_path_from_partial(&json), Some(s));
+        }
+
+        /// An incomplete value (opening quote present, closing quote
+        /// absent) returns `None`. The streaming path relies on this:
+        /// a partial path is not a candidate.
+        #[test]
+        fn prop_incomplete_value_is_none(s in "[a-zA-Z0-9/_.-]{1,60}") {
+            let json = format!(r#"{{"path":"{}"#, s);
+            prop_assert_eq!(extract_path_from_partial(&json), None);
+        }
+
+        /// Non-string values for `path` are `None`. The function
+        /// requires `path` to be a string.
+        #[test]
+        fn prop_non_string_path_is_none(
+            v in prop::sample::select(vec!["123", "null", "[1]", "true", "{}"]),
+        ) {
+            let json = format!(r#"{{"path":{}}}"#, v);
+            prop_assert_eq!(extract_path_from_partial(&json), None);
+        }
+
+        /// Escaped quote inside the value round-trips to the literal
+        /// quote. The fast path (valid JSON) handles this correctly.
+        #[test]
+        fn prop_escaped_quote_round_trip(a in safe_path(), b in safe_path()) {
+            let json = format!(r#"{{"path":"{}a\"b{}"}}"#, a, b);
+            let expected = format!("{a}a\"b{b}");
+            prop_assert_eq!(extract_path_from_partial(&json), Some(expected));
+        }
+
+        /// Valid JSON followed by trailing garbage: the fast path
+        /// fails (whole-string parse), the slow path finds the first
+        /// `"path"` and returns it. The result matches the path from
+        /// the leading JSON object.
+        #[test]
+        fn prop_valid_json_plus_garbage(
+            s in safe_path(),
+            garbage in "[a-zA-Z ]{1,20}",
+        ) {
+            let json = format!(r#"{{"path":"{}"}} {}"#, s, garbage);
+            prop_assert_eq!(extract_path_from_partial(&json), Some(s));
+        }
+
+        /// A nested `"path"` (no top-level `path`) is found via the
+        /// slow path. Pins that the slow path searches anywhere, not
+        /// just top level.
+        #[test]
+        fn prop_nested_path_is_found(s in safe_path()) {
+            let json = format!(r#"{{"outer":{{"path":"{}"}}}}"#, s);
+            prop_assert_eq!(extract_path_from_partial(&json), Some(s));
+        }
+    }
+
+    /// Control: prose with no `"path"` token returns `None`.
+    #[test]
+    fn control_no_path_in_prose() {
+        assert_eq!(extract_path_from_partial("the path is /foo/bar"), None);
+    }
+
+    /// Control: `"filepath"` and `"path2"` do not match. The `find`
+    /// requires the exact six-byte token `"path"`; a longer key
+    /// containing those letters does not.
+    #[test]
+    fn control_longer_key_does_not_match() {
+        assert_eq!(extract_path_from_partial(r#"{"filepath":"foo"}"#), None);
+        assert_eq!(extract_path_from_partial(r#"{"path2":"foo"}"#), None);
+    }
+
+    /// Control: with both a top-level `path` and a nested one in
+    /// valid JSON, the fast path returns the top-level value. See
+    /// the module doc's note on the fast/slow disagreement for
+    /// malformed inputs.
+    #[test]
+    fn control_top_level_wins_over_nested() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"note":{"path":"nested"},"path":"top"}"#),
+            Some("top".to_string()),
+        );
+    }
+}
