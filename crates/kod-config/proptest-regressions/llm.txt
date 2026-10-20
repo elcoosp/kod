@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 04f1bf1c9af2accbc7910bc6bf2d684d47432996d6c0b699f616f05983ad7408 # shrinks to cfg = LlmConfig { network_access: false, endpoints: [EndpointConfig { name: "", provider: OpenAICompatible, base_url: "", model: "", api_key_env: None, temperature: None, max_tokens: None, context_window: 0, timeout_secs: 9223372036854775808, pricing: None, effort: None, trust: None, rate_limit_wait_secs: None, tab_bridge: false }], routing: None, prewarm: Auto, retry: RetryConfig { fallback_chains: {} } }
+cc 1a4c96ac318e0c1c219f52951d9f8a177882a9ef5f206347ef264ef30282ce48 # shrinks to cfg = LlmConfig { network_access: false, endpoints: [EndpointConfig { name: "", provider: OpenAICompatible, base_url: "", model: "", api_key_env: None, temperature: None, max_tokens: None, context_window: 0, timeout_secs: 0, pricing: None, effort: None, trust: None, rate_limit_wait_secs: None, tab_bridge: false }], routing: None, prewarm: Auto, retry: RetryConfig { fallback_chains: {} } }
