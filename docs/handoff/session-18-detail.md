@@ -953,8 +953,13 @@ the test is easy; proving it has teeth is the hard part.
   that did not (the first kod-ast draft) was vacuous and the control
   caught it. L27.
 - **Do not `git commit -m` with `--` in the message.** L28.
-- **Do not tag `v0.1.13` for test-only commits.** Everything since
-  `v0.1.12` is tests and docs; a tag would be meaningless.
+- **Do not tag for test-only commits.** The `v0.1.13` premise
+  ("everything since `v0.1.12` is tests and docs") was true when
+  written and false by the end of the session: ten `fix:` commits
+  landed, nine real production bugs, three security-relevant. The
+  rule is *do not tag commits whose only value is tests*; it is
+  not *never tag this session's work*. `v0.1.13` is a real
+  release.
 - **Do not re-build a covered seam.** Three times this session a
   "gap" was named from memory and reading the tests showed it
   covered. Read the test file first.
