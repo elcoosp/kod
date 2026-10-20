@@ -1141,3 +1141,119 @@ mod integration_tests {
         assert_eq!(on_disk, "fs write");
     }
 }
+
+#[cfg(test)]
+mod url_path_target_proptests {
+    //! Properties for `url_path_target`.
+    //!
+    //! The function separates two kinds of `conflict://` URL: a
+    //! registered block id (no `/` or `.`) and a filesystem path
+    //! (contains `/` or `.`). The doc names only the id case;
+    //! everything after that is what these properties pin.
+    //!
+    //! **A boundary pinned, not fixed:** `..` and any leading-dot
+    //! component pass the `contains('/') || contains('.')` test, so
+    //! `conflict://..` and `conflict://a/../b` return `Some(PathBuf)`
+    //! containing a traversal. Whether that's a bug depends on
+    //! whether callers sandbox the returned path — `resolve_path` in
+    //! `context.rs` does, `read_file` in `tools.rs:346` runs it
+    //! through `url_path_target` and then through the tool's own path
+    //! resolution. The property suite documents the acceptance; the
+    //! control makes a future traversal-guard a visible decision.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// A `conflict://` URL whose body has no `/` and no `.` is a
+        /// block id, not a path — always `None`.
+        #[test]
+        fn prop_bare_block_id_is_none(s in "[a-zA-Z0-9_-]{1,40}") {
+            prop_assume!(!s.contains('/') && !s.contains('.'));
+            let url = format!("conflict://{s}");
+            prop_assert_eq!(url_path_target(&url), None, "url {:?}", url);
+        }
+
+        /// A URL not starting with `conflict://` is never a path
+        /// target, regardless of what follows.
+        #[test]
+        fn prop_non_conflict_scheme_is_none(s in "[a-zA-Z0-9:/. -]{0,40}") {
+            prop_assume!(!s.starts_with("conflict://"));
+            prop_assert_eq!(url_path_target(&s), None, "input {:?}", s);
+        }
+
+        /// The exact `conflict://` prefix (empty body) is `None`.
+        #[test]
+        fn prop_empty_body_is_none(_dummy in 0u8..1) {
+            prop_assert_eq!(url_path_target("conflict://"), None);
+        }
+
+        /// A body containing `/` or `.` is a path — always `Some`
+        /// with the body as the `PathBuf`.
+        #[test]
+        fn prop_path_body_is_some(
+            pre in "[a-zA-Z0-9_-]{0,20}",
+            sep in prop::sample::select(vec!["/", "."]),
+            post in "[a-zA-Z0-9_-]{0,20}",
+        ) {
+            let body = format!("{pre}{sep}{post}");
+            let url = format!("conflict://{body}");
+            let target = url_path_target(&url);
+            prop_assert_eq!(
+                target.as_deref(),
+                Some(std::path::Path::new(body.as_str())),
+                "url {:?}", url,
+            );
+        }
+
+        /// Determinism.
+        #[test]
+        fn prop_deterministic(s in "[a-zA-Z0-9:/. _-]{0,40}") {
+            prop_assert_eq!(url_path_target(&s), url_path_target(&s));
+        }
+    }
+
+    /// Control: a slash in the body of a `conflict://` URL means
+    /// "path", even when the body looks nothing like one. Pins the
+    /// distinction so a future tighten-to-actual-path-shape is a
+    /// decision.
+    #[test]
+    fn control_any_slash_is_a_path() {
+        assert_eq!(
+            url_path_target("conflict:///"),
+            Some(std::path::PathBuf::from("/")),
+        );
+    }
+
+    /// Control: a dot anywhere in the body means "path". Dotfiles
+    /// and dotted-directory names count.
+    #[test]
+    fn control_any_dot_is_a_path() {
+        assert_eq!(
+            url_path_target("conflict://.env"),
+            Some(std::path::PathBuf::from(".env")),
+        );
+        assert_eq!(
+            url_path_target("conflict://some.thing"),
+            Some(std::path::PathBuf::from("some.thing")),
+        );
+    }
+
+    /// **The traversal case, pinned, not fixed.** `..` contains `.`,
+    /// so `conflict://..` and `conflict://a/../b` are accepted as
+    /// paths. Whether the caller sandboxes them is the caller's
+    /// question. The control documents the acceptance; a future
+    /// traversal-guard in `url_path_target` would fail here, which
+    /// is a visible decision point.
+    #[test]
+    fn control_traversal_is_accepted() {
+        assert_eq!(
+            url_path_target("conflict://.."),
+            Some(std::path::PathBuf::from("..")),
+        );
+        assert_eq!(
+            url_path_target("conflict://a/../b"),
+            Some(std::path::PathBuf::from("a/../b")),
+        );
+    }
+}
