@@ -1479,4 +1479,53 @@ mod shake_parser_proptests {
     fn control_scan_regions_plain_prose_is_empty() {
         assert!(scan_regions("just prose, no markers").is_empty());
     }
+
+    /// The specific case `prop_scan_regions_disjoint_and_sorted` could
+    /// not reliably sample: a valid XML block *before* a valid fence.
+    ///
+    /// `scan_regions` builds its result as `fences.clone()` extended by
+    /// `find_xml_blocks`. The returned Vec is therefore always
+    /// fences-then-xml, regardless of document position. If a caller
+    /// relies on "regions are in document order", that assumption is
+    /// wrong. This test pins the actual behaviour so a future change
+    /// that sorts is a deliberate decision, not an accidental pass.
+    #[test]
+    fn control_xml_before_fence_is_not_document_ordered() {
+        let content = "<context>\nx\n</context>\n```\ncode\n```\n";
+        let regions = scan_regions(content);
+        assert_eq!(regions.len(), 2, "got: {regions:?}");
+        // Exactly one of each kind.
+        let xml_count = regions
+            .iter()
+            .filter(|r| matches!(&r.kind, RegionKind::Xml { .. }))
+            .count();
+        let fence_count = regions
+            .iter()
+            .filter(|r| matches!(&r.kind, RegionKind::Fence { .. }))
+            .count();
+        assert_eq!(xml_count, 1);
+        assert_eq!(fence_count, 1);
+        // The XML block in the input starts earlier in the document than
+        // the fence, but the returned Vec lists the fence first. If a
+        // refactor changes the order, this test tells us.
+        let xml_region = regions
+            .iter()
+            .find(|r| matches!(&r.kind, RegionKind::Xml { .. }))
+            .unwrap();
+        let fence_region = regions
+            .iter()
+            .find(|r| matches!(&r.kind, RegionKind::Fence { .. }))
+            .unwrap();
+        assert!(
+            xml_region.range.start < fence_region.range.start,
+            "in the input, xml starts before fence",
+        );
+        assert!(
+            regions[0].range.start > regions[1].range.start,
+            "returned Vec is fences-then-xml, which is NOT sorted by start; \
+             got: {:?} vs {:?}",
+            regions[0].range,
+            regions[1].range,
+        );
+    }
 }
