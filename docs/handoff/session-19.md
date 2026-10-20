@@ -159,15 +159,15 @@ fix or lesson matters; the starting document stays short.
 
 | | |
 |---|---|
-| HEAD | `0980469` (`chore(release): v0.1.14`) |
+| HEAD | `b457ac5` (`test(kod-core-state): property tests for DecisionLog`) |
 | tag | **`v0.1.14` at `0980469`** (released in session 19) |
 | previous tag | `v0.1.13` at `087d6e1` |
 | tree | clean |
 | `session-18.md` | 340 lines (the starting document) |
 | `session-18-detail.md` | 1618 lines (the narrative) |
-| `session-19-detail.md` | ~140 lines (R1, R2, R3, and the v0.1.14 release note) |
-| commits since v0.1.13 | 49 |
-| last full-workspace gate | `dde9d65` — **`4720/4720`, 5 skipped, 0 leaks** |
+| `session-19-detail.md` | ~320 lines (R1–R6, the v0.1.14 release note) |
+| commits since v0.1.13 | 53 |
+| last full-workspace gate | `b457ac5` — `Summary [  55.056s] 4755 tests run: 4755 passed, 5 skipped` |
 
 ### Gate verification at session open
 
@@ -189,12 +189,28 @@ companion test count changes. The number that matters is the
 
 ## Session 19 in one line
 
-Opens with a full-workspace gate that has not been run since
-`06d97d0` — 41 commits and ~55 new properties later — then either
-picks `repomap` (the largest untouched module, and the only one
-that fits the session-18 cadence after a read-only survey and a
-fixture-file plan) or stops if the gate is red. The cadence that
-worked in session 18 — read the body, write properties plus
-controls, targeted `cargo nextest run -p <crate> --lib <module>`,
-fix only if a property goes red on the expected class — does not
-fit `repomap` in one round.
+Opened with a full-workspace gate (4720/4720 at `dde9d65`), ran
+six property rounds (R1–R6) across three crates, released
+`v0.1.14` at `0980469` with three production fixes carried in
+from sessions 18 and 19, and closed with three clean
+regression-guard rounds and one real bug (`R2`, Go block
+imports). The cadence that worked for twenty-plus rounds — read
+the body, write properties plus controls, targeted
+`cargo nextest run -p <crate> --lib <module>`, fix only if a
+property goes red on the expected class — is now exhausted on
+pure-function targets. The remaining work in the workspace
+(`worktree`, `worktree_isolation_ownership`, `run_structured`,
+`repomap`'s filesystem and budget functions) needs `tempfile` +
+`git init`, `libc::kill`, or async + mock-provider fixtures, and
+is new-session shape, not one-round.
+
+The session also spent real effort on something other than
+properties: the counting/checking failures (L56–L58, plus the
+R4 panic-probe misfire and the release-script tag-object
+mismatch) were all in the scripts that *surrounded* the code —
+derived numbers, anchored greps, `rev-parse` on an annotated
+tag, a check whose result was printed and not used. None of
+them was a code bug; all of them were the same family. The
+pattern is stable enough that a session-20 opening should read
+L56–L58 first and prefer the *run's own Summary line* over any
+script-derived count.

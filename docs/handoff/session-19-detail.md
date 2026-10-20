@@ -181,3 +181,88 @@ wrapper failure was fixed in that release (`RUSTC_WRAPPER: ""`
 in both workflows) — no known failure mode remains, but the
 workflow run itself is the thing to check.
 
+
+### R4 — `ToolLoopGuard` properties (`ff871cd`)
+
+Five properties + one control on the loop-detection state
+machine. No bug in the crate; the round's first attempt was
+written against a wrong model of the code.
+
+The first version's controls probed for a panic on
+`with_threshold(0)`. The survey's own pre-check output said
+`with_threshold clamps lower bound: 1` — the constructor is
+`threshold.max(2)` — and I wrote the test against the model I'd
+had before reading it. The two controls were rewritten after
+the first targeted run failed with `test did not panic as
+expected`. This is **L58's family one step earlier**: not a
+property that couldn't produce the counterexample, but a survey
+result that was read, printed, and then not used.
+
+Properties that did land:
+- same round for `threshold` rounds fires Corrective exactly
+  at the threshold-th round.
+- alternating rounds never fire.
+- `reset()` clears the accumulator.
+- empty `calls` clears the accumulator.
+- (threshold >= 2 throughout.)
+
+Control: `with_threshold(0)` and `with_threshold(1)` both clamp
+to 2. The clamp lives in the constructor; the
+`expect("len >= threshold >= 2")` in `observe_round` is
+therefore unreachable, not a live panic path. Pinned so a
+future change that removed the clamp is a visible decision.
+
+### R5 — `Goal` state-machine properties (`b359e4c`)
+
+Nine properties + two controls on `Goal` / `GoalStatus`. No
+bug found; the body is saturating arithmetic and status
+guards.
+
+Properties:
+- `delta_tokens` saturates; excludes cache-read; `None` and
+  `Some(0)` for `cache_read_tokens` are equivalent.
+- `observe_usage` monotone across any sequence.
+- `observe_time` monotone.
+- terminal status (`Complete` | `Dropped`) is a hard stop for
+  observations.
+- `BudgetLimited` is sticky under observations.
+- `take_budget_steer` fires exactly once.
+- `wants_continuation() == (status == Active)` exhaustively.
+- `is_terminal() == (status in {Complete, Dropped})` exhaustively.
+
+Controls: a small token budget is reachable to
+`BudgetLimited`; a zero-token delta is a no-op for the token
+counter.
+
+### R6 — `DecisionLog` state-machine properties (`b457ac5`)
+
+Six properties + three controls. No bug found; the body is
+`Vec::retain` plus a wall-clock read in `push` that no property
+compares.
+
+Properties:
+- `push` returns distinct ids; each push grows the log by one.
+- `drop` returns true iff the id is present; length arithmetic
+  symmetric (present -1, absent 0).
+- `recent(n)` returns exactly `min(n, len)` items, newest
+  first.
+- `render_prompt_block(n)` renders `min(n, len)` bullet lines
+  for a non-empty log; empty log renders the empty string.
+
+Controls:
+- per-kind tag mapping ([preference], [approach], [file],
+  [constraint], [other]).
+- `drop` uses `retain`, so it removes all records with the
+  matching id. `entries` is `pub`; the control pins the
+  behavior so a future "drop the first match" is a visible
+  decision.
+- `next_id` is not reused after `drop`.
+
+### Rounds R4–R6 in one line
+
+Three clean regression-guard rounds, zero new bugs. The body
+of every target was pure bookkeeping (state machine, retain,
+format), and the properties pin contracts against drift rather
+than probe for defects. The only defect the session found after
+`v0.1.14` was none — R2's Go block-import bug was the last
+real one, and it is in `v0.1.14`'s release note.
