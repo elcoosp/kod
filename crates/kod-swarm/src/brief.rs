@@ -446,13 +446,15 @@ mod proptests {
             prop::collection::vec("[a-zA-Z0-9 .]{0,30}", 0..3),
             prop::collection::vec("[a-zA-Z0-9 ?]{0,30}", 0..3),
         )
-            .prop_map(|(summary, facts, files, decisions, questions)| SubagentReport {
-                summary,
-                facts_learned: facts,
-                files_touched: files.into_iter().map(PathBuf::from).collect(),
-                decisions_proposed: decisions,
-                open_questions: questions,
-            })
+            .prop_map(
+                |(summary, facts, files, decisions, questions)| SubagentReport {
+                    summary,
+                    facts_learned: facts,
+                    files_touched: files.into_iter().map(PathBuf::from).collect(),
+                    decisions_proposed: decisions,
+                    open_questions: questions,
+                },
+            )
     }
 
     fn arb_valid_json() -> impl Strategy<Value = String> {
