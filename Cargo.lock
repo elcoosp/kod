@@ -2369,6 +2369,7 @@ dependencies = [
 name = "kod-lsp"
 version = "0.1.14"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",
