@@ -2331,8 +2331,7 @@ impl TuiLoop {
                             if d.is_empty() {
                                 format!("- {n}")
                             } else {
-                                let short =
-                                    kod_types::strutil::truncate_with_ellipsis(d, 100, "…");
+                                let short = kod_types::strutil::truncate_with_ellipsis(d, 100, "…");
                                 format!("- {n} — {short}")
                             }
                         })
@@ -3695,8 +3694,7 @@ impl TuiLoop {
                     }
                 } else {
                     self.app.set_session_system_prompt(rest.to_string());
-                    let shown =
-                        kod_types::strutil::truncate_with_ellipsis(rest, 80, "…");
+                    let shown = kod_types::strutil::truncate_with_ellipsis(rest, 80, "…");
                     self.app.push_system_message(&format!(
                         "System prompt override set: {}\nPrepended to every subsequent prompt.",
                         shown,
@@ -6632,7 +6630,10 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
     }
     // Plain integer: hours, the common case (`/overnight 2`).
     if let Ok(h) = s.parse::<i64>() {
-        return (h > 0).then(|| Duration::from_secs((h as u64) * 3600));
+        if h <= 0 {
+            return None;
+        }
+        return (h as u64).checked_mul(3600).map(Duration::from_secs);
     }
     let mut total = Duration::ZERO;
     let mut num = String::new();
@@ -6644,11 +6645,12 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
         }
         let n: i64 = num.parse().ok()?;
         num.clear();
-        match ch {
-            'h' => total += Duration::from_secs((n as u64) * 3600),
-            'm' => total += Duration::from_secs((n as u64) * 60),
+        let secs = match ch {
+            'h' => (n as u64).checked_mul(3600)?,
+            'm' => (n as u64).checked_mul(60)?,
             _ => return None,
-        }
+        };
+        total = total.checked_add(Duration::from_secs(secs))?;
         saw_any = true;
     }
     // A trailing number with no unit is not a valid compound form.
@@ -8869,4 +8871,182 @@ fn parse_duration_secs(v: &str) -> std::result::Result<u64, String> {
         .map_err(|_| format!("--time expects N[s|m|h], got `{v}`"))?;
     n.checked_mul(mult)
         .ok_or_else(|| format!("--time {v} overflows u64 seconds"))
+}
+
+#[cfg(test)]
+mod duration_parser_proptests {
+    //! Properties for the duration parsers in this file.
+    //!
+    //! `parse_duration_secs` is safe: it uses `checked_mul`, so a
+    //! `u64`-sized number with a large suffix returns an error
+    //! rather than panicking. Its properties are a regression
+    //! guard.
+    //!
+    //! **`parse_overnight_duration` has a real overflow bug.** The
+    //! compound branch computes `(n as u64) * 3600` and
+    //! `(n as u64) * 60` with plain multiplication; the plain-integer
+    //! branch computes `(h as u64) * 3600` the same way. `n` is
+    //! bounded by `i64::MAX` (~9.2×10^18), but `i64::MAX * 3600`
+    //! ≈ 3.3×10^22 — over `u64::MAX`. Debug builds panic; release
+    //! builds wrap silently, returning a nonsense duration.
+    //!
+    //! Two properties below fail on the pre-fix code (panic) and
+    //! pass after (`checked_mul` + `checked_add` return `None`).
+
+    use super::*;
+    use proptest::prelude::*;
+
+    // ---- parse_duration_secs: regression guards ------------------------
+
+    #[test]
+    fn prop_duration_bare_number_is_seconds() {
+        for n in [1u64, 5, 30, 60, 3600, 86400] {
+            assert_eq!(parse_duration_secs(&n.to_string()), Ok(n));
+        }
+    }
+
+    #[test]
+    fn prop_duration_seconds_suffix() {
+        for n in [1u64, 5, 30, 60, 3600] {
+            assert_eq!(parse_duration_secs(&format!("{n}s")), Ok(n));
+        }
+    }
+
+    #[test]
+    fn prop_duration_minutes_suffix() {
+        for n in [1u64, 5, 30, 60] {
+            assert_eq!(parse_duration_secs(&format!("{n}m")), Ok(n * 60));
+        }
+    }
+
+    #[test]
+    fn prop_duration_hours_suffix() {
+        for n in [1u64, 2, 5] {
+            assert_eq!(parse_duration_secs(&format!("{n}h")), Ok(n * 3600));
+        }
+    }
+
+    #[test]
+    fn prop_duration_empty_errors() {
+        assert!(parse_duration_secs("").is_err());
+        assert!(parse_duration_secs("   ").is_err());
+    }
+
+    #[test]
+    fn prop_duration_non_numeric_errors() {
+        assert!(parse_duration_secs("abc").is_err());
+        assert!(parse_duration_secs("5x").is_err());
+    }
+
+    #[test]
+    fn prop_duration_overflow_errors_not_panics() {
+        // u64::MAX seconds with a 1x suffix is fine; with a 60x
+        // suffix it overflows. checked_mul returns Err, not panic.
+        assert!(parse_duration_secs(&format!("{}m", u64::MAX)).is_err());
+        assert!(parse_duration_secs(&format!("{}h", u64::MAX)).is_err());
+    }
+
+    // ---- parse_overnight_duration: the bug -----------------------------
+
+    #[test]
+    fn prop_overnight_plain_integer_is_hours() {
+        assert_eq!(
+            parse_overnight_duration("1"),
+            Some(Duration::from_secs(3600))
+        );
+        assert_eq!(
+            parse_overnight_duration("2"),
+            Some(Duration::from_secs(7200))
+        );
+        assert_eq!(
+            parse_overnight_duration("8"),
+            Some(Duration::from_secs(8 * 3600))
+        );
+    }
+
+    #[test]
+    fn prop_overnight_hours_suffix() {
+        assert_eq!(
+            parse_overnight_duration("1h"),
+            Some(Duration::from_secs(3600))
+        );
+        assert_eq!(
+            parse_overnight_duration("2h"),
+            Some(Duration::from_secs(7200))
+        );
+    }
+
+    #[test]
+    fn prop_overnight_minutes_suffix() {
+        assert_eq!(
+            parse_overnight_duration("30m"),
+            Some(Duration::from_secs(1800))
+        );
+        assert_eq!(
+            parse_overnight_duration("90m"),
+            Some(Duration::from_secs(5400))
+        );
+    }
+
+    #[test]
+    fn prop_overnight_compound() {
+        assert_eq!(
+            parse_overnight_duration("1h30m"),
+            Some(Duration::from_secs(3600 + 1800)),
+        );
+        assert_eq!(
+            parse_overnight_duration("2h15m"),
+            Some(Duration::from_secs(2 * 3600 + 15 * 60)),
+        );
+    }
+
+    #[test]
+    fn prop_overnight_rejects_unknown_units() {
+        assert!(parse_overnight_duration("5x").is_none());
+        assert!(parse_overnight_duration("1h5x").is_none());
+        assert!(parse_overnight_duration("1y").is_none());
+    }
+
+    #[test]
+    fn prop_overnight_rejects_zero() {
+        assert!(parse_overnight_duration("0").is_none());
+        assert!(parse_overnight_duration("0h").is_none());
+        assert!(parse_overnight_duration("0m").is_none());
+    }
+
+    /// **The bug.** A plain integer near `i64::MAX` makes the
+    /// plain-integer branch compute `(h as u64) * 3600`, which
+    /// overflows `u64` and panics in debug builds. Post-fix it
+    /// returns `None` — the value is beyond what a duration can
+    /// represent, which is the honest answer for `/overnight
+    /// 9223372036854775807`.
+    #[test]
+    fn prop_overnight_plain_integer_overflow_does_not_panic() {
+        let huge = i64::MAX.to_string();
+        // Must not panic. Pre-fix: panics in debug with "attempt to
+        // multiply with overflow". Post-fix: None.
+        let r = parse_overnight_duration(&huge);
+        assert!(
+            r.is_none(),
+            "i64::MAX hours is beyond Duration; expected None, got {:?}",
+            r,
+        );
+    }
+
+    /// **The bug, compound branch.** A large hour count with the
+    /// `h` suffix overflows the same way.
+    #[test]
+    fn prop_overnight_compound_h_overflow_does_not_panic() {
+        let huge = format!("{}h", i64::MAX);
+        let r = parse_overnight_duration(&huge);
+        assert!(r.is_none(), "expected None for overflow, got {:?}", r);
+    }
+
+    /// **The bug, minute branch.** `i64::MAX` minutes overflows.
+    #[test]
+    fn prop_overnight_compound_m_overflow_does_not_panic() {
+        let huge = format!("{}m", i64::MAX);
+        let r = parse_overnight_duration(&huge);
+        assert!(r.is_none(), "expected None for overflow, got {:?}", r);
+    }
 }

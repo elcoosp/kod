@@ -2631,6 +2631,7 @@ dependencies = [
  "kod-skills",
  "kod-tools",
  "kod-types",
+ "proptest",
  "ratatui",
  "regex",
  "rstest",
