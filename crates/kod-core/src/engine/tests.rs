@@ -1945,8 +1945,8 @@ async fn test_render_history_drops_unpinned_turn_again() {
 
 use async_trait::async_trait;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelInfo, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelInfo, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk,
 };
 
 /// A provider whose `generate` panics. Reaching the summary task's
@@ -1980,9 +1980,8 @@ impl LlmProvider for PanicOnGenerate {
         &self,
         _prompt: &str,
         _options: &GenerationOptions,
-    ) -> std::pin::Pin<
-        Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+    {
         Box::pin(futures::stream::empty())
     }
 }
@@ -2021,9 +2020,8 @@ impl LlmProvider for OkText {
         &self,
         _prompt: &str,
         _options: &GenerationOptions,
-    ) -> std::pin::Pin<
-        Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+    {
         Box::pin(futures::stream::empty())
     }
 }
@@ -2088,8 +2086,8 @@ async fn panicking_compaction_summary_clears_the_in_flight_mark() {
 
 // --- Session 18, adversarial-input arc: mental-model block budget ---
 
-use kod_types::memory::{MemoryEntry, MemoryMetadata, MemoryType};
 use kod_types::MemoryId;
+use kod_types::memory::{MemoryEntry, MemoryMetadata, MemoryType};
 
 fn mental_entry(content: &str) -> MemoryEntry {
     MemoryEntry {

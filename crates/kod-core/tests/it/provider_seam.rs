@@ -66,9 +66,7 @@ fn text_completion_body(text: &str) -> String {
 /// One text delta followed by the `[DONE]` terminator, the shape the
 /// adapter's streaming parser consumes.
 fn text_sse_body(text: &str) -> String {
-    format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\ndata: [DONE]\n\n"
-    )
+    format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\ndata: [DONE]\n\n")
 }
 
 /// Build an engine whose single provider is a real OpenAICompatProvider

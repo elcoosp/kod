@@ -273,9 +273,8 @@ async fn two_clients_are_served_independently_then_shutdown_stops_the_daemon() {
 
     let server_engine = engine.clone();
     let server_sock = sock.clone();
-    let server = tokio::spawn(async move {
-        kod_core_serve::serve::serve(server_engine, server_sock).await
-    });
+    let server =
+        tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
 
     // Wait for the accept loop to bind.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -294,12 +293,7 @@ async fn two_clients_are_served_independently_then_shutdown_stops_the_daemon() {
     // One request/response round-trip on a borrowed stream. `split()`
     // lets the read half own a BufReader while the write half stays
     // available; both halves drop before the stream is reused.
-    async fn one_rpc<R, W>(
-        r: R,
-        mut w: W,
-        id: &str,
-        method: &str,
-    ) -> serde_json::Value
+    async fn one_rpc<R, W>(r: R, mut w: W, id: &str, method: &str) -> serde_json::Value
     where
         R: AsyncReadExt + Unpin,
         W: tokio::io::AsyncWrite + Unpin,

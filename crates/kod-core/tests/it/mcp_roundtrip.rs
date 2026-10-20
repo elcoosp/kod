@@ -18,9 +18,9 @@
 //! instead of the client's public methods directly. No model, no
 //! network.
 
+use kod_config::{McpConfig, McpServerConfig};
 use kod_core::KodEngine;
 use kod_core::router::RouterConfig;
-use kod_config::{McpConfig, McpServerConfig};
 use kod_provider::testkit::{MockProvider, Script};
 use kod_types::ToolCall;
 use serde_json::json;
@@ -110,10 +110,7 @@ fn mcp_config_with_fake_server(tmp: &std::path::Path) -> McpConfig {
 /// Build a started engine with a scripted provider and a fake MCP
 /// server installed **before** `start()` — the point at which the
 /// lifecycle registers the adapters on the tool registry.
-async fn engine_with_mcp(
-    tmp: &TempDir,
-    script: Vec<Script>,
-) -> Arc<KodEngine> {
+async fn engine_with_mcp(tmp: &TempDir, script: Vec<Script>) -> Arc<KodEngine> {
     let cfg = RouterConfig {
         embedder: None,
         skill_threshold: 0.3,
@@ -176,10 +173,7 @@ async fn engine_dispatches_a_model_tool_call_through_a_real_mcp_server() {
         tool_name: "mcp:fake.echo".into(),
         arguments: json!({ "text": "seam" }),
     };
-    let script = vec![
-        Script::Calls(vec![call]),
-        Script::Text("done".into()),
-    ];
+    let script = vec![Script::Calls(vec![call]), Script::Text("done".into())];
 
     let tmp = TempDir::new().unwrap();
     let engine = engine_with_mcp(&tmp, script).await;
@@ -298,7 +292,10 @@ async fn install_from_config_registers_the_adapter_on_a_started_engine() {
         )
         .await;
 
-    let resp = engine.process("please echo from config").await.expect("process");
+    let resp = engine
+        .process("please echo from config")
+        .await
+        .expect("process");
     assert_eq!(
         resp.tool_results.len(),
         1,

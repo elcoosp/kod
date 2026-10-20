@@ -91,10 +91,7 @@ fn intent_branch_does_not_add_a_spurious_ellipsis_at_the_char_cap() {
     // sites fixed but only replaced four; this test closes the gap
     // and the commit message records the over-claim).
     let intent = cjk(80);
-    let brief = format_call_brief(
-        "read_file",
-        &json!({ "path": "x", "intent": intent }),
-    );
+    let brief = format_call_brief("read_file", &json!({ "path": "x", "intent": intent }));
     assert!(
         brief.ends_with(&intent),
         "the full 80-char intent must survive after the em-dash; \
