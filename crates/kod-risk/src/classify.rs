@@ -637,6 +637,31 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
     let segments = split_segments(&tokens);
     let pipe_fed = segments.len() > 1;
 
+    // SEC-A-05b: a subshell after a command separator (`;`, `&&`,
+    // `||`, `|`) starts a child shell the classifier cannot inspect
+    // statically. The whole-command check above only fires when the
+    // raw text *starts* with `(`. `echo hi; (rm -rf ~)` reached
+    // this point with segment 2's first token being `(rm` — not in
+    // `DESTRUCTIVE`, so no path check ran and the command classified
+    // `Safe`. Escalate every segment whose first token begins with
+    // `(`. The module contract is "never refuses; escalates", so
+    // `Confirm` is the correct level here — a subsequent user policy
+    // gate decides whether `(rm -rf ~)` actually runs.
+    for seg in &segments {
+        if let Some(first) = seg.first() {
+            let f = unquote(first);
+            if f.starts_with('(') {
+                findings.push(RiskFinding {
+                    level: RiskLevel::Confirm,
+                    reason: "a segment begins with a subshell `(`; the \
+                             classifier cannot inspect it statically"
+                        .to_string(),
+                    target: seg.join(" "),
+                });
+            }
+        }
+    }
+
     for seg in &segments {
         let (program, args, clean) = unwrap(seg);
 
@@ -1897,6 +1922,46 @@ mod property_tests {
                 "classify({:?}) returned Safe — bare `&` must split \
                  segments so the destructive half is visible",
                 form
+            );
+        }
+
+        /// **Failing-first.** A subshell after a command separator
+        /// (`;`, `&&`, `||`, `|`) is a child shell the classifier
+        /// cannot inspect statically. `echo hi; (rm -rf ~)` split into
+        /// two segments; the second segment's first token is `(rm`,
+        /// which is not in `DESTRUCTIVE`, so no path check runs. The
+        /// existing leading-`(` heuristic only fires when the raw
+        /// command *starts* with `(` — it misses a subshell after a
+        /// separator. The module contract is "never refuses; escalates",
+        /// so this must be at least `Confirm`, never `Safe`.
+        #[test]
+        fn prop_subshell_after_separator_is_not_safe(
+            prefix in "[a-z]{1,10}",
+            sep in prop::sample::select(vec![";", "&&", "||", "|"]),
+        ) {
+            let form = format!("{prefix} {sep} (rm -rf ~)");
+            let a = assess(&form, &prop_ctx());
+            prop_assert!(
+                !matches!(a.level, RiskLevel::Safe),
+                "classify({:?}) returned Safe — a subshell after `{}` \
+                 is a child shell the classifier cannot inspect",
+                form, sep
+            );
+        }
+
+        /// Over-escalation control. A plain `echo` with no shell
+        /// metacharacters must not be escalated — if the fix for the
+        /// subshell property escalates every command, this catches it.
+        #[test]
+        fn prop_echo_without_subshell_stays_safe(
+            args in "[a-z0-9 ]{0,20}",
+        ) {
+            let form = format!("echo {args}");
+            let a = assess(&form, &prop_ctx());
+            prop_assert!(
+                matches!(a.level, RiskLevel::Safe | RiskLevel::Low),
+                "classify({:?}) over-escalated echo to {:?}",
+                form, a.level
             );
         }
     }
