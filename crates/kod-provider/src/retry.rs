@@ -976,3 +976,221 @@ mod text_hint_proptests {
         assert_eq!(text_hint_secs("retry after 0 seconds"), Some(0));
     }
 }
+
+#[cfg(test)]
+mod extract_retry_hints_proptests {
+    //! Properties for `extract_retry_hints`.
+    //!
+    //! The function combines header hints (`retry-after`,
+    //! `retry-after-ms`, `x-ratelimit-reset{,-ms}`), body hints
+    //! (`scan_suffix_hint`, `scan_text_hint`), takes the maximum,
+    //! and decides `cap_declined` by comparing against `HINT_CAP`.
+    //!
+    //! The primary invariant: **`cap_declined` iff `delay > HINT_CAP`**.
+    //! This is the only place the caller learns whether to retry or
+    //! surface the error, and it is a single comparison in the
+    //! implementation — easy to get wrong if the boundary moves.
+    //!
+    //! Properties are driven by header-only inputs (empty body), so
+    //! `scan_suffix_hint` and `scan_text_hint` cannot fire and the
+    //! comparison against `HINT_CAP` is entirely attributable to the
+    //! headers the property constructs.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn hdr(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    /// A valid `Retry-After` header (integer seconds).
+    fn retry_after_header() -> impl Strategy<Value = (String, String)> {
+        (0u64..10_000u64).prop_map(|n| hdr("Retry-After", &n.to_string()))
+    }
+
+    /// A valid `retry-after-ms` header.
+    fn retry_after_ms_header() -> impl Strategy<Value = (String, String)> {
+        (0u64..60_000u64).prop_map(|n| hdr("retry-after-ms", &n.to_string()))
+    }
+
+    /// An arbitrary header pair, header name from a finite set that
+    /// includes the four the function recognises and one it does not.
+    fn arbitrary_header() -> impl Strategy<Value = (String, String)> {
+        (
+            prop::sample::select(vec![
+                "Retry-After",
+                "retry-after",
+                "RETRY-AFTER",
+                "retry-after-ms",
+                "x-ratelimit-reset",
+                "x-request-id",
+                "content-type",
+            ]),
+            "[0-9a-zA-Z .]{0,20}",
+        )
+            .prop_map(|(k, v)| (k.to_string(), v.to_string()))
+    }
+
+    proptest! {
+        /// **The primary invariant.** `cap_declined` is true if and
+        /// only if `delay` is present and greater than `HINT_CAP`.
+        #[test]
+        fn prop_cap_declined_consistent_with_delay(headers in prop::collection::vec(arbitrary_header(), 0..=3)) {
+            let r = extract_retry_hints(None, &headers, "");
+            let expected = r.delay.map_or(false, |d| d > HINT_CAP);
+            prop_assert_eq!(
+                r.cap_declined, expected,
+                "cap_declined={} but delay={:?} vs HINT_CAP={:?}",
+                r.cap_declined, r.delay, HINT_CAP,
+            );
+        }
+
+        /// No hints at all (empty headers, empty body) is the
+        /// default: no delay, no cap declined.
+        #[test]
+        fn prop_empty_is_default(_dummy in 0u8..1) {
+            let r = extract_retry_hints(None, &[], "");
+            prop_assert_eq!(r.delay, None);
+            prop_assert_eq!(r.cap_declined, false);
+        }
+
+        /// A `Retry-After` header alone yields `delay >= parsed` and
+        /// the cap follows. With an integer value, the parsed delay
+        /// is exactly that many seconds.
+        #[test]
+        fn prop_retry_after_is_read(
+            n in 0u64..10_000u64,
+        ) {
+            let headers = vec![hdr("Retry-After", &n.to_string())];
+            let r = extract_retry_hints(Some(429), &headers, "");
+            prop_assert_eq!(r.delay, Some(Duration::from_secs(n)));
+            prop_assert_eq!(r.cap_declined, n > HINT_CAP.as_secs());
+        }
+
+        /// Adding a non-hint header never lowers `delay`. Unknown
+        /// header names are ignored by the parser.
+        #[test]
+        fn prop_unknown_header_is_ignored(
+            v in "[0-9a-zA-Z .]{0,20}",
+        ) {
+            let baseline = extract_retry_hints(None, &[], "");
+            let with_unknown = extract_retry_hints(None, &[hdr("x-request-id", &v)], "");
+            prop_assert_eq!(baseline.delay, with_unknown.delay);
+            prop_assert_eq!(baseline.cap_declined, with_unknown.cap_declined);
+        }
+
+        /// Adding a valid hint to an existing header set does not
+        /// lower the reported `delay`. The max-of-push behaviour.
+        #[test]
+        fn prop_adding_a_hint_does_not_lower_delay(
+            existing in prop::collection::vec(retry_after_header(), 0..=3),
+            extra_n in 0u64..10_000u64,
+        ) {
+            let baseline = extract_retry_hints(None, &existing, "");
+            let mut augmented = existing.clone();
+            augmented.push(hdr("Retry-After", &extra_n.to_string()));
+            let after = extract_retry_hints(None, &augmented, "");
+            match (baseline.delay, after.delay) {
+                (None, _) => {}
+                (Some(b), Some(a)) => prop_assert!(
+                    a >= b,
+                    "adding a hint lowered delay: {:?} -> {:?}", b, a,
+                ),
+                (Some(_), None) => prop_assert!(false, "adding a hint made delay vanish"),
+            }
+        }
+
+        /// Determinism.
+        #[test]
+        fn prop_deterministic(headers in prop::collection::vec(arbitrary_header(), 0..=4)) {
+            let a = extract_retry_hints(None, &headers, "");
+            let b = extract_retry_hints(None, &headers, "");
+            prop_assert_eq!(a.delay, b.delay);
+            prop_assert_eq!(a.cap_declined, b.cap_declined);
+        }
+
+        /// `retry-after-ms` produces a sub-second delay for values
+        /// below 1000ms, and the cap follows exactly as for
+        /// `retry-after`.
+        #[test]
+        fn prop_retry_after_ms_is_read(
+            n in 0u64..60_000u64,
+        ) {
+            let headers = vec![hdr("retry-after-ms", &n.to_string())];
+            let r = extract_retry_hints(Some(429), &headers, "");
+            prop_assert_eq!(r.delay, Some(Duration::from_millis(n)));
+            prop_assert_eq!(r.cap_declined, Duration::from_millis(n) > HINT_CAP);
+        }
+
+        /// Header names are case-insensitive: `Retry-After`,
+        /// `retry-after`, and `RETRY-AFTER` are equivalent.
+        #[test]
+        fn prop_header_case_insensitive(n in 0u64..10_000u64) {
+            let v = n.to_string();
+            let lower = extract_retry_hints(None, &[hdr("retry-after", &v)], "");
+            let upper = extract_retry_hints(None, &[hdr("RETRY-AFTER", &v)], "");
+            let mixed = extract_retry_hints(None, &[hdr("Retry-After", &v)], "");
+            prop_assert_eq!(lower.delay, upper.delay);
+            prop_assert_eq!(lower.delay, mixed.delay);
+        }
+    }
+
+    /// Control: the boundary at `HINT_CAP` exactly. `HINT_CAP`
+    /// seconds does NOT decline (the implementation uses `>`, not
+    /// `>=`). `HINT_CAP + 1` seconds does. Pinning both sides means
+    /// a change to either `>` or `>=` shows up here.
+    #[test]
+    fn control_cap_boundary_is_exact() {
+        let cap_secs = HINT_CAP.as_secs();
+
+        let at_cap =
+            extract_retry_hints(Some(429), &[hdr("Retry-After", &cap_secs.to_string())], "");
+        assert_eq!(at_cap.delay, Some(HINT_CAP));
+        assert_eq!(
+            at_cap.cap_declined, false,
+            "a delay of exactly HINT_CAP must NOT decline (uses > not >=)",
+        );
+
+        let over_cap = extract_retry_hints(
+            Some(429),
+            &[hdr("Retry-After", &(cap_secs + 1).to_string())],
+            "",
+        );
+        assert_eq!(over_cap.delay, Some(HINT_CAP + Duration::from_secs(1)));
+        assert!(over_cap.cap_declined);
+    }
+
+    /// Control: `retry-after-ms` at exactly `HINT_CAP` in millis
+    /// also does not decline. Same `>` boundary in the millisecond
+    /// path.
+    #[test]
+    fn control_ms_boundary_is_exact() {
+        let cap_ms = HINT_CAP.as_millis() as u64;
+        let at_cap =
+            extract_retry_hints(Some(429), &[hdr("retry-after-ms", &cap_ms.to_string())], "");
+        assert_eq!(at_cap.delay, Some(HINT_CAP));
+        assert!(!at_cap.cap_declined);
+
+        let over_cap = extract_retry_hints(
+            Some(429),
+            &[hdr("retry-after-ms", &(cap_ms + 1).to_string())],
+            "",
+        );
+        assert_eq!(over_cap.delay, Some(HINT_CAP + Duration::from_millis(1)));
+        assert!(over_cap.cap_declined);
+    }
+
+    /// Control: an unrecognised `Retry-After` value (HTTP-date form
+    /// not parsed in this module) contributes no hint, so the
+    /// result is the default.
+    #[test]
+    fn control_http_date_retry_after_is_ignored() {
+        let r = extract_retry_hints(
+            Some(429),
+            &[hdr("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")],
+            "",
+        );
+        assert_eq!(r.delay, None);
+        assert_eq!(r.cap_declined, false);
+    }
+}
