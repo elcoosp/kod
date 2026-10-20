@@ -714,7 +714,9 @@ pub fn sanitize_slug(s: &str) -> String {
         .join("-")
         .chars()
         .take(32)
-        .collect()
+        .collect::<String>()
+        .trim_end_matches('-')
+        .to_string()
 }
 
 /// Run `git <args>` in `repo`. Returns trimmed stdout on success. Used
@@ -1143,4 +1145,95 @@ fn next_worktree_seq() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod sanitize_slug_proptests {
+    //! Properties for `sanitize_slug`.
+    //!
+    //! At file scope, not nested inside `mod tests`: `sanitize_slug`
+    //! is a file-scope `pub fn`, so `super::*` here reaches it
+    //! directly, and the trailing-position heuristic that broke the
+    //! previous attempt is not needed.
+    //!
+    //! `sanitize_slug` is "lowercase, non-alnum to dash, collapse
+    //! dashes, truncate to 32". The example test
+    //! `sanitize_slug_makes_kebab` only checks length. These
+    //! properties pin the full kebab contract: charset, no leading
+    //! dash, no trailing dash, no consecutive dashes, and idempotence.
+    //!
+    //! Idempotence and no-trailing-dash are not vacuous checks: the
+    //! implementation runs `.take(32)` **after** split/join. If the
+    //! 32nd character of the joined form is `'-'`, the output ends
+    //! with a trailing dash, and a second pass (whose split/filter
+    //! removes it) produces a different string. If the properties
+    //! go red, the fix is to trim trailing dashes after the take.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_idempotent(s in "[a-zA-Z0-9 _.-]{0,60}") {
+            let once = sanitize_slug(&s);
+            let twice = sanitize_slug(&once);
+            prop_assert_eq!(once, twice, "input: {:?}", s);
+        }
+
+        #[test]
+        fn prop_output_alphabet(s in any::<String>()) {
+            let out = sanitize_slug(&s);
+            for c in out.chars() {
+                prop_assert!(
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-',
+                    "non-slug char {:?} in {:?} (from {:?})",
+                    c, out, s,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_output_length_at_most_32(s in "[a-zA-Z0-9 _.-]{0,200}") {
+            let out = sanitize_slug(&s);
+            prop_assert!(out.len() <= 32, "len {} > 32 for {:?}: {:?}", out.len(), s, out);
+        }
+
+        #[test]
+        fn prop_no_leading_dash(s in any::<String>()) {
+            let out = sanitize_slug(&s);
+            prop_assert!(!out.starts_with('-'), "input {:?} -> {:?}", s, out);
+        }
+
+        #[test]
+        fn prop_no_trailing_dash(s in "[a-zA-Z0-9 _.-]{0,200}") {
+            let out = sanitize_slug(&s);
+            prop_assert!(!out.ends_with('-'), "input {:?} -> {:?}", s, out);
+        }
+
+        #[test]
+        fn prop_no_consecutive_dashes(s in "[a-zA-Z0-9 _.-]{0,200}") {
+            let out = sanitize_slug(&s);
+            prop_assert!(!out.contains("--"), "input {:?} -> {:?}", s, out);
+        }
+    }
+
+    #[test]
+    fn punctuation_only_is_empty() {
+        assert_eq!(sanitize_slug("!!!"), "");
+        assert_eq!(sanitize_slug("---"), "");
+        assert_eq!(sanitize_slug("   "), "");
+        assert_eq!(sanitize_slug(""), "");
+    }
+
+    #[test]
+    fn truncation_does_not_leave_a_trailing_dash() {
+        let input = "a".repeat(31) + " " + &"b".repeat(10);
+        let out = sanitize_slug(&input);
+        assert!(
+            !out.ends_with('-'),
+            "trailing dash after truncation: {:?} (len {})",
+            out,
+            out.len(),
+        );
+    }
 }
