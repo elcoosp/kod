@@ -1824,3 +1824,136 @@ mod provider_stream_deadline {
         );
     }
 }
+
+#[cfg(test)]
+mod normalize_base_url_proptests {
+    //! Properties for `normalize_base_url`.
+    //!
+    //! The four-line body trims trailing slashes and appends `/v1`
+    //! unless the trimmed form already ends with `/v1`. The example
+    //! tests pin specific inputs; these properties pin the shape
+    //! across all inputs.
+    //!
+    //! **A path-suffix input double-appends:** `"http://x/v1/foo"`
+    //! (ends with `/foo`, not `/v1`) normalizes to
+    //! `"http://x/v1/foo/v1"`. That may be a caller mistake (a
+    //! base_url shouldn't have a path suffix after `/v1`) or a
+    //! function bug (the contract doesn't say). It is pinned as a
+    //! **control** to document the current behaviour, not fixed in
+    //! this commit. Fixing it would require deciding whether the
+    //! correction belongs in `normalize_base_url`, in
+    //! `LlmConfig::validate`, or in a new validation step, and that
+    //! is a separate round.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Characters safe to put in a URL component: no spaces, no `?`,
+    /// no `#`, no unicode, no quote. `normalize_base_url` does no
+    /// validation, only the trailing-slash/`/v1` transformation, so
+    /// the shape of "typical" input matters less than the shape of
+    /// "the function is total and the transformation holds."
+    fn url_safe() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9:/._-]{0,80}"
+    }
+
+    proptest! {
+        /// The output always ends with `/v1`. This is the function's
+        /// single contract.
+        #[test]
+        fn prop_output_ends_with_v1(s in url_safe()) {
+            let out = normalize_base_url(&s);
+            prop_assert!(out.ends_with("/v1"), "input {:?} -> {:?}", s, out);
+        }
+
+        /// The output never ends with `/`. A normalized URL always
+        /// ends with `1` (from `/v1`) or is the literal `"/v1"`.
+        #[test]
+        fn prop_output_does_not_end_with_slash(s in url_safe()) {
+            let out = normalize_base_url(&s);
+            prop_assert!(!out.ends_with('/'), "input {:?} -> {:?}", s, out);
+        }
+
+        /// Idempotence: normalizing twice equals normalizing once.
+        #[test]
+        fn prop_idempotent(s in url_safe()) {
+            let once = normalize_base_url(&s);
+            let twice = normalize_base_url(&once);
+            prop_assert_eq!(once, twice, "input {:?}", s);
+        }
+
+        /// The trimmed input is preserved as a prefix. The function
+        /// never rewrites the host or path, only trims trailing
+        /// slashes and appends `/v1`.
+        #[test]
+        fn prop_trimmed_input_is_prefix(s in url_safe()) {
+            let trimmed = s.trim_end_matches('/');
+            let out = normalize_base_url(&s);
+            prop_assert!(
+                out.starts_with(trimmed),
+                "trimmed {:?} is not a prefix of {:?}", trimmed, out,
+            );
+        }
+
+        /// Determinism: same input, same output.
+        #[test]
+        fn prop_deterministic(s in url_safe()) {
+            prop_assert_eq!(normalize_base_url(&s), normalize_base_url(&s));
+        }
+
+        /// ASCII-preserving: an ASCII input produces an ASCII output.
+        /// The transformation only adds the four ASCII bytes `/v1`.
+        #[test]
+        fn prop_ascii_preserved(s in url_safe()) {
+            let out = normalize_base_url(&s);
+            prop_assert!(out.is_ascii());
+        }
+    }
+
+    /// Control: trailing slashes are trimmed before the `/v1` is
+    /// appended.
+    #[test]
+    fn control_trailing_slash_trimmed() {
+        assert_eq!(
+            normalize_base_url("http://localhost:11434/"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            normalize_base_url("http://localhost:11434///"),
+            "http://localhost:11434/v1"
+        );
+    }
+
+    /// Control: an existing `/v1` is preserved, no double append.
+    #[test]
+    fn control_existing_v1_preserved() {
+        assert_eq!(normalize_base_url("http://x/v1"), "http://x/v1");
+        assert_eq!(normalize_base_url("http://x/v1/"), "http://x/v1");
+        assert_eq!(normalize_base_url("http://x/v1///"), "http://x/v1");
+    }
+
+    /// Control: empty input becomes the bare `/v1`. Current
+    /// behaviour, pinned so a future change to reject empty input
+    /// shows up here.
+    #[test]
+    fn control_empty_is_bare_v1() {
+        assert_eq!(normalize_base_url(""), "/v1");
+    }
+
+    /// Control: the path-suffix double-append. `"http://x/v1/foo"`
+    /// does not end with `/v1`, so the function appends — giving
+    /// `"http://x/v1/foo/v1"`. Documented, not fixed. See the
+    /// module doc's note.
+    #[test]
+    fn control_path_suffix_double_appends() {
+        assert_eq!(normalize_base_url("http://x/v1/foo"), "http://x/v1/foo/v1");
+    }
+
+    /// Control: a bare host (no scheme) gets `/v1` appended. The
+    /// function does not validate, only normalises; scheme checking
+    /// is the caller's job.
+    #[test]
+    fn control_bare_host_gets_v1() {
+        assert_eq!(normalize_base_url("api.example.com"), "api.example.com/v1");
+    }
+}
