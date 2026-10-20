@@ -119,7 +119,12 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
             Some(n) if n > 0 => n,
             _ => continue,
         };
-        let end_line: Option<u32> = cap.get(4).and_then(|m| m.as_str().parse().ok());
+        let end_line: Option<u32> =
+            match cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                Some(n) if n > 0 && n >= line => Some(n),
+                Some(_) => continue,
+                None => None,
+            };
         if path.is_empty() || ext.is_empty() {
             continue;
         }
@@ -633,5 +638,201 @@ mod coverage_citation_extraction {
             c.is_empty(),
             "uppercase extensions currently not matched: {c:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod extract_citations_proptests {
+    //! Properties for `extract_citations`.
+    //!
+    //! The example tests pin specific prose cases. These properties
+    //! pin the shape of what the regex-based extractor returns:
+    //! closure (line > 0), no duplicates, round-trip on the returned
+    //! form, and — the pair that the current code fails — a
+    //! well-formed range (`end_line >= line` and `end_line > 0` when
+    //! `end_line.is_some()`).
+    //!
+    //! `extract_citations` parses `line` with a `> 0` guard but parses
+    //! `end_line` with no guard at all. Two properties assert the
+    //! contract the struct doc implies ("the second number" of a
+    //! range); both are expected to fail on the current code, and the
+    //! fix in the same commit validates `end_line` against `line`.
+    //!
+    //! No `Debug` requirement on `Citation`: assertions compare field
+    //! values directly, so a struct without `#[derive(Debug)]` still
+    //! compiles. `prop_assert_eq!` on `(raw_path, line)` tuples needs
+    //! `Debug` on `String` and `u32`, both of which have it.
+
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+
+    const EXTENSIONS: &[&str] = &[
+        "toml", "yaml", "bash", "json", "java", "hpp", "cxx", "yml", "tsx", "jsx", "cpp", "ts",
+        "js", "rs", "py", "go", "rb", "md", "sh", "cc", "c", "h",
+    ];
+
+    fn arb_path() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9_/.-]{1,30}"
+    }
+
+    fn arb_ext() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(EXTENSIONS)
+    }
+
+    fn arb_citation_text() -> impl Strategy<Value = String> {
+        (
+            arb_path(),
+            arb_ext(),
+            1u32..10_000u32,
+            prop::option::of(0u32..10_000u32),
+        )
+            .prop_map(|(path, ext, line, end)| match end {
+                Some(e) => format!("{path}.{ext}:{line}-{e}"),
+                None => format!("{path}.{ext}:{line}"),
+            })
+    }
+
+    proptest! {
+        /// Closure: every returned citation has `line > 0`. The
+        /// implementation enforces this with `Some(n) if n > 0`,
+        /// so the property pins the guard against regression.
+        #[test]
+        fn prop_line_positive(text in arb_citation_text()) {
+            for c in extract_citations(&text) {
+                prop_assert!(c.line > 0, "citation returned with line = 0");
+            }
+        }
+
+        /// No duplicates: two citations never share
+        /// `(raw_path, line)`. The implementation dedupes with
+        /// `iter().any(...)`; the property pins that.
+        #[test]
+        fn prop_no_duplicates(text in arb_citation_text()) {
+            let cites = extract_citations(&text);
+            let mut seen: HashSet<(String, u32)> = HashSet::new();
+            for c in &cites {
+                prop_assert!(
+                    seen.insert((c.raw_path.clone(), c.line)),
+                    "duplicate citation: ({}, {})", c.raw_path, c.line,
+                );
+            }
+        }
+
+        /// Round-trip: a returned citation, re-serialized as
+        /// `raw_path:line` and fed back, produces a citation with the
+        /// same `(raw_path, line)`. The regex the extractor uses
+        /// matches its own output; if that ever stops being true, a
+        /// citation rendered by `render_block` would not parse back.
+        #[test]
+        fn prop_round_trip(text in arb_citation_text()) {
+            for c in extract_citations(&text) {
+                let reparsed = extract_citations(&format!("{}:{}", c.raw_path, c.line));
+                prop_assert!(
+                    reparsed
+                        .iter()
+                        .any(|r| r.raw_path == c.raw_path && r.line == c.line),
+                    "round-trip failed for ({}, {})", c.raw_path, c.line,
+                );
+            }
+        }
+
+        /// Range validity: when `end_line` is `Some`, it is at least
+        /// `line`. A range with `end < start` is not a range.
+        #[test]
+        fn prop_end_line_at_least_line(text in arb_citation_text()) {
+            for c in extract_citations(&text) {
+                if let Some(end) = c.end_line {
+                    prop_assert!(
+                        end >= c.line,
+                        "end_line {} < line {} in citation {}.{}:",
+                        end, c.line, c.raw_path, c.line,
+                    );
+                }
+            }
+        }
+
+        /// Range positivity: when `end_line` is `Some`, it is `> 0`.
+        #[test]
+        fn prop_end_line_positive(text in arb_citation_text()) {
+            for c in extract_citations(&text) {
+                if let Some(end) = c.end_line {
+                    prop_assert!(end > 0, "end_line = 0 in citation");
+                }
+            }
+        }
+
+        /// Path shape: every returned `raw_path` ends in `.ext` for
+        /// one of the extensions the regex names. A path outside that
+        /// set cannot have been produced by the regex, so a violation
+        /// would mean the extractor is fabricating values.
+        #[test]
+        fn prop_path_ends_in_known_extension(text in arb_citation_text()) {
+            for c in extract_citations(&text) {
+                prop_assert!(
+                    EXTENSIONS.iter().any(|e| c.raw_path.ends_with(&format!(".{e}"))),
+                    "raw_path {:?} does not end in a known extension",
+                    c.raw_path,
+                );
+            }
+        }
+    }
+
+    /// Control: empty input produces no citations, so the universal
+    /// properties above are not checks over an empty set — well, this
+    /// control confirms that on empty it *is* the empty set, which is
+    /// correct behavior. The real non-vacuity control is
+    /// `control_plain_citation_is_extracted` below.
+    #[test]
+    fn control_empty_input_is_empty() {
+        assert!(extract_citations("").is_empty());
+    }
+
+    /// Control: a well-formed citation is extracted. Without this,
+    /// the universal properties would pass on a `extract_citations`
+    /// that returned `[]` unconditionally.
+    #[test]
+    fn control_plain_citation_is_extracted() {
+        let cites = extract_citations("see src/main.rs:42 for context");
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].raw_path, "src/main.rs");
+        assert_eq!(cites[0].line, 42);
+        assert_eq!(cites[0].end_line, None);
+    }
+
+    /// Control: the specific malformed range the range properties
+    /// would catch. Before the fix, `end_line = Some(5)` (less than
+    /// line = 100). After the fix, the citation is dropped entirely
+    /// because the range is malformed.
+    #[test]
+    fn control_bad_range_is_rejected() {
+        let cites = extract_citations("src/a.rs:100-5");
+        assert!(
+            cites.is_empty(),
+            "malformed range 100-5 must not produce a citation, got {:?}",
+            cites,
+        );
+    }
+
+    /// Control: `end_line = 0` is not a range. Before the fix,
+    /// `end_line = Some(0)`. After the fix, dropped.
+    #[test]
+    fn control_zero_end_line_is_rejected() {
+        let cites = extract_citations("src/a.rs:42-0");
+        assert!(
+            cites.is_empty(),
+            "range ending at 0 must not produce a citation, got {:?}",
+            cites,
+        );
+    }
+
+    /// Control: a valid range is preserved. If the fix over-tightened
+    /// and dropped legitimate ranges, this catches it.
+    #[test]
+    fn control_valid_range_is_preserved() {
+        let cites = extract_citations("src/a.rs:42-45");
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].line, 42);
+        assert_eq!(cites[0].end_line, Some(45));
     }
 }
