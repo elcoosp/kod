@@ -130,10 +130,8 @@ impl RetryPolicy {
         // counter across the full u64 bit-space, and XOR mixes it
         // into the (nanos, tid, pid) seed without disturbing the
         // existing bit layout.
-        let mut state = nanos
-            ^ tid
-            ^ (std::process::id() as u64)
-            ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut state =
+            nanos ^ tid ^ (std::process::id() as u64) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         state = state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
@@ -828,5 +826,153 @@ mod hint_tests {
                 base * (1.0 + j),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod text_hint_proptests {
+    //! Properties for `scan_text_hint` and `text_hint_secs`.
+    //!
+    //! The 17 example tests in `hint_tests` pin specific cue/unit
+    //! combinations. These properties pin the shape across input
+    //! classes: case insensitivity, cue requirement, unit round-trip,
+    //! saturation on overflow.
+    //!
+    //! `text_hint_secs` does **not** apply `HINT_CAP` — that is
+    //! `extract_retry_hints`'s job, and the two callers in
+    //! `kod-core-routing::retry_strategy` pass the raw value through
+    //! uncapped. That caller gap is documented in the continuation
+    //! record; it is not a contract of this function and is not
+    //! asserted here.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    const UNITS_SECS: &[&str] = &["", "s", "sec", "secs", "second", "seconds"];
+    const UNITS_MINS: &[&str] = &["m", "min", "mins", "minute", "minutes"];
+    const UNITS_HOURS: &[&str] = &["h", "hr", "hrs", "hour", "hours"];
+
+    proptest! {
+        /// Empty input has no cue, so no hint.
+        #[test]
+        fn prop_empty_returns_none(_dummy in 0u8..1) {
+            prop_assert_eq!(text_hint_secs(""), None);
+        }
+
+        /// A string with no cue word returns `None` regardless of
+        /// the numbers or units it contains.
+        #[test]
+        fn prop_no_cue_returns_none(prefix in "[a-zA-Z ]{0,20}", n in 1u64..1000, unit in prop::sample::select(UNITS_SECS)) {
+            let text = format!("{}{}{}", prefix, n, unit);
+            // Ensure the string cannot accidentally contain a cue.
+            prop_assume!(
+                !text.to_ascii_lowercase().contains("try again in")
+                    && !text.to_ascii_lowercase().contains("retry after")
+                    && !text.to_ascii_lowercase().contains("retry in")
+                    && !text.to_ascii_lowercase().contains("wait ")
+            );
+            prop_assert_eq!(text_hint_secs(&text), None);
+        }
+
+        /// Determinism: same input, same output.
+        #[test]
+        fn prop_deterministic(text in "[a-zA-Z0-9 .~-]{0,60}") {
+            prop_assert_eq!(text_hint_secs(&text), text_hint_secs(&text));
+        }
+
+        /// Case insensitivity: `scan_text_hint` lowercases the body
+        /// before searching for cues, so mixed/upper/lower all match
+        /// the same way.
+        #[test]
+        fn prop_case_insensitive(
+            n in 1u64..1000,
+            unit in prop::sample::select(UNITS_SECS),
+        ) {
+            let lower = format!("retry after {} {}", n, unit);
+            let upper = lower.to_ascii_uppercase();
+            let mixed = lower
+                .chars()
+                .enumerate()
+                .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c })
+                .collect::<String>();
+            prop_assert_eq!(text_hint_secs(&lower), text_hint_secs(&upper));
+            prop_assert_eq!(text_hint_secs(&lower), text_hint_secs(&mixed));
+        }
+
+        /// Round-trip for every seconds-suffix spelling and every cue.
+        #[test]
+        fn prop_seconds_round_trip(
+            cue in prop::sample::select(&["try again in ", "retry after ", "retry in ", "wait "][..]),
+            n in 0u64..100_000,
+            unit in prop::sample::select(UNITS_SECS),
+        ) {
+            let text = format!("{}{} {}", cue, n, unit);
+            prop_assert_eq!(
+                text_hint_secs(&text),
+                Some(n),
+                "cue={:?} n={} unit={:?}", cue, n, unit,
+            );
+        }
+
+        /// Minutes multiply by 60.
+        #[test]
+        fn prop_minutes_multiply(n in 0u64..10_000, unit in prop::sample::select(UNITS_MINS)) {
+            let text = format!("retry after {} {}", n, unit);
+            prop_assert_eq!(text_hint_secs(&text), Some(n.saturating_mul(60)));
+        }
+
+        /// Hours multiply by 3600.
+        #[test]
+        fn prop_hours_multiply(n in 0u64..10_000, unit in prop::sample::select(UNITS_HOURS)) {
+            let text = format!("retry after {} {}", n, unit);
+            prop_assert_eq!(text_hint_secs(&text), Some(n.saturating_mul(3600)));
+        }
+
+        /// A huge hour count saturates to `u64::MAX`, not wrapping.
+        /// `scan_text_hint` uses `saturating_mul`, so the multiplication
+        /// is safe; the property pins that it stays saturating rather
+        /// than wrapping to a small value.
+        #[test]
+        fn prop_hours_saturate(_dummy in 0u8..1) {
+            let text = format!("retry after {} hours", u64::MAX);
+            prop_assert_eq!(text_hint_secs(&text), Some(u64::MAX));
+        }
+
+        /// Non-digit cue suffixes yield `None` (the parser requires
+        /// digits immediately after the cue, modulo whitespace and `~`).
+        #[test]
+        fn prop_no_digits_after_cue_returns_none(filler in "[a-zA-Z ]{1,20}") {
+            let text = format!("retry after {}", filler);
+            // Filler starts with a letter, so no digits follow the cue.
+            prop_assume!(filler.chars().next().map(|c| !c.is_ascii_digit()).unwrap_or(true));
+            prop_assert_eq!(text_hint_secs(&text), None);
+        }
+    }
+
+    /// Control: an unknown unit returns `None` (the parser only
+    /// accepts the listed suffixes). Without this, a property like
+    /// `prop_seconds_round_trip` could pass on a `scan_text_hint`
+    /// that accepts *any* unit.
+    #[test]
+    fn control_unknown_unit_returns_none() {
+        assert_eq!(text_hint_secs("retry after 5 fortnights"), None);
+    }
+
+    /// Control: the "no unit" form is seconds. The parser treats
+    /// `"retry after 5"` as `Some(5)`, not `None` and not an error.
+    #[test]
+    fn control_no_unit_is_seconds() {
+        assert_eq!(text_hint_secs("retry after 5"), Some(5));
+    }
+
+    /// Control: `"retry after 0 seconds"` parses to `Some(0)`.
+    /// This is the current behaviour — a "retry immediately" hint.
+    /// The property suite does not assert that `Some(0)` is
+    /// impossible; it is a valid hint. Callers that would hot-loop on
+    /// a zero hint are a caller-side concern (see the continuation
+    /// record's note on the kod-core-routing call sites).
+    #[test]
+    fn control_zero_is_a_valid_hint() {
+        assert_eq!(text_hint_secs("retry after 0 seconds"), Some(0));
     }
 }
