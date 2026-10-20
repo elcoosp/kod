@@ -84,18 +84,16 @@ pub fn needs_map_reduce(diff: &str) -> bool {
 /// Truncate a file's diff body to [`MAX_FILE_TOKENS`], with a marker.
 fn cap_file_body(body: &str) -> String {
     let max_chars = MAX_FILE_TOKENS * CHARS_PER_TOKEN;
-    if body.len() <= max_chars {
+    // `max_chars` is MAX_FILE_TOKENS * CHARS_PER_TOKEN — a
+    // character budget, not a byte budget. A byte comparison
+    // truncates a CJK body at ~1/3 the intended character
+    // count.
+    if body.chars().count() <= max_chars {
         return body.to_string();
     }
-    let mut end = max_chars;
-    while end > 0 && !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!(
-        "{}\n… [{} chars elided at MAX_FILE_TOKENS]",
-        &body[..end],
-        body.len() - end,
-    )
+    let head: String = body.chars().take(max_chars).collect();
+    let elided = body.chars().count() - head.chars().count();
+    format!("{head}\n… [{elided} chars elided at MAX_FILE_TOKENS]",)
 }
 
 /// Summarize each file section (map), then the per-file summaries
@@ -236,5 +234,80 @@ diff --git a/b.rs b/b.rs
         let summarize = |_: &str| "unused".to_string();
         assert_eq!(map_reduce("", &summarize), "");
         assert_eq!(map_reduce("   \n", &summarize), "");
+    }
+}
+
+#[cfg(test)]
+mod cap_file_body_proptests {
+    //! Properties for `cap_file_body`'s char bound.
+    //!
+    //! `cap_file_body` computes `max_chars = MAX_FILE_TOKENS *
+    //! CHARS_PER_TOKEN` and compares with `body.len()`. Both are
+    //! named in chars (the module's `CHARS_PER_TOKEN` convention).
+    //! The comparison is byte-based, so a CJK diff body is truncated
+    //! at roughly a third of the intended character budget.
+    //!
+    //! The property below sizes the CJK body so its byte length
+    //! exceeds the 200_000 budget but its char length does not. On
+    //! the pre-fix code the byte comparison trips; post-fix the char
+    //! comparison keeps the body.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    proptest! {
+        /// A CJK body whose byte length exceeds `MAX_FILE_TOKENS *
+        /// CHARS_PER_TOKEN` but whose char length does not must not
+        /// be truncated. Pre-fix the byte comparison trips.
+        #[test]
+        fn prop_cjk_body_under_char_budget_not_truncated(
+            body in prop::collection::vec(cjk_char(), 1..=1)
+                .prop_flat_map(|_| {
+                    // 2/3 of the char budget: char count ~133_333,
+                    // byte count ~400_000. Under char budget,
+                    // over byte budget.
+                    prop::collection::vec(cjk_char(), 133_333..=133_333)
+                })
+                .prop_map(|chars| chars.into_iter().collect::<String>()),
+        ) {
+            let budget = MAX_FILE_TOKENS * CHARS_PER_TOKEN;
+            prop_assume!(body.chars().count() < budget);
+            prop_assume!(body.len() > budget);
+            let capped = cap_file_body(&body);
+            prop_assert!(
+                !capped.contains("elided at MAX_FILE_TOKENS"),
+                "CJK body of {} chars ({} bytes) under a {}-char budget was truncated",
+                body.chars().count(), body.len(), budget,
+            );
+        }
+    }
+
+    /// Control: an ASCII body under the char budget is not truncated.
+    #[test]
+    fn control_ascii_body_under_budget_not_truncated() {
+        let body = "x".repeat(MAX_FILE_TOKENS * CHARS_PER_TOKEN - 1);
+        let capped = cap_file_body(&body);
+        assert!(
+            !capped.contains("elided"),
+            "ASCII body under budget should not be truncated"
+        );
+    }
+
+    /// Control: an ASCII body over the budget is truncated with the
+    /// marker.
+    #[test]
+    fn control_ascii_body_over_budget_truncated() {
+        let body = "x".repeat(MAX_FILE_TOKENS * CHARS_PER_TOKEN + 100);
+        let capped = cap_file_body(&body);
+        assert!(
+            capped.contains("elided"),
+            "ASCII body over budget should be truncated"
+        );
     }
 }

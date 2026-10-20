@@ -155,7 +155,10 @@ impl Blackboard {
         let mut out = String::from("## Team knowledge\n\n");
         for e in entries.iter().take(max_entries) {
             let line = format!("- {}: {}\n", e.key, e.value);
-            if out.len() + line.len() > max_chars {
+            // The parameter is `max_chars`, so count chars. A byte
+            // count truncates a CJK block at roughly a third of
+            // the visible budget (each CJK char is 3 bytes).
+            if out.chars().count() + line.chars().count() > max_chars {
                 break;
             }
             out.push_str(&line);
@@ -301,5 +304,114 @@ mod tests {
         let b = a.clone();
         a.put("k", serde_json::json!(1), "a", AuthorKind::Agent, vec![]);
         assert_eq!(b.get("k").unwrap().value, serde_json::json!(1));
+    }
+}
+
+#[cfg(test)]
+mod render_block_proptests {
+    //! Properties for `Blackboard::render_prompt_block`'s char bound.
+    //!
+    //! The function's parameter is `max_chars`. The loop accumulates
+    //! `out` with `format!("- {}: {}\n", e.key, e.value)` and breaks
+    //! when `out.len() + line.len() > max_chars`. Both `.len()`
+    //! calls are byte counts. For ASCII the two agree; for CJK a
+    //! 3-byte character counts as 3, so the truncated block holds
+    //! roughly a third of the visible characters the caller asked
+    //! for.
+    //!
+    //! The property below sizes the CJK value so its byte length
+    //! exceeds a 200-char budget but its char length does not. On
+    //! the pre-fix code the byte comparison trips and drops the
+    //! line; post-fix the char comparison keeps it.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    fn cjk_string(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(cjk_char(), 1..=max_len).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        /// A CJK value whose byte length exceeds 200 but whose char
+        /// length (plus the wrapper) fits 200 must be present.
+        /// Pre-fix the byte comparison drops it.
+        #[test]
+        fn prop_render_block_keeps_cjk_under_char_budget(
+            body in cjk_string(100),
+        ) {
+            // Need char count of value + wrapper + header under 200,
+            // but byte count over 200.
+            //   header: "## Team knowledge\n\n" = 19 chars
+            //   line: "- team: " = 8 chars, "\n" = 1 char
+            //   JSON wrapper around the value: {"k":"","v":""} adds
+            //   ~16 ASCII chars (the CJK body is the value)
+            // So chars ≈ 19 + 9 + 16 + body.chars().count() = 44 + n
+            //     bytes ≈ 44 + 3*n (for CJK)
+            // Need: 44 + n <= 200  (n <= 156)
+            //       44 + 3n > 200  (n > 52)
+            prop_assume!(body.chars().count() > 55 && body.chars().count() <= 100);
+
+            let b = Blackboard::new();
+            b.put(
+                "team",
+                serde_json::json!(body),
+                "test",
+                AuthorKind::Agent,
+                vec!["team".to_string()],
+            );
+            let out = b.render_prompt_block("team", 10, 200);
+            prop_assert!(
+                out.contains(&body),
+                "CJK value of {} chars ({} bytes) under a 200-char budget must be present; output is {} chars: {:?}",
+                body.chars().count(), body.len(), out.chars().count(), out,
+            );
+        }
+    }
+
+    /// Control: a short ASCII entry under a generous budget is present.
+    #[test]
+    fn control_short_ascii_entry_fits() {
+        let b = Blackboard::new();
+        b.put(
+            "team",
+            serde_json::json!("v"),
+            "test",
+            AuthorKind::Agent,
+            vec!["team".to_string()],
+        );
+        let out = b.render_prompt_block("team", 10, 200);
+        assert!(
+            out.contains("- team:"),
+            "short ASCII entry should appear: {:?}",
+            out
+        );
+    }
+
+    /// Control: an oversized ASCII entry under a tight budget is
+    /// truncated. The fix must not remove truncation entirely.
+    #[test]
+    fn control_oversized_ascii_entry_is_truncated() {
+        let b = Blackboard::new();
+        let long_value = "x".repeat(300);
+        b.put(
+            "team",
+            serde_json::json!(long_value),
+            "test",
+            AuthorKind::Agent,
+            vec!["team".to_string()],
+        );
+        let out = b.render_prompt_block("team", 10, 100);
+        assert!(
+            out.chars().count() <= 100,
+            "ASCII output {} chars over 100",
+            out.chars().count(),
+        );
+        assert!(out.contains("## Team knowledge"));
     }
 }
