@@ -266,3 +266,63 @@ format), and the properties pin contracts against drift rather
 than probe for defects. The only defect the session found after
 `v0.1.14` was none — R2's Go block-import bug was the last
 real one, and it is in `v0.1.14`'s release note.
+
+## Post-v0.1.14 rounds (R7–R8)
+
+After the `v0.1.14` release (`0980469`), two more property rounds
+landed on the workspace's remaining pure-function surface, plus a
+refactor that collapsed a real duplication.
+
+### R7 — `kod-core::engine::render` private helpers (`ddf85d7`)
+
+`render.rs` had **zero tests** on its six pure helpers. The round
+pinned five of them with 16 properties:
+
+- `truncate_with_ellipsis` (5): under/over budget, char bound
+  ASCII + CJK, exact `prefix + ellipsis` shape.
+- `shorten_path` (3): identity for short paths, last-two-segments
+  for long paths, idempotent.
+- `cap_lines` (2): identity under, bound over.
+- `line_is_goal_marker` (5): exact match, structural-separator
+  variants, CJK byte-boundary non-panic, pure-CJK false.
+- `format_tool_header` (2): determinism, name-prefix shape.
+
+**No bug found.** The one place that *looks* like a byte-vs-char
+bug — `truncate_with_ellipsis`'s `if shown.len() < s.len()` — is
+correct because `truncate_chars` returns a strict prefix of `s`.
+The properties pin that assumption.
+
+A real finding, named but not fixed in R7: **`truncate_chars` was
+defined in three places** — `kod-types::strutil` (canonical, tested
+by `string_safety.rs`), `kod-core::router` (inline copy), and
+`kod-core::engine::render` (already delegating). That was logged
+as follow-up work and fixed in R8.
+
+### R8 — `truncate_chars` collapsed (`d6a6671`)
+
+`router.rs` had a byte-identical inline copy of
+`kod_types::strutil::truncate_chars`. `render.rs` (same crate)
+already delegated to the canonical version. Two copies of the same
+function in the same crate with different strategies is a
+maintenance hazard: a future fix to the canonical version would
+not reach the router path.
+
+**Refactor, no behaviour change.** The three definitions after
+`d6a6671`:
+
+| Path | Body |
+|---|---|
+| `kod-types::strutil::truncate_chars` | canonical (`char_indices().nth(max)`) |
+| `kod-core::router::truncate_chars` | delegates to canonical |
+| `kod-core::engine::render::truncate_chars` | already delegated |
+
+Router's only caller (`MAX_EXAMPLE_CHARS` at `router.rs:1322`) gets
+identical behaviour: the body it had was byte-identical to the
+canonical version. `kod-core` full crate green (649/649).
+
+### Rounds R7–R8 in one line
+
+One property round with no bug (`render` private helpers, 16
+properties), and one small refactor that closed a duplication
+named in R7's commit message. Neither adds a release-worthy
+change; `v0.1.14` is still the current tag.
