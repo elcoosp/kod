@@ -29,6 +29,7 @@ kod-core-state = { path = "../kod-core-state" }
 kod-core-routing = { path = "../kod-core-routing" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = "3.8"
 tokio = { workspace = true }
 rstest = { workspace = true }

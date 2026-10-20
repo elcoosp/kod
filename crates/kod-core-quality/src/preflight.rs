@@ -72,7 +72,14 @@ pub fn parse_meminfo(text: &str) -> (Option<u64>, Option<u64>, Option<u64>) {
             .find(|l| l.starts_with(name))
             .and_then(|l| l.split_whitespace().nth(1))
             .and_then(|v| v.parse::<u64>().ok())
-            .map(|kb| kb * 1024)
+            // `kb.saturating_mul(1024)`, not `kb * 1024`: a
+            // hostile/corrupt `/proc/meminfo` with an out-of-range
+            // kB value panicked under `overflow-checks` (debug +
+            // test profiles) on `kb * 1024`. The byte count is
+            // only compared against `0.10 * total`; saturation at
+            // `u64::MAX` is the correct answer for a value that
+            // cannot fit, not a panic in a startup-time probe.
+            .map(|kb| kb.saturating_mul(1024))
     };
     let total = field("MemTotal:");
     let available = field("MemAvailable:").or_else(|| field("MemFree:"));
@@ -84,10 +91,18 @@ pub fn parse_meminfo(text: &str) -> (Option<u64>, Option<u64>, Option<u64>) {
 
 /// Parse `sysctl -n vm.loadavg` (macOS), which prints `{ 1.5 2.0 3.0 }`.
 pub fn parse_loadavg(text: &str) -> Option<f64> {
+    // `.filter(|v| v.is_finite())`: `f64::parse` accepts `"NaN"`,
+    // `"inf"`, `"-inf"`, and `"Infinity"`. A `NaN` load would
+    // silently fail the `load > cores` check in
+    // `pressure_reasons` (any comparison with NaN is false), so an
+    // under-pressure host would be reported as safe. The load
+    // average is a finite non-negative number or nothing; anything
+    // else is not a load average and the parser must say so.
     text.trim_matches(|c: char| c == '{' || c == '}' || c.is_whitespace())
         .split_whitespace()
         .next()
         .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
 }
 
 /// Parse `pmset -g batt` (macOS). Returns `(percent, on_battery)`.
@@ -228,5 +243,96 @@ SwapFree:        4000000 kB
             ..Default::default()
         };
         assert!(s.pressure_reasons(8).is_empty());
+    }
+}
+
+
+#[cfg(test)]
+mod proptests {
+    //! Properties of the host-preflight parsers.
+    //!
+    //! `parse_meminfo`, `parse_loadavg`, `parse_pmset` parse
+    //! OS-reported text. The contract:
+    //!
+    //! - none of them panics on arbitrary input;
+    //! - a `Some(f64)` load average is finite (`.is_finite()`),
+    //!   never `NaN` / `±inf` — a `NaN` load silently fails the
+    //!   `load > cores` check in `pressure_reasons`, reporting an
+    //!   under-pressure host as safe;
+    //! - a `Some(u64)` byte count is `kb.saturating_mul(1024)`,
+    //!   not `kb * 1024`; a hostile/corrupt `/proc/meminfo` with an
+    //!   out-of-range kB value must not panic under
+    //!   `overflow-checks`.
+    //!
+    //! **The failing-first properties:** `loadavg_nan_and_inf_are_rejected`
+    //! (`.parse::<f64>()` accepts `"NaN"` and `"inf"`) and
+    //! `meminfo_huge_value_does_not_overflow` (`kb * 1024` panics on
+    //! `u64::MAX`).
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// All three parsers must not panic on arbitrary input.
+        #[test]
+        fn prop_parsers_never_panic(text in any::<String>()) {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parse_meminfo(&text);
+                let _ = parse_loadavg(&text);
+                let _ = parse_pmset(&text);
+            }));
+            prop_assert!(outcome.is_ok());
+        }
+
+        /// Direct probe: an out-of-range kB value must not panic.
+        #[test]
+        fn meminfo_huge_value_does_not_overflow(_dummy in any::<u8>()) {
+            let cases = [
+                "MemTotal: 18446744073709551615 kB\n",
+                "MemTotal: 9007199254740992 kB\n",
+                "MemAvailable: 18446744073709551615 kB\n",
+                "SwapTotal: 18446744073709551615 kB\n",
+                "SwapFree: 18446744073709551615 kB\n",
+            ];
+            for case in cases {
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = parse_meminfo(case);
+                }));
+                prop_assert!(outcome.is_ok(),
+                    "parse_meminfo panicked on {:?}", case);
+            }
+        }
+
+        /// `parse_loadavg` must not report a non-finite value.
+        #[test]
+        fn loadavg_is_finite(text in any::<String>()) {
+            if let Some(v) = parse_loadavg(&text) {
+                prop_assert!(v.is_finite(),
+                    "parse_loadavg({:?}) returned non-finite {:?}", text, v);
+            }
+        }
+
+        /// Direct probe on the exact adversarial loadavg shapes.
+        #[test]
+        fn loadavg_nan_and_inf_are_rejected(_dummy in any::<u8>()) {
+            for case in [
+                "NaN", "nan", "inf", "-inf", "Infinity", "INF",
+                "{ NaN 2.0 3.0 }", "{ inf 2.0 3.0 }",
+            ] {
+                let got = parse_loadavg(case);
+                prop_assert!(
+                    got.is_none(),
+                    "parse_loadavg({:?}) = {:?} — must be None for non-finite",
+                    case, got,
+                );
+            }
+        }
+
+        /// Positive: a well-formed finite loadavg string parses back.
+        #[test]
+        fn loadavg_parses_a_finite_number(x in 0.0f64..1000.0f64) {
+            let s = format!("{x}");
+            let got = parse_loadavg(&s);
+            prop_assert_eq!(got, Some(x));
+        }
     }
 }
