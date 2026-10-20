@@ -754,7 +754,7 @@ mod tests {
     use kod_types::MessageId;
     use time::OffsetDateTime;
 
-    fn user(content: &str) -> ChatMessage {
+    pub(super) fn user(content: &str) -> ChatMessage {
         ChatMessage::text(
             MessageId::new(),
             MessageRole::User,
@@ -763,7 +763,7 @@ mod tests {
         )
     }
 
-    fn assistant(content: &str) -> ChatMessage {
+    pub(super) fn assistant(content: &str) -> ChatMessage {
         ChatMessage::text(
             MessageId::new(),
             MessageRole::Assistant,
@@ -772,7 +772,7 @@ mod tests {
         )
     }
 
-    fn tool(content: &str) -> ChatMessage {
+    pub(super) fn tool(content: &str) -> ChatMessage {
         ChatMessage::text(
             MessageId::new(),
             MessageRole::Tool,
@@ -783,7 +783,7 @@ mod tests {
 
     /// A config that admits every candidate regardless of gate. Used
     /// by tests that isolate a scanner rule rather than a gate.
-    fn ungated() -> ShakeConfig {
+    pub(super) fn ungated() -> ShakeConfig {
         ShakeConfig {
             protect_tokens: 0,
             minimum_savings: 0,
@@ -793,7 +793,7 @@ mod tests {
 
     /// Suffix estimator that reports a large number, clearing any
     /// protect window a test uses.
-    fn big_suffix() -> impl Fn(usize) -> u64 {
+    pub(super) fn big_suffix() -> impl Fn(usize) -> u64 {
         |_| 1_000_000
     }
 
@@ -1537,6 +1537,217 @@ mod shake_parser_proptests {
              got: {:?} vs {:?}",
             regions[0].range,
             regions[1].range,
+        );
+    }
+}
+
+#[cfg(test)]
+mod plan_shake_proptests {
+    //! Properties for `plan_shake`.
+    //!
+    //! The example tests in `tests` pin each gate individually
+    //! (`the_protect_window_skips_a_message`,
+    //! `the_cache_warm_guard_skips_a_message`, the two savings-gate
+    //! tests). What they do not pin is the *shape* of the plan as a
+    //! function of the config: closure, determinism, and the three
+    //! monotonicities a caller reasoning about the config relies on.
+    //!
+    //! `arb_transcript` (randomised) drives the closure properties,
+    //! which are meaningful on empty plans too.
+    //!
+    //! `control_transcript` (fixed) drives the monotonicity
+    //! properties, which are only meaningful on plans that actually
+    //! contain actions. `control_transcript_yields_a_non_empty_plan`
+    //! asserts that shape; if it goes red, the fixed transcript has
+    //! stopped being eligible, and the monotonicity properties are
+    //! no longer proving what they claim (L58).
+
+    use super::tests::*;
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_message() -> impl Strategy<Value = ChatMessage> {
+        (
+            prop::sample::select(vec!["user", "assistant", "tool"]),
+            "[a-zA-Z0-9 \t\n<>/._~`-]{0,200}",
+        )
+            .prop_map(|(role, content)| match role {
+                "user" => user(&content),
+                "assistant" => assistant(&content),
+                _ => tool(&content),
+            })
+    }
+
+    fn arb_transcript() -> impl Strategy<Value = Vec<ChatMessage>> {
+        prop::collection::vec(arb_message(), 0..=4)
+    }
+
+    /// A fixed transcript with three regions large enough to be
+    /// elided under `ungated()`. Used only by the monotonicity
+    /// properties.
+    fn control_transcript() -> Vec<ChatMessage> {
+        let fenced = format!("```\n{}\n```", "x".repeat(2_000));
+        let body = "y".repeat(3_000);
+        vec![
+            user(&format!("see:\n{fenced}\nend")),
+            assistant(&format!("analysis:\n{fenced}\nconclusion")),
+            tool(&body),
+        ]
+    }
+
+    fn cold_config() -> ShakeConfig {
+        let mut c = ungated();
+        c.protect_tokens = 0;
+        c.cache_warm_suffix_tokens = u64::MAX;
+        c
+    }
+
+    proptest! {
+        /// Every action's `message_id` is one that appears in the
+        /// transcript. No fabricated ids.
+        #[test]
+        fn prop_actions_target_existing_messages(transcript in arb_transcript()) {
+            let plan = plan_shake(&transcript, &cold_config(), big_suffix(), false);
+            let ids: std::collections::HashSet<_> =
+                transcript.iter().map(|m| m.id.clone()).collect();
+            for a in &plan.actions {
+                prop_assert!(
+                    ids.contains(&a.message_id),
+                    "action targets an id not in the transcript: {:?}",
+                    a.message_id,
+                );
+            }
+        }
+
+        /// Every action's range is inside its message's content. A
+        /// range that overflowed the message length would panic the
+        /// caller's splice; the property is the plan-level check.
+        #[test]
+        fn prop_action_ranges_in_bounds(transcript in arb_transcript()) {
+            let plan = plan_shake(&transcript, &cold_config(), big_suffix(), false);
+            let by_id: std::collections::HashMap<_, _> =
+                transcript.iter().map(|m| (m.id.clone(), m.content.len())).collect();
+            for a in &plan.actions {
+                let len = by_id[&a.message_id];
+                prop_assert!(
+                    a.range.start <= a.range.end && a.range.end <= len,
+                    "range {:?} not in bounds of message {:?} (len {})",
+                    a.range, a.message_id, len,
+                );
+            }
+        }
+
+        /// Determinism: same transcript, same config, same plan
+        /// (same actions, same order).
+        #[test]
+        fn prop_deterministic(transcript in arb_transcript()) {
+            let cfg = cold_config();
+            let a = plan_shake(&transcript, &cfg, big_suffix(), false);
+            let b = plan_shake(&transcript, &cfg, big_suffix(), false);
+            prop_assert_eq!(a.len(), b.len());
+            for (x, y) in a.actions.iter().zip(b.actions.iter()) {
+                prop_assert_eq!(&x.message_id, &y.message_id);
+                prop_assert_eq!(x.range.start, y.range.start);
+                prop_assert_eq!(x.range.end, y.range.end);
+            }
+        }
+    }
+
+    proptest! {
+        /// `minimum_savings` is upward-closed: raising it can only
+        /// remove actions, never add.
+        #[test]
+        fn prop_minimum_savings_is_upward_closed(_dummy in 0u8..1) {
+            let transcript = control_transcript();
+            let mut low = cold_config();
+            low.minimum_savings = 0;
+            let mut high = cold_config();
+            high.minimum_savings = u64::MAX;
+            let low_plan = plan_shake(&transcript, &low, big_suffix(), false);
+            let high_plan = plan_shake(&transcript, &high, big_suffix(), false);
+            prop_assert!(
+                !low_plan.is_empty(),
+                "control transcript must yield a plan at minimum_savings=0",
+            );
+            prop_assert!(
+                high_plan.is_empty(),
+                "minimum_savings=u64::MAX must give an empty plan, got {} actions",
+                high_plan.len(),
+            );
+        }
+
+        /// `protect_tokens` is downward-closed: raising it can only
+        /// remove actions.
+        #[test]
+        fn prop_protect_tokens_is_downward_closed(_dummy in 0u8..1) {
+            let transcript = control_transcript();
+            let mut low = cold_config();
+            low.protect_tokens = 0;
+            let mut high = cold_config();
+            high.protect_tokens = u64::MAX;
+            let low_plan = plan_shake(&transcript, &low, big_suffix(), false);
+            let high_plan = plan_shake(&transcript, &high, big_suffix(), false);
+            prop_assert!(!low_plan.is_empty());
+            prop_assert!(high_plan.is_empty());
+        }
+
+        /// `fence_min_tokens` is downward-closed: raising it can only
+        /// remove *fence* actions. Tool-body actions are unaffected.
+        #[test]
+        fn prop_fence_min_tokens_downward_closed_for_fences(_dummy in 0u8..1) {
+            let transcript = control_transcript();
+            let mut low = cold_config();
+            low.fence_min_tokens = 10;
+            let mut high = cold_config();
+            high.fence_min_tokens = u64::MAX;
+            let low_plan = plan_shake(&transcript, &low, big_suffix(), false);
+            let high_plan = plan_shake(&transcript, &high, big_suffix(), false);
+            let low_fence_count = low_plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a.kind, RegionKind::Fence { .. }))
+                .count();
+            let high_fence_count = high_plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a.kind, RegionKind::Fence { .. }))
+                .count();
+            prop_assert!(low_fence_count > 0, "control must contain fence actions");
+            prop_assert_eq!(high_fence_count, 0, "u64::MAX fence_min_tokens must remove all");
+        }
+
+        /// Cold prefix plan is a superset of warm prefix plan, under
+        /// a config that opens the cache-warm band (protect=0,
+        /// cache_warm_suffix below big_suffix so warm filters fire).
+        #[test]
+        fn prop_cold_prefix_supersets_warm(_dummy in 0u8..1) {
+            let transcript = control_transcript();
+            let mut cfg = cold_config();
+            cfg.cache_warm_suffix_tokens = 1_000;
+            let cold = plan_shake(&transcript, &cfg, big_suffix(), false);
+            let warm = plan_shake(&transcript, &cfg, big_suffix(), true);
+            prop_assert!(!cold.is_empty());
+            for wa in &warm.actions {
+                let found = cold.actions.iter().any(|ca| {
+                    ca.message_id == wa.message_id
+                        && ca.range.start == wa.range.start
+                        && ca.range.end == wa.range.end
+                });
+                prop_assert!(found, "warm action not in cold plan: {:?}", wa);
+            }
+        }
+    }
+
+    /// Control: the fixed transcript used by the monotonicity
+    /// properties actually produces a non-empty plan under
+    /// `cold_config()`. Without this, those properties could pass on
+    /// empty sets without checking anything (L58).
+    #[test]
+    fn control_transcript_yields_a_non_empty_plan() {
+        let plan = plan_shake(&control_transcript(), &cold_config(), big_suffix(), false);
+        assert!(
+            !plan.is_empty(),
+            "control transcript must yield a non-empty plan under cold_config",
         );
     }
 }
