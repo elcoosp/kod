@@ -184,19 +184,58 @@ impl SkillParser {
 
     /// Extract attribute value from an XML-like tag
     fn extract_attribute(&self, tag: &str, attr: &str) -> Option<String> {
+        // Fix (proptest round): require a whitespace boundary before
+        // the attribute name. The pre-fix `tag.find("input=\"")` was
+        // a substring match, so `data-input="x"`, `xinput="y"`, and
+        // `requires-input="z"` all reported an `input` attribute that
+        // was not there. `SkillExample.input` flows into the router's
+        // prompt, so a fake attribute value would land in the model's
+        // input. Same class as `completion_report::extract_status`
+        // (af0301f).
+        //
+        // Attributes in `<example ...>` are whitespace-separated;
+        // "preceded by whitespace" (or at the start of the tag) is the
+        // property the parser wants. Each branch loops past non-
+        // boundary matches, so `<example data-input="x" input="y">`
+        // finds the real `input`.
+        //
         // T5-C31: double quotes first, then single.
         let pattern = format!("{}=\"", attr);
-        if let Some(start) = tag.find(&pattern) {
-            let rest = &tag[start + pattern.len()..];
-            let end = rest.find('"')?;
-            return Some(rest[..end].to_string());
+        let mut search_at = 0;
+        loop {
+            let Some(found) = tag[search_at..].find(&pattern) else {
+                break;
+            };
+            let idx = search_at + found;
+            let preceded_ok = tag[..idx]
+                .chars()
+                .last()
+                .is_none_or(|c| c.is_whitespace());
+            if preceded_ok {
+                let rest = &tag[idx + pattern.len()..];
+                let end = rest.find('"')?;
+                return Some(rest[..end].to_string());
+            }
+            search_at = idx + pattern.len();
         }
         let pattern = format!("{}='", attr);
-        let start = tag.find(&pattern)?;
-        let content_start = start + pattern.len();
-        let end = tag[content_start..].find('\'')? + content_start;
-
-        Some(tag[content_start..end].to_string())
+        let mut search_at = 0;
+        loop {
+            let Some(found) = tag[search_at..].find(&pattern) else {
+                return None;
+            };
+            let idx = search_at + found;
+            let preceded_ok = tag[..idx]
+                .chars()
+                .last()
+                .is_none_or(|c| c.is_whitespace());
+            if preceded_ok {
+                let content_start = idx + pattern.len();
+                let end = tag[content_start..].find('\'')? + content_start;
+                return Some(tag[content_start..end].to_string());
+            }
+            search_at = idx + pattern.len();
+        }
     }
 }
 
@@ -725,6 +764,124 @@ mod proptests {
                 skill.constraints.as_deref().map(str::trim),
                 Some(c.trim()),
             );
+        }
+    }
+
+
+    // -----------------------------------------------------------------
+    // `<example input="...">` attribute extraction.
+    //
+    // `02de4e8` and `4600d40` noted this gap: `extract_attribute` is
+    // exercised indirectly by `prop_example_blocks_are_captured_in_order`
+    // (which uses no attributes), but not pinned. The failing-first
+    // property here is `prop_fake_input_attribute_is_ignored`:
+    // `extract_attribute` does `tag.find("input=\"")`, a substring
+    // match. A tag like `<example requires-input="true">` reports
+    // `input = "true"` even though there is no `input` attribute —
+    // same class as `completion_report::extract_status` at `af0301f`.
+    // -----------------------------------------------------------------
+
+    /// Build a valid SKILL.md whose body is one `<example>` block with
+    /// the given opening-tag attributes (already formatted).
+    fn build_example_with_attrs(attrs: &str) -> String {
+        let body = if attrs.is_empty() {
+            "<example>body</example>\n".to_string()
+        } else {
+            format!("<example {attrs}>body</example>\n")
+        };
+        build_with_body(&body)
+    }
+
+    proptest::proptest! {
+        /// `<example>` with no attribute at all yields empty input.
+        #[test]
+        fn prop_no_input_attribute_yields_empty_input(_dummy in proptest::prelude::any::<u8>()) {
+            let content = build_example_with_attrs("");
+            let skill = parser().parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(skill.examples.len(), 1);
+            proptest::prop_assert_eq!(&skill.examples[0].input, "");
+        }
+
+        /// **Failing-first.** A tag carrying an attribute whose name
+        /// merely *contains* `input` must yield empty input. The
+        /// pre-fix `find("input=\"")` matches all of them.
+        #[test]
+        fn prop_fake_input_attribute_is_ignored(
+            fake_attr in proptest::sample::select(vec![
+                "xinput",
+                "data-input",
+                "requires-input",
+                "my-input",
+                "sub_input",
+                "aninput",
+            ]),
+        ) {
+            let attrs = format!("{fake_attr}=\"wrong\"");
+            let content = build_example_with_attrs(&attrs);
+            let skill = parser().parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(skill.examples.len(), 1);
+            proptest::prop_assert_eq!(
+                &skill.examples[0].input,
+                "",
+                "attribute {:?} produced input {:?}; the tag has no \
+                 `input=` attribute",
+                fake_attr,
+                skill.examples[0].input,
+            );
+        }
+
+        /// Positive control: a real `input="..."` still parses.
+        #[test]
+        fn prop_real_input_attribute_is_honoured(
+            text in "[a-zA-Z0-9 .]{1,30}",
+        ) {
+            let attrs = format!("input=\"{text}\"");
+            let content = build_example_with_attrs(&attrs);
+            let skill = parser().parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(&skill.examples[0].input, &text);
+        }
+
+        /// Single-quote form: `input='...'` parses.
+        #[test]
+        fn prop_single_quote_form_is_honoured(
+            text in "[a-zA-Z0-9 .]{1,30}",
+        ) {
+            let attrs = format!("input='{text}'");
+            let content = build_example_with_attrs(&attrs);
+            let skill = parser().parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(&skill.examples[0].input, &text);
+        }
+
+        /// A fake attribute before a real one: the real one wins.
+        /// The pre-fix `find` returns the fake (lower index), so this
+        /// fails on the same bug as `prop_fake_input_attribute_is_ignored`.
+        #[test]
+        fn prop_real_input_wins_over_fake(
+            prefix in proptest::sample::select(vec![
+                "data-input",
+                "xinput",
+                "some-input",
+            ]),
+            real in "[a-zA-Z0-9 .]{1,30}",
+        ) {
+            let attrs = format!("{prefix}=\"wrong\" input=\"{real}\"");
+            let content = build_example_with_attrs(&attrs);
+            let skill = parser().parse_content(&content, "test.skill.md").unwrap();
+            proptest::prop_assert_eq!(
+                &skill.examples[0].input, &real,
+                "prefix {:?}: got {:?}, expected {:?}",
+                prefix, skill.examples[0].input, real,
+            );
+        }
+
+        /// Never panics on arbitrary opening-tag content.
+        #[test]
+        fn prop_never_panics(garbage in proptest::prelude::any::<String>()) {
+            let content = build_example_with_attrs(&garbage);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = parser().parse_content(&content, "test.skill.md");
+            }));
+            proptest::prop_assert!(outcome.is_ok());
         }
     }
 
