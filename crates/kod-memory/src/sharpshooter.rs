@@ -156,7 +156,15 @@ pub const MIN_PROMPT_CHARS: usize = 16;
 /// is a harness directive, not a statement of intent.
 pub fn prompt_is_eligible(prompt: &str) -> bool {
     let t = prompt.trim();
-    if t.len() < MIN_PROMPT_CHARS {
+    // `MIN_PROMPT_CHARS` names a character count, so count chars,
+    // not bytes. The pre-fix code used `t.len()` (bytes), which made
+    // a 15-CJK-char prompt (45 bytes) eligible while a 15-ASCII-char
+    // prompt was not. For ASCII the two agree; for CJK and emoji
+    // they differ by 3x and 4x. The properties
+    // `prop_not_eligible_15_cjk_chars` and
+    // `prop_not_eligible_4_emoji` pin the character-boundary
+    // behaviour.
+    if t.chars().count() < MIN_PROMPT_CHARS {
         return false;
     }
     if t.starts_with('/') {
@@ -658,5 +666,370 @@ mod tests {
         // The serde rename must serialize the kind as the design's
         // spelling, not the Rust variant name.
         assert!(json.contains("rejected_approach"), "got: {json}");
+    }
+}
+
+#[cfg(test)]
+mod sharpshooter_proptests {
+    //! Properties for the eight pure functions in this module.
+    //!
+    //! The example tests pin specific cases. These properties pin the
+    //! shape across arbitrary inputs, and one of them finds a real
+    //! bug in `prompt_is_eligible`.
+    //!
+    //! **The bug:** `prompt_is_eligible` compares `t.len()` (bytes)
+    //! against `MIN_PROMPT_CHARS` (named for chars). For ASCII the
+    //! two agree, so the example test `the_minimum_length_is_sixteen`
+    //! passes. For CJK and emoji they diverge by 3x and 4x:
+    //!
+    //! * 15 CJK chars = 45 bytes. `45 >= 16` → eligible. The intent
+    //!   (16 chars minimum) says it should not be.
+    //! * 4 emoji = 16 bytes. `16 >= 16` → eligible. The intent says
+    //!   it should not be (4 < 16).
+    //!
+    //! Both properties below fail on the pre-fix code and pass after.
+    //! The fix is `t.chars().count()` in place of `t.len()`.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    // ---- prompt_is_eligible ---------------------------------------------
+
+    /// ASCII boundary: 16 chars eligible, 15 chars not. Pins the
+    /// documented minimum so a change to `MIN_PROMPT_CHARS` is a
+    /// visible decision.
+    #[test]
+    fn prop_eligible_ascii_boundary() {
+        assert!(prompt_is_eligible(&"a".repeat(16)));
+        assert!(!prompt_is_eligible(&"a".repeat(15)));
+    }
+
+    /// **The bug: 15 CJK chars (45 bytes) should NOT be eligible**
+    /// (15 < 16 chars). The pre-fix code accepts it because
+    /// `t.len()` = 45 >= 16. Post-fix `t.chars().count()` = 15 < 16.
+    #[test]
+    fn prop_not_eligible_15_cjk_chars() {
+        let s = "中".repeat(15);
+        assert_eq!(s.chars().count(), 15);
+        assert_eq!(s.len(), 45, "15 CJK chars = 45 bytes");
+        assert!(
+            !prompt_is_eligible(&s),
+            "15-char CJK prompt should not be eligible (15 < 16 chars)",
+        );
+    }
+
+    /// **The bug: 4 emoji (16 bytes) should NOT be eligible**
+    /// (4 < 16 chars). The pre-fix code accepts it because
+    /// `t.len()` = 16 >= 16.
+    #[test]
+    fn prop_not_eligible_4_emoji() {
+        let s = "😀😀😀😀";
+        assert_eq!(s.chars().count(), 4);
+        assert_eq!(s.len(), 16);
+        assert!(
+            !prompt_is_eligible(s),
+            "4-emoji prompt should not be eligible (4 < 16 chars), \
+             but the byte count 16 passes a 16-byte threshold",
+        );
+    }
+
+    /// 16 CJK chars (48 bytes) IS eligible under both interpretations
+    /// (16 >= 16 chars, 48 >= 16 bytes). Pins the non-buggy side of
+    /// the same boundary.
+    #[test]
+    fn prop_eligible_16_cjk_chars() {
+        let s = "中".repeat(16);
+        assert_eq!(s.chars().count(), 16);
+        assert_eq!(s.len(), 48, "16 CJK chars = 48 bytes");
+        assert!(prompt_is_eligible(&s));
+    }
+
+    /// A slash-prefixed prompt is not eligible regardless of length.
+    #[test]
+    fn prop_slash_prefixed_not_eligible() {
+        for n in 16..=100 {
+            let s = format!("/{}", "a".repeat(n));
+            assert!(
+                !prompt_is_eligible(&s),
+                "/-prefixed prompt of len {} should not be eligible",
+                s.len()
+            );
+        }
+    }
+
+    // ---- evidence_is_grounded -------------------------------------------
+
+    proptest! {
+        /// Evidence that is a case-insensitive substring of the
+        /// prompt is grounded. This is the whole contract.
+        #[test]
+        fn prop_evidence_substring_grounded(
+            prefix in "[a-zA-Z ]{0,20}",
+            evidence in "[a-zA-Z ]{1,20}",
+            suffix in "[a-zA-Z ]{0,20}",
+        ) {
+            let prompt = format!("{}{}{}", prefix, evidence, suffix);
+            // No additional assumption — evidence.trim() could still
+            // be non-empty; if all-whitespace, the function correctly
+            // returns false.
+            if !evidence.trim().is_empty() {
+                prop_assert!(evidence_is_grounded(&evidence, &prompt));
+            }
+        }
+
+        /// Case-insensitive: uppercasing either side does not change
+        /// the result (for ASCII, where `to_lowercase` is
+        /// byte-preserving).
+        #[test]
+        fn prop_evidence_ascii_case_insensitive(
+            evidence in "[a-zA-Z]{1,10}",
+            prompt in "[a-zA-Z]{0,30}",
+        ) {
+            prop_assert_eq!(
+                evidence_is_grounded(&evidence, &prompt),
+                evidence_is_grounded(&evidence.to_uppercase(), &prompt),
+            );
+            prop_assert_eq!(
+                evidence_is_grounded(&evidence, &prompt),
+                evidence_is_grounded(&evidence, &prompt.to_uppercase()),
+            );
+        }
+    }
+
+    /// Empty or whitespace-only evidence is never grounded.
+    #[test]
+    fn prop_empty_evidence_not_grounded() {
+        assert!(!evidence_is_grounded("", "anything"));
+        assert!(!evidence_is_grounded("   ", "anything"));
+        assert!(!evidence_is_grounded("\t\n", "anything"));
+    }
+
+    // ---- rank_by_friction -----------------------------------------------
+
+    fn delta(statement: &str, friction: Friction) -> DecisionDelta {
+        DecisionDelta {
+            kind: DecisionKind::Correction,
+            statement: statement.to_string(),
+            rejected_alternative: None,
+            rationale: None,
+            evidence: statement.to_string(),
+            friction,
+        }
+    }
+
+    fn zero_friction() -> Friction {
+        Friction {
+            corrective: false,
+            regression: false,
+            subtle: false,
+        }
+    }
+
+    fn corrective_only() -> Friction {
+        Friction {
+            corrective: true,
+            regression: false,
+            subtle: false,
+        }
+    }
+
+    fn regression_only() -> Friction {
+        Friction {
+            corrective: false,
+            regression: true,
+            subtle: false,
+        }
+    }
+
+    /// Monotone: after ranking, no delta's friction rank exceeds the
+    /// rank of the one before it.
+    #[test]
+    fn prop_rank_monotone() {
+        let deltas = vec![
+            delta("a", zero_friction()),
+            delta("b", regression_only()),
+            delta("c", corrective_only()),
+            delta("d", zero_friction()),
+            delta("e", regression_only()),
+        ];
+        let ranked = rank_by_friction(deltas);
+        for pair in ranked.windows(2) {
+            assert!(
+                pair[0].friction.rank() >= pair[1].friction.rank(),
+                "rank order violated: {} then {}",
+                pair[0].friction.rank(),
+                pair[1].friction.rank(),
+            );
+        }
+    }
+
+    /// Stable: deltas of equal friction preserve their input order.
+    #[test]
+    fn prop_rank_stable_for_equal_friction() {
+        let deltas = vec![
+            delta("first", zero_friction()),
+            delta("second", zero_friction()),
+            delta("third", zero_friction()),
+            delta("fourth", zero_friction()),
+        ];
+        let ranked = rank_by_friction(deltas);
+        let statements: Vec<&str> = ranked.iter().map(|d| d.statement.as_str()).collect();
+        assert_eq!(statements, vec!["first", "second", "third", "fourth"]);
+    }
+
+    /// Length preserved: ranking does not add or drop deltas.
+    #[test]
+    fn prop_rank_preserves_length() {
+        for n in 0..=20 {
+            let deltas: Vec<DecisionDelta> = (0..n)
+                .map(|i| delta(&format!("d{i}"), zero_friction()))
+                .collect();
+            let ranked = rank_by_friction(deltas);
+            assert_eq!(ranked.len(), n);
+        }
+    }
+
+    // ---- truncate_to_ceiling --------------------------------------------
+
+    /// Line count is at most `FILE_LINE_CEILING` (120).
+    #[test]
+    fn prop_truncate_line_count_at_most_ceiling() {
+        for n in [0, 1, 50, 119, 120, 121, 200, 500] {
+            let text = (0..n)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let out = truncate_to_ceiling(&text);
+            assert!(
+                out.lines().count() <= FILE_LINE_CEILING,
+                "input with {} lines yielded {} lines (ceiling {})",
+                n,
+                out.lines().count(),
+                FILE_LINE_CEILING,
+            );
+        }
+    }
+
+    /// Idempotent: truncating twice equals truncating once.
+    #[test]
+    fn prop_truncate_idempotent() {
+        for n in [0, 1, 120, 121, 500] {
+            let text = (0..n)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let once = truncate_to_ceiling(&text);
+            let twice = truncate_to_ceiling(&once);
+            assert_eq!(once, twice, "truncate not idempotent for {} lines", n);
+        }
+    }
+
+    // ---- parse_reply ----------------------------------------------------
+
+    /// An empty reply or a reply without a JSON array yields nothing.
+    #[test]
+    fn prop_parse_reply_empty_yields_empty() {
+        for reply in ["", "no array here", "{}", "still nothing"] {
+            let parsed = parse_reply(reply, 4);
+            assert!(
+                parsed.is_empty(),
+                "reply {:?} should parse to nothing",
+                reply
+            );
+        }
+    }
+
+    /// A well-formed JSON array round-trips: parse_reply with a
+    /// generous cap returns deltas whose statements match the input.
+    #[test]
+    fn prop_parse_reply_well_formed_roundtrip() {
+        let input = vec![
+            delta("decision one", zero_friction()),
+            delta("decision two", corrective_only()),
+        ];
+        let json = serde_json::to_string(&input).expect("Delta serializes");
+        let parsed = parse_reply(&json, 10);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].statement, "decision one");
+        assert_eq!(parsed[1].statement, "decision two");
+    }
+
+    /// The returned count is bounded by `max_entries.max(1)`.
+    #[test]
+    fn prop_parse_reply_max_entries_bound() {
+        for n in 0..=5 {
+            let deltas: Vec<DecisionDelta> = (0..10)
+                .map(|i| delta(&format!("d{i}"), zero_friction()))
+                .collect();
+            let json = serde_json::to_string(&deltas).expect("serializes");
+            let parsed = parse_reply(&json, n);
+            assert!(
+                parsed.len() <= n.max(1),
+                "max_entries={} yielded {} deltas (bound {})",
+                n,
+                parsed.len(),
+                n.max(1),
+            );
+        }
+    }
+
+    // ---- controls -------------------------------------------------------
+
+    /// Control: evidence "istanbul" is **not** grounded against a
+    /// prompt containing Turkish "İstanbul". `to_lowercase` expands
+    /// `İ` to `i` + combining dot, so the lowercased evidence is not
+    /// a byte-substring of the lowercased prompt. Documented, not
+    /// fixed: Turkish (and German ß) case-folding is more than the
+    /// function's `to_lowercase` handles. Pin so a future fix to a
+    /// Unicode-aware matcher is a decision.
+    #[test]
+    fn control_turkish_i_not_grounded() {
+        assert!(
+            !evidence_is_grounded("istanbul", "We discussed İstanbul yesterday"),
+            "current behaviour: Turkish İ expansion breaks case-insensitive grounding",
+        );
+    }
+
+    /// Control: `parse_reply` truncates **before** filtering malformed
+    /// entries. A reply whose first `max_entries` deltas are all
+    /// malformed yields an empty vec, even if later deltas are valid.
+    /// `max_entries` is applied to the parsed array, then
+    /// `retain` drops empty-statement/empty-evidence entries.
+    /// Defensible ("only the first N the model returned"), pinned so
+    /// a future reorder (filter-then-truncate) is a visible decision.
+    #[test]
+    fn control_parse_reply_truncates_before_filtering() {
+        let json = r#"[
+            {"kind":"correction","statement":"","evidence":""},
+            {"kind":"correction","statement":"","evidence":""},
+            {"kind":"correction","statement":"valid one","evidence":"valid one"},
+            {"kind":"correction","statement":"valid two","evidence":"valid two"}
+        ]"#;
+        let parsed = parse_reply(json, 2);
+        assert_eq!(
+            parsed.len(),
+            0,
+            "first 2 are malformed, cap is 2 — nothing survives"
+        );
+        let parsed_generous = parse_reply(json, 10);
+        assert_eq!(
+            parsed_generous.len(),
+            2,
+            "with a generous cap, both valid entries survive"
+        );
+    }
+
+    /// Control: `truncate_to_ceiling` strips trailing whitespace
+    /// (via `trim_end`). A 3-line input with trailing spaces on the
+    /// last line yields the same text with those spaces removed.
+    /// Pinned so a change to `trim_end()` (e.g. to preserve trailing
+    /// whitespace) is a decision.
+    #[test]
+    fn control_truncate_strips_trailing_whitespace() {
+        let text = "line one\nline two\nline three   \n\n";
+        let out = truncate_to_ceiling(text);
+        assert!(!out.ends_with(' '));
+        assert!(!out.ends_with('\n'));
+        assert!(out.starts_with("line one"));
     }
 }
