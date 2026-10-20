@@ -127,3 +127,57 @@ the failing first run produced is committed as an adversarial
 input (two seeds: one with `ttft_ms: None`, one with
 `ttft_ms: Some(0)` — both valid cases worth keeping).
 
+
+## Release: v0.1.14 (`0980469`)
+
+Tagged and pushed at `0980469`, tagged object `f20dd37`. First
+release since `v0.1.13` at `087d6e1` (session 18).
+
+**Why this release:** three production bug fixes landed between
+the two tags:
+
+- `225309e` — `sanitize_slug`: a `take(32)` after `split`/`join`
+  could leave a trailing `-`, breaking the kebab contract and
+  idempotence. Reachable from `WorktreeManager::create` and
+  `create_session`.
+- `fc88fe6` — `extract_citations`: `end_line` was parsed with no
+  guard against `line`, so `file.rs:100-5` produced a
+  citation with end < start, printed verbatim by `render_block`.
+  Reachable from `jev.rs:472`.
+- `6945a77` — `extract_imports('go', _)`: a repeated capture
+  group in the block-import pattern lost all but the last
+  import, so every `goimports`-formatted block import produced
+  one entry in the repo map. Reachable from `build_repo_map`.
+
+Plus roughly 100 new property tests across ten modules; no
+behavior change from those.
+
+**Release state:**
+
+- `0980469` — `chore(release): v0.1.14`, the version bump.
+- `v0.1.14` annotated tag at `0980469`, pushed to origin.
+- `origin/main` at `0980469`.
+- Workspace `4720/4720` tests at `dde9d65` (the commit before
+  the release bump; the bump itself only changed the version
+  string and the lockfile).
+
+**Release script bug (not fixed in the script, corrected in
+this record):** the final verification in the tag-push script
+compared `git rev-parse v0.1.14` (annotated tag object SHA) to
+`git rev-parse HEAD` (commit SHA), which always mismatches for
+an annotated tag. The correct check is `git rev-list -n1
+v0.1.14`, which peels the tag to its commit. The script printed
+`MISMATCH: tag does not point at the release commit` and
+exited 1 — after both pushes had already succeeded. Seventh
+counting/checking failure of the session; same family as
+L56–L58 (the checker is code). The release is correct; the
+check was wrong.
+
+**Release workflow:** fires on the tag push (GitHub Actions,
+six-target build). Not verified from this side; a tag push
+triggers the workflow and the log lives in the Actions tab.
+Same six-target cross-compile as `v0.1.13`, whose `kache`
+wrapper failure was fixed in that release (`RUSTC_WRAPPER: ""`
+in both workflows) — no known failure mode remains, but the
+workflow run itself is the thing to check.
+

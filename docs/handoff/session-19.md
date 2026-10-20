@@ -3,7 +3,7 @@
 **Continues:** session 18 (`docs/handoff/session-18.md` for the
 start; `docs/handoff/session-18-detail.md` for the narrative
 through `330185a`).
-**Last tag:** `v0.1.13` (`087d6e1`).
+**Last tag:** **`v0.1.14` (`0980469`)** — released in session 19.
 **Last verified commit:** `330185a` (docs-only close of session
 18 — no code change, no gate).
 **Tree at handoff:** clean.
@@ -159,13 +159,15 @@ fix or lesson matters; the starting document stays short.
 
 | | |
 |---|---|
-| HEAD | `330185a` (`docs(handoff): record the post-extraction rounds`) |
-| tag | `v0.1.13` at `087d6e1` |
+| HEAD | `0980469` (`chore(release): v0.1.14`) |
+| tag | **`v0.1.14` at `0980469`** (released in session 19) |
+| previous tag | `v0.1.13` at `087d6e1` |
 | tree | clean |
 | `session-18.md` | 340 lines (the starting document) |
 | `session-18-detail.md` | 1618 lines (the narrative) |
-| commits since tag | 41 |
-| last full-workspace gate | `61536ba` — **`4692/4692`, 5 skipped, 0 leaks** |
+| `session-19-detail.md` | ~140 lines (R1, R2, R3, and the v0.1.14 release note) |
+| commits since v0.1.13 | 49 |
+| last full-workspace gate | `dde9d65` — **`4720/4720`, 5 skipped, 0 leaks** |
 
 ### Gate verification at session open
 
