@@ -7,14 +7,33 @@
 # For local native builds use:  cargo build --release -C target-cpu=native
 # (or the `just build-native` recipe).
 
-# Use kache as the rustc wrapper. Caches compilation artifacts across
-# clean checkouts and across workspace crates, so a dep rebuild after
-# touching only kod-* files is a cache hit instead of a recompile.
-# Note: kache is faster on cold builds, slower on
-# warm rebuilds. Do not disable it — measure before
-# changing. Known issue: doctests can fail with E0463;
-# workaround is RUSTC_WRAPPER= for the doctest run.
-# (previous note: measured 3.7x slower (43s vs 12s single-crate rebuild); kache serves stale rlibs and breaks rustdoc E0463)
+# kache is a rustc-wrapper build cache. It is a good local tool.
+#
+# It used to be set here under `[build]` as `rustc-wrapper = "kache"`,
+# which forced the coupling on every clean checkout — including
+# GitHub Actions runners, where kache is not installed. The v0.1.13
+# release workflow failed on all six targets because of it:
+#
+#     error: could not execute process `kache .../rustc -vV`
+#     Caused by: No such file or directory (os error 2)
+#
+# Local tool choices live in the user-level config, not the repo.
+# To use kache locally, add to `~/.cargo/config.toml`:
+#
+#     [build]
+#     rustc-wrapper = "kache"
+#
+# (or export `RUSTC_WRAPPER=kache` in the shell — the release and CI
+# workflows set `RUSTC_WRAPPER: ""` so a runner-side value cannot
+# affect a project build either way).
+#
+# If TPD-13's reasoning is to be revisited, the trigger is not
+# "measure the rebuild time" — it is "make the release workflow
+# install kache, or take it out of the tracked config". Committing
+# the wrapper without one of those is the shape that failed here.
 
-[build]
-rustc-wrapper = "kache"
+# target-cpu=native was removed from the default build config: it
+# caused CI release binaries to require the exact CPU features of
+# the runner, producing SIGILL on older CPUs. For local native
+# builds, use `cargo build --release -C target-cpu=native` (or the
+# `just build-native` recipe).

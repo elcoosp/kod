@@ -13,6 +13,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Disable any rustc wrapper — see release.yml for the v0.1.13
+  # failure this is a guard against.
+  RUSTC_WRAPPER: ""
   # H-C6: RUSTFLAGS is scoped to the lint job below. Setting it
   # workflow-wide broke CI on a warning emitted by any *dependency*
   # (a nightly change in a transitive crate is out of our control)

@@ -10,6 +10,14 @@ on:
 # is a hard failure, not a warning.
 env:
   CARGO_TERM_COLOR: always
+  # Explicitly disable any rustc wrapper. The release builds must
+  # not depend on a machine-local caching tool (kache, sccache).
+  # `.cargo/config.toml` used to select kache; v0.1.13 failed on
+  # all six targets with `kache: No such file or directory` because
+  # of it. The tracked config is now wrapper-free; this line is the
+  # belt-and-braces guard against a self-hosted runner's
+  # `~/.cargo/config.toml` or a future re-add.
+  RUSTC_WRAPPER: ""
 
 jobs:
   release:
