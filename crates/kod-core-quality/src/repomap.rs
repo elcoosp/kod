@@ -458,12 +458,7 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
             r#"(?m)^\s*import\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]"#,
             r#"(?m)require\(\s*['"]([^'"]+)['"]\s*\)"#,
         ],
-        "go" => &[
-            r#"(?m)^\s*import\s+['"]([^'"]+)['"]"#,
-            r#"(?m)^\s*import\s*\(\s*
-(?:\s*['"]([^'"]+)['"]\s*
-)*"#,
-        ],
+        "go" => &[r#"(?m)^\s*import\s+['"]([^'"]+)['"]"#],
         "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => &[r#"(?m)^\s*#\s*include\s+["<]([^">]+)[">]"#],
         "rb" => &[r#"(?m)^\s*require(?:_relative)?\s+['"]([^'"]+)['"]"#],
         "java" => &[r"(?m)^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s*;"],
@@ -500,6 +495,37 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
                 let s = m.as_str().trim().to_string();
                 if !s.is_empty() && !out.contains(&s) {
                     out.push(s);
+                }
+            }
+        }
+    }
+
+    // Go block imports: `import (\n    "a"\n    "b"\n)`.
+    //
+    // A single regex with a repeated inner capture group
+    // `(?:...)*` keeps only the last capture in Rust's regex crate,
+    // so a three-import block returned one. Scan line by line inside
+    // each `import ( ... )` block to get every import. The property
+    // `prop_go_block_import_all_returned` was written to catch the
+    // pre-fix behaviour and did (minimal failing input:
+    // a="a", b="a_", c="a0" -> got ["a0"]).
+    if ext == "go" {
+        let mut in_block = false;
+        for line in content.lines() {
+            let t = line.trim();
+            if t == "import (" || t == "import(" {
+                in_block = true;
+                continue;
+            }
+            if in_block {
+                if t.starts_with(')') {
+                    in_block = false;
+                    continue;
+                }
+                if let Some(inner) = t.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                    if !inner.is_empty() && !out.contains(&inner.to_string()) {
+                        out.push(inner.to_string());
+                    }
                 }
             }
         }
@@ -1441,6 +1467,123 @@ mod repomap_proptests {
                 !imports.is_empty(),
                 "extract_imports(\"rs\", {:?}) returned empty", src,
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod extract_imports_proptests {
+    //! Properties for `extract_imports`.
+    //!
+    //! The example tests cover Rust (`use`/`mod`) and C (`#include`).
+    //! These properties cover all seven languages `extract_imports`
+    //! dispatches on, plus a per-language round-trip and a dedup
+    //! property.
+    //!
+    //! **One expected failure.** The Go block-import pattern in the
+    //! pre-fix code was a single regex with a repeated inner
+    //! capture group:
+    //!
+    //!     r#"(?m)^\s*import\s*\(\s*\n(?:\s*['"]([^'"]+)['"]\s*\n)*"#
+    //!
+    //! Rust's regex crate keeps only the **last** capture across a
+    //! repetition, so `import (\n"a"\n"b"\n"c"\n)` returned
+    //! `["c"]`, not `["a", "b", "c"]`. `prop_go_block_import_all_returned`
+    //! was written to catch this, and did. The fix (below in the
+    //! commit) replaces that pattern with a line-by-line scan.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn single_name() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,8}"
+    }
+
+    proptest! {
+        #[test]
+        fn prop_rust_use_captured(name in single_name()) {
+            let got = extract_imports("rs", &format!("use {name};\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_python_import_captured(name in single_name()) {
+            let got = extract_imports("py", &format!("import {name}\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_python_from_import_captured(
+            mod_name in single_name(),
+            name in single_name(),
+        ) {
+            let got = extract_imports("py", &format!("from {mod_name} import {name}\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &mod_name);
+        }
+
+        #[test]
+        fn prop_js_import_captured(name in "[a-z][a-z0-9_/-]{0,10}") {
+            let got = extract_imports("js", &format!("import x from \"{name}\";\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_ruby_require_captured(name in "[a-z][a-z0-9_/]{0,10}") {
+            let got = extract_imports("rb", &format!("require \"{name}\"\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_java_import_captured(name in "[a-z][a-z0-9_.]{0,15}") {
+            let got = extract_imports("java", &format!("import {name};\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_c_include_captured(name in "[a-z][a-z0-9_./]{0,10}") {
+            let got = extract_imports("c", &format!("#include <{name}>\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        #[test]
+        fn prop_go_single_import_captured(name in "[a-z][a-z0-9_/]{0,10}") {
+            let got = extract_imports("go", &format!("import \"{name}\"\n"));
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
+        }
+
+        /// Go block import: three imports in a parenthesized block
+        /// must all be returned. **Expected to fail on the pre-fix
+        /// code**; the fix is in the same commit.
+        #[test]
+        fn prop_go_block_import_all_returned(
+            a in single_name(),
+            b in single_name(),
+            c in single_name(),
+        ) {
+            prop_assume!(a != b && b != c && a != c);
+            let src = format!("import (\n    \"{a}\"\n    \"{b}\"\n    \"{c}\"\n)\n");
+            let got = extract_imports("go", &src);
+            let set: std::collections::HashSet<&str> =
+                got.iter().map(|s| s.as_str()).collect();
+            prop_assert!(set.contains(a.as_str()), "missing {a:?} in {got:?}");
+            prop_assert!(set.contains(b.as_str()), "missing {b:?} in {got:?}");
+            prop_assert!(set.contains(c.as_str()), "missing {c:?} in {got:?}");
+        }
+
+        #[test]
+        fn prop_duplicates_collapse(name in single_name()) {
+            let src = format!("use {name};\nuse {name};\n");
+            let got = extract_imports("rs", &src);
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(&got[0], &name);
         }
     }
 }
