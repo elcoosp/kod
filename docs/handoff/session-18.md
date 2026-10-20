@@ -3,12 +3,12 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `af0301f` (full-workspace gate green at that
-commit; see "State" below and the twelve "Re-verification"
-subsections in "What's open" #1). 4476/4476 on the first try; 5
-skipped; no leaky. The commit fixes a real bug in
-`kod-swarm/src/completion_report.rs::extract_status` (substring
-match on "status") and adds six proptests to the parser.
+**Last verified commit:** `4600d40` (full-workspace gate green at that
+commit; see "State" below and the thirteen "Re-verification"
+subsections in "What's open" #1). 4481/4481 on the first try; 5
+skipped; no leaky. The commit adds five section-extraction
+properties to `kod-skills/parser.rs`, closing the gap
+`02de4e8` named honestly.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -25,7 +25,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, and `af0301f`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, and `4600d40`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -59,6 +59,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `4600d40` (after the section-extraction
+properties).** Ran the same command at `4600d40`:
+
+    4481 tests run: 4481 passed, 5 skipped
+
+Up from 4476 at `af0301f` — exactly the five new `kod-skills`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `af0301f` (after the `completion_report` fix).**
 Ran the same command at `af0301f`:
@@ -236,7 +244,7 @@ correct last tag.
 
 ## State
 
-`main` at `af0301f`, twenty-seven commits past `v0.1.12`:
+`main` at `4600d40`, twenty-eight commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -277,6 +285,8 @@ correct last tag.
 | `02de4e8` | test(skills): proptests for `SkillParser::parse_content` (7 properties, 2 controls) |
 | `7ca7db3` | docs(handoff): gate at `02de4e8`; SKILL.md proptests + L46 |
 | `af0301f` | fix(swarm): whitespace boundary before `status`; proptests for `completion_report::parse` |
+| `4a622fe` | docs(handoff): gate at `af0301f`; `completion_report` fix + L47 |
+| `4600d40` | test(skills): section-extraction properties for `parse_content` (5 properties, 2 controls) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -766,6 +776,44 @@ Both restored cleanly; suite re-confirmed green. One real bug,
 six properties, two controls, and two lessons (L46's third
 occurrence and the new L47).
 
+**Ninth round: SKILL.md section extraction (`4600d40`).** Not a
+new target — the gap `02de4e8` named honestly. Five properties
+that pin `extract_section` through `parse_content`'s public
+outputs (`Skill::instructions`, `Skill::constraints`), since
+`extract_section` is private:
+
+- `prop_instructions_section_does_not_leak_past_next_header`
+- `prop_no_instructions_section_falls_back_to_body`
+- `prop_constraints_section_is_extracted`
+- `prop_no_constraints_section_yields_none`
+- `prop_both_sections_extract_independently`
+
+**No parser bug found.** The hand-analysis held: `find(header)`
+then `find("\n## ")`; both bound their slices, neither can
+overshoot. This is a regression-guard round, not a fix round —
+the same honest shape as `1ce1bb6` (kod-memory) and half of the
+`02de4e8` round.
+
+**Two positive controls:**
+
+- Control A: `extract_section(&body, "## Instructions")` ->
+  `extract_section(&body, "## InstructionsXX")`. The lookup
+  never matches, so the whole body is the instructions and the
+  `## Notes` line leaks in.
+  `prop_instructions_section_does_not_leak_past_next_header`
+  fails; `prop_both_sections_extract_independently` fails too
+  (bonus — it also asserts the instructions match the input).
+- Control B: `find("\n## ")` -> `find("\n##NEVER")`. Same
+  two properties fail for the same reason (boundary never
+  matches).
+
+Both restored cleanly; suite re-confirmed green. No new lesson
+this round — the properties are a straightforward regression
+guard and the controls confirmed they have teeth on the first
+try. That is the honest shape: a round that adds coverage
+without finding a bug, and without inventing a lesson to
+justify itself.
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -943,11 +991,14 @@ the test is easy; proving it has teeth is the hard part.
    (b) The last remaining parser from the L42 survey:
    `kod-types/effort.rs` (a tiny `parse` over an enum's five
    string forms — smallest target, no wire input). Optional.
-   (c) The `## Instructions` / `## Constraints` extractors in
-   `kod-skills/parser.rs` are not covered by the new properties
-   (`02de4e8` says so explicitly). A small, defensive
-   find-and-slice with no arithmetic hazard; adding a property
-   is a future round if it becomes worth the surface.
+   (c) The `## Instructions` / `## Constraints` extractors are
+   now covered (`4600d40`). The only remaining gap in
+   `kod-skills/parser.rs` is `extract_attribute`
+   (`input="..."` / `input='...'`), exercised indirectly by
+   `prop_example_blocks_are_captured_in_order` (no attributes)
+   but not pinned directly. Same shape as the section
+   extractor: small `find`-and-slice, no arithmetic hazard. A
+   future round if it becomes worth the surface.
 
 ## Note on `session-17.md`
 
@@ -1016,10 +1067,10 @@ under the control, one (L46) came from a strategy that
 admitted whitespace-only strings the parser trims (six
 occurrences across three rounds), and one (L47) came from a
 `grep -E` pattern whose interval quantifier bound to the
-wrong atom. The full workspace gate at `af0301f` runs 4476
-tests, all green, including forty new properties across nine
-modules (`kod-config/config.rs`, `kod-config/policy.rs`,
+wrong atom. The full workspace gate at `4600d40` runs 4481
+tests, all green, including forty-five new properties across
+nine modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
-`kod-swarm/brief.rs`, `kod-skills/parser.rs`,
+`kod-swarm/brief.rs`, `kod-skills/parser.rs` — twelve there,
 `kod-swarm/completion_report.rs`).
