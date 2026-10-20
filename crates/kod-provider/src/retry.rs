@@ -76,44 +76,76 @@ impl RetryPolicy {
             return capped;
         }
         // Deterministic pseudo-jitter from nanos; avoids pulling in `rand`.
-        // T2-H11: mix thread id + process id + nanos into the jitter seed.
-        // The pre-fix shape read only `SystemTime::subsec_nanos`, which is
-        // correlated across threads: a swarm hitting the same 429 at the
-        // same wall-clock instant computed identical jitter and retried
-        // in lockstep — the exact failure mode jitter exists to prevent.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
+        let jitter = Self::jitter_for(nanos);
+        let factor = 1.0 + jitter * self.jitter_fraction;
+        let secs = capped.as_secs_f64() * factor;
+        Duration::from_secs_f64(secs.max(0.0))
+    }
+
+    /// Derive the raw jitter value in `[-1, 1]` from a wall-clock
+    /// `nanos` value. Extracted from `delay_for` so a test can
+    /// exercise the seed derivation without a clock dependency.
+    ///
+    /// **Seed diversity.** The seed is a function of wall-clock
+    /// nanos, thread id, and process id. On a fast machine,
+    /// `SystemTime::now()` (microsecond resolution on macOS) does
+    /// not advance between back-to-back calls: a 1000-call burst
+    /// completed in well under a millisecond sees every sample get
+    /// the same nanos, the same seed, and therefore the same jitter.
+    /// That is the exact lockstep-retry problem jitter exists to
+    /// prevent, and it caused a real flake in
+    /// `jitter_is_centered_and_signed`. The counter fix lands in the
+    /// next commit.
+    fn jitter_for(nanos: u64) -> f64 {
+        // T2-H11: mix thread id + process id + nanos into the jitter
+        // seed. The pre-fix shape read only `SystemTime::subsec_nanos`,
+        // which is correlated across threads: a swarm hitting the same
+        // 429 at the same wall-clock instant computed identical jitter
+        // and retried in lockstep — the exact failure mode jitter
+        // exists to prevent.
         let tid = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             std::thread::current().id().hash(&mut h);
             h.finish()
         };
-        let mut state = nanos ^ tid ^ (std::process::id() as u64);
+        // Fix (L48 round): mix a monotonic counter into the seed.
+        // The pre-fix seed was `nanos ^ tid ^ pid`; on a fast machine
+        // `SystemTime::now()` (microsecond resolution on macOS) does
+        // not advance between back-to-back calls, so a burst of
+        // retries saw one `nanos`, one `tid`, one `pid` — and
+        // therefore identical jitter, the exact lockstep-retry
+        // problem jitter exists to prevent. The counter is a global
+        // atomic; a per-instance counter would collide across
+        // `RetryPolicy` values that share a nanos.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Fold `seq` into the state through the golden-ratio
+        // constant (Knuth's multiplier) so adjacent counters do not
+        // land on adjacent states: `seq * GOLDEN` spreads the
+        // counter across the full u64 bit-space, and XOR mixes it
+        // into the (nanos, tid, pid) seed without disturbing the
+        // existing bit layout.
+        let mut state = nanos
+            ^ tid
+            ^ (std::process::id() as u64)
+            ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         state = state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         // T2-H11 follow-up: the pre-fix formula was
         //     let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
-        // `state >> 33` keeps 31 bits (0 ..= 2^31 - 1), but it was
-        // divided by `u32::MAX` (2^32 - 1). The numerator was always
-        // at most half the denominator, so the ratio was in [0, 0.5)
-        // and the jitter — after `* 2 - 1` — was ALWAYS NEGATIVE,
-        // in [-1, 0). Backoff was biased 25 % short on every attempt
-        // instead of ±25 % centered, and every retry hit the same
-        // sign of jitter.
-        //
-        // Fixed by taking the top 32 bits and dividing by `2^32` (the
-        // precise count, not `u32::MAX`). `2^32` is a power of two, so
-        // the division is exact in f64, and the range is the intended
-        // `[0, 1)`.
+        // `state >> 33` keeps 31 bits, but it was divided by
+        // `u32::MAX` (2^32 - 1). The numerator was always at most half
+        // the denominator, so the ratio was in [0, 0.5) and the jitter
+        // — after `* 2 - 1` — was ALWAYS NEGATIVE, in [-1, 0).
+        // Fixed by taking the top 32 bits and dividing by `2^32`.
         let top32 = (state >> 32) as u32;
-        let jitter = (top32 as f64) / (u32::MAX as f64 + 1.0) * 2.0 - 1.0;
-        let factor = 1.0 + jitter * self.jitter_fraction;
-        let secs = capped.as_secs_f64() * factor;
-        Duration::from_secs_f64(secs.max(0.0))
+        (top32 as f64) / (u32::MAX as f64 + 1.0) * 2.0 - 1.0
     }
 }
 
@@ -201,6 +233,32 @@ mod tests {
     /// with a large sample: the sample min must be below the capped
     /// delay (some negative jitter) and the sample max must be above
     /// it (some positive jitter).
+    /// **Failing-first.** Two calls with the same `nanos` must
+    /// produce different jitter.
+    ///
+    /// The seed currently depends only on `(nanos, tid, pid)`. Both
+    /// `tid` and `pid` are constant within a test run, so
+    /// `jitter_for(12345)` twice returns the same f64 — deterministically.
+    /// On a fast machine, `SystemTime::now()` (microsecond resolution
+    /// on macOS) does not advance between back-to-back calls, so a
+    /// burst of retries all get the same seed and retry in lockstep —
+    /// the exact problem jitter exists to prevent. The test below
+    /// catches that deterministically; the flaky
+    /// `jitter_is_centered_and_signed` catches it probabilistically
+    /// (min < 900 and max > 1100 cannot both hold when all samples
+    /// are identical, and the gate saw exactly that).
+    #[test]
+    fn jitter_for_identical_nanos_differs_per_call() {
+        let a = RetryPolicy::jitter_for(12345);
+        let b = RetryPolicy::jitter_for(12345);
+        assert_ne!(
+            a, b,
+            "jitter_for(12345) returned the same value twice; the seed \
+             depends only on wall-clock nanos, which does not advance \
+             between back-to-back calls on a fast machine",
+        );
+    }
+
     #[test]
     fn jitter_is_centered_and_signed() {
         let policy = RetryPolicy {
