@@ -2571,6 +2571,7 @@ dependencies = [
 name = "kod-telemetry"
 version = "0.1.13"
 dependencies = [
+ "proptest",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
