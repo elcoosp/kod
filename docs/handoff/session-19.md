@@ -149,6 +149,12 @@ does not pass its own gate, and the diagnosis of any failure in
 the new round becomes ambiguous.
 
 
+## Round log
+
+The narrative for each property round lives in
+`docs/handoff/session-19-detail.md`. Read it when a specific
+fix or lesson matters; the starting document stays short.
+
 ## State
 
 | | |
