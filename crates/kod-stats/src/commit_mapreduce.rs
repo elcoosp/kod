@@ -247,10 +247,18 @@ mod cap_file_body_proptests {
     //! The comparison is byte-based, so a CJK diff body is truncated
     //! at roughly a third of the intended character budget.
     //!
-    //! The property below sizes the CJK body so its byte length
-    //! exceeds the 200_000 budget but its char length does not. On
-    //! the pre-fix code the byte comparison trips; post-fix the char
-    //! comparison keeps the body.
+    //! The property below sizes the body to the minimum that trips
+    //! the byte branch without hitting the char branch: 66_667 CJK
+    //! chars = 200_001 bytes > 200_000 (byte budget), and 66_667
+    //! chars < 200_000 (char budget). Pre-fix the byte comparison
+    //! truncates; post-fix the char comparison keeps the body.
+    //!
+    //! The case count is capped at 16 (rather than proptest's default
+    //! 256) because the input is a single fixed shape, not a search
+    //! space. The property added in 610b487 used 133_333 chars and
+    //! the default 256 cases — 34M char iterations, and that one
+    //! property took the whole-workspace gate from 55s to 291s.
+    //! 66_667 chars × 16 cases is ~1.07M iterations, 32x fewer.
 
     use super::*;
     use proptest::prelude::*;
@@ -262,18 +270,14 @@ mod cap_file_body_proptests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
         /// A CJK body whose byte length exceeds `MAX_FILE_TOKENS *
         /// CHARS_PER_TOKEN` but whose char length does not must not
         /// be truncated. Pre-fix the byte comparison trips.
         #[test]
         fn prop_cjk_body_under_char_budget_not_truncated(
-            body in prop::collection::vec(cjk_char(), 1..=1)
-                .prop_flat_map(|_| {
-                    // 2/3 of the char budget: char count ~133_333,
-                    // byte count ~400_000. Under char budget,
-                    // over byte budget.
-                    prop::collection::vec(cjk_char(), 133_333..=133_333)
-                })
+            body in prop::collection::vec(cjk_char(), 66_667..=66_667)
                 .prop_map(|chars| chars.into_iter().collect::<String>()),
         ) {
             let budget = MAX_FILE_TOKENS * CHARS_PER_TOKEN;
