@@ -4,11 +4,11 @@
 //! to provide a single API for storing and retrieving context.
 
 use crate::{long_term::LongTermMemory, short_term::ShortTermMemory};
+use futures::FutureExt;
 use kod_error::{KodError, Result};
 use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType};
 use std::path::PathBuf;
 use time::OffsetDateTime;
-use futures::FutureExt;
 
 /// Episodic entries whose last touch (write or retrieval) is older
 /// than this many days are archived by [`MemoryManager::consolidate`].
@@ -992,7 +992,12 @@ impl MemoryManager {
             let cached = self.query_embed_cache.lock().get(&query_for_embed);
             let q_vec: Option<Vec<f32>> = match cached {
                 Some(v) => Some(v),
-                None => match Self::embed_safe(embedder.as_ref(), std::slice::from_ref(&query_for_embed)).await {
+                None => match Self::embed_safe(
+                    embedder.as_ref(),
+                    std::slice::from_ref(&query_for_embed),
+                )
+                .await
+                {
                     Ok(mut v) if !v.is_empty() => {
                         let vec = v.remove(0);
                         self.query_embed_cache

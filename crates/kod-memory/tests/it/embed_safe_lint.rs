@@ -38,16 +38,12 @@ fn body_range(src: &str, start_marker: &str, end_marker: &str) -> (usize, usize)
 
 #[test]
 fn every_foreground_embed_call_goes_through_embed_safe() {
-    let src = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/manager.rs",
-    ))
-    .expect("read src/manager.rs");
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/manager.rs",))
+        .expect("read src/manager.rs");
 
     // The panic barrier itself — its body contains the unwrapped
     // `.embed(` call by design.
-    let (embed_safe_start, embed_safe_end) =
-        body_range(&src, "async fn embed_safe(", "\n    }\n");
+    let (embed_safe_start, embed_safe_end) = body_range(&src, "async fn embed_safe(", "\n    }\n");
     // The background task — its body calls the embedder inside a
     // `tokio::spawn`, isolated by the existing flush-drop test.
     let (spawn_embed_start, spawn_embed_end) =

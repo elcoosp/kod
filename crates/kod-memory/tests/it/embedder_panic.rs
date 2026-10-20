@@ -47,8 +47,8 @@ impl EmbeddingClient for PanicEmbedder {
 #[tokio::test]
 async fn panicking_embedder_does_not_kill_the_retrieval_path() {
     let dir = tempfile::TempDir::new().unwrap();
-    let mut mgr = MemoryManager::new(dir.path().join("retrieval.redb"), 100)
-        .expect("manager construction");
+    let mut mgr =
+        MemoryManager::new(dir.path().join("retrieval.redb"), 100).expect("manager construction");
     mgr.set_embedder(std::sync::Arc::new(PanicEmbedder));
 
     // Store one entry. This puts a row in the long-term store so

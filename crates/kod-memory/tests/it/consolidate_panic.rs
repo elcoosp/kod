@@ -46,8 +46,7 @@ impl EmbeddingClient for PanicEmbedder {
 #[tokio::test]
 async fn panicking_embedder_does_not_kill_consolidation() {
     let dir = tempfile::TempDir::new().unwrap();
-    let mut mgr =
-        MemoryManager::new(dir.path().join("consolidate.redb"), 100).expect("manager");
+    let mut mgr = MemoryManager::new(dir.path().join("consolidate.redb"), 100).expect("manager");
     mgr.set_embedder(std::sync::Arc::new(PanicEmbedder));
 
     // Two DIFFERENT entries in the same project. Different content

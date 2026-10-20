@@ -331,9 +331,7 @@ mod proptests {
     fn arb_valid_reply() -> impl Strategy<Value = String> {
         prop::collection::vec(
             (
-                prop::sample::select(vec![
-                    "preference", "decision", "pattern", "fact", "unknown",
-                ]),
+                prop::sample::select(vec!["preference", "decision", "pattern", "fact", "unknown"]),
                 arb_content(),
             ),
             1..=3,
