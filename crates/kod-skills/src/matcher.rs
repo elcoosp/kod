@@ -151,8 +151,13 @@ impl SkillMatcher {
             let tag_lower = tag.to_lowercase();
             // M-10: the reversed check (tag contains query) needs a
             // length floor, or a 2-char query like "ui" matched "build"
-            // and injected unrelated skills at 0.4 >= the 0.3 threshold.
-            let reverse_hit = query.len() >= MIN_TAG_MATCH_CHARS && tag_lower.contains(query);
+            // and injected unrelated skills at 0.4 >= the 0.3
+            // threshold. The floor counts characters, not bytes — a
+            // 1-CJK-char query is 3 bytes and would otherwise pass a
+            // byte-based floor and reproduce the same spurious match
+            // in a different alphabet.
+            let reverse_hit =
+                query.chars().count() >= MIN_TAG_MATCH_CHARS && tag_lower.contains(query);
             if query.contains(&tag_lower) || reverse_hit {
                 score += 0.4;
                 reasons.push(MatchReason::TagMatch { tag: tag.clone() });
@@ -178,8 +183,8 @@ impl SkillMatcher {
         let name_lower = skill.metadata.name.to_lowercase();
         const MIN_NAME_MATCH_CHARS: usize = 3;
         let name_hit = name_lower == query
-            || (name_lower.contains(query) && query.len() >= MIN_NAME_MATCH_CHARS)
-            || (query.contains(&name_lower) && name_lower.len() >= MIN_NAME_MATCH_CHARS);
+            || (name_lower.contains(query) && query.chars().count() >= MIN_NAME_MATCH_CHARS)
+            || (query.contains(&name_lower) && name_lower.chars().count() >= MIN_NAME_MATCH_CHARS);
         if name_hit {
             score += 0.9;
             reasons.push(MatchReason::NameMatch {
@@ -559,5 +564,197 @@ mod coverage_match_scoring {
         assert_eq!(m.count().await, 1);
         assert!(m.find_relevant_skills("old-trigger").await.is_empty());
         assert_eq!(m.find_relevant_skills("new-trigger").await.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod matcher_proptests {
+    //! Properties for `SkillMatcher::score_skill`.
+    //!
+    //! Three length floors in `score_skill` compare `str::len()`
+    //! (bytes) against constants named `*_MATCH_CHARS`:
+    //!
+    //! * `query.len() >= MIN_TAG_MATCH_CHARS` (line 155)
+    //! * `query.len() >= MIN_NAME_MATCH_CHARS` (line 181)
+    //! * `name_lower.len() >= MIN_NAME_MATCH_CHARS` (line 182)
+    //!
+    //! The first is documented for a bug the comment calls M-10:
+    //! "a 2-char query like 'ui' matched 'build' and injected
+    //! unrelated skills". The example is ASCII, where `len() ==
+    //! chars().count()`. For CJK they diverge 3:1 — a 1-CJK-char
+    //! query is 3 bytes and passes the floor, reproducing the exact
+    //! spurious-match bug the floor was built to prevent.
+    //!
+    //! The three properties below fail on the pre-fix code and pass
+    //! after replacing `.len()` with `.chars().count()` at all three
+    //! sites. The three controls prove the fix does not weaken the
+    //! working case (3-char CJK and multi-char ASCII queries still
+    //! reverse-match; 2-char ASCII still does not).
+
+    use super::*;
+    use kod_types::{MatchReason, SkillId, SkillMetadata};
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+
+    /// A minimal `Skill` with only a name and tags set. Empty
+    /// triggers, capabilities, description, and instructions, so
+    /// only the name and tag paths can contribute a match.
+    fn test_skill(name: &str, tags: &[&str]) -> Skill {
+        Skill {
+            id: SkillId::new(),
+            metadata: SkillMetadata {
+                name: name.to_string(),
+                description: String::new(),
+                version: "1.0.0".to_string(),
+                author: None,
+                category: "test".to_string(),
+                tags: tags.iter().map(|s| s.to_string()).collect(),
+                capabilities: Vec::new(),
+                requirements: Vec::new(),
+                triggers: Vec::new(),
+            },
+            instructions: String::new(),
+            examples: Vec::new(),
+            constraints: None,
+            content: String::new(),
+            path: PathBuf::new(),
+        }
+    }
+
+    /// A small set of CJK characters, each 3 bytes in UTF-8. Enough
+    /// distinct values for proptest to try the boundary across
+    /// several runs.
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
+        ])
+    }
+
+    proptest! {
+        /// **Bug 1, tag path.** A 1-CJK-char query (3 bytes) is a
+        /// substring of a 2-char CJK tag, so the reverse-match check
+        /// fires pre-fix: `query.len() = 3 >= 3`. That is exactly
+        /// the spurious tag match M-10 exists to prevent, in a
+        /// different alphabet.
+        #[test]
+        fn prop_one_cjk_char_query_does_not_tag_reverse_match(c in cjk_char()) {
+            let tag = format!("{c}設");
+            let matcher = SkillMatcher::new();
+            let skill = test_skill("", &[&tag]);
+            let (_score, reasons) = matcher.score_skill(&skill, &c.to_string());
+            prop_assert!(
+                !reasons
+                    .iter()
+                    .any(|r| matches!(r, MatchReason::TagMatch { .. })),
+                "1-CJK-char query {:?} reverse-matched tag {:?}",
+                c, tag,
+            );
+        }
+
+        /// **Bug 2, name path, first clause.** A 1-CJK-char query
+        /// is a substring of a longer CJK name. Pre-fix:
+        /// `name_lower.contains(query) && query.len() >= 3` fires.
+        /// That is the "short query matched a longer name"
+        /// spurious-match case the floor exists for.
+        #[test]
+        fn prop_one_cjk_char_query_does_not_name_match(c in cjk_char()) {
+            let name = format!("{c}師");
+            let matcher = SkillMatcher::new();
+            let skill = test_skill(&name, &[]);
+            let (_score, reasons) = matcher.score_skill(&skill, &c.to_string());
+            prop_assert!(
+                !reasons
+                    .iter()
+                    .any(|r| matches!(r, MatchReason::NameMatch { .. })),
+                "1-CJK-char query {:?} matched name {:?}",
+                c, name,
+            );
+        }
+
+        /// **Bug 3, name path, second clause.** A 1-CJK-char skill
+        /// name is a substring of a longer CJK query. Pre-fix:
+        /// `query.contains(name_lower) && name_lower.len() >= 3`
+        /// fires. That is the "short skill name matched a longer
+        /// query" spurious-match case, the mirror of bug 2.
+        #[test]
+        fn prop_one_cjk_char_name_does_not_match(c in cjk_char()) {
+            let name = c.to_string();
+            let query = format!("{c}設");
+            let matcher = SkillMatcher::new();
+            let skill = test_skill(&name, &[]);
+            let (_score, reasons) = matcher.score_skill(&skill, &query);
+            prop_assert!(
+                !reasons
+                    .iter()
+                    .any(|r| matches!(r, MatchReason::NameMatch { .. })),
+                "1-CJK-char name {:?} matched query {:?}",
+                name, query,
+            );
+        }
+    }
+
+    // ---- controls: the fix must not weaken the working case --------
+
+    /// 2-char ASCII query against a tag that contains it: the M-10
+    /// case. Passes both pre-fix and post-fix (2 chars = 2 bytes,
+    /// both below 3). Proves the floor still rejects the ASCII case
+    /// the comment documents.
+    #[test]
+    fn control_two_ascii_char_query_does_not_reverse_match() {
+        let matcher = SkillMatcher::new();
+        let skill = test_skill("", &["build"]);
+        let (_score, reasons) = matcher.score_skill(&skill, "ui");
+        assert!(
+            !reasons
+                .iter()
+                .any(|r| matches!(r, MatchReason::TagMatch { .. })),
+            "2-char ASCII query 'ui' must not reverse-match tag 'build'",
+        );
+    }
+
+    /// 3-char CJK query against a longer CJK tag that contains it:
+    /// the working case. Passes both pre-fix and post-fix (3 chars,
+    /// 9 bytes, both >= 3). Proves the fix does not over-tighten.
+    #[test]
+    fn control_three_cjk_char_query_still_reverse_matches() {
+        let matcher = SkillMatcher::new();
+        let skill = test_skill("", &["中國設計師學會"]);
+        let (_score, reasons) = matcher.score_skill(&skill, "設計師");
+        assert!(
+            reasons
+                .iter()
+                .any(|r| matches!(r, MatchReason::TagMatch { .. })),
+            "3-CJK-char query '設計師' against tag '中國設計師學會' should reverse-match",
+        );
+    }
+
+    /// 3-char ASCII query against a longer ASCII tag: also working
+    /// case, also passes both pre-fix and post-fix.
+    #[test]
+    fn control_three_ascii_char_query_still_reverse_matches() {
+        let matcher = SkillMatcher::new();
+        let skill = test_skill("", &["rebuild"]);
+        let (_score, reasons) = matcher.score_skill(&skill, "bui");
+        assert!(
+            reasons
+                .iter()
+                .any(|r| matches!(r, MatchReason::TagMatch { .. })),
+            "3-char ASCII query 'bui' against tag 'rebuild' should reverse-match",
+        );
+    }
+
+    /// 3-char CJK query against a longer CJK name: the working case
+    /// for the name path. Passes both pre-fix and post-fix.
+    #[test]
+    fn control_three_cjk_char_query_still_name_matches() {
+        let matcher = SkillMatcher::new();
+        let skill = test_skill("中國設計師學會", &[]);
+        let (_score, reasons) = matcher.score_skill(&skill, "設計師");
+        assert!(
+            reasons
+                .iter()
+                .any(|r| matches!(r, MatchReason::NameMatch { .. })),
+            "3-CJK-char query '設計師' against name '中國設計師學會' should match",
+        );
     }
 }
