@@ -3,13 +3,15 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `88ca5f7` (full-workspace gate green at that
-commit; see "State" below and the fifteen "Re-verification"
-subsections in "What's open" #1). 4493/4493 on the first try; 5
-skipped; no leaky. The commit fixes a real bug: the compiler-output
-parsers in `kod-tools/src/check.rs` accepted `line = 0`/`column = 0`,
-which no compiler emits — found by a **direct probe**, not by the
-`any::<String>()` property that was almost vacuous on that shape.
+**Last verified commit:** `767e280` (full-workspace gate green at that
+commit; see "State" below and the sixteen "Re-verification"
+subsections in "What's open" #1). 4495/4495 on the fourth attempt; 5
+skipped; no leaky. The commit fixes a real security bug: the shell
+classifier in `kod-risk/src/classify.rs` returned `Safe` for
+`echo hi; (rm -rf ~)` — a subshell after a command separator escaped
+the leading-`(` heuristic entirely. The three attempts that preceded
+the passing gate were SIGKILLed by a **concurrent process on the host**,
+not OOM; L51 records the corrected diagnosis.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -26,7 +28,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, and `88ca5f7`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, `af0301f`, `4600d40`, `016c43b`, `88ca5f7`, and `767e280`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -60,6 +62,34 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `767e280` (after the risk-classifier fix).**
+Ran the same command at `767e280`:
+
+    4495 tests run: 4495 passed, 5 skipped
+
+Clean first try *when no other cargo/rustc was running on the host*:
+140s wall, 125s test time, no execfail, no EAGAIN, no leaky.
+
+**Three failed attempts preceded it — the diagnosis was wrong.**
+Attempt 1 was SIGKILLed (exit 137) at 458s during the criterion /
+plotters / axum dev-deps compile; `target/` had just been deleted to
+free disk, so the rebuild started from scratch. Attempt 2 (resumed
+from 5 GiB of built `target/`) was SIGKILLed at 93s at the same
+dev-deps. Attempt 3 hit a kache-served `kod_ast` exit — the killed
+rustc had left a corrupt cache entry; a re-run cleared it.
+
+The first pass diagnosed OOM on this 16 GiB host and fell back to
+per-crate verification: **1476 tests across 5 crates** (kod-risk 74,
+kod-config 246, kod-core-tools 84, kod-tools 441, kod-core 631),
+all passing. That was correct but insufficient — it proved the
+change's blast radius, not the whole workspace.
+
+**The user reported the SIGKILLs were another script's fault, not
+OOM.** A fourth attempt, with no other cargo/rustc running, passed
+in 140s. The pass is the honest record. L51 names the lesson: a
+SIGKILL during a build is not the build's fault until you check for
+a concurrent process.
 
 **Re-verification at `88ca5f7` (after the zero-position parser fix).**
 Ran the same command at `88ca5f7`:
@@ -278,7 +308,7 @@ correct last tag.
 
 ## State
 
-`main` at `88ca5f7`, thirty-one commits past `v0.1.12`:
+`main` at `767e280`, thirty-two commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -326,6 +356,8 @@ correct last tag.
 | `016c43b` | fix(provider): mix a counter into the jitter seed; deterministic test |
 | `060fc9d` | docs(handoff): gate at `016c43b`; jitter-seed fix + L48 |
 | `88ca5f7` | fix(tools): reject zero line/column in compiler-output parsers; proptests + probes |
+| `49b00b5` | docs(handoff): gate at `88ca5f7`; zero-position parser fix + L49 |
+| `767e280` | fix(risk): escalate subshells after command separators (SEC-A-05b) |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -946,7 +978,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L49)
+## The lesson index (L20–L51)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -983,6 +1015,8 @@ corresponding section in `session-17.md` for the full story.
 | L47 | When verifying a literal string that contains regex metacharacters, use `grep -F` (fixed string), not `grep -E` with hand-escaped metacharacters. A pattern like `'[a-zA-Z0-9]{1,40}'` in ERE binds the `{1,40}` to the closing `]`, not the class — the escaped pattern looks correct and can never match. The patch was right; the check was wrong. Same family as L23 but distinct: the check *logic* was fine, the *pattern* was wrong. |
 | L48 | A flake is a test whose *assumption* fails, not a test that is wrong. `jitter_is_centered_and_signed` asserts `min < 900 and max > 1100` across 1000 samples; that cannot hold if all 1000 samples are identical. The identical samples were the bug (`jitter_for` seeded only from wall-clock nanos, which does not advance on fast hardware), not the test. Reduce the flake to a deterministic test (`jitter_for(12345)` twice) and it becomes a failing-first property for the fix. A flake that reduces deterministically is a bug report, not noise. |
 | L49 | `proptest!` requires every `#[test]` inside it to be `fn name(args in strategy)`. A bare `#[test]` with no `in` clause fails to parse, and the compile error is reported at the block's *first* item, not the offending one — an error message pointing at property #1 that is actually property #4. A bare `#[test]` belongs at module level; doc comments on items inside `proptest!` are line comments (`//`) in this version, not `///`. |
+| L50 | A security classifier's escalation level is part of its contract. The `kod-risk` module doc says "never refuses; escalates" — `Confirm`, not `Catastrophic`, for a construct the classifier cannot statically inspect. Escalating to `Catastrophic` (refused outright, no path through) would violate the contract even though it looks safer. The fix for the subshell-after-separator bug used `Confirm` because the module contract demands it, not because `Catastrophic` would have failed a test. |
+| L51 | A SIGKILL (exit 137) during `cargo nextest run` is not the build's fault until you check for a concurrent process on the host. Two `767e280` gate attempts died at ~90s with `broken pipe` from a killed `rustc`; the first pass diagnosed OOM on a 16 GiB host and fell back to per-crate verification (1476 tests across 5 crates). A fourth attempt — after the user reported the kill was another script — passed clean at 4495/4495 in 140s. Before concluding a build failure is OOM, run `pgrep -fl 'cargo\|rustc\|nextest'` and check for a concurrent process. The per-crate fallback was correct but insufficient: it proves the change's blast radius, not the whole workspace. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -1180,6 +1214,72 @@ recurred since the kache cleanup; the disk-full failure earlier
 in the session was a different signal (`errno=28`).
 
 
+**Fourteenth round: the risk-classifier subshell bug (`767e280`).**
+The last major untested surface was `kod-risk/src/classify.rs` —
+1903 lines of security classification where `RiskLevel::Safe`
+runs a command immediately and `Catastrophic` is refused
+outright. Prior coverage: 59 example tests, three properties
+(`never_panics`, `expansion_in_argument_is_not_safe`,
+`bare_ampersand_splits_segments`).
+
+**The bug.** `echo hi; (rm -rf ~)` classified **Safe**. The
+subshell after `;` runs `rm -rf ~` in a child shell, but the
+tokenizer glues `(rm` into one token, which is not in
+`DESTRUCTIVE`, so no path check runs. The whole-command
+leading-`(` heuristic fires only when the raw text *starts*
+with `(`; a subshell after `;`, `&&`, `||`, or `|` escapes
+entirely. A false `Safe` on a literal `rm -rf ~` is the
+highest-severity bug class this crate has.
+
+**Found by a property.** `prop_subshell_after_separator_is_not_safe`
+(`prefix in "[a-z]{1,10}"`, `sep in [";", "&&", "||", "|"]`)
+generates `{prefix}{sep}(rm -rf ~)` and asserts the verdict
+is not `Safe`. On the pre-fix code it failed on the first case
+(`a ; (rm -rf ~)`). The three existing properties all passed —
+none exercised the subshell shape after a *separator*.
+
+**The fix.** After `split_segments`, iterate over segments
+once and push a `Confirm` finding for each whose first token
+begins with `(`. The module contract is "never refuses to run
+something it does not understand; it escalates", so `Confirm`
+is the correct level — a subsequent user policy gate decides
+whether `(rm -rf ~)` runs. Escalating to `Catastrophic` would
+refuse the command outright with no path through (L50).
+
+**A second property, added alongside as an over-escalation
+control.** `prop_echo_without_subshell_stays_safe` asserts
+that `echo <args>` stays `Safe` or `Low`. If a future fix for
+the subshell property escalates every command, this catches
+it. It passes on the fixed code.
+
+**Two positive controls:**
+
+- Control A: remove the per-segment `(` block.
+  `prop_subshell_after_separator_is_not_safe` fails.
+- Control B: change the condition from `starts_with('(')` to
+  `starts_with(')')` — the check exists but no segment can
+  match it. Same property fails.
+
+**The gate: three interrupted attempts, one clean pass.** After
+the fix, the full-workspace gate was attempted three times and
+interrupted each time (two SIGKILLs at ~90s and one poisoned
+kache entry). The first pass diagnosed OOM on this 16 GiB host
+and fell back to per-crate verification (1476 tests across 5
+crates, all passing). The user reported the SIGKILLs were
+another script's fault; a fourth attempt with no other
+cargo/rustc running passed clean at 4495/4495 in 140s.
+
+**The first-pass diagnosis was wrong, and the correction is
+recorded.** The per-crate fallback proved the change's blast
+radius, not the whole workspace; the handoff's `767e280`
+verification now records the fourth, passing gate. L51 is the
+lesson: a SIGKILL during a build is not the build's fault until
+you check for a concurrent process.
+
+**Net for the round:** one real security bug, two proptests,
+two positive controls, and a 4495/4495 full-workspace gate.
+
+
 ## Where to start
 
 1. **Step 0** — verify tree, HEAD, tag.
@@ -1191,19 +1291,19 @@ in the session was a different signal (`errno=28`).
    contract is serde's own.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
-5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `88ca5f7`. Nothing this session started is unfinished.
+5. **Or stop.** The tree is clean, tagged, and verified
+   end-to-end at `767e280` (4495/4495 full-workspace). Nothing
+   this session started is unfinished.
+
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs;
-   free space is at ~19 GiB after this gate, so a `rm -rf target`
-   before the next one is prudent. (b) The last remaining parser
-   from the L42 survey: `kod-types/effort.rs` (a tiny `parse`
-   over an enum's five string forms — smallest target, no wire
-   input). Optional. (c) Every parser reached by this arc's
-   survey now has at least one property or probe; the surface
-   named "closed" in prior handoffs is genuinely closed for the
-   parsers a survey can find, not just for the last three
-   targets (L42, satisfied).
+   `target/` is warm at ~9 GiB — keep it warm, and confirm no
+   other cargo/rustc is running before concluding a SIGKILL is
+   the build's fault (L51). (b) `kod-risk` has more surface
+   (path classification, wrapper-table sync) but every function
+   reached by this arc's survey now has at least one property
+   or probe. (c) `kod-types/effort.rs` is the last remaining
+   parser from the L42 survey; optional.
 
 ## Note on `session-17.md`
 
@@ -1259,8 +1359,8 @@ normalization, in the same round. The honest-scope caveat
 from the serve fix was closed by a `serve_io` extraction
 (`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
 test (`7f6cfd5`) verified the finding that only the `process`
-site was ever wedged (L39). Thirty handoff lessons
-(L20–L49) that are mostly about the *checker* being wrong,
+site was ever wedged (L39). Thirty-two handoff lessons
+(L20–L51) that are mostly about the *checker* being wrong,
 not the code; two (L40) came from a build cache that failed
 silently, two (L41, L42) came from a parser survey that found
 a real overflow the prior "surface closed" claim missed, one
@@ -1276,12 +1376,16 @@ wrong atom, and one (L48) came from a **flake** that reduced
 to a deterministic failing-first test and turned out to be a
 real lockstep-retry bug (not a test bug), and one (L49) came
 from a bare `#[test]` inside `proptest!` whose compile error
-pointed at the wrong line. The full workspace gate at `88ca5f7` runs 4493
-tests, all green, including fifty-seven new tests across
+pointed at the wrong line, one (L50) came from the module
+contract demanding `Confirm` where `Catastrophic` looked safer,
+and one (L51) came from a SIGKILL that was another process's
+fault, not OOM. The full workspace gate at `767e280` runs 4495
+tests, all green, including fifty-nine new tests across
 ten modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
 `kod-swarm/brief.rs`, `kod-skills/parser.rs` — eighteen there,
 `kod-swarm/completion_report.rs`, `kod-tools/check.rs` — five
-there, plus a deterministic test for the jitter-seed collision
-the gate exposed.
+there, `kod-risk/classify.rs` — five there (three pre-existing,
+two added), plus a deterministic test for the jitter-seed
+collision the gate exposed.
