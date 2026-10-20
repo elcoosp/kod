@@ -3,13 +3,12 @@
 **Continues:** session 17 (`docs/handoff/session-17.md`, now a mixed
 record — see "Note on session-17.md" at the end).
 **Last tag:** `v0.1.12` (`59e6951`).
-**Last verified commit:** `02de4e8` (full-workspace gate green at that
-commit; see "State" below and the eleven "Re-verification"
-subsections in "What's open" #1). 4470/4470 on the first try; 5
-skipped; no leaky. The commit adds seven proptests to
-`kod-skills/src/parser.rs::parse_content` (the SKILL.md boundary).
-No bug was found; two checker bugs were caught by the property
-drill.
+**Last verified commit:** `af0301f` (full-workspace gate green at that
+commit; see "State" below and the twelve "Re-verification"
+subsections in "What's open" #1). 4476/4476 on the first try; 5
+skipped; no leaky. The commit fixes a real bug in
+`kod-swarm/src/completion_report.rs::extract_status` (substring
+match on "status") and adds six proptests to the parser.
 **Tree at handoff:** clean.
 
 ## Step 0 — verify before touching anything
@@ -26,7 +25,7 @@ assume an in-progress change is yours.
 
 ## What's open, in order
 
-### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, and `02de4e8`
+### 1. CLOSED — full-workspace gate at `a2eb27b` (`74d8ef7`); re-verified at `a23bce7`, `47cc41a`, `5a005a9`, `98e129b`, `90e8126`, `7f6cfd5`, `dac5844`, `1ce1bb6`, `31bd1a5`, `45aec66`, `02de4e8`, and `af0301f`
 
 The four proptest crates (`195f30b`, `f665998`, `0006609`,
 `b5704c3`) were each gated per-crate. The full-workspace run since
@@ -60,6 +59,14 @@ and its companion `a23bce7`). Re-ran the same command at `a23bce7`:
 The count went from 4433 to 4436 — exactly the three new kod-config
 properties. No execfail, no EAGAIN, `--no-fail-fast` was on (the
 whole suite ran). This is the last-verified state.
+
+**Re-verification at `af0301f` (after the `completion_report` fix).**
+Ran the same command at `af0301f`:
+
+    4476 tests run: 4476 passed, 5 skipped
+
+Up from 4470 at `02de4e8` — exactly the six new `kod-swarm`
+properties. Clean first try: no execfail, no EAGAIN, no leaky.
 
 **Re-verification at `02de4e8` (after the SKILL.md proptests).**
 Ran the same command at `02de4e8`:
@@ -229,7 +236,7 @@ correct last tag.
 
 ## State
 
-`main` at `02de4e8`, twenty-six commits past `v0.1.12`:
+`main` at `af0301f`, twenty-seven commits past `v0.1.12`:
 
 | Commit | What |
 |---|---|
@@ -268,6 +275,8 @@ correct last tag.
 | `45aec66` | fix(swarm): guard `start <= end` in `parse_report`; proptests for the report parser |
 | `a79c99d` | docs(handoff): gate at `45aec66`; `parse_report` panic fix + L45 |
 | `02de4e8` | test(skills): proptests for `SkillParser::parse_content` (7 properties, 2 controls) |
+| `7ca7db3` | docs(handoff): gate at `02de4e8`; SKILL.md proptests + L46 |
+| `af0301f` | fix(swarm): whitespace boundary before `status`; proptests for `completion_report::parse` |
 
 `v0.1.12` (`59e6951`) is the release that carries the two behavior
 changes from this work: four panic-isolation fixes (a panic in
@@ -697,6 +706,66 @@ extractor is a small `find`-and-slice with no arithmetic hazard
 and no security relevance; a future round can add a property if
 it becomes worth the surface.
 
+**Eighth round: the completion-report parser (`af0301f`).** The
+next target from the L42 survey: `kod-swarm/src/completion_report.rs::parse`,
+which reads the LLM subagent's final message as a tag-delimited
+report (`<completion-report status=done>...`). Called from
+`kod-core/src/swarm_runner.rs:1850` and `kod-core/src/overnight.rs:176`.
+
+**One real bug, in `extract_status`.** The pre-fix code did
+`open_line.find("status")` — a substring match. An attribute
+like `xstatus=done`, `some=status=done`, or `my-status=done`
+matched as if it were a real `status=` attribute, so an agent
+whose tag carried a descriptive word ending in "status"
+reported `Done` even though it never named a status. Same class
+as the `parse_report` panic (`45aec66`): a boundary parser
+accepting input it should reject. The failing-first property
+(`prop_fake_status_attribute_is_unknown`) was written and run
+against the pre-fix code and confirmed red on `xstatus=done`.
+
+The fix: require a whitespace boundary before `status`.
+Attributes are whitespace-separated; "preceded by whitespace"
+is the property the parser actually wants. The loop keeps
+searching past a non-boundary match, so a tag like
+`<completion-report foo=xstatus=bar status=done>` still parses
+correctly (the real attribute is found second).
+
+**Six properties:** never-panics, valid-block round-trip,
+absent-block fallback, real-status positive control,
+fake-status failing-first, `had_block` matches the open prefix.
+
+**The L46 drill, three times in one round.** The round-trip
+property's strategies first admitted whitespace-only strings
+for `summary`, `validation`, `f1`, `f2`. Each produced a
+different manifestation of the same rule: `summary = " "` —
+`parse` keeps the untrimmed string, the expected value
+`.trim()`s to `""`; `validation = " "` — `parse` correctly
+treats empty validation as `None`; `f1 = " "` — `parse`
+correctly drops the empty followup. All four strategies now
+exclude whitespace. Across the session, L46 has now fired six
+times in three rounds.
+
+**A verification-tool bug, on the way in (L47).** The
+structural check for `summary in "[a-zA-Z0-9]{1,40}"` used
+`grep -qE` with `\[a-zA-Z0-9\]{1,40}` — in ERE the `{1,40}`
+binds to the closing `]`, not the character class, so the
+pattern can never match. The patch was correct; the check was
+wrong. Fixed by `grep -qF` (fixed string). Same family as L23
+but distinct: the check *logic* was fine, the *pattern* was
+wrong.
+
+**Two positive controls:**
+
+- Control A: revert the whitespace-boundary fix.
+  `prop_fake_status_attribute_is_unknown` fails on
+  `xstatus=done`.
+- Control B: break the `followups:` key match (`followupsXX:`).
+  `prop_valid_block_round_trips` fails.
+
+Both restored cleanly; suite re-confirmed green. One real bug,
+six properties, two controls, and two lessons (L46's third
+occurrence and the new L47).
+
 
 ## What landed before `v0.1.12` in this arc
 
@@ -790,7 +859,7 @@ truncated at `--` and the trailing words become pathspecs. Any
 message containing an em-dash, a `--flag` snippet, or a Markdown
 horizontal rule needs `git commit -F <file>`.
 
-## The lesson index (L20–L46)
+## The lesson index (L20–L47)
 
 Every one of these is from a real failure this session. Read the
 corresponding section in `session-17.md` for the full story.
@@ -823,7 +892,8 @@ corresponding section in `session-17.md` for the full story.
 | L43 | A proptest's strategy can be non-vacuous and still blind to a control. When the drill reverted the `>= 12` content-length filter and the property still passed, the cause was the strategy: it only generated 12–40-byte content, so the filter never fired. Force every edge the code branches on into the corpus with `prop_oneof![Just(edge), range]`. L35's companion — same failure shape, on the guard's own invariant. |
 | L44 | A **pair** property can be semantically correct and pragmatically vacuous. `prop_same_as_implies_url_same_origin` draws two URLs independently; the specific adversarial pair (e.g. `evil\@example.com` vs `example.com`) is one out of 2^128 possible pairs and is never sampled. Pair properties need either a derived second side (mutate `a` to get `b`), or a direct control that forces `same_as` to return the wrong answer. Proving a pair property has teeth is the same shape as proving a unit property has teeth — the control is the proof, not the corpus. |
 | L45 | A **relational** property ("A parses identically to B") is blind to any mutation that changes both sides identically. `prop_fenced_block_strips_to_bare_json` compares the fenced parse to the bare parse; a control that overwrote both with the same wrong value would pass it. The property that anchors to *external truth* — `prop_valid_report_round_trips` comparing against `serde_json::to_string` — is what caught the mutation. Relational properties need a companion that pins one side to something outside the pair. |
-| L46 | A strategy that admits whitespace-only strings passes a property that trims. `parse_content`'s example extractor trims the output; a strategy of `"[a-zA-Z0-9 ]{1,40}"` produced `" "`, which trimmed to `""`, and the assert compared `""` to `" "`. The same round's `build` helper hit the same shape on the YAML side: an unquoted `" "` normalizes to `""`, `validate_metadata` rejects it, and the test's `expect("must parse")` panics. Rule: the strategy must not produce a value the code's own trim/normalize step changes into something the assertion treats as different. Three occurrences in three rounds (`1ce1bb6`, `1ce1bb6`, and this one) — the class is real. |
+| L46 | A strategy that admits whitespace-only strings passes a property that trims. `parse_content`'s example extractor trims the output; a strategy of `"[a-zA-Z0-9 ]{1,40}"` produced `" "`, which trimmed to `""`, and the assert compared `""` to `" "`. The same round's `build` helper hit the same shape on the YAML side: an unquoted `" "` normalizes to `""`, `validate_metadata` rejects it, and the test's `expect("must parse")` panics. Rule: the strategy must not produce a value the code's own trim/normalize step changes into something the assertion treats as different. Six occurrences across three rounds (`1ce1bb6` ×1, `02de4e8` ×2, `af0301f` ×3) — the class is real and the checklist rule is cheap. |
+| L47 | When verifying a literal string that contains regex metacharacters, use `grep -F` (fixed string), not `grep -E` with hand-escaped metacharacters. A pattern like `'[a-zA-Z0-9]{1,40}'` in ERE binds the `{1,40}` to the closing `]`, not the class — the escaped pattern looks correct and can never match. The patch was right; the check was wrong. Same family as L23 but distinct: the check *logic* was fine, the *pattern* was wrong. |
 
 The pattern behind L23–L27: **the checker is code, and code has
 bugs.** In four proptest crates and ~15 rounds, there were four
@@ -867,13 +937,12 @@ the test is easy; proving it has teeth is the hard part.
 4. **"What's open" #3** — CLOSED. The `live-integrations` job in
    `ci.yml` runs the two previously-uncovered tests.
 5. **Or stop.** The tree is clean, tagged, and verified end-to-end
-   at `02de4e8`. Nothing this session started is unfinished.
+   at `af0301f`. Nothing this session started is unfinished.
    Known gaps: (a) kache's auto-gc daemon was not evicting (L40),
    check `kache stats` and `auto-gc.log` if disk-full recurs.
-   (b) Remaining same-class parsers from the survey (L42):
-   `kod-swarm/completion_report.rs` and `kod-types/effort.rs`.
-   Neither has a real bug found yet. Each is a small
-   read-then-write round; none is urgent.
+   (b) The last remaining parser from the L42 survey:
+   `kod-types/effort.rs` (a tiny `parse` over an enum's five
+   string forms — smallest target, no wire input). Optional.
    (c) The `## Instructions` / `## Constraints` extractors in
    `kod-skills/parser.rs` are not covered by the new properties
    (`02de4e8` says so explicitly). A small, defensive
@@ -934,8 +1003,8 @@ normalization, in the same round. The honest-scope caveat
 from the serve fix was closed by a `serve_io` extraction
 (`b38b7c2`) and an end-to-end test (`90e8126`). A follow-up
 test (`7f6cfd5`) verified the finding that only the `process`
-site was ever wedged (L39). Twenty-seven handoff lessons
-(L20–L46) that are mostly about the *checker* being wrong,
+site was ever wedged (L39). Twenty-eight handoff lessons
+(L20–L47) that are mostly about the *checker* being wrong,
 not the code; two (L40) came from a build cache that failed
 silently, two (L41, L42) came from a parser survey that found
 a real overflow the prior "surface closed" claim missed, one
@@ -943,11 +1012,14 @@ a real overflow the prior "surface closed" claim missed, one
 guard branches on, one (L44) came from a **pair** property
 whose adversarial pair was never sampled, one (L45) came from
 a **relational** property that changed both sides identically
-under the control, and one (L46) came from a strategy that
-admitted whitespace-only strings the parser trims. The full
-workspace gate at `02de4e8` runs 4470 tests, all green,
-including thirty-four new properties across eight modules
-(`kod-config/config.rs`, `kod-config/policy.rs`,
+under the control, one (L46) came from a strategy that
+admitted whitespace-only strings the parser trims (six
+occurrences across three rounds), and one (L47) came from a
+`grep -E` pattern whose interval quantifier bound to the
+wrong atom. The full workspace gate at `af0301f` runs 4476
+tests, all green, including forty new properties across nine
+modules (`kod-config/config.rs`, `kod-config/policy.rs`,
 `kod-config/llm.rs`, `kod-provider-anthropic/wire.rs`,
 `kod-memory/extract.rs`, `kod-mcp/http_policy.rs`,
-`kod-swarm/brief.rs`, `kod-skills/parser.rs`).
+`kod-swarm/brief.rs`, `kod-skills/parser.rs`,
+`kod-swarm/completion_report.rs`).
