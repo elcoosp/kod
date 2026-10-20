@@ -1340,3 +1340,138 @@ a template, not the real 4433-test output. If a future session needs
 a gate-record shape, copy the "Re-verification at `a23bce7`"
 section in this file, not that one.
 
+
+## Continuation after v0.1.13
+
+Work landed after the release tag, on top of `c9dbd17` (the
+session-18 starting doc). The tag is unchanged; nothing here is
+released. Twenty-two commits, one real production bug
+(`sanitize_slug`), three property corrections, six new lessons
+(L53–L58), and approximately 55 new tests across eight modules.
+
+### Commits
+
+| Commit | What |
+|---|---|
+| `1350790` | chore(kod-types): apply pending rustfmt drift (proven pre-existing) |
+| `661c689` | test(kod-types): property tests for `EffortLevel::parse`; reconcile contradictory fallback docs |
+| `ae25ef7` | docs(handoff): v0.1.13 tag line, L53, L54 |
+| `b5e8474` | test(kod-core-routing): pin `classify`'s precedence contracts (ordering triples) |
+| `b9f32db` | docs(handoff): L55 — an ordering contract needs a triple, not a pair |
+| `bd1cabb` | chore(kod-core-quality): apply pending rustfmt drift (proven pre-existing) |
+| `c87eb73` | test(kod-core-quality): property tests for auto-thinking clamping |
+| `f46c157` | docs(handoff): L56 and the post-v0.1.13 continuation record |
+| `06d97d0` | docs(handoff): L57 and a correction to L56's advice |
+| `04195e9` | test(kod-core-quality): property tests for transcript-coherence primitives |
+| `7550f78` | test(kod-core-quality): property tests for snapcompact |
+| `eca9d7a` | test(kod-core-quality): property tests for `plan_prune` |
+| `60c1e5e` | fix(kod-core-quality): silence irrefutable if-let in the prune proptest helper |
+| `225309e` | **fix(kod-core-quality): `sanitize_slug` must not truncate onto a dash** (real bug) |
+| `4662da6` | docs(handoff): record the four rounds after f46c157 |
+| `bc51c9d` | test(kod-core-quality): property tests for shake parsers |
+| `7858a58` | test(kod-core-quality): pin `scan_regions`' fences-then-xml order |
+| `e447883` | fix(kod-core-quality): `prop_scan_regions_disjoint`, not `_and_sorted` |
+| `3043e61` | docs(handoff): L58 — a property name that overclaims its contract |
+| `cdd0838` | test(kod-core-quality): property tests for `plan_shake` |
+| `a5af833` | test(kod-core-quality): `plan_shake` protected_paths gate |
+| `af233ec` | test(kod-core-quality): `plan_shake` mixed-transcript protected_paths |
+
+### Gate history
+
+- `c9dbd17` — `4503 run / 4500 passed / 3 execfail / 5 skipped`.
+  The three `execfail` were `EAGAIN` at `fork` (os error 35), not
+  code: a concurrent `nextest run --workspace --test-threads=2`
+  was alive on the same host (PID 66595, not ours). The same 22
+  LSP tests passed in isolation under both nextest and
+  `cargo test`.
+- `ae25ef7` — `4510 / 4510 passed (1 leaky) / 5 skipped`. The
+  `LEAK` was `kod-core engine::prop_tests::prop_arbitrary_text_is_not_a_done_marker`,
+  0/5 on isolated re-run: flaky straggler, not this test.
+- `b9f32db` — `4518 / 4518 passed / 5 skipped`.
+- `c87eb73` — `4529 / 4529 passed / 5 skipped`. Predicted 4531;
+  the counter was wrong (L56).
+- `f46c157` — `4529 / 4529 passed / 5 skipped` (docs only).
+- `06d97d0` — `4529 / 4529 passed / 5 skipped` (docs only).
+
+**After `06d97d0`: no full-workspace gate was run.** Per the
+instruction "stop running full gate ate every commit", all
+verification since then has been per-module via targeted
+`cargo nextest run -p <crate> --lib <module>`. When a full gate
+is next needed — immediately before a tag — the expected total
+is **4529 + 55** from the eight new property modules, but the
+count has not been verified end-to-end since `06d97d0`.
+
+### Gaps closed
+
+- (c) `retry_strategy::classify` ordering contracts — `b5e8474`,
+  six precedence triples plus three `contains_bounded` properties.
+- (d) `kod-types/effort.rs` — `661c689`, seven properties plus
+  two plain tests.
+- `auto_thinking` — `c87eb73`, eleven properties plus two controls.
+- `transcript_coherence` — `04195e9`, twelve properties.
+- `snapcompact` — `7550f78`, six properties plus three controls.
+- `plan_prune` — `eca9d7a`, seven properties plus one control.
+- `sanitize_slug` — `225309e`, six properties plus two controls,
+  fixed the take(32)-after-join bug.
+- `shake` parsers — `bc51c9d` + `7858a58` + `e447883`, seven
+  properties plus three controls, with one property corrected.
+- `plan_shake` — `cdd0838` + `a5af833` + `af233ec`, ten
+  properties/controls including the protected_paths gate and
+  three mixed-transcript controls.
+
+### Real production bug found
+
+**`sanitize_slug`** (`225309e`). The function ran `.take(32)`
+**after** `.split('-').filter(...).join("-")`. If the joined
+form exceeded 32 chars and position 31 was `'-'`, the output
+ended with a trailing dash, violating the kebab contract. A
+second `sanitize_slug` pass would strip the dash via split/filter,
+so the function was not idempotent. Example input:
+`'a'*31 + ' ' + 'b'*10` → `'a'*31 + '-'` → re-sanitized
+`'a'*31`. Fixed by adding `.trim_end_matches('-')` after the
+take. Reachable from `WorktreeManager::create` and
+`create_session`; branch names carry the slug. Contract
+violation, not security.
+
+### Lesson index entries added
+
+- **L53** — a per-developer tool committed as a project invariant
+  only surfaces at release time (kache wrapper).
+- **L54** — `cargo fmt -p <crate>` reformats the whole crate, not
+  just your edit.
+- **L55** — an ordering contract needs a *triple*, not a pair.
+- **L56** — a predicted test count is not a count.
+- **L57** — the check that records a counting lesson can make the
+  same counting mistake.
+- **L58** — a property whose name claims more than the code
+  guarantees, passing on a generator that cannot produce the
+  counterexample.
+
+### Remaining
+
+- (a) kache's auto-gc daemon was not evicting (L40). Operational,
+  not code.
+- `repomap.rs` (1300 lines) — AST extraction via `tree-sitter`.
+  Needs fixture files on disk and slow grammar compiles. A new
+  session's work, not one round.
+- `worktree.rs` beyond `sanitize_slug` — every test needs
+  `tempfile` + `git init`, which is the L51 flaky shape at scale.
+- `worktree_isolation_ownership.rs` — same `tempfile` cost, plus
+  `libc::kill`-based process-death simulation; `#[cfg(unix)]`
+  either way.
+- `prune.rs` and `shake.rs` are now property-tested at both the
+  primitive and plan levels. No further gaps from this session's
+  survey.
+
+### Honest caveats
+
+1. **Three counting mistakes** across the continuation
+   (`c87eb73`'s message, `f46c157`'s advice line, `cdd0838`'s
+   message). L56–L57 record two; the third is a message-only
+   miscount in `cdd0838`, not corrected in history.
+2. **One overclaiming property** caught and corrected
+   (`bc51c9d` → `e447883`). L58 records it.
+3. **No full-workspace gate since `06d97d0`.** The per-module
+   runs are green; a full gate has not been re-run. If a future
+   session tags without a full gate, the 55 new tests could hide
+   an integration failure the per-module runs cannot see.
