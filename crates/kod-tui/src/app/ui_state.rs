@@ -1013,3 +1013,82 @@ mod friendly_duration_boundaries {
         }
     }
 }
+
+#[cfg(test)]
+mod duration_differential {
+    //! **Differential test.** `format_friendly_duration`'s doc says
+    //! "Same tiers as the engine's `format_duration_ms` plus an hour
+    //! tier". Nothing in the workspace verified that claim across the
+    //! two crates. This module compares the two implementations
+    //! directly: for every millisecond below one hour they must
+    //! produce the identical string, and at or above one hour they
+    //! must diverge in exactly the documented way (the TUI switches
+    //! to `h`, the engine keeps counting minutes).
+    //!
+    //! If this fails, one of the two doc comments is wrong — either
+    //! the TUI's tiers drifted from the engine's, or the engine
+    //! gained a tier the doc does not mention.
+    use super::KodApp;
+    use proptest::prelude::*;
+    use std::time::Duration;
+
+    const ONE_HOUR_MS: u64 = 3_600_000;
+
+    proptest! {
+        /// Below one hour the two formatters agree byte for byte.
+        #[test]
+        fn prop_agrees_below_one_hour(ms in 0u64..ONE_HOUR_MS) {
+            let tui = KodApp::format_friendly_duration(Duration::from_millis(ms));
+            let engine = kod_core::engine::format_duration_ms(ms);
+            prop_assert_eq!(
+                tui, engine,
+                "formatters diverged at {}ms",
+                ms,
+            );
+        }
+    }
+
+    /// Exactly at the hour boundary the TUI switches tier and the
+    /// engine does not. This is the whole reason the TUI has its own
+    /// formatter; pinning it makes a future "unify the two" change
+    /// visible.
+    #[test]
+    fn diverges_at_exactly_one_hour() {
+        let tui = KodApp::format_friendly_duration(Duration::from_millis(ONE_HOUR_MS));
+        let engine = kod_core::engine::format_duration_ms(ONE_HOUR_MS);
+        assert_eq!(tui, "1h00m");
+        assert_eq!(engine, "60m00s");
+        assert_ne!(tui, engine);
+    }
+
+    /// The tier boundaries themselves, side by side. Both formatters
+    /// must switch at 1000ms and at 60_000ms; only the third switch
+    /// differs.
+    #[test]
+    fn tier_boundaries_match_below_the_hour() {
+        for ms in [999u64, 1_000, 59_999, 60_000, 3_599_999] {
+            let tui = KodApp::format_friendly_duration(Duration::from_millis(ms));
+            let engine = kod_core::engine::format_duration_ms(ms);
+            assert_eq!(tui, engine, "boundary {}ms diverged", ms);
+        }
+    }
+
+    /// The TUI's hour tier keeps two-digit minutes; the engine's
+    /// minute tier keeps two-digit seconds. Both are zero-padded —
+    /// pinned because a `{}` instead of `{:02}` would render `1h5m`
+    /// and still "look" right.
+    #[test]
+    fn zero_padding_is_preserved_on_both_sides() {
+        // 1h05m exactly.
+        let tui = KodApp::format_friendly_duration(Duration::from_millis(ONE_HOUR_MS + 5 * 60_000));
+        assert_eq!(tui, "1h05m");
+        // 5m05s exactly, inside the engine's overlap window.
+        let ms = 5 * 60_000 + 5_000;
+        let engine = kod_core::engine::format_duration_ms(ms);
+        assert_eq!(engine, "5m05s");
+        assert_eq!(
+            KodApp::format_friendly_duration(Duration::from_millis(ms)),
+            engine
+        );
+    }
+}
