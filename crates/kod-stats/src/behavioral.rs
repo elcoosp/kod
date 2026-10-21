@@ -16,8 +16,19 @@ pub struct BehavioralSignals {
 }
 
 impl BehavioralSignals {
+    /// Sum of every field. Saturating, matching [`merge`](Self::merge).
+    ///
+    /// A `BehavioralSignals` is not constructed only from `analyze`
+    /// (whose counts are bounded by the message length) — its fields
+    /// are public, so a hand-built value near `u32::MAX` must not
+    /// overflow. The pre-fix plain `+` was inconsistent with `merge`'s
+    /// `saturating_add`.
     pub fn total(&self) -> u32 {
-        self.negation + self.repetition + self.blame + self.anguish + self.yelling
+        self.negation
+            .saturating_add(self.repetition)
+            .saturating_add(self.blame)
+            .saturating_add(self.anguish)
+            .saturating_add(self.yelling)
     }
 
     pub fn any(&self) -> bool {
@@ -81,9 +92,38 @@ const ANGUISH_CUES: &[&str] = &[
 ];
 
 fn count_cues(lower: &str, cues: &[&str]) -> u32 {
-    let mut n = 0;
-    for cue in cues {
-        n += lower.matches(cue).count() as u32;
+    cues.iter().map(|cue| count_cue(lower, cue)).sum()
+}
+
+/// Count `cue` in `lower` with the boundary rule its length deserves.
+///
+/// A cue of three bytes or fewer (`ugh`, `ffs`, `nah`, `no,`, `no.`)
+/// is a fragment of common English words: `ugh` is inside
+/// enough/rough/tough/laugh/through, `ffs` inside offs/staffs, `nah`
+/// inside nairobi, `no,`/`no.` inside piano,. Counting those as
+/// frustration fired on mundane prose. Short cues require a
+/// non-alphanumeric character on each side.
+///
+/// Longer cues use substring matching: `damn` still matches
+/// `goddamn`, `incorrect` still matches `incorrectly` — derivations
+/// of the same root are real signals, and every cue above three bytes
+/// is a word or multi-word phrase that does not appear inside another.
+fn count_cue(lower: &str, cue: &str) -> u32 {
+    if cue.len() > 3 {
+        return lower.matches(cue).count() as u32;
+    }
+    let bytes = lower.as_bytes();
+    let mut n = 0u32;
+    let mut start = 0;
+    while let Some(pos) = lower[start..].find(cue) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+        let after = abs + cue.len();
+        let after_ok = after == bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            n += 1;
+        }
+        start = abs + 1;
     }
     n
 }
@@ -248,9 +288,54 @@ mod behavioral_proptests {
         #[test]
         fn prop_total_and_any_agree_with_fields(text in "\\PC{0,300}") {
             let s = analyze(&text);
-            let expected = s.negation + s.repetition + s.blame + s.anguish + s.yelling;
+            let expected = s
+                .negation
+                .saturating_add(s.repetition)
+                .saturating_add(s.blame)
+                .saturating_add(s.anguish)
+                .saturating_add(s.yelling);
             prop_assert_eq!(s.total(), expected);
             prop_assert_eq!(s.any(), expected > 0);
+        }
+
+        /// A short cue surrounded by ASCII letters never counts.
+        /// General form of the enough/rough/tough/offs/staffs fix.
+        #[test]
+        fn prop_short_cue_inside_letters_does_not_fire(
+            prefix in "[a-z]{1,5}",
+            suffix in "[a-z]{1,5}",
+        ) {
+            for cue in ["ugh", "ffs", "nah"] {
+                let text = format!("{}{}{}", prefix, cue, suffix);
+                let lower = text.to_ascii_lowercase();
+                prop_assert_eq!(
+                    count_cue(&lower, cue),
+                    0,
+                    "{:?} counted inside {:?}",
+                    cue,
+                    text,
+                );
+            }
+        }
+
+        /// A short cue with non-alphanumeric neighbours counts exactly
+        /// once.
+        #[test]
+        fn prop_short_cue_alone_fires(
+            pre in "[^a-zA-Z0-9]{1,3}",
+            post in "[^a-zA-Z0-9]{1,3}",
+        ) {
+            for cue in ["ugh", "ffs", "nah"] {
+                let text = format!("{}{}{}", pre, cue, post);
+                let lower = text.to_ascii_lowercase();
+                prop_assert_eq!(
+                    count_cue(&lower, cue),
+                    1,
+                    "{:?} not counted in {:?}",
+                    cue,
+                    text,
+                );
+            }
         }
 
         /// `merge` is field-wise addition (saturating at the u32 cap,
@@ -292,21 +377,41 @@ mod behavioral_proptests {
         }
     }
 
-    /// **Characterization.** `"ugh"` matches inside common words.
+    /// `"ugh"` no longer matches inside common words: the three-byte
+    /// cue requires a non-alphanumeric character on each side.
     #[test]
-    fn ugh_cue_fires_inside_common_words() {
+    fn ugh_does_not_fire_inside_common_words() {
         for word in ["enough", "rough", "tough", "laugh", "through"] {
             let s = analyze(&format!("that is {}", word));
-            assert_eq!(s.anguish, 1, "{:?} should score anguish via 'ugh'", word);
+            assert_eq!(s.anguish, 0, "{:?} should NOT score anguish", word);
         }
     }
 
-    /// **Characterization.** `"ffs"` matches inside `"offs"`/`"staffs"`.
+    /// A standalone `ugh` still fires — any non-alphanumeric char
+    /// counts as a boundary.
     #[test]
-    fn ffs_cue_fires_inside_ffs_words() {
+    fn ugh_alone_still_fires() {
+        for text in ["ugh", "ugh!", "ugh.", "ugh,", "well ugh then"] {
+            let s = analyze(text);
+            assert_eq!(s.anguish, 1, "{:?} should score anguish", text);
+        }
+    }
+
+    /// `"ffs"` no longer matches inside `offs`/`staffs`.
+    #[test]
+    fn ffs_does_not_fire_inside_ffs_words() {
         for word in ["offs", "staffs", "offsets"] {
             let s = analyze(word);
-            assert!(s.anguish >= 1, "{:?} should score anguish via 'ffs'", word);
+            assert_eq!(s.anguish, 0, "{:?} should NOT score anguish", word);
+        }
+    }
+
+    /// A standalone `ffs` still fires.
+    #[test]
+    fn ffs_alone_still_fires() {
+        for text in ["ffs", "ffs!", "ffs.", "oh ffs"] {
+            let s = analyze(text);
+            assert_eq!(s.anguish, 1, "{:?} should score anguish", text);
         }
     }
 
