@@ -334,6 +334,16 @@ impl WorkPool {
             return None;
         }
         let take = slot.queue.len().min(self.batch_budget);
+        // A zero budget means the slot can hand out nothing.
+        // Returning `Some(empty)` here would be indistinguishable
+        // from progress for a caller written as
+        // `while let Some(b) = take_batch(id) { ... }`: the batch is
+        // empty, the queue is unchanged, and the loop never exits.
+        // `None` matches the existing "empty queue -> None" contract
+        // and tells the caller to stop.
+        if take == 0 {
+            return None;
+        }
         let items: Vec<WorkItem> = slot.queue.drain(..take).collect();
         slot.state = SlotState::Running;
         Some(BatchAssignment {
@@ -825,5 +835,121 @@ mod dispatch_proptests {
         }
         assert_eq!(pool.slot_count(), 5);
         assert_eq!(pool.queued_len(), 5);
+    }
+}
+
+#[cfg(test)]
+mod take_batch_proptests {
+    //! Properties for `WorkPool::take_batch`.
+    //!
+    //! **A contract question on the empty batch.** With
+    //! `batch_budget == 0`, `take = queue.len().min(0) == 0`, and
+    //! `drain(..0)` drains nothing. The function then returns
+    //! `Some(BatchAssignment { items: [] })`. A caller written as
+    //! `while let Some(b) = pool.take_batch(id) { ... }` loops
+    //! forever: the batch is empty, the queue is unchanged, and the
+    //! function keeps returning `Some`.
+    //!
+    //! The existing test `a_take_batch_on_an_empty_queue_is_none`
+    //! establishes "nothing to take -> None". A budget of 0 is the
+    //! same situation from the caller's side: there is nothing the
+    //! slot can hand out, so `None` is the consistent answer.
+    //!
+    //! The control `control_zero_budget_returns_none` fails on the
+    //! pre-fix code and passes after `take == 0 -> None`.
+    //!
+    //! **Reachability:** `WorkPool::new(max_agents, batch_budget)`
+    //! is public; a caller can pass 0. Whether a production caller
+    //! *does* is the survey question; even if not, the empty
+    //! `Some` is a footgun on a public API.
+
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    fn item(id: &str) -> WorkItem {
+        WorkItem::new(id, json!({}))
+    }
+
+    fn pool_with_budget(budget: usize, n_items: usize) -> (WorkPool, String) {
+        let mut pool = WorkPool::new(4, budget);
+        let d = pool.dispatch(item("warmup"));
+        let agent_id = match d {
+            Dispatch::Queued { agent_id } | Dispatch::Spawn { agent_id } => agent_id,
+            Dispatch::Rejected { .. } => panic!("dispatch rejected on a fresh pool"),
+        };
+        for i in 1..n_items {
+            pool.dispatch(item(&format!("item{i}")));
+        }
+        (pool, agent_id)
+    }
+
+    proptest! {
+        /// With a non-zero budget, `take_batch` drains at most the
+        /// budget's worth of items, and at least one if the queue
+        /// is non-empty. This is the documented contract; pin it
+        /// so a future budget-handling change fails here.
+        #[test]
+        fn prop_bounded_by_budget(
+            budget in 1usize..=8,
+            n_items in 1usize..=16,
+        ) {
+            let (mut pool, agent_id) = pool_with_budget(budget, n_items);
+            let before = pool.queued_len();
+            let batch = pool.take_batch(&agent_id).expect("non-empty queue, non-zero budget");
+            let after = pool.queued_len();
+            prop_assert!(batch.items.len() >= 1, "empty batch from non-empty queue");
+            prop_assert!(
+                batch.items.len() <= budget,
+                "batch of {} > budget {}", batch.items.len(), budget,
+            );
+            prop_assert_eq!(before - after, batch.items.len());
+        }
+    }
+
+    // ---- controls: the empty-queue and zero-budget boundaries -----
+
+    /// **The bug control.** A zero budget returns `None`, not
+    /// `Some(empty)`. Pre-fix: `Some(BatchAssignment { items: [] })`
+    /// for a non-empty queue, which is a naive-caller infinite
+    /// loop. Post-fix: `None`.
+    #[test]
+    fn control_zero_budget_returns_none() {
+        let (mut pool, agent_id) = pool_with_budget(0, 3);
+        let result = pool.take_batch(&agent_id);
+        assert!(
+            result.is_none(),
+            "zero budget returned {:?}; expected None (nothing can be taken)",
+            result,
+        );
+    }
+
+    /// Control: an `Unavailable` slot returns `None`, even if the
+    /// queue is non-empty. The tombstone means "do not reuse this
+    /// slot"; taking a batch would resume work on a stale schema.
+    #[test]
+    fn control_unavailable_slot_returns_none() {
+        let (mut pool, agent_id) = pool_with_budget(4, 3);
+        if let Some(slot) = pool.slots.get_mut(&agent_id) {
+            slot.state = SlotState::Unavailable;
+        }
+        assert!(pool.take_batch(&agent_id).is_none());
+    }
+
+    /// Control: an unknown agent id returns `None`.
+    #[test]
+    fn control_unknown_agent_returns_none() {
+        let (mut pool, _) = pool_with_budget(4, 1);
+        assert!(pool.take_batch("nope").is_none());
+    }
+
+    /// Control: an empty queue returns `None` (the pre-existing
+    /// test restated; pins the contract the zero-budget fix
+    /// extends to its own case).
+    #[test]
+    fn control_empty_queue_returns_none() {
+        let (mut pool, agent_id) = pool_with_budget(4, 1);
+        let _ = pool.take_batch(&agent_id);
+        assert!(pool.take_batch(&agent_id).is_none());
     }
 }
