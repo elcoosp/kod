@@ -164,7 +164,19 @@ pub fn check(
     }
 
     // Soft threshold at 80 % of either cap.
-    if q.per_session > 0 && s * 100 >= q.per_session * 80 {
+    //
+    // `saturating_mul` on both sides: `q.per_session` and
+    // `q.per_turn` come from config as `usize`, with no upstream
+    // bound. Plain `* 80` overflows for any quota above
+    // `usize::MAX / 80`; debug builds panic, release builds wrap
+    // to a small value and the soft check fires spuriously. With
+    // saturation, an overflowing right side becomes `usize::MAX`
+    // and the left (a session's tool-call count) can never reach
+    // it — which is the correct "no one has that many calls"
+    // behavior. The left side `s * 100` cannot overflow in
+    // practice (one increment per `record()`), but saturating
+    // there too costs nothing and pins the invariant.
+    if q.per_session > 0 && s.saturating_mul(100) >= q.per_session.saturating_mul(80) {
         return QuotaVerdict::Soft {
             reason: format!(
                 "`{tool}` has used {s}/{} of its session quota",
@@ -172,7 +184,7 @@ pub fn check(
             ),
         };
     }
-    if q.per_turn > 0 && t * 100 >= q.per_turn * 80 {
+    if q.per_turn > 0 && t.saturating_mul(100) >= q.per_turn.saturating_mul(80) {
         return QuotaVerdict::Soft {
             reason: format!("`{tool}` has used {t}/{} of its per-turn quota", q.per_turn,),
         };
@@ -344,5 +356,169 @@ mod tests {
         let grep = snap.iter().find(|(n, _, _)| n == "grep").unwrap();
         assert_eq!(grep.1, 2);
         assert_eq!(grep.2, 2);
+    }
+}
+
+#[cfg(test)]
+mod tool_quota_proptests {
+    //! Properties for `check`.
+    //!
+    //! **A real overflow bug.** The soft-threshold arithmetic is
+    //! `s * 100 >= q.per_session * 80` (and the same for
+    //! `per_turn`). Both multiplications are plain `usize`; for
+    //! any config with `per_session > usize::MAX / 80`, the right
+    //! side overflows. Debug builds panic; release builds wrap
+    //! to a small value and the soft check fires spuriously.
+    //!
+    //! `ToolQuota` comes from config, so a single YAML/TOML
+    //! entry with an absurd number is reachable. The property
+    //! below fails on the pre-fix code (panic) and passes after
+    //! (`saturating_mul` on both sides).
+    //!
+    //! The other five properties pin the documented per-cap
+    //! behaviour and the short-circuit on `None`.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn counts_after(tool: &str, n: usize) -> ToolCounts {
+        let c = ToolCounts::new();
+        for _ in 0..n {
+            c.record(tool, None);
+        }
+        c
+    }
+
+    fn quota(per_turn: usize, per_session: usize, per_command: usize) -> ToolQuota {
+        ToolQuota {
+            per_turn,
+            per_session,
+            per_command,
+        }
+    }
+
+    // ---- the bug ------------------------------------------------
+
+    /// **The overflow.** `check` never panics for any `usize`
+    /// quota. Pre-fix, the soft-threshold arithmetic overflows
+    /// when `per_session` or `per_turn` exceeds `usize::MAX / 80`.
+    #[test]
+    fn prop_check_never_panics_on_huge_quota() {
+        let huge_values = [
+            usize::MAX,
+            usize::MAX / 2,
+            usize::MAX / 80,
+            usize::MAX / 80 + 1,
+            usize::MAX / 100,
+            usize::MAX / 100 + 1,
+        ];
+        for &p in &huge_values {
+            // per_session huge, per_turn normal
+            let c = counts_after("t", 0);
+            let q = quota(10, p, 10);
+            let _ = check(&c, "t", Some(&q), None);
+
+            // per_turn huge, per_session normal
+            let q = quota(p, 10, 10);
+            let _ = check(&c, "t", Some(&q), None);
+
+            // both huge
+            let q = quota(p, p, p);
+            let _ = check(&c, "t", Some(&q), Some("cmd"));
+        }
+    }
+
+    // ---- documented behaviour (regression guards) ---------------
+
+    proptest! {
+        /// `None` quota is always `Ok`. The function short-circuits
+        /// before any arithmetic.
+        #[test]
+        fn prop_none_quota_is_ok(tool in "[a-z]{1,5}", n in 0usize..=20) {
+            let c = counts_after(&tool, n);
+            prop_assert_eq!(
+                std::mem::discriminant(&check(&c, &tool, None, None)),
+                std::mem::discriminant(&QuotaVerdict::Ok),
+            );
+        }
+
+        /// At the per-session cap, the verdict is Hard. Below it,
+        /// not Hard.
+        #[test]
+        fn prop_per_session_cap(
+            cap in 1usize..=10,
+            under in 0usize..=9,
+        ) {
+            prop_assume!(under < cap);
+            let c_under = counts_after("t", under);
+            let q = quota(0, cap, 0);
+            let under_v = check(&c_under, "t", Some(&q), None);
+            prop_assert!(
+                !matches!(under_v, QuotaVerdict::Hard { .. }),
+                "under cap {} with {} calls -> {:?}", cap, under, under_v,
+            );
+
+            let c_at = counts_after("t", cap);
+            let at_v = check(&c_at, "t", Some(&q), None);
+            prop_assert!(
+                matches!(at_v, QuotaVerdict::Hard { .. }),
+                "at cap {} with {} calls -> {:?}", cap, cap, at_v,
+            );
+        }
+
+        /// A quota field of `0` disables that cap. A `per_session = 0`
+        /// with any number of calls is not Hard for the session
+        /// reason.
+        #[test]
+        fn prop_zero_cap_disabled(n in 0usize..=50) {
+            let c = counts_after("t", n);
+            let q = quota(0, 0, 0);
+            let v = check(&c, "t", Some(&q), None);
+            prop_assert_eq!(
+                std::mem::discriminant(&v),
+                std::mem::discriminant(&QuotaVerdict::Ok),
+            );
+        }
+    }
+
+    // ---- controls: the 80% soft threshold -----------------------
+
+    /// Control: at 80% of the per-session cap, Soft fires.
+    #[test]
+    fn control_soft_at_eighty_percent_session() {
+        let c = counts_after("t", 8);
+        let q = quota(0, 10, 0);
+        let v = check(&c, "t", Some(&q), None);
+        assert!(matches!(v, QuotaVerdict::Soft { .. }), "got {:?}", v);
+    }
+
+    /// Control: below 80%, Ok (not Soft).
+    #[test]
+    fn control_below_eighty_percent_is_ok() {
+        let c = counts_after("t", 7);
+        let q = quota(0, 10, 0);
+        let v = check(&c, "t", Some(&q), None);
+        assert!(matches!(v, QuotaVerdict::Ok), "got {:?}", v);
+    }
+
+    /// Control: at the cap, Hard (not Soft). The hard check fires
+    /// before the soft threshold.
+    #[test]
+    fn control_hard_beats_soft_at_cap() {
+        let c = counts_after("t", 10);
+        let q = quota(0, 10, 0);
+        let v = check(&c, "t", Some(&q), None);
+        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {:?}", v);
+    }
+
+    /// Control: `per_turn` cap is independent of `per_session`.
+    /// `begin_turn` resets turn only; a session-capped run with a
+    /// high per-turn cap is Hard on session.
+    #[test]
+    fn control_session_independent_of_turn() {
+        let c = counts_after("t", 5);
+        let q = quota(100, 5, 0);
+        let v = check(&c, "t", Some(&q), None);
+        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {:?}", v);
     }
 }

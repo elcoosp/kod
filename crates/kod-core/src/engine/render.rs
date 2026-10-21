@@ -918,10 +918,6 @@ mod render_proptests {
     use super::*;
     use proptest::prelude::*;
 
-    fn ascii(s: &str) -> bool {
-        s.is_ascii()
-    }
-
     fn cjk_char() -> impl Strategy<Value = char> {
         prop::sample::select(vec![
             '中', '国', '建', '設', '計', '師', '文', '字', '力', '心',
