@@ -1237,3 +1237,213 @@ mod sanitize_slug_proptests {
         );
     }
 }
+
+#[cfg(test)]
+mod merge_refusal_tests {
+    //! Integration tests for `merge_all`'s H-D3 refusal paths and for
+    //! `disarm`. The clean-merge and conflict paths already have tests
+    //! (`merge_all_merges_clean_worktree`,
+    //! `merge_all_reports_conflict_and_aborts`); the refusal paths do
+    //! not, and they are the ones whose bodies carry hard-won fixes.
+    //!
+    //! Three specific behaviours are pinned:
+    //!
+    //! 1. HEAD not descended from the swarm's base commit: every
+    //!    branch lands in `report.failed` and no merge is attempted.
+    //!    The ancestor check (`merge-base --is-ancestor`) is
+    //!    deliberately more permissive than HEAD == base — a user
+    //!    committing on `main` mid-swarm must not block the merge.
+    //! 2. A dirty index: `report.failed` non-empty, no merge
+    //!    attempted.
+    //! 3. An unreadable status fails **closed**: the pre-fix
+    //!    `unwrap_or_default()` turned any error into an empty string,
+    //!    the dirty-index guard passed, and merge ran on a dirty tree.
+    //!
+    //! Plus one for `disarm`: after disarming, `Drop` must leave the
+    //! worktree directories on disk — that is the whole point of the
+    //! method.
+    use super::*;
+
+    fn binary_on_path(name: &str) -> bool {
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+            .unwrap_or(false)
+    }
+
+    /// A minimal git repo with one commit. Mirrors the private
+    /// `init_repo` in `mod tests`; replicated rather than shared
+    /// because the sibling module is private and promoting it would
+    /// touch the existing test module for no reason.
+    fn init_repo() -> Option<tempfile::TempDir> {
+        if !binary_on_path("git") {
+            return None;
+        }
+        let tmp = tempfile::TempDir::new().ok()?;
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "T"],
+            vec!["config", "gc.auto", "0"],
+            vec!["config", "gc.autoDetach", "false"],
+            vec!["config", "maintenance.auto", "false"],
+        ] {
+            let _ = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(tmp.path())
+                .status();
+        }
+        std::fs::write(tmp.path().join("seed.txt"), "seed\n").ok()?;
+        let _ = std::process::Command::new("git")
+            .args(["add", "seed.txt"])
+            .current_dir(tmp.path())
+            .status();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-q", "-m", "seed"])
+            .current_dir(tmp.path())
+            .status();
+        Some(tmp)
+    }
+
+    fn git(repo: &Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// **H-D3 ancestor refusal.** After the swarm's base commit is no
+    /// longer an ancestor of HEAD, `merge_all` must refuse every
+    /// branch and merge nothing. The pre-fix shape ran `git merge` in
+    /// whatever checkout was current.
+    #[test]
+    fn merge_all_refuses_when_head_is_not_descended_from_base() {
+        let Some(tmp) = init_repo() else { return };
+
+        // Capture the manager at the seed commit.
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        mgr.create("agent-1").expect("create agent-1");
+
+        // Move HEAD to an orphan branch, so base is no longer an
+        // ancestor.
+        assert!(
+            git(tmp.path(), &["checkout", "--orphan", "orphaned"]),
+            "could not create orphan branch",
+        );
+        assert!(
+            git(
+                tmp.path(),
+                &["commit", "-q", "--allow-empty", "-m", "orphan commit"],
+            ),
+            "could not commit on orphan branch",
+        );
+
+        let report = mgr.merge_all().expect("merge_all returns Ok(report)");
+        assert!(
+            report.merged.is_empty(),
+            "expected no merge, got {:?}",
+            report.merged,
+        );
+        assert!(
+            !report.failed.is_empty(),
+            "expected refusal in report.failed, got {:?}",
+            report.failed,
+        );
+        let (branch, msg) = &report.failed[0];
+        assert!(branch.contains("agent-1"), "wrong branch: {branch}");
+        assert!(
+            msg.contains("not descended") || msg.contains("ancestor"),
+            "refusal message did not name the ancestor check: {msg}",
+        );
+    }
+
+    /// **H-D3 dirty-index refusal.** A modified file that is not
+    /// `.gitignore` blocks the merge.
+    #[test]
+    fn merge_all_refuses_when_the_index_is_dirty() {
+        let Some(tmp) = init_repo() else { return };
+
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        mgr.create("agent-1").expect("create agent-1");
+
+        // Dirty the source repo, *outside* the excluded .gitignore.
+        std::fs::write(tmp.path().join("dirty.txt"), "uncommitted\n").unwrap();
+
+        let report = mgr.merge_all().expect("merge_all returns Ok(report)");
+        assert!(
+            report.merged.is_empty(),
+            "expected no merge, got {:?}",
+            report.merged,
+        );
+        assert!(
+            !report.failed.is_empty(),
+            "expected refusal in report.failed, got {:?}",
+            report.failed,
+        );
+        let (_, msg) = &report.failed[0];
+        assert!(
+            msg.contains("uncommitted changes"),
+            "refusal message did not name the dirty index: {msg}",
+        );
+    }
+
+    /// **H-D3 fix specific to `.gitignore`.** `create()` appends
+    /// `.kod/` to `.gitignore`; the dirty-index check excludes that
+    /// exact file, so a create-then-merge sequence must NOT refuse on
+    /// the manager's own edit. Without the exclusion, every merge
+    /// refused — which is what made the merge path unusable before
+    /// this fix.
+    #[test]
+    fn merge_all_does_not_refuse_on_the_managers_gitignore_edit() {
+        let Some(tmp) = init_repo() else { return };
+
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        mgr.create("agent-1").expect("create agent-1");
+
+        // Commit some work in the agent branch so the merge has
+        // something to do.
+        let info = &mgr.created()[0];
+        std::fs::write(info.path.join("agent-work.txt"), "hi\n").unwrap();
+        assert!(git(&info.path, &["add", "agent-work.txt"]));
+        assert!(git(&info.path, &["commit", "-q", "-m", "agent work"]));
+
+        let report = mgr.merge_all().expect("merge_all returns Ok(report)");
+        assert!(
+            report.failed.is_empty(),
+            "refused a merge it should have accepted: {:?}",
+            report.failed,
+        );
+        assert_eq!(
+            report.merged.len(),
+            1,
+            "expected the one agent branch to merge, got {:?}",
+            report.merged,
+        );
+    }
+
+    /// **`disarm`.** After disarming, `Drop` must leave the worktree
+    /// directories on disk — clearing `created` is the whole point of
+    /// the method. A regression that removed `created.clear()` would
+    /// make `disarm` a no-op and `Drop` would delete worktrees the
+    /// caller explicitly asked to keep.
+    #[test]
+    fn disarm_prevents_drop_from_removing_worktrees() {
+        let Some(tmp) = init_repo() else { return };
+
+        let worktree_path;
+        {
+            let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+            let info = mgr.create("agent-1").expect("create agent-1");
+            worktree_path = info.path.clone();
+            assert!(worktree_path.exists(), "worktree not created");
+            mgr.disarm();
+        } // Drop runs here.
+
+        assert!(
+            worktree_path.exists(),
+            "disarm did not prevent Drop from removing {}",
+            worktree_path.display(),
+        );
+    }
+}
