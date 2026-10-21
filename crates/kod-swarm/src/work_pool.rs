@@ -233,10 +233,21 @@ impl WorkPool {
         if self.policy == DispatchPolicy::FreshAgents {
             let id = self.next_agent_id();
             // FreshAgents slots are Running from the moment they
-            // exist — the item goes with the spawn, not into a
-            // queue.
+            // exist. The item goes into the slot's queue, the same
+            // way it does in the Batched branches: `Dispatch::Spawn
+            // { agent_id }` means "your item is in a slot, go spawn
+            // the agent", and the caller fetches it via
+            // `take_batch(agent_id)`.
+            //
+            // Pre-fix this branch created the slot but did not push
+            // the item, and `Spawn` does not carry it — so the item
+            // was silently dropped. `FreshAgents` is set nowhere in
+            // production today, but `with_policy(FreshAgents)` is a
+            // public API and the trap is live for any caller that
+            // opts in.
             let mut slot = WorkerSlot::new(id.clone(), 0);
             slot.state = SlotState::Running;
+            slot.queue.push_back(item);
             self.slots.insert(id.clone(), slot);
             return Dispatch::Spawn { agent_id: id };
         }
@@ -727,5 +738,92 @@ mod tests {
             pool.slot_ids(),
             vec!["alpha".to_string(), "zeta".to_string()]
         );
+    }
+}
+
+#[cfg(test)]
+mod dispatch_proptests {
+    //! Conservation properties for `WorkPool::dispatch`.
+    //!
+    //! **A real bug.** `dispatch(item)` takes the item by value.
+    //! Every branch either pushes it into a slot's queue or returns
+    //! `Rejected`, **except** the `FreshAgents` branch: it creates a
+    //! new slot but never pushes the item, and `Dispatch::Spawn {
+    //! agent_id }` does not carry it. The item is silently dropped.
+    //!
+    //! `FreshAgents` is set nowhere in production code today (only
+    //! in one test), so the bug is latent — but `WorkPool::
+    //! with_policy(DispatchPolicy::FreshAgents)` is a public API,
+    //! and any future caller that opts into that policy loses every
+    //! dispatched item with no error.
+    //!
+    //! The fix (same commit) pushes the item into the fresh slot's
+    //! queue, so both `Spawn` branches mean the same thing: "your
+    //! item is in a slot, go spawn the agent". The fix preserves
+    //! the FreshAgents property (one slot per item, no sharing):
+    //! each fresh slot has its own queue of exactly one item.
+
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    fn item(id: &str) -> WorkItem {
+        WorkItem::new(id, json!({}))
+    }
+
+    fn fresh_pool() -> WorkPool {
+        WorkPool::new(1, 10).with_policy(DispatchPolicy::FreshAgents)
+    }
+
+    proptest! {
+        /// **The bug.** Under `FreshAgents`, dispatching an item
+        /// leaves it in the pool. Pre-fix: `queued_len() == 0` and
+        /// the item is gone. Post-fix: `queued_len() == 1`, the
+        /// item is in the fresh slot's queue.
+        #[test]
+        fn prop_fresh_agents_preserves_item(id in "[a-z]{1,10}") {
+            let mut pool = fresh_pool();
+            let d = pool.dispatch(item(&id));
+            prop_assert!(matches!(d, Dispatch::Spawn { .. }), "expected Spawn, got {:?}", d);
+            prop_assert!(
+                pool.queued_len() >= 1,
+                "dispatch spawned but pool has 0 queued items; the item was dropped",
+            );
+        }
+
+        /// **Conservation, Batched.** Under the default `Batched`
+        /// policy, every dispatch either queues the item or rejects
+        /// it. Pre-fix this already holds (all three Batched
+        /// branches push into `slot.queue` before returning
+        /// `Queued` or `Spawn`); pinned as a regression guard.
+        #[test]
+        fn prop_batched_conserves_item(id in "[a-z]{1,10}") {
+            let mut pool = WorkPool::new(4, 10);
+            let d = pool.dispatch(item(&id));
+            match d {
+                Dispatch::Queued { .. } | Dispatch::Spawn { .. } => {
+                    prop_assert!(
+                        pool.queued_len() >= 1,
+                        "Batched dispatch {:?} did not queue the item", d,
+                    );
+                }
+                Dispatch::Rejected { .. } => {
+                    // Rejected is fine; nothing was consumed.
+                }
+            }
+        }
+    }
+
+    /// Control: N dispatches under `FreshAgents` yield N slots,
+    /// each with exactly one queued item. This is the whole point
+    /// of the policy — one slot per item, no sharing.
+    #[test]
+    fn control_fresh_agents_one_item_per_slot() {
+        let mut pool = fresh_pool();
+        for i in 0..5 {
+            pool.dispatch(item(&format!("i{i}")));
+        }
+        assert_eq!(pool.slot_count(), 5);
+        assert_eq!(pool.queued_len(), 5);
     }
 }
