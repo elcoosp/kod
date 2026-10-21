@@ -226,6 +226,17 @@ pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
 
 /// `kod plan json` — plan as JSON.
 pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
+    let s = plan_json_string(state)?;
+    println!("{s}");
+    Ok(())
+}
+
+/// The JSON body `run_plan_json` prints, as data.
+///
+/// `null` is a valid output: it means "no plan recorded in this state
+/// file". The wrapper prints whatever this returns; a test asserts on
+/// the parsed `serde_json::Value`.
+pub fn plan_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
     let path = match state {
         Some(p) => p,
         None => kod_core::StateStore::default_path()
@@ -234,10 +245,7 @@ pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let store = kod_core::StateStore::open(path);
     let loaded = store.load();
     let plan = loaded.plans.get("session");
-    let s =
-        serde_json::to_string_pretty(&plan).map_err(|e| KodError::Serialization(e.to_string()))?;
-    println!("{s}");
-    Ok(())
+    serde_json::to_string_pretty(&plan).map_err(|e| KodError::Serialization(e.to_string()))
 }
 
 /// `kod decisions show` — decisions from state.json.
@@ -270,6 +278,14 @@ pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize)
 
 /// `kod decisions json` — decisions as JSON.
 pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
+    let s = decisions_json_string(state)?;
+    println!("{s}");
+    Ok(())
+}
+
+/// The JSON body `run_decisions_json` prints, as data.
+/// `null` means "no decisions recorded".
+pub fn decisions_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
     let path = match state {
         Some(p) => p,
         None => kod_core::StateStore::default_path()
@@ -278,10 +294,7 @@ pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()>
     let store = kod_core::StateStore::open(path);
     let loaded = store.load();
     let log = loaded.decision_logs.get("session");
-    let s =
-        serde_json::to_string_pretty(&log).map_err(|e| KodError::Serialization(e.to_string()))?;
-    println!("{s}");
-    Ok(())
+    serde_json::to_string_pretty(&log).map_err(|e| KodError::Serialization(e.to_string()))
 }
 
 /// Default `turns.jsonl` path under the user's home directory.
@@ -586,12 +599,17 @@ pub(super) async fn drive_prompt_through_fresh_engine(
 
 /// `kod trace json` — every turn as a JSON array.
 pub async fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
-    let path = resolve_trace_path(path)?;
-    let traces = kod_core::read_traces(&path)?;
-    let s = serde_json::to_string_pretty(&traces)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let s = trace_json_string(path)?;
     println!("{s}");
     Ok(())
+}
+
+/// The JSON body `run_trace_json` prints, as data. An empty trace
+/// file serializes to `[]`, not `null`.
+pub fn trace_json_string(path: Option<std::path::PathBuf>) -> Result<String> {
+    let path = resolve_trace_path(path)?;
+    let traces = kod_core::read_traces(&path)?;
+    serde_json::to_string_pretty(&traces).map_err(|e| KodError::Serialization(e.to_string()))
 }
 
 /// Truncate a display field to `max` chars, adding `…` on cut.

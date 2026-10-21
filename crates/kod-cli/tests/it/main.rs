@@ -8,6 +8,7 @@ mod acp_handshake;
 pub mod common;
 mod config_migrate;
 mod integration_tests;
+mod observability_json;
 mod observability_paths;
 mod observability_render;
 mod policy_explain;
