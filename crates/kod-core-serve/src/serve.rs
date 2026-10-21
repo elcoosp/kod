@@ -325,7 +325,18 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
                 .iter()
                 .position(|&b| b == b'\n')
                 .map_or(available.len(), |p| p + 1);
-            if buf.len() + take > self.cap {
+            // The cap is a *content* budget: a trailing `\n` is a
+            // terminator, not content. Pre-fix the check used `take`
+            // as-is, so a line of exactly `cap` content bytes
+            // followed by `\n` was rejected while the same content
+            // at EOF was accepted. Measure content only.
+            let terminator_len = if available.get(take.saturating_sub(1)) == Some(&b'\n') {
+                1
+            } else {
+                0
+            };
+            let content_take = take - terminator_len;
+            if buf.len() + content_take > self.cap {
                 return Err(KodError::InvalidParameters {
                     reason: format!("request line exceeds {} bytes", self.cap),
                 });
@@ -491,30 +502,31 @@ where
                 let id_for_guard = id.clone();
                 spawn_panic_guarded(
                     async move {
-                    match engine.process_for(&key, &input).await {
-                        Ok(resp) => {
-                            if let Err(write_err) = write_done(&out, &id, &resp).await {
-                                tracing::warn!(
-                                    error = %write_err,
-                                    "serve: could not deliver the process_for done frame",
-                                );
+                        match engine.process_for(&key, &input).await {
+                            Ok(resp) => {
+                                if let Err(write_err) = write_done(&out, &id, &resp).await {
+                                    tracing::warn!(
+                                        error = %write_err,
+                                        "serve: could not deliver the process_for done frame",
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                // The engine errored; the client needs to
+                                // know. The pre-fix `let _ =` would silently
+                                // drop the error frame if the writer channel
+                                // had closed, leaving the caller waiting
+                                // until its own timeout fired (if any).
+                                if let Err(write_err) = write_error(&out, &id, &e.to_string()).await
+                                {
+                                    tracing::warn!(
+                                        error = %write_err,
+                                        engine_error = %e,
+                                        "serve: could not deliver the process_for error frame",
+                                    );
+                                }
                             }
                         }
-                        Err(e) => {
-                            // The engine errored; the client needs to
-                            // know. The pre-fix `let _ =` would silently
-                            // drop the error frame if the writer channel
-                            // had closed, leaving the caller waiting
-                            // until its own timeout fired (if any).
-                            if let Err(write_err) = write_error(&out, &id, &e.to_string()).await {
-                                tracing::warn!(
-                                    error = %write_err,
-                                    engine_error = %e,
-                                    "serve: could not deliver the process_for error frame",
-                                );
-                            }
-                        }
-                    }
                     },
                     out_for_guard,
                     id_for_guard,
@@ -530,28 +542,28 @@ where
                 let id_for_guard = id.clone();
                 spawn_panic_guarded(
                     async move {
-                    if let Err(e) = run_streaming(&engine, &out, &id, &input, &key).await {
-                        // The streaming pump failed mid-turn. Try to
-                        // hand the client an error frame; a failure to
-                        // deliver *that* is a second, independent
-                        // problem and is logged rather than dropped.
-                        if let Err(write_err) = send_response(
-                            &out,
-                            &Response {
-                                id: &id,
-                                kind: "error",
-                                data: Some(serde_json::json!({"message": e.to_string()})),
-                            },
-                        )
-                        .await
-                        {
-                            tracing::warn!(
-                                error = %write_err,
-                                engine_error = %e,
-                                "serve: could not deliver the process_streaming error frame",
-                            );
+                        if let Err(e) = run_streaming(&engine, &out, &id, &input, &key).await {
+                            // The streaming pump failed mid-turn. Try to
+                            // hand the client an error frame; a failure to
+                            // deliver *that* is a second, independent
+                            // problem and is logged rather than dropped.
+                            if let Err(write_err) = send_response(
+                                &out,
+                                &Response {
+                                    id: &id,
+                                    kind: "error",
+                                    data: Some(serde_json::json!({"message": e.to_string()})),
+                                },
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    error = %write_err,
+                                    engine_error = %e,
+                                    "serve: could not deliver the process_streaming error frame",
+                                );
+                            }
                         }
-                    }
                     },
                     out_for_guard,
                     id_for_guard,
@@ -640,24 +652,26 @@ where
                 let id_for_guard = id.clone();
                 spawn_panic_guarded(
                     async move {
-                    if let Err(e) = run_swarm(&engine, &out, &id, &goal, max_agents, merge).await {
-                        if let Err(write_err) = send_response(
-                            &out,
-                            &Response {
-                                id: &id,
-                                kind: "error",
-                                data: Some(serde_json::json!({"message": e.to_string()})),
-                            },
-                        )
-                        .await
+                        if let Err(e) =
+                            run_swarm(&engine, &out, &id, &goal, max_agents, merge).await
                         {
-                            tracing::warn!(
-                                error = %write_err,
-                                engine_error = %e,
-                                "serve: could not deliver the swarm error frame",
-                            );
+                            if let Err(write_err) = send_response(
+                                &out,
+                                &Response {
+                                    id: &id,
+                                    kind: "error",
+                                    data: Some(serde_json::json!({"message": e.to_string()})),
+                                },
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    error = %write_err,
+                                    engine_error = %e,
+                                    "serve: could not deliver the swarm error frame",
+                                );
+                            }
                         }
-                    }
                     },
                     out_for_guard,
                     id_for_guard,
@@ -756,7 +770,6 @@ async fn handle_connection(
     let (read_half, write_half) = stream.into_split();
     serve_io(engine, read_half, write_half, shutdown).await
 }
-
 
 /// Pump one streaming call's chunks through the writer channel.
 /// Extracted from the main loop so `process_streaming` can spawn it.
@@ -905,11 +918,8 @@ async fn write_done(
 /// the shape `acp.rs:464` uses for `run_prompt` (aa21bf8): an inner
 /// `tokio::spawn` whose `JoinHandle::await` returns `Err` on panic,
 /// so the error path runs on normal, error, and panic.
-pub(crate) fn spawn_panic_guarded<F>(
-    fut: F,
-    out: tokio::sync::mpsc::Sender<String>,
-    id: String,
-) where
+pub(crate) fn spawn_panic_guarded<F>(fut: F, out: tokio::sync::mpsc::Sender<String>, id: String)
+where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     tokio::spawn(async move {
@@ -1472,7 +1482,6 @@ mod version_tests {
     }
 }
 
-
 #[cfg(test)]
 mod panic_guard_tests {
     //! Pins the contract of `spawn_panic_guarded`: a panic in the
@@ -1507,12 +1516,13 @@ mod panic_guard_tests {
             Ok(None) => panic!(
                 "channel closed with no error frame; the caller would wait on its request id"
             ),
-            Err(_) => panic!(
-                "no error frame within 1s; the caller would wait on its request id"
-            ),
+            Err(_) => panic!("no error frame within 1s; the caller would wait on its request id"),
         };
         assert!(line.contains("\"error\""), "not an error frame: {line}");
-        assert!(line.contains("req-1"), "error frame is not for req-1: {line}");
+        assert!(
+            line.contains("req-1"),
+            "error frame is not for req-1: {line}"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -1545,11 +1555,7 @@ mod panic_guard_tests {
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> kod_error::Result<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
             panic!("simulated provider panic in generate")
         }
         async fn generate_with_tools(
@@ -1570,9 +1576,7 @@ mod panic_guard_tests {
     }
 
     /// Build an engine with `PanickingProvider` installed and started.
-    async fn engine_with_panicking_provider(
-        temp: &tempfile::TempDir,
-    ) -> Arc<KodEngine> {
+    async fn engine_with_panicking_provider(temp: &tempfile::TempDir) -> Arc<KodEngine> {
         let cfg = RouterConfig {
             embedder: None,
             skill_threshold: 0.3,
@@ -1582,9 +1586,7 @@ mod panic_guard_tests {
             context_window: 8192,
             short_term_capacity: 100,
         };
-        let engine = Arc::new(
-            KodEngine::new(cfg, temp.path().join("serve.redb")).unwrap(),
-        );
+        let engine = Arc::new(KodEngine::new(cfg, temp.path().join("serve.redb")).unwrap());
 
         let provider: Arc<dyn LlmProvider> = Arc::new(PanickingProvider);
         let mut registry = ProviderRegistry::new();
@@ -1619,9 +1621,10 @@ mod panic_guard_tests {
         let shutdown = Arc::new(tokio::sync::Notify::new());
         let shutdown_for_serve = shutdown.clone();
 
-        let serve_handle = tokio::spawn(async move {
-            serve_io(engine, server_r, server_w, shutdown_for_serve).await
-        });
+        let serve_handle =
+            tokio::spawn(
+                async move { serve_io(engine, server_r, server_w, shutdown_for_serve).await },
+            );
 
         let req = serde_json::json!({
             "id": "r1",
@@ -1647,7 +1650,10 @@ mod panic_guard_tests {
         .await
         .expect("no response frame within 5s; the guard did not send one")
         .expect("read failed");
-        assert!(read > 0, "EOF on client side; the guard did not send a frame");
+        assert!(
+            read > 0,
+            "EOF on client side; the guard did not send a frame"
+        );
 
         let frame: serde_json::Value = serde_json::from_str(buf.trim_end()).unwrap();
         assert_eq!(
@@ -1662,11 +1668,7 @@ mod panic_guard_tests {
         );
 
         shutdown.notify_one();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            serve_handle,
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serve_handle).await;
     }
 
     // ---------------------------------------------------------------------
@@ -1692,9 +1694,10 @@ mod panic_guard_tests {
         let shutdown = Arc::new(tokio::sync::Notify::new());
         let shutdown_for_serve = shutdown.clone();
 
-        let serve_handle = tokio::spawn(async move {
-            serve_io(engine, server_r, server_w, shutdown_for_serve).await
-        });
+        let serve_handle =
+            tokio::spawn(
+                async move { serve_io(engine, server_r, server_w, shutdown_for_serve).await },
+            );
 
         let req = serde_json::json!({
             "id": "s1",
@@ -1731,11 +1734,8 @@ mod panic_guard_tests {
                         "error frame is not for s1: {frame}",
                     );
                     shutdown.notify_one();
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        serve_handle,
-                    )
-                    .await;
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), serve_handle).await;
                     return;
                 }
                 Some("done") => panic!(
@@ -1749,5 +1749,176 @@ mod panic_guard_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod capped_lines_proptests {
+    //! Properties for `CappedLines::next_line`.
+    //!
+    //! `CappedLines` reads a byte stream one `\n`-terminated line
+    //! at a time, capped by a caller-supplied byte budget. It is
+    //! the request-line reader for the ACP server; the 1 MiB cap
+    //! is a hostile-peer guard, not a per-request limit a
+    //! well-behaved client hits.
+    //!
+    //! **A real off-by-one.** The cap is enforced as
+    //! `buf.len() + take > cap`, where `take` includes the `\n`
+    //! terminator if one is present. That means:
+    //!
+    //! * `content + "\n"` with `content.len() == cap - 1`:
+    //!   `take = cap`, `0 + cap > cap` is false -> accepts.
+    //! * `content + "\n"` with `content.len() == cap`:
+    //!   `take = cap + 1`, `cap + 1 > cap` -> **errors**.
+    //! * `content` at EOF (no terminator) with
+    //!   `content.len() == cap`: `take = cap`,
+    //!   `0 + cap > cap` is false -> accepts.
+    //!
+    //! Same content, two outcomes, based on whether a terminator
+    //! follows. The cap's unit is ambiguous between "line including
+    //! terminator" and "content excluding terminator"; the code
+    //! measures one or the other depending on the read path.
+    //!
+    //! `prop_terminator_does_not_change_admissibility` fails on the
+    //! pre-fix code for `content.len() == cap`; the fix (below,
+    //! same commit) makes the cap a *content* budget by subtracting
+    //! the terminator from `take`.
+
+    use super::*;
+    use proptest::prelude::*;
+    use std::io::Cursor;
+    use tokio::io::BufReader;
+
+    /// Drive `next_line` on a fixed byte slice. The reader is a
+    /// `BufReader` over a `Cursor`, so `fill_buf` returns chunks
+    /// without any real I/O.
+    fn one_line(bytes: Vec<u8>, cap: usize) -> Result<Option<String>> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .expect("single-thread rt");
+        rt.block_on(async {
+            let mut reader = BufReader::new(Cursor::new(bytes));
+            let mut lines = CappedLines::new(&mut reader, cap);
+            lines.next_line().await
+        })
+    }
+
+    fn safe_content(max_len: usize) -> impl Strategy<Value = String> {
+        prop::string::string_regex(&format!("[a-zA-Z0-9]{{0,{max_len}}}")).expect("regex compiles")
+    }
+
+    proptest! {
+        /// A well-formed line with `\n` terminator yields its
+        /// content, minus the terminator.
+        #[test]
+        fn prop_lf_stripped(content in safe_content(40)) {
+            let mut bytes = content.clone().into_bytes();
+            bytes.push(b'\n');
+            let result = one_line(bytes, 1000).expect("ok");
+            prop_assert_eq!(result, Some(content));
+        }
+
+        /// A well-formed line with `\r\n` terminator yields its
+        /// content, minus both.
+        #[test]
+        fn prop_crlf_stripped(content in safe_content(40)) {
+            let mut bytes = content.clone().into_bytes();
+            bytes.extend_from_slice(b"\r\n");
+            let result = one_line(bytes, 1000).expect("ok");
+            prop_assert_eq!(result, Some(content));
+        }
+
+        /// EOF with no terminator yields the content. Excludes
+        /// empty input: `next_line` returns `None` for that case,
+        /// pinned separately by `prop_empty_returns_none`.
+        #[test]
+        fn prop_eof_no_terminator_returns_content(content in "[a-zA-Z0-9]{1,40}") {
+            let bytes = content.clone().into_bytes();
+            let result = one_line(bytes, 1000).expect("ok");
+            prop_assert_eq!(result, Some(content));
+        }
+
+        /// Empty input returns `None`.
+        #[test]
+        fn prop_empty_returns_none(_dummy in 0u8..1) {
+            let result = one_line(Vec::new(), 1000).expect("ok");
+            prop_assert_eq!(result, None);
+        }
+
+        /// A bare `\n` returns `Some("")`.
+        #[test]
+        fn prop_bare_newline_returns_empty(_dummy in 0u8..1) {
+            let result = one_line(b"\n".to_vec(), 1000).expect("ok");
+            prop_assert_eq!(result, Some(String::new()));
+        }
+
+        /// **The bug.** `content + "\n"` and `content` at EOF must
+        /// have the same admissibility at the cap boundary. Pre-fix
+        /// the former errors and the latter accepts when
+        /// `content.len() == cap`.
+        #[test]
+        fn prop_terminator_does_not_change_admissibility(
+            cap in 1usize..=20usize,
+        ) {
+            let content: String = "x".repeat(cap);
+
+            let with_lf = {
+                let mut b = content.clone().into_bytes();
+                b.push(b'\n');
+                one_line(b, cap)
+            };
+            let at_eof = one_line(content.clone().into_bytes(), cap);
+
+            prop_assert_eq!(
+                with_lf.is_ok(),
+                at_eof.is_ok(),
+                "cap={}: with '\\n' is_ok={}, at EOF is_ok={}",
+                cap,
+                with_lf.is_ok(),
+                at_eof.is_ok(),
+            );
+        }
+    }
+
+    /// Control: content of `cap - 1` bytes plus `\n` is admitted.
+    /// The current code already accepts this; the control pins the
+    /// lower edge of the boundary.
+    #[test]
+    fn control_cap_minus_one_with_lf_accepted() {
+        let content = "x".repeat(10);
+        let mut bytes = content.clone().into_bytes();
+        bytes.push(b'\n');
+        let result = one_line(bytes, 11);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(content));
+    }
+
+    /// Control: content of `cap + 1` bytes plus `\n` is rejected.
+    /// The current code rejects this; the control pins the upper
+    /// edge of the boundary.
+    #[test]
+    fn control_over_cap_rejected() {
+        let content = "x".repeat(12);
+        let mut bytes = content.into_bytes();
+        bytes.push(b'\n');
+        let result = one_line(bytes, 10);
+        assert!(result.is_err(), "12 content + 1 terminator > cap 10");
+    }
+
+    /// Control: no panic on invalid UTF-8. The reader uses
+    /// `from_utf8_lossy`, so an invalid byte becomes U+FFFD, not an
+    /// error. Pinned so a future strict-UTF-8 change is a
+    /// decision.
+    #[test]
+    fn control_invalid_utf8_is_lossy() {
+        let mut bytes = vec![0xFFu8, 0xFE];
+        bytes.push(b'\n');
+        let result = one_line(bytes, 10).expect("no error on invalid utf8");
+        assert!(result.is_some());
+        // Both bytes become replacement characters; the content is
+        // whatever lossy decoding produces, which is not "FF FE".
+        let s = result.unwrap();
+        assert!(!s.is_empty());
     }
 }

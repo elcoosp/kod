@@ -19,6 +19,7 @@ kod-core = { path = "../kod-core" }
 kod-core-state = { path = "../kod-core-state" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 async-trait = "0.1"
 kod-config = { path = "../kod-config" }
 kod-error = { path = "../kod-error" }

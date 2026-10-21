@@ -2281,6 +2281,7 @@ dependencies = [
  "kod-provider",
  "kod-types",
  "libc",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",
