@@ -222,3 +222,167 @@ mod tests {
         assert!(!stripped.contains("<memories>"), "got: {stripped}");
     }
 }
+
+#[cfg(test)]
+mod hygiene_proptests {
+    //! Properties for the memory-tag stripper.
+    //!
+    //! `strip_memory_tags` removes `<memories>…</memories>` blocks
+    //! before text reaches the model or the store. The contract is
+    //! the output never contains either tag; the body has two edge
+    //! behaviors worth pinning — an unterminated open tag drops the
+    //! rest of the text, and a lone closing tag is stripped by the
+    //! trailing `replace`.
+    use super::*;
+    use proptest::prelude::*;
+
+    const OPEN: &str = "<memories>";
+    const CLOSE: &str = "</memories>";
+
+    /// An explicit non-alphanumeric alphabet. `char::is_alphanumeric`
+    /// is Unicode-aware, so a `[^a-zA-Z0-9]` class would still admit
+    /// `é` or `中` and break the "fewer than two" invariant. Listing
+    /// the characters makes the guarantee literal.
+    fn arb_non_alnum() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop::sample::select(vec![
+                '!', '.', ',', ';', ':', '?', ' ', '\t', '\n', '-', '_', '@', '#', '$', '%', '^',
+                '&', '*', '(', ')', '[', ']', '{', '}', '<', '>', '/', '\\', '|', '~', '`', '"',
+                '\'',
+            ]),
+            0..30,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    proptest! {
+        /// Totality.
+        #[test]
+        fn prop_never_panics(text in "\\PC{0,300}") {
+            let _ = strip_memory_tags(&text);
+            let _ = has_substantive_content(&text);
+        }
+
+        /// **The contract.** No tag survives the stripper, ever.
+        #[test]
+        fn prop_output_has_no_tags(text in "\\PC{0,300}") {
+            let out = strip_memory_tags(&text);
+            prop_assert!(
+                !out.contains(OPEN),
+                "OPEN leaked through {:?} -> {:?}", text, out,
+            );
+            prop_assert!(
+                !out.contains(CLOSE),
+                "CLOSE leaked through {:?} -> {:?}", text, out,
+            );
+        }
+
+        /// Text with no angle brackets at all is returned unchanged —
+        /// the fast path is a no-op.
+        #[test]
+        fn prop_tagless_text_unchanged(text in "[^<>]{0,200}") {
+            let out = strip_memory_tags(&text);
+            prop_assert_eq!(out, text);
+        }
+
+        /// Idempotent: stripping the output again changes nothing.
+        #[test]
+        fn prop_idempotent(text in "\\PC{0,300}") {
+            let once = strip_memory_tags(&text);
+            let twice = strip_memory_tags(&once);
+            prop_assert_eq!(once, twice);
+        }
+
+        /// A well-formed block with arbitrary body is fully removed;
+        /// only the text around it survives.
+        #[test]
+        fn prop_well_formed_block_removed(
+            pre in "[a-z ]{0,20}",
+            body in "[a-z ]{0,30}",
+            post in "[a-z ]{0,20}",
+        ) {
+            let text = format!("{}{}{}{}{}", pre, OPEN, body, CLOSE, post);
+            let out = strip_memory_tags(&text);
+            let expected = format!("{}{}", pre, post);
+            prop_assert_eq!(out, expected);
+        }
+
+        /// An unterminated block drops everything from the open tag
+        /// onward — its contents are malformed scaffolding and must
+        /// not leak into the store.
+        #[test]
+        fn prop_unterminated_block_drops_tail(
+            pre in "[a-z ]{0,20}",
+            body in "[a-z ]{0,30}",
+        ) {
+            let text = format!("{}{}{}", pre, OPEN, body);
+            let out = strip_memory_tags(&text);
+            prop_assert_eq!(out, pre);
+        }
+
+        /// `has_substantive_content` is deterministic.
+        #[test]
+        fn prop_substantive_deterministic(text in "\\PC{0,100}") {
+            prop_assert_eq!(
+                has_substantive_content(&text),
+                has_substantive_content(&text),
+            );
+        }
+
+        /// **Constructed, not filtered.** A string with at most one
+        /// alphanumeric is never substantive. Arbitrary `\PC` input
+        /// almost always has ≥2 alphanumerics, so a `prop_assume!`
+        /// filter aborts with "too many global rejects"; drawing the
+        /// non-alphanumerics from an explicit set and inserting at
+        /// most one alnum makes the invariant hold by construction.
+        #[test]
+        fn prop_fewer_than_two_alnum_not_substantive(
+            mut text in arb_non_alnum(),
+            one in prop::option::of(prop::sample::select(vec!['a', 'Z', '0', '9'])),
+        ) {
+            if let Some(c) = one {
+                text.push(c);
+            }
+            let alnum = text.chars().filter(|c| c.is_alphanumeric()).count();
+            prop_assert!(alnum < 2, "generator broke: {:?} has {} alnum", text, alnum);
+            prop_assert!(!has_substantive_content(&text), "got true for {:?}", text);
+        }
+    }
+
+    /// The concrete edge cases the body's branches encode.
+    #[test]
+    fn unterminated_open_drops_the_tail() {
+        assert_eq!(strip_memory_tags("keep <memories>leaked"), "keep ");
+    }
+
+    #[test]
+    fn lone_close_tag_is_stripped() {
+        assert_eq!(
+            strip_memory_tags("before </memories> after"),
+            "before  after"
+        );
+    }
+
+    #[test]
+    fn well_formed_block_is_fully_removed() {
+        assert_eq!(strip_memory_tags("a <memories>secret</memories> b"), "a  b",);
+    }
+
+    #[test]
+    fn placeholder_is_not_substantive() {
+        for p in ["ok", "done", "n/a", "na", "...", "…", "nothing", ""] {
+            assert!(
+                !has_substantive_content(p),
+                "{:?} should not be substantive",
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn two_alnum_chars_are_substantive() {
+        assert!(has_substantive_content("ab"));
+        assert!(has_substantive_content("a1"));
+        assert!(!has_substantive_content("a"));
+    }
+}
