@@ -67,14 +67,52 @@ const CANDIDATES: &[&str] = &[
 /// permitted"*) is understood; one that returns an opaque "invalid
 /// request" yields [`RetryPlan::GiveUp`] rather than a guess.
 pub fn classify_rejection(status: u16, body: &str) -> Rejection {
+    // Match case-insensitively: a provider that writes `'CONST' is
+    // not permitted` is naming the construct just as clearly as one
+    // that writes `'const'`. `to_ascii_lowercase` does not touch the
+    // `$` in `$ref` or any byte the boundary check treats specially,
+    // so the word-boundary contract is preserved. The keyword
+    // returned is the canonical `CANDIDATES` spelling — the caller
+    // drops it from the schema by name and must get the exact key.
+    let lower = body.to_ascii_lowercase();
     let keyword = CANDIDATES
         .iter()
-        .find(|kw| contains_word(body, kw))
+        .find(|kw| contains_word_ci(&lower, kw))
         .map(|kw| (*kw).to_string());
     Rejection {
         keyword,
         message: format!("{status}: {}", body.trim()),
     }
+}
+
+/// Case-insensitive `contains_word`: `word` is matched against the
+/// already-lowercased `lower_text` without allocating. The boundary
+/// predicate is identical to `contains_word`'s — ASCII alphanumeric,
+/// `_`, and `$` are word bytes; everything else is a boundary.
+fn contains_word_ci(lower_text: &str, word: &str) -> bool {
+    let bytes = lower_text.as_bytes();
+    let w = word.as_bytes();
+    if w.is_empty() || w.len() > bytes.len() {
+        return false;
+    }
+    let is_boundary = |b: u8| !(b.is_ascii_alphanumeric() || b == b'_' || b == b'$');
+    let mut i = 0;
+    while i + w.len() <= bytes.len() {
+        let hit = bytes[i..i + w.len()]
+            .iter()
+            .zip(w.iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b));
+        if hit {
+            let before_ok = i == 0 || is_boundary(bytes[i - 1]);
+            let after = i + w.len();
+            let after_ok = after == bytes.len() || is_boundary(bytes[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Whether `text` contains `word` as a whole token — not as a
@@ -296,5 +334,57 @@ mod recovery_proptests {
     #[test]
     fn utf8_multibyte_before_keyword_is_currently_a_false_positive() {
         assert!(contains_word("列挙enum", "enum"));
+    }
+}
+
+#[cfg(test)]
+mod case_insensitivity {
+    use super::*;
+
+    /// An uppercase construct name is prose naming the construct.
+    /// The pre-fix matcher compared bytes exactly, so `'CONST'` was
+    /// not recognised and the rejection became `GiveUp` instead of
+    /// `RetryWithoutConstruct { keyword: "const" }`.
+    #[test]
+    fn uppercase_keyword_is_recognised() {
+        let r = classify_rejection(400, "Invalid schema: 'CONST' is not permitted");
+        assert_eq!(r.keyword.as_deref(), Some("const"));
+        assert_eq!(
+            plan_retry(&r),
+            RetryPlan::RetryWithoutConstruct {
+                keyword: "const".into(),
+            },
+        );
+    }
+
+    /// CamelCase candidates are recognised regardless of the body's
+    /// casing, and the returned keyword is the canonical spelling —
+    /// the caller drops it from the schema by name.
+    #[test]
+    fn camelcase_keyword_is_returned_canonically() {
+        for body in ["oneof", "ONEOF", "OneOf", "oneOf"] {
+            let text = format!("the {body} keyword is unsupported");
+            let r = classify_rejection(400, &text);
+            assert_eq!(r.keyword.as_deref(), Some("oneOf"), "body {text:?}",);
+        }
+    }
+
+    /// `$ref` is recognised in any casing.
+    #[test]
+    fn dollar_ref_is_case_insensitive() {
+        for body in ["$ref", "$REF", "$Ref"] {
+            let text = format!("schema uses {body} which is not supported");
+            let r = classify_rejection(400, &text);
+            assert_eq!(r.keyword.as_deref(), Some("$ref"), "body {text:?}");
+        }
+    }
+
+    /// Case-insensitivity must not defeat the word-boundary check:
+    /// `ENUMERATE` is one word and must not match `enum`.
+    #[test]
+    fn boundary_still_holds_under_insensitivity() {
+        assert!(!contains_word("ENUMERATE", "enum"));
+        let r = classify_rejection(400, "please ENUMERATE the values");
+        assert_eq!(r.keyword, None);
     }
 }
