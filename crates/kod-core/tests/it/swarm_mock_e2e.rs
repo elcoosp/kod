@@ -27,12 +27,20 @@ use tokio::time::{Duration, timeout};
 const ONE_SUBTASK: &str = r#"[{"name":"alpha","description":"do the thing","expected_writes":[],"capability":"coding","depends_on":[]}]"#;
 
 async fn engine_with_mock(script: Vec<Script>, tmp: &tempfile::TempDir) -> Arc<KodEngine> {
-    // The swarm's system prompt + tool schemas is ~17 KB; a 8192-token
-    // window leaves only ~6,144 chars of usable prompt budget and every
-    // agent fails with "request too long" before it reaches the mock.
-    // 32768 gives ~24,576 chars of budget, 1.5x the observed need.
+    engine_with_mock_window(script, tmp, 32768).await
+}
+
+async fn engine_with_mock_window(
+    script: Vec<Script>,
+    tmp: &tempfile::TempDir,
+    context_window: usize,
+) -> Arc<KodEngine> {
+    // The swarm's system prompt + tool schemas is ~17 KB. 32768 gives
+    // ~24,576 chars of prompt budget (1.5x headroom); 8192 gives
+    // ~6,144 chars, small enough that every agent fails with
+    // "request too long" — used by the permanent-error test below.
     let cfg = RouterConfig {
-        context_window: 32768,
+        context_window,
         short_term_capacity: 100,
         ..Default::default()
     };
@@ -127,6 +135,97 @@ async fn run_produces_decomposed_and_agent_events_over_a_mock_provider() {
         resp.merged.contains("agent said done"),
         "concatenated merge lost the agent text: {:?}",
         resp.merged,
+    );
+
+    engine.shutdown().await.expect("shutdown");
+}
+
+/// **A permanent error is not retried.** Before the fix, the swarm
+/// retried every failure once regardless of classification, so an
+/// agent whose request could never fit re-ran and printed
+/// `AgentRetrying (2/2): request too long`. The engine's own retry
+/// ladders gate on `is_retryable()`; the swarm's did not, because
+/// the KodError was stringified before the decision. This test pins
+/// the corrected behaviour: exactly one `AgentStarted`, zero
+/// `AgentRetrying`, one `AgentFailed` whose message carries the
+/// real reason.
+///
+/// The window is deliberately 8192 — small enough that the swarm's
+/// system prompt + tool schemas (~17 KB) cannot fit — so the engine
+/// produces an `InvalidParameters` (classified permanent) on the
+/// first attempt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn permanent_error_is_not_retried() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // Only the decompose reply is consumed: the agent call fails
+    // before the mock is reached, because the prompt does not fit.
+    let script = vec![Script::Text(ONE_SUBTASK.to_string())];
+    let engine = engine_with_mock_window(script, &tmp, 8192).await;
+
+    let cfg = SwarmConfig {
+        max_agents: 2,
+        merge_results: false,
+        isolation: kod_config::Isolation::Shared,
+        agent_retries: 1, // allow one retry in principle; the fix must skip it
+        ..Default::default()
+    };
+    let runner = SwarmRunner::from_config(engine.clone(), &cfg)
+        .await
+        .expect("from_config");
+
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let collector = tokio::spawn(async move {
+        let mut out = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            out.push(ev);
+        }
+        out
+    });
+
+    // The run may return Ok (with no successful agents) or Err; we
+    // do not care which. We care about the *events*.
+    let _ = timeout(Duration::from_secs(30), runner.run("do the thing", &tx)).await;
+    drop(tx);
+    let events = collector.await.expect("collector");
+
+    let starts = events
+        .iter()
+        .filter(|e| matches!(e, SwarmEvent::AgentStarted { .. }))
+        .count();
+    let retries = events
+        .iter()
+        .filter(|e| matches!(e, SwarmEvent::AgentRetrying { .. }))
+        .count();
+    let failures = events
+        .iter()
+        .filter(|e| matches!(e, SwarmEvent::AgentFailed { .. }))
+        .count();
+
+    assert_eq!(
+        starts, 1,
+        "expected exactly one AgentStarted (no retry); got {events:?}",
+    );
+    assert_eq!(
+        retries, 0,
+        "a permanent error must not emit AgentRetrying; got {events:?}",
+    );
+    assert_eq!(
+        failures, 1,
+        "expected exactly one AgentFailed; got {events:?}",
+    );
+
+    // The failure message should name the real reason — not a generic
+    // "retries exhausted".
+    let failed_msg = events
+        .iter()
+        .find_map(|e| match e {
+            SwarmEvent::AgentFailed { error, .. } => Some(error.clone()),
+            _ => None,
+        })
+        .expect("AgentFailed present");
+    assert!(
+        failed_msg.contains("too long") || failed_msg.contains("Invalid tool parameters"),
+        "failure message did not carry the real reason: {failed_msg}",
     );
 
     engine.shutdown().await.expect("shutdown");
