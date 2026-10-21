@@ -813,3 +813,202 @@ mod score_with_weights_is_bounded {
         );
     }
 }
+
+#[cfg(test)]
+mod decay_proptests {
+    //! Properties for `Decay::decay`, `weibull_shape_for`, and
+    //! `redistribute` in the retrieval scorer.
+    //!
+    //! The example tests in `tests` pin specific numeric cases:
+    //! `decay(0) == 1`, a long-term entry decays slower than an
+    //! episodic one, the shape is deterministic, `redistribute`
+    //! moves the semantic weight onto keyword. The properties
+    //! below pin the *continuous-domain* shape those examples
+    //! don't reach.
+    //!
+    //! **No bug expected.** The bodies are guarded: `decay` has
+    //! early returns for `age <= 0` and `eta <= 0 || k <= 0`, and
+    //! `exp(-x)` for `x >= 0` is in `(0, 1]`. `redistribute` is
+    //! two lines with no division.
+    //!
+    //! **Not covered here:** `QueryTerms::idf` and
+    //! `keyword_bm25_lite` need `MemoryEntry` construction, which
+    //! `tests` already exercises; the bound `[0, 1]` for the
+    //! latter is pinned by the `score_is_bounded_above_by_one`
+    //! example test.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn shape() -> impl Strategy<Value = DecayShape> {
+        (0.1f32..=10_000.0f32, 0.1f32..=2.0f32)
+            .prop_map(|(eta_hours, k)| DecayShape { eta_hours, k })
+    }
+
+    proptest! {
+        /// `decay(age)` is in `[0, 1]` for every finite positive
+        /// `age` and every well-formed shape. `exp(-ratio^k)` with
+        /// `ratio >= 0` and `k > 0` is in `(0, 1]`; the early
+        /// returns guard `age <= 0` (returns 1) and
+        /// `eta <= 0 || k <= 0` (returns 0).
+        #[test]
+        fn prop_decay_bounded(
+            sh in shape(),
+            age in 0.0f32..=1_000_000.0f32,
+        ) {
+            prop_assume!(age.is_finite());
+            let out = sh.decay(age);
+            prop_assert!(
+                (0.0..=1.0).contains(&out),
+                "decay({}) = {} not in [0, 1]", age, out,
+            );
+        }
+
+        /// `decay(0) == 1` for any well-formed shape. Pins the
+        /// zero-age early return.
+        #[test]
+        fn prop_decay_zero_age_is_one(sh in shape()) {
+            prop_assert_eq!(sh.decay(0.0), 1.0, "eta={}, k={}", sh.eta_hours, sh.k);
+        }
+
+        /// `decay` is monotone non-increasing in age: an older
+        /// entry never scores higher on recency than a younger one
+        /// for the same shape.
+        #[test]
+        fn prop_decay_monotone_in_age(
+            sh in shape(),
+            a1 in 0.0f32..=1_000_000.0f32,
+            a2 in 0.0f32..=1_000_000.0f32,
+        ) {
+            prop_assume!(a1.is_finite() && a2.is_finite());
+            let (lo, hi) = if a1 <= a2 { (a1, a2) } else { (a2, a1) };
+            let d_lo = sh.decay(lo);
+            let d_hi = sh.decay(hi);
+            prop_assert!(
+                d_lo >= d_hi,
+                "decay({}) = {} < decay({}) = {} (should be non-increasing)",
+                lo, d_lo, hi, d_hi,
+            );
+        }
+
+        /// `decay` is monotone non-decreasing in `eta_hours`: a
+        /// longer characteristic lifetime means slower decay at any
+        /// fixed age.
+        #[test]
+        fn prop_decay_monotone_in_eta(
+            eta1 in 0.1f32..=10_000.0f32,
+            eta2 in 0.1f32..=10_000.0f32,
+            k in 0.1f32..=2.0f32,
+            age in 0.0f32..=1_000_000.0f32,
+        ) {
+            prop_assume!(age.is_finite());
+            let (lo, hi) = if eta1 <= eta2 { (eta1, eta2) } else { (eta2, eta1) };
+            let s_lo = DecayShape { eta_hours: lo, k };
+            let s_hi = DecayShape { eta_hours: hi, k };
+            prop_assert!(
+                s_hi.decay(age) >= s_lo.decay(age),
+                "age={}, k={}: eta={} decayed to {} but eta={} decayed to {}",
+                age, k, lo, s_lo.decay(age), hi, s_hi.decay(age),
+            );
+        }
+
+        /// A zero or negative `eta_hours` short-circuits to 0. Pins
+        /// the guard, so a future "just divide" refactor fails on
+        /// the epsilon case.
+        #[test]
+        fn prop_decay_zero_eta_is_zero(
+            age in 0.0f32..=1_000_000.0f32,
+            k in 0.1f32..=2.0f32,
+        ) {
+            prop_assume!(age.is_finite());
+            let sh = DecayShape { eta_hours: 0.0, k };
+            prop_assert_eq!(sh.decay(age), 0.0, "eta=0, age={}", age);
+        }
+
+        /// `weibull_shape_for` returns a well-formed shape for
+        /// every `MemoryType`: positive `eta_hours`, positive `k`.
+        #[test]
+        fn prop_weibull_shape_well_formed(t in prop::sample::select(vec![
+            MemoryType::LongTerm,
+            MemoryType::Episodic,
+            MemoryType::ShortTerm,
+        ])) {
+            let sh = weibull_shape_for(t);
+            prop_assert!(sh.eta_hours > 0.0, "eta = {}", sh.eta_hours);
+            prop_assert!(sh.k > 0.0, "k = {}", sh.k);
+        }
+
+        /// `redistribute` zeroes the semantic weight and adds it
+        /// to the keyword weight. The total is preserved (modulo
+        /// float addition, which is exact here since we add the
+        /// same two values).
+        #[test]
+        fn prop_redistribute_zeroes_semantic(
+            w_sem in 0.0f32..=10.0f32,
+            w_kw in 0.0f32..=10.0f32,
+        ) {
+            let (s, k) = redistribute(w_sem, w_kw);
+            prop_assert_eq!(s, 0.0);
+            prop_assert_eq!(k, w_sem + w_kw);
+        }
+
+        /// `redistribute` is idempotent on its own output: the
+        /// semantic weight is already 0, so a second call is a
+        /// no-op.
+        #[test]
+        fn prop_redistribute_idempotent(
+            w_sem in 0.0f32..=10.0f32,
+            w_kw in 0.0f32..=10.0f32,
+        ) {
+            let (s1, k1) = redistribute(w_sem, w_kw);
+            let (s2, k2) = redistribute(s1, k1);
+            prop_assert_eq!(s2, s1);
+            prop_assert_eq!(k2, k1);
+        }
+    }
+
+    // ---- controls: the documented shapes -------------------------
+
+    /// Control: a well-formed shape's decay at its own eta is
+    /// `exp(-1) ≈ 0.368`. `ratio = 1`, `1^k = 1`, `exp(-1)`. This
+    /// is the characteristic-lifetime definition; pinned so a
+    /// future "`eta` is a hard cutoff" change is visible.
+    #[test]
+    fn control_decay_at_eta_is_e_inverse() {
+        let sh = DecayShape {
+            eta_hours: 100.0,
+            k: 1.0,
+        };
+        let d = sh.decay(100.0);
+        assert!(
+            (d - std::f32::consts::E.recip()).abs() < 1e-6,
+            "decay(eta) = {}, expected 1/e ≈ {}",
+            d,
+            std::f32::consts::E.recip(),
+        );
+    }
+
+    /// Control: `redistribute(0.0, w)` returns `(0.0, w)`
+    /// verbatim. The early return in the body is dead code (the
+    /// general path produces the same result), but this control
+    /// pins the boundary so a future change that added a
+    /// `w == 0` special case is visible.
+    #[test]
+    fn control_redistribute_zero_semantic() {
+        assert_eq!(redistribute(0.0, 0.5), (0.0, 0.5));
+        assert_eq!(redistribute(0.0, 0.0), (0.0, 0.0));
+    }
+
+    /// Control: the three memory types have distinct decay
+    /// shapes. If two matched to the same `(eta, k)`, a future
+    /// refactor could silently collapse the distinction.
+    #[test]
+    fn control_weibull_shapes_are_distinct() {
+        let long = weibull_shape_for(MemoryType::LongTerm);
+        let epi = weibull_shape_for(MemoryType::Episodic);
+        let short = weibull_shape_for(MemoryType::ShortTerm);
+        assert_ne!((long.eta_hours, long.k), (epi.eta_hours, epi.k));
+        assert_ne!((epi.eta_hours, epi.k), (short.eta_hours, short.k));
+        assert_ne!((long.eta_hours, long.k), (short.eta_hours, short.k));
+    }
+}
