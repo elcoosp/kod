@@ -427,3 +427,150 @@ mod tests {
         assert_eq!(classify("~/.ssh/../..", &ctx()).0, PathDanger::Catastrophic,);
     }
 }
+
+#[cfg(test)]
+mod paths_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn ctx() -> RiskContext {
+        RiskContext {
+            working_dir: PathBuf::from("/work/repo"),
+            home_dir: PathBuf::from("/home/user"),
+            scratch_dir: PathBuf::from("/tmp/scratch"),
+        }
+    }
+
+    fn arb_base_components() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(
+            prop_oneof![
+                Just("a".to_string()),
+                Just("b".to_string()),
+                Just("etc".to_string()),
+                Just(".ssh".to_string()),
+                Just(".git".to_string()),
+                Just("user".to_string()),
+            ],
+            1..5,
+        )
+    }
+
+    /// Insert a canceling fragment (`.` or `p/..`) before each base
+    /// component. The two paths normalize to the same thing by
+    /// construction — that is what the normalized-form property needs,
+    /// and generating it directly avoids proptest rejecting ~99% of
+    /// cases.
+    fn same_normalized_pair() -> impl Strategy<Value = (String, String)> {
+        (
+            arb_base_components(),
+            prop::collection::vec(
+                prop_oneof![Just(".".to_string()), Just("p/..".to_string())],
+                0..5,
+            ),
+        )
+            .prop_map(|(base, noise)| {
+                let a = base.join("/");
+                let mut b_parts: Vec<String> = Vec::new();
+                for (i, c) in base.iter().enumerate() {
+                    if let Some(n) = noise.get(i) {
+                        b_parts.push(n.clone());
+                    }
+                    b_parts.push(c.clone());
+                }
+                let b = b_parts.join("/");
+                (a, b)
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_normalize_has_no_dot_components(base in arb_base_components()) {
+            let raw = base.join("/");
+            let n = normalize(&raw);
+            for c in n.components() {
+                prop_assert!(
+                    !matches!(c, Component::CurDir | Component::ParentDir),
+                    "normalize({:?}) = {:?} retained {:?}",
+                    raw, n, c,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_normalize_is_idempotent(base in arb_base_components()) {
+            let raw = base.join("/");
+            let once = normalize(&raw);
+            let twice = normalize(&once.to_string_lossy());
+            prop_assert_eq!(once, twice);
+        }
+
+        #[test]
+        fn prop_normalize_absolute_stays_absolute(base in arb_base_components()) {
+            let raw = format!("/{}", base.join("/"));
+            let n = normalize(&raw);
+            prop_assert!(n.is_absolute(), "normalize({:?}) = {:?} lost root", raw, n);
+        }
+
+        #[test]
+        fn prop_classify_never_panics(raw in "\\PC{0,200}") {
+            let _ = classify(&raw, &ctx());
+        }
+
+        #[test]
+        fn prop_classify_is_deterministic(raw in "\\PC{0,200}") {
+            let c = ctx();
+            prop_assert_eq!(classify(&raw, &c), classify(&raw, &c));
+        }
+
+        /// The security invariant: the DANGER LEVEL is a pure function
+        /// of the normalized path. `b` is built from `a` by inserting
+        /// only canceling fragments, so the two normalized forms are
+        /// equal by construction. The reason string embeds the raw
+        /// input, so only the danger level is compared.
+        #[test]
+        fn prop_classify_danger_depends_only_on_normalized_form(
+            (a, b) in same_normalized_pair(),
+        ) {
+            let c = ctx();
+            prop_assert_eq!(normalize(&a), normalize(&b), "pair not equal after normalize: a={:?} b={:?}", a, b);
+            prop_assert_eq!(
+                classify(&a, &c).0,
+                classify(&b, &c).0,
+                "same normalized path, different verdict: a={:?} b={:?}",
+                a, b,
+            );
+        }
+
+        #[test]
+        fn prop_ssh_is_never_safe(suffix in "[a-z]{0,8}") {
+            let raw = format!("~/.ssh/{}", suffix);
+            let (d, why) = classify(&raw, &ctx());
+            prop_assert_ne!(d, PathDanger::Safe, "{:?} classified Safe ({})", raw, why);
+        }
+
+        #[test]
+        fn prop_etc_with_traversal_is_never_safe(prefix in "(\\.\\.?/){0,4}") {
+            let raw = format!("/tmp/{}etc/passwd", prefix);
+            let (d, why) = classify(&raw, &ctx());
+            prop_assert_ne!(d, PathDanger::Safe, "{:?} classified Safe ({})", raw, why);
+        }
+    }
+
+    #[test]
+    fn collapse_to_empty_becomes_root() {
+        assert_eq!(normalize(""), PathBuf::from("/"));
+        assert_eq!(normalize("a/.."), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn bare_parent_traversal_is_catastrophic() {
+        let (d, _) = classify("..", &ctx());
+        assert_eq!(d, PathDanger::Catastrophic);
+    }
+
+    #[test]
+    fn traversal_into_etc_is_still_catastrophic() {
+        let (d, _) = classify("/tmp/../etc/passwd", &ctx());
+        assert_eq!(d, PathDanger::Catastrophic);
+    }
+}
