@@ -146,3 +146,31 @@ The gate is green at 5035/5035, the tree is clean, 22 commits wait for a
 tag decision, and the one real remaining bug — `patch.rs`'s trailing
 newline — is documented with a repro and a known-wrong fix, ready for a
 write-tests-first round.
+
+## Update — two more rounds and a survey correction
+
+Commits after the session-21 entry point was written:
+
+| Commit | Crate | Outcome |
+|---|---|---|
+| `e1c1cdf` | kod-core | `parse_plan_steps`: 6 props + 3 deterministic checks. Harden. First test of any kind for that function. Control pins the documented "first `[` to last `]`" limitation. |
+| `af7a8b8` | kod-schema-dialect | `contains_word` / `classify_rejection`: 7 props + 2 checks + 1 characterization. Harden. |
+
+### The survey's false zeros
+
+Two files were reported as "0 proptest" by the workspace sweep and **both had them**:
+
+- `crates/kod-types/src/strutil.rs` — covered in `crates/kod-types/tests/it/string_safety.rs`.
+- `crates/kod-core-quality/src/preflight.rs` — 5 proptests in a second `#[cfg(test)]` module *in the same file*, past a first `mod tests` that the sweep stopped at.
+
+**Rule:** never trust a sweep's "0 proptest" claim. Check `tests/it/`, and check for a *second* `#[cfg(test)]` block in the file. If a target is declared uncovered, grep the file for `proptest!` directly before writing anything.
+
+### `recovery.rs` — one real limitation, characterized
+
+`contains_word` walks bytes and treats every non-ASCII-alphanumeric, non-underscore, non-dollar byte as a boundary. Every UTF-8 continuation byte (`0x80..=0xBF`) satisfies that, so `"列挙enum"` matches `"enum"` even though `挙` is a word character. Reachability is very narrow; the fix is `char_indices()`. Pinned by `utf8_multibyte_before_keyword_is_currently_a_false_positive` with a doc comment saying the fix is correct and the test must be updated when it lands.
+
+Also noted and deliberately **not** changed: `classify_rejection` does not lowercase, so an all-uppercase provider body misses. The sibling `contains_word` in `kod-core/src/router.rs` *does* lowercase. No documented contract settles it; left for a round that can decide rather than a round that pins.
+
+### Gate status
+
+Green at `1b0c5ba` (5035/5035) and again at `e1c1cdf` (5044/5044). `af7a8b8` is test-only in one crate, verified at 33/33 there, and is covered by the gate this record precedes.
