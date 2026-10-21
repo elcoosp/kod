@@ -374,3 +374,126 @@ mod coverage_stemming {
         }
     }
 }
+
+#[cfg(test)]
+mod stopwords_proptests {
+    //! Properties for `tokens` and its helpers.
+    //!
+    //! The 15 example tests pin specific inputs: "the parsers are
+    //! running" produces `["parser", "runn", ...]`, punctuation
+    //! is handled, numbers survive. The properties below pin the
+    //! *contract* those examples don't name:
+    //!
+    //! 1. No stopword appears in the output.
+    //! 2. Every token is lowercase.
+    //! 3. No empty tokens.
+    //!
+    //! **A real bug candidate on #1.** `tokens` filters by
+    //! `is_stopword(w)` *before* `stem(w)`. If `stem` produces a
+    //! stopword from a non-stopword (e.g. a plural whose singular
+    //! is a stopword), the filter misses it and a stopword leaks
+    //! into the output. The property `prop_no_stopwords_in_output`
+    //! will fail on the first such input.
+    //!
+    //! The fix depends on `stem`'s behaviour on short words:
+    //! - If `stem("the")` is `"the"` (short words untouched),
+    //!   adding `.filter(|w| !is_stopword(w))` *after* `.map(stem)`
+    //!   catches the leaked case without breaking the current
+    //!   filter-before case.
+    //! - If `stem("the")` strips a suffix (`"th"`), the
+    //!   filter-after approach would produce `"th"` from `"the"`
+    //!   and be wrong. The fix would need both filters, or a
+    //!   combined predicate.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A word-like string with no `is_alphanumeric` gap: letters,
+    /// digits, and a common suffix. Keeps the generator inside the
+    /// stemmer's domain.
+    fn wordy() -> impl Strategy<Value = String> {
+        "[a-zA-Z]{2,20}"
+    }
+
+    proptest! {
+        /// **The contract.** No token in the output is a stopword.
+        ///
+        /// This is what `tokens` claims to do ("filter stopwords,
+        /// then stem"). The order in the body is filter-then-stem;
+        /// if the stemmer can turn a non-stopword into a stopword,
+        /// the output violates the contract.
+        #[test]
+        fn prop_no_stopwords_in_output(s in "\\PC{0,200}") {
+            for t in tokens(&s) {
+                prop_assert!(
+                    !is_stopword(&t),
+                    "stopword {:?} leaked from {:?}", t, s,
+                );
+            }
+        }
+
+        /// Every token is lowercase. The body lowercases the input
+        /// before splitting; this pins the contract so a future
+        /// "preserve original case" refactor fails here.
+        #[test]
+        fn prop_tokens_are_lowercase(s in "\\PC{0,200}") {
+            for t in tokens(&s) {
+                prop_assert_eq!(&t, &t.to_lowercase(), "token {:?} not lowercase", t);
+            }
+        }
+
+        /// No empty tokens. The body has `.filter(|w| !w.is_empty())`;
+        /// the property pins it against a future change that
+        /// dropped the filter.
+        #[test]
+        fn prop_no_empty_tokens(s in "\\PC{0,200}") {
+            for t in tokens(&s) {
+                prop_assert!(!t.is_empty(), "empty token from {:?}", s);
+            }
+        }
+
+        /// Determinism: same input, same tokens, same order.
+        #[test]
+        fn prop_deterministic(s in "\\PC{0,200}") {
+            prop_assert_eq!(tokens(&s), tokens(&s));
+        }
+    }
+
+    // ---- controls: the specific cases that make the bug reachable
+
+    /// Control: `"the"` is a stopword and is filtered before
+    /// stemming. If the fix adds a post-stem filter, this must
+    /// still hold.
+    #[test]
+    fn control_the_is_dropped() {
+        assert!(
+            tokens("the").is_empty(),
+            "bare 'the' produced {:?}",
+            tokens("the")
+        );
+    }
+
+    /// Control: the specific shape that makes the bug reachable.
+    /// A plural of a stopword — `"thes"` — is not in the stopword
+    /// list, so it passes the pre-stem filter; the stemmer may
+    /// reduce it to `"the"`.
+    #[test]
+    fn control_thes_probe() {
+        let out = tokens("thes");
+        // Do not assert the output shape; this is a probe, not a
+        // pin. The failure of prop_no_stopwords_in_output (if any)
+        // will name the actual input and token, and the fix will
+        // be chosen from that.
+        eprintln!("tokens(\"thes\") = {:?}", out);
+    }
+
+    /// Control: a well-known content word survives. If the fix
+    /// adds a post-stem filter, this must not accidentally drop
+    /// content words whose stem collides with a stopword by
+    /// accident.
+    #[test]
+    fn control_content_word_survives() {
+        let out = tokens("parser");
+        assert_eq!(out, vec!["parser".to_string()], "got {:?}", out);
+    }
+}
