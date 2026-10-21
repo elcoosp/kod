@@ -570,3 +570,207 @@ mod tests {
         assert_eq!(events[0].rule, "custom");
     }
 }
+
+#[cfg(test)]
+mod redact_proptests {
+    //! Properties for `Redactor::redact`.
+    //!
+    //! The existing tests in `tests/it/string_safety.rs` pin the
+    //! head/tail saturation and non-ASCII cases. What they don't
+    //! pin is what happens when *multiple rules* interact:
+    //!
+    //! * The doc says "A rule cannot fire on a substring of an
+    //!   earlier substitution" — but nothing in the body enforces
+    //!   it. The substitution text is `[REDACTED:<name>]`; if a
+    //!   later rule's pattern happens to match part of that, it
+    //!   fires again. That would be silent (the caller sees a
+    //!   mangled marker).
+    //! * Redaction is applied rule-by-rule on the *output* of the
+    //!   previous rule. Whether that's idempotent overall — redact
+    //!   once, redact again, nothing changes — is a property of
+    //!   the whole rule set, not of any single rule.
+    //!
+    //! **No bug expected for the built-in rule set.** The built-in
+    //! rule names are short (`openai-key`, `aws-access-key`,
+    //! `pem-private-key`) and no built-in pattern matches
+    //! `[REDACTED:` or a short name. A *custom* rule with a long
+    //! name could break idempotence; the properties pin idempotence
+    //! for the default set, which is what ships.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// ASCII text with no built-in secret shape: lowercase letters
+    /// and spaces only, bounded to 20 chars. No `sk-`, no `AKIA`,
+    /// no PEM header, no 24+ alnum run (so the entropy rule can't
+    /// fire either).
+    fn safe_text() -> impl Strategy<Value = String> {
+        "[a-z ]{0,20}"
+    }
+
+    /// A custom rule pattern that can't appear in `safe_text`.
+    fn custom_rule() -> RedactRule {
+        RedactRule {
+            name: "custom".to_string(),
+            pattern: Regex::new(r"XYZ-[0-9]+").unwrap(),
+            head: 0,
+            tail: 0,
+        }
+    }
+
+    // ---- idempotence: the sharp property --------------------------
+
+    proptest! {
+        /// Redacting an already-redacted string is a no-op.
+        ///
+        /// If this fails, a rule fired on the output of an earlier
+        /// rule — either it matched a substring of `[REDACTED:name]`
+        /// or it re-matched text the first pass should have
+        /// eliminated. Either is a real defect: a caller that
+        /// redacts twice (log-write and prompt-build both call
+        /// `redact`, per the module doc) would see different output
+        /// depending on how many times it happened to call.
+        #[test]
+        fn prop_idempotent_default(input in "\\PC{0,200}") {
+            let r = Redactor::default();
+            let (out1, _ev1) = r.redact(&input);
+            let (out2, ev2) = r.redact(&out1);
+            prop_assert_eq!(&out1, &out2, "redact not idempotent on {:?}", input);
+            prop_assert!(
+                ev2.is_empty(),
+                "second redact of {:?} fired {} events: {:?}",
+                input, ev2.len(), ev2,
+            );
+        }
+
+        /// No nested markers in the default-rule output. A
+        /// `[REDACTED:[REDACTED:` substring means a rule fired on a
+        /// marker.
+        #[test]
+        fn prop_no_nested_markers_default(input in "\\PC{0,200}") {
+            let r = Redactor::default();
+            let (out, _) = r.redact(&input);
+            prop_assert!(
+                !out.contains("[REDACTED:[REDACTED:"),
+                "nested markers in {:?} for input {:?}", out, input,
+            );
+        }
+
+        /// Every `[REDACTED:` in the output is closed by a `]`
+        /// within a reasonable distance (a rule name is short). A
+        /// marker that runs to the end of the string with no `]`
+        /// means a subsequent rule ate the closing bracket.
+        #[test]
+        fn prop_markers_are_well_formed_default(input in "\\PC{0,200}") {
+            let r = Redactor::default();
+            let (out, _) = r.redact(&input);
+            let mut rest = out.as_str();
+            while let Some(pos) = rest.find("[REDACTED:") {
+                let after = &rest[pos + "[REDACTED:".len()..];
+                let close = after.find(']');
+                prop_assert!(
+                    close.is_some(),
+                    "unclosed marker in {:?} for input {:?}", out, input,
+                );
+                let name_len = close.unwrap();
+                prop_assert!(
+                    name_len <= 64,
+                    "marker name {} chars long in {:?}", name_len, out,
+                );
+                rest = &after[name_len + 1..];
+            }
+        }
+    }
+
+    // ---- identity on non-secret text ------------------------------
+
+    proptest! {
+        /// Text that contains no secret shape is returned unchanged
+        /// by the default rule set. The `safe_text` generator is
+        /// lowercase letters + spaces, max 20 chars — no key prefix,
+        /// no PEM, no long alnum run, no keyword.
+        #[test]
+        fn prop_identity_on_safe_text(input in safe_text()) {
+            let r = Redactor::default();
+            let (out, events) = r.redact(&input);
+            prop_assert_eq!(&out, &input, "non-secret input {:?} was modified", input);
+            prop_assert!(events.is_empty(), "non-secret input fired {:?}", events);
+        }
+    }
+
+    // ---- custom-rule round trips ---------------------------------
+
+    proptest! {
+        /// A custom rule with `head == 0 && tail == 0` replaces each
+        /// match with `[REDACTED:<name>]` and leaves the surrounding
+        /// text untouched.
+        #[test]
+        fn prop_custom_rule_preserves_surroundings(
+            before in "[a-z]{0,20}",
+            n in 0u32..1_000_000u32,
+            after in "[a-z]{0,20}",
+        ) {
+            let r = Redactor::with_rules(vec![custom_rule()]);
+            let needle = format!("XYZ-{n}");
+            let input = format!("{before}{needle}{after}");
+            let (out, _) = r.redact(&input);
+            let expected = format!("{before}[REDACTED:custom]{after}");
+            prop_assert_eq!(out, expected, "input {:?}", input);
+        }
+
+        /// N distinct custom matches in one input yield N markers.
+        #[test]
+        fn prop_custom_rule_count(
+            nums in prop::collection::vec(0u32..1_000_000u32, 1..=8),
+            sep in "[-_ ,]{1,3}",
+        ) {
+            let r = Redactor::with_rules(vec![custom_rule()]);
+            let parts: Vec<String> = nums.iter().map(|n| format!("XYZ-{n}")).collect();
+            let input = parts.join(&sep);
+            let (out, events) = r.redact(&input);
+            prop_assert_eq!(
+                out.matches("[REDACTED:custom]").count(),
+                nums.len(),
+                "input {:?} -> {:?}", input, out,
+            );
+            prop_assert_eq!(events.len(), 1, "one rule fired, {:?}", events);
+            prop_assert_eq!(events[0].count, nums.len());
+        }
+    }
+
+    // ---- controls -------------------------------------------------
+
+    /// Control: empty input, empty output, no events.
+    #[test]
+    fn control_empty_input() {
+        let r = Redactor::default();
+        let (out, events) = r.redact("");
+        assert_eq!(out, "");
+        assert!(events.is_empty());
+    }
+
+    /// Control: whitespace-only input is unchanged.
+    #[test]
+    fn control_whitespace_input() {
+        let r = Redactor::default();
+        let (out, events) = r.redact("   \n\t  ");
+        assert_eq!(out, "   \n\t  ");
+        assert!(events.is_empty());
+    }
+
+    /// Control: a custom rule with `head = 4, tail = 4` preserves
+    /// the first and last 4 chars of the match. This pins the
+    /// head/tail contract independent of the built-in rules.
+    #[test]
+    fn control_custom_head_tail() {
+        let rule = RedactRule {
+            name: "ht".to_string(),
+            pattern: Regex::new(r"ABCDEFGHIJ").unwrap(),
+            head: 4,
+            tail: 4,
+        };
+        let r = Redactor::with_rules(vec![rule]);
+        let (out, _) = r.redact("xxABCDEFGHIJyy");
+        assert_eq!(out, "xxABCD…[REDACTED:ht]GHIJyy");
+    }
+}
