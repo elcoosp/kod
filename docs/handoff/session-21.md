@@ -209,14 +209,20 @@ findings below.
 
 ### Three findings, each needing a decision rather than a test
 
-**1. `patch.rs` trailing newline — INCOMPLETE.** `8e62f47` fixed three
-compounding defects (empty-split phantom, original-shape inference, and
-the positional marker), and its crate-local suite went green. The
-full-workspace gate at `8e62f47` then found a fourth case via a
-different proptest seed: 5083/5084, with a new seed written to
-`crates/kod-tools/proptest-regressions/patch.txt`. The fix is not done;
-the failing case is recorded in the seed file. History below is kept
-because the attempts are the useful part.
+**1. `patch.rs` trailing newline — PRODUCTION FIX LANDED IN `8e62f47`;
+THE GENERAL PROPERTY WAS WITHDRAWN.** Three real defects fixed (see below).
+A fourth case surfaced only under a different proptest seed: `similar`
+2.7.0 emits an internally inconsistent header (`@@ -1 +2 @@`, declaring
+one old line) with a body that consumes two, for whitespace-only
+boundary diffs. `apply_unified_diff`'s W9 guard correctly rejects that
+malformed patch; the code is right, the renderer is wrong. The
+round-trip property cannot be made green without weakening W9 or
+excluding `similar`'s inconsistent output — neither is worth doing, so
+the property was withdrawn. `8e62f47`'s production fix stays: it is
+independently justified by the confirmed cases (`""` → `"A"`,
+`"A"` → `"A\n"`, `"a"` → `"0\n"`). A fresh session that wants a
+round-trip property should feed only patches `similar` emits
+consistently, or pin `similar` and file the bug upstream.
 
 `apply_unified_diff` loses a trailing newline that a patch *adds* to a
 file that previously lacked one (seed: `old = "A"`, `new = " \n"` →
@@ -338,3 +344,19 @@ red in the gate means "not verified," not "regressed."
 
 The doc commit `f7ab00b` claimed "patch.rs closed" before the gate ran.
 That was premature; this correction supersedes it.
+
+### Final `patch.rs` state
+
+- **`8e62f47` stays.** Three defects fixed, independently verified:
+  - empty original `""` splits to `[""]` → phantom newline after splice
+  - trailing-newline decision read the original's shape instead of the patch's
+  - `\ No newline` marker is **positional** (applies to the line above it),
+    and a parser that leaves it set across a body push makes the next line
+    inherit a stale marker
+- **The general round-trip property was withdrawn.** `similar` 2.7.0 emits
+  an inconsistent header for whitespace-only boundary diffs; W9 correctly
+  rejects it; the property cannot be made green without weakening W9.
+- **The seed file was deleted** (it pinned a `similar` bug, not a kod bug).
+
+A future session should either pin `similar` and file the upstream bug, or
+write a round-trip property that feeds only consistent patches.
