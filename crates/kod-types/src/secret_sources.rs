@@ -515,3 +515,172 @@ mod tests {
         assert!(!name_is_secret_shaped("MONKEY"));
     }
 }
+
+#[cfg(test)]
+mod secret_sources_proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::string::string_regex;
+
+    fn arb_name() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("OPENAI_API_KEY".to_string()),
+            Just("MY_TOKEN".to_string()),
+            Just("PASSWORD".to_string()),
+            Just("AWS_SECRET".to_string()),
+            Just("PATH".to_string()),
+            Just("MONKEY".to_string()),
+            Just(String::new()),
+            string_regex("[A-Z_]{0,24}").unwrap(),
+        ]
+    }
+
+    fn arb_value() -> impl Strategy<Value = String> {
+        string_regex("[ -~]{0,32}").unwrap()
+    }
+
+    fn arb_env() -> impl Strategy<Value = Vec<(String, String)>> {
+        prop::collection::vec((arb_name(), arb_value()), 0..8)
+    }
+
+    fn arb_secret_like() -> impl Strategy<Value = String> {
+        (
+            prop_oneof![
+                Just("sk-".to_string()),
+                Just("github_pat_".to_string()),
+                Just("ghp_".to_string()),
+                Just("xoxb-".to_string()),
+                Just("npm_".to_string()),
+                Just("AKIA".to_string()),
+            ],
+            string_regex("[A-Za-z0-9]{16,64}").unwrap(),
+        )
+            .prop_map(|(p, t)| format!("{p}{t}"))
+    }
+
+    fn arb_text() -> impl Strategy<Value = String> {
+        string_regex("[ -~\\n]{0,200}").unwrap()
+    }
+
+    proptest! {
+        #[test]
+        fn prop_scan_env_is_sound(pairs in arb_env()) {
+            let expected = pairs.clone();
+            let out = scan_env(|| pairs);
+            prop_assert!(out.len() <= expected.len());
+            for d in &out {
+                prop_assert_eq!(d.source, SecretSource::Env);
+                prop_assert!(d.value.len() >= MIN_ENV_VALUE_LENGTH);
+                prop_assert!(name_is_secret_shaped(&d.origin));
+                prop_assert!(
+                    expected.iter().any(|(n, v)| n == &d.origin && v == &d.value),
+                    "scan_env invented a pair: {}={}",
+                    d.origin,
+                    d.value
+                );
+            }
+        }
+
+        #[test]
+        fn prop_scan_text_dedupes(
+            values in prop::collection::vec(arb_secret_like(), 0..6),
+            noise in arb_text(),
+        ) {
+            let text = format!("{} {}", noise, values.join(" "));
+            let out = scan_text(&text);
+            let mut seen = std::collections::HashSet::new();
+            for d in &out {
+                prop_assert!(seen.insert(d.value.clone()), "duplicate value: {}", d.value);
+            }
+        }
+
+        #[test]
+        fn prop_scan_text_is_superset_of_scanners(text in arb_text()) {
+            let vendors = scan_vendors(&text);
+            let urls = scan_connection_urls(&text);
+            let combined = scan_text(&text);
+            for d in vendors.iter().chain(urls.iter()) {
+                prop_assert!(
+                    combined.iter().any(|c| c.value == d.value),
+                    "scan_text dropped {} found by a sub-scanner",
+                    d.value
+                );
+            }
+        }
+
+        #[test]
+        fn prop_scan_text_is_deterministic(text in arb_text()) {
+            let a: Vec<(String, SecretSource, String)> = scan_text(&text)
+                .into_iter()
+                .map(|d| (d.value, d.source, d.origin))
+                .collect();
+            let b: Vec<(String, SecretSource, String)> = scan_text(&text)
+                .into_iter()
+                .map(|d| (d.value, d.source, d.origin))
+                .collect();
+            prop_assert_eq!(a, b);
+        }
+
+        #[test]
+        fn prop_vendor_matches_are_pattern_instances(
+            secret in arb_secret_like(),
+            noise in arb_text(),
+        ) {
+            let text = format!("{} {}", noise, secret);
+            for d in scan_vendors(&text) {
+                let p = vendor_patterns()
+                    .iter()
+                    .find(|p| p.name == d.origin)
+                    .expect("every vendor origin names a known pattern");
+                prop_assert!(
+                    p.literal_prefixes.iter().any(|pre| d.value.starts_with(pre)),
+                    "value {} does not start with any prefix of {}",
+                    d.value,
+                    p.name
+                );
+                let m = p
+                    .regex
+                    .find(&d.value)
+                    .expect("a pattern must re-match its own match");
+                prop_assert_eq!(m.as_str(), d.value.as_str());
+            }
+        }
+
+        #[test]
+        fn prop_register_discovered_counts_only_new(
+            secrets in prop::collection::vec(arb_secret_like(), 0..6),
+            noise in arb_text(),
+        ) {
+            let text = format!("{} {}", noise, secrets.join(" "));
+            let discovered = scan_text(&text);
+            let unique: std::collections::HashSet<String> =
+                discovered.iter().map(|d| d.value.clone()).collect();
+            let v = SecretVault::with_key([7u8; 32]);
+            let first = register_discovered(&v, discovered);
+            prop_assert_eq!(first, unique.len());
+            let second = register_discovered(&v, scan_text(&text));
+            prop_assert_eq!(second, 0);
+        }
+
+        #[test]
+        fn prop_scanned_secrets_do_not_survive_obfuscation(
+            secret in arb_secret_like(),
+            noise in arb_text(),
+        ) {
+            let text = format!("{} {}", noise, secret);
+            let discovered = scan_text(&text);
+            let values: Vec<String> = discovered.iter().map(|d| d.value.clone()).collect();
+            let v = SecretVault::with_key([11u8; 32]);
+            register_discovered(&v, discovered);
+            let obfuscated = v.obfuscate(&text);
+            for value in &values {
+                prop_assert!(
+                    !obfuscated.contains(value),
+                    "scanned secret survived obfuscation: {}",
+                    value
+                );
+            }
+            prop_assert_eq!(v.deobfuscate(&obfuscated).0, text);
+        }
+    }
+}
