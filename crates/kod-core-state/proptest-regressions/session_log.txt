@@ -1,0 +1,8 @@
+cc af3913cf88a4bc82bd231c6d67f255d0c4813b9ef4cfbf9c662c8b605790ff57 # shrinks to names = ["a", "a", "_", "_", "_", "_", "a", "_", "a", "a", "_", "_"]
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0a73c886ddc348ae5ae37938269c00c3ddd5f88946bd9cb458002620ce32440c # shrinks to ids = ["_", "a", "a", "a", "a", "a"], unnamed = ["_", "A", "_", "A", "A", "A"]

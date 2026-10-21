@@ -618,6 +618,15 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
     for v in by_name.into_values() {
         out.extend(v);
     }
+    // Deterministic order. `HashMap` iteration order is randomized per
+    // process, so without this sort the pending list is stable within
+    // one run but differs between runs. The module doc names
+    // log-diffing as use case #2, and `kod-tui`'s warning does
+    // `.join(", ")` for display — both make the reordering visible.
+    // Sorted output is also what makes the four `pending_*` example
+    // tests meaningful: they each produce a single-element list, so
+    // they never observed the order at all.
+    out.sort();
     out
 }
 
@@ -1662,5 +1671,95 @@ mod session_sweep_tests {
         write_log(tmp.path(), "keep.txt", 0);
         assert_eq!(sweep_session_logs_at(tmp.path()), 0);
         assert!(tmp.path().join("keep.txt").exists());
+    }
+}
+
+#[cfg(test)]
+mod pending_tool_calls_proptests {
+    //! **The sortedness contract.** `pending_tool_calls` builds its
+    //! output from two `HashMap`s (`by_id` and `by_name`) via
+    //! `into_values()`. `HashMap` iteration order is randomized per
+    //! process, so with two or more pending calls the output order
+    //! changes between runs. The module doc names log-diffing as use
+    //! case #2, and `kod-tui`'s warning line does `.join(", ")` for
+    //! display — either surface makes the reordering visible.
+    //!
+    //! The property pins the contract that would fix it: the output is
+    //! sorted. Pre-fix this fails with ~1 - 1/12! probability per
+    //! property run; post-fix it cannot fail.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn start(holder: &str, tool: &str, id: Option<&str>) -> SessionEntry {
+        SessionEntry::ToolExecutionStart {
+            timestamp_ms: 0,
+            holder: holder.to_string(),
+            tool_name: tool.to_string(),
+            call_id: id.map(String::from),
+        }
+    }
+
+    proptest! {
+        /// With many id-bearing starts and no completions, every call
+        /// is pending, and the output order must be deterministic —
+        /// sorted.
+        #[test]
+        fn prop_pending_output_is_sorted(
+            names in prop::collection::vec("[a-z_]{1,12}", 12..16),
+        ) {
+            let entries: Vec<SessionEntry> = names.iter().enumerate()
+                .map(|(i, n)| start("h", n, Some(&format!("id-{i}"))))
+                .collect();
+            let out = pending_tool_calls(&entries, "h");
+            let mut sorted = out.clone();
+            sorted.sort();
+            prop_assert_eq!(
+                &out,
+                &sorted,
+                "pending output was not sorted (HashMap iteration order leaked)",
+            );
+        }
+
+        /// The mixed case — some id-bearing starts, some unnamed —
+        /// must also come out sorted as one list.
+        #[test]
+        fn prop_mixed_pending_output_is_sorted(
+            ids in prop::collection::vec("[a-z_]{1,10}", 6..8),
+            unnamed in prop::collection::vec("[A-Z_]{1,10}", 6..8),
+        ) {
+            let mut entries: Vec<SessionEntry> = Vec::new();
+            for (i, n) in ids.iter().enumerate() {
+                entries.push(start("h", n, Some(&format!("id-{i}"))));
+            }
+            for n in &unnamed {
+                entries.push(start("h", n, None));
+            }
+            let out = pending_tool_calls(&entries, "h");
+            let mut sorted = out.clone();
+            sorted.sort();
+            prop_assert_eq!(
+                &out,
+                &sorted,
+                "mixed pending output was not sorted",
+            );
+        }
+    }
+
+    /// Named, deterministic pin of the contract. Pre-fix, the two
+    /// entries may come out in either order (50% chance per run);
+    /// post-fix the order is the sorted one.
+    #[test]
+    fn pending_names_are_returned_in_sorted_order() {
+        let entries = vec![
+            start("h", "zebra", Some("id-1")),
+            start("h", "apple", Some("id-2")),
+            start("h", "mango", Some("id-3")),
+        ];
+        let out = pending_tool_calls(&entries, "h");
+        assert_eq!(
+            out,
+            vec!["apple", "mango", "zebra"],
+            "pending names are not sorted",
+        );
     }
 }
