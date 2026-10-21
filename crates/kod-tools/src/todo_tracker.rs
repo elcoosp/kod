@@ -359,3 +359,149 @@ mod tests {
         assert!(t.reminder_awaiting_progress());
     }
 }
+
+#[cfg(test)]
+mod todo_tracker_proptests {
+    //! State-machine invariants for `TodoTracker`.
+    //!
+    //! The tracker accumulates "mutating tool calls since the last
+    //! todo touch" and decides when to nudge. The invariants:
+    //!
+    //! 1. A fresh tracker is idle (`mutating_since_todo() == 0`).
+    //! 2. A non-mutating observation never increments the counter.
+    //! 3. The counter is monotone non-decreasing between todo
+    //!    touches.
+    //! 4. A todo touch resets the counter to zero.
+    //!
+    //! **Invariant 4 is the one I'd bet against.** If the reset is
+    //! conditioned on something other than `is_todo_touch` (e.g.
+    //! only on `note_prelude_offered`, or only when the tracker
+    //! has issued a nudge), `prop_todo_touch_resets` fails and the
+    //! body's actual contract is revealed. The other three are
+    //! safe: they follow from the type of the function (`u32`
+    //! counter) and the name of the field.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A sequence of `(is_mutating, is_todo_touch)` observations.
+    /// The pair with `is_todo_touch == true` is rare in practice;
+    /// the generator includes it so the reset property can
+    /// exercise it.
+    fn observation_seq() -> impl Strategy<Value = Vec<(bool, bool)>> {
+        prop::collection::vec((any::<bool>(), any::<bool>()), 0..=20)
+    }
+
+    proptest! {
+        /// A fresh tracker has counters at zero.
+        #[test]
+        fn prop_new_is_idle(_dummy in 0u8..1) {
+            let t = TodoTracker::new();
+            prop_assert_eq!(t.mutating_since_todo(), 0);
+            prop_assert_eq!(t.nudges_this_cycle(), 0);
+        }
+
+        /// The mutating counter never goes *up* for a non-mutating
+        /// observation.
+        #[test]
+        fn prop_non_mutating_no_increment(seq in observation_seq()) {
+            let mut t = TodoTracker::new();
+            for (is_mutating, is_todo_touch) in seq {
+                if !is_mutating && !is_todo_touch {
+                    let before = t.mutating_since_todo();
+                    t.observe_tool(false, false);
+                    let after = t.mutating_since_todo();
+                    prop_assert_eq!(
+                        after, before,
+                        "non-mutating observe changed counter {} -> {}",
+                        before, after,
+                    );
+                } else {
+                    t.observe_tool(is_mutating, is_todo_touch);
+                }
+            }
+        }
+
+        /// Mutating observations are monotone non-decreasing
+        /// *between* todo touches. A run of `(true, false)` can
+        /// only raise the counter.
+        #[test]
+        fn prop_mutating_monotone_between_todos(seq in observation_seq()) {
+            let mut t = TodoTracker::new();
+            let mut prev = t.mutating_since_todo();
+            for (is_mutating, is_todo_touch) in seq {
+                t.observe_tool(is_mutating, is_todo_touch);
+                let now = t.mutating_since_todo();
+                // A todo touch may reset the counter (lower it);
+                // anything else must not lower it.
+                if !is_todo_touch {
+                    prop_assert!(
+                        now >= prev || !is_mutating,
+                        "counter decreased {} -> {} after (mutating={}, todo={})",
+                        prev, now, is_mutating, is_todo_touch,
+                    );
+                }
+                prev = now;
+            }
+        }
+
+        /// A todo touch resets the counter. **The contract I'd bet
+        /// against** — if this fails, the reset is conditioned on
+        /// something else, and the failure message will name the
+        /// case.
+        #[test]
+        fn prop_todo_touch_resets(seq_before in observation_seq()) {
+            let mut t = TodoTracker::new();
+            for (is_mutating, _) in seq_before {
+                t.observe_tool(is_mutating, false);
+            }
+            t.observe_tool(false, true);
+            prop_assert_eq!(
+                t.mutating_since_todo(), 0,
+                "todo touch did not reset counter",
+            );
+        }
+
+        /// Determinism: two trackers fed the same sequence end in
+        /// the same state.
+        #[test]
+        fn prop_deterministic(seq in observation_seq()) {
+            let mut a = TodoTracker::new();
+            let mut b = TodoTracker::new();
+            for (m, tt) in seq {
+                a.observe_tool(m, tt);
+                b.observe_tool(m, tt);
+            }
+            prop_assert_eq!(a.mutating_since_todo(), b.mutating_since_todo());
+            prop_assert_eq!(a.nudges_this_cycle(), b.nudges_this_cycle());
+            prop_assert_eq!(a.reminder_awaiting_progress(), b.reminder_awaiting_progress());
+        }
+    }
+
+    // ---- controls: the described usage patterns -------------------
+
+    /// A few mutating tool calls, then a todo update, leaves the
+    /// tracker idle. This is the whole point of the counter: a
+    /// session that touches todos after doing work is "on track".
+    #[test]
+    fn control_mutate_then_todo_resets() {
+        let mut t = TodoTracker::new();
+        for _ in 0..5 {
+            t.observe_tool(true, false);
+        }
+        assert_eq!(t.mutating_since_todo(), 5);
+        t.observe_tool(false, true);
+        assert_eq!(t.mutating_since_todo(), 0);
+    }
+
+    /// Reading a file (non-mutating) is not "work" for the
+    /// tracker; it doesn't count toward the nudge threshold.
+    #[test]
+    fn control_read_only_is_not_work() {
+        let mut t = TodoTracker::new();
+        for _ in 0..10 {
+            t.observe_tool(false, false);
+        }
+        assert_eq!(t.mutating_since_todo(), 0);
+    }
+}
