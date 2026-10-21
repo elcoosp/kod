@@ -745,3 +745,224 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+mod instructions_proptests {
+    //! Properties and characterizations for the AGENTS.md parser.
+    //!
+    //! The parser is fenced and heading-aware: a `::: when <cond>`
+    //! opens a guarded block, a bare `:::` closes it, and a `## Name`
+    //! starts a named section. Inside a ```` ``` ```` code fence none
+    //! of those are live (F2b-9). Two behaviors below are
+    //! CHARACTERIZED, not asserted correct: `::: whenfoo` is
+    //! silently treated as `::: when` (strip_prefix("when") matches
+    //! the "when" prefix of "whenfoo"), and `::: <other>` is
+    //! silently dropped rather than preserved in the body.
+    use super::*;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+
+    fn from() -> PathBuf {
+        PathBuf::from("AGENTS.md")
+    }
+
+    /// Text with no `## ` heading, no `:::`, and no ```` ``` ```` —
+    /// the parser should emit exactly one unguarded section. `\r`
+    /// is excluded because the parser normalizes every line to a
+    /// trailing `\n`; see the body comparison below.
+    fn plain_text() -> impl Strategy<Value = String> {
+        prop::collection::vec("[^:#`\\[\\]\\r]{0,30}", 0..6).prop_map(|lines| lines.join("\n"))
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_never_panics(src in "\\PC{0,400}") {
+            let _ = parse_agents_md(&src, &from());
+        }
+
+        #[test]
+        fn prop_parse_deterministic(src in "\\PC{0,400}") {
+            let a = parse_agents_md(&src, &from());
+            let b = parse_agents_md(&src, &from());
+            prop_assert_eq!(a.len(), b.len());
+            for (x, y) in a.iter().zip(b.iter()) {
+                prop_assert_eq!(x.body.clone(), y.body.clone());
+                prop_assert_eq!(x.name.clone(), y.name.clone());
+            }
+        }
+
+        /// A plain body with no directives emits exactly one section,
+        /// unguarded, unnamed, whose body is the source with every
+        /// line re-terminated by `\n` — the parser's own
+        /// normalization.
+        #[test]
+        fn prop_plain_text_is_one_section(src in plain_text()) {
+            let sections = parse_agents_md(&src, &from());
+            if src.trim().is_empty() {
+                prop_assert!(sections.is_empty(), "blank src produced {:?}", sections);
+                return Ok(());
+            }
+            prop_assert_eq!(sections.len(), 1, "src={:?}", src);
+            prop_assert!(matches!(sections[0].when, When::Always));
+            prop_assert!(sections[0].name.is_none());
+            let expected: String = src.lines().map(|l| format!("{l}\n")).collect();
+            prop_assert_eq!(&sections[0].body, &expected, "src={:?}", src);
+        }
+
+        /// **F2b-9.** A `::: when` inside a fenced code block is not a
+        /// live directive: it stays in the body verbatim.
+        #[test]
+        fn prop_directive_inside_code_fence_is_literal(guard in "[a-z]{1,8}") {
+            let src = format!(
+                "before\n```\n::: when task={guard}\nbody\n:::\n```\nafter\n"
+            );
+            let sections = parse_agents_md(&src, &from());
+            prop_assert_eq!(sections.len(), 1, "src={:?}", src);
+            prop_assert!(matches!(sections[0].when, When::Always), "src={:?}", src);
+            let body = &sections[0].body;
+            prop_assert!(body.contains("before"), "lost 'before': {:?}", body);
+            prop_assert!(body.contains("after"), "lost 'after': {:?}", body);
+            let directive_line = format!("::: when task={}", guard);
+            prop_assert!(
+                body.contains(&directive_line),
+                "directive line did not survive as text: {:?}", body,
+            );
+        }
+
+        /// A `::: when task=X` block followed by a bare `:::` emits
+        /// one section with `When::TaskType(X)`.
+        #[test]
+        fn prop_task_fence_guards_a_block(guard in "[a-zA-Z]{1,8}") {
+            let src = format!("::: when task={}\nhello\n:::\n", guard);
+            let sections = parse_agents_md(&src, &from());
+            prop_assert_eq!(sections.len(), 1, "src={:?}", src);
+            match &sections[0].when {
+                When::TaskType(v) => prop_assert_eq!(v, &guard),
+                other => prop_assert!(false, "expected TaskType({}), got {:?}", guard, other),
+            }
+            prop_assert!(sections[0].body.contains("hello"));
+        }
+
+        /// A path fence produces `When::Path`, a lang fence
+        /// `When::Lang`.
+        #[test]
+        fn prop_path_and_lang_fences(guard in "[a-z/]{1,20}") {
+            let path_src = format!("::: when path={}\nbody\n:::\n", guard);
+            let ps = parse_agents_md(&path_src, &from());
+            prop_assert_eq!(ps.len(), 1);
+            prop_assert!(matches!(&ps[0].when, When::Path(p) if p == &guard),
+                "expected Path({}), got {:?}", guard, ps[0].when);
+            let lang_src = format!("::: when lang={}\nbody\n:::\n", guard);
+            let ls = parse_agents_md(&lang_src, &from());
+            prop_assert_eq!(ls.len(), 1);
+            prop_assert!(matches!(&ls[0].when, When::Lang(p) if p == &guard),
+                "expected Lang({}), got {:?}", guard, ls[0].when);
+        }
+
+        /// `parse_condition` maps the three prefixes to their
+        /// variants and everything else to `Always`.
+        #[test]
+        fn prop_parse_condition_totality(s in "\\PC{0,30}") {
+            let when = parse_condition(&s);
+            if let Some(v) = s.strip_prefix("task=") {
+                prop_assert!(matches!(&when, When::TaskType(x) if x == v.trim()),
+                    "task= gave {:?}", when);
+            } else if let Some(v) = s.strip_prefix("path=") {
+                prop_assert!(matches!(&when, When::Path(x) if x == v.trim()),
+                    "path= gave {:?}", when);
+            } else if let Some(v) = s.strip_prefix("lang=") {
+                prop_assert!(matches!(&when, When::Lang(x) if x == v.trim()),
+                    "lang= gave {:?}", when);
+            } else {
+                prop_assert!(matches!(when, When::Always),
+                    "unknown condition {s:?} gave {:?}", when);
+            }
+        }
+    }
+
+    /// **Characterization.** `::: whenfoo` (no space after `when`) is
+    /// treated as `::: when foo`, which parses to `Always`.
+    #[test]
+    fn whenfoo_is_treated_as_when_with_unknown_condition() {
+        let src = "::: whenfoo\nbody\n:::\n";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        assert!(
+            matches!(sections[0].when, When::Always),
+            "expected Always (typo no-op), got {:?}",
+            sections[0].when,
+        );
+        assert!(sections[0].body.contains("body"));
+    }
+
+    /// **Characterization.** `::: <other>` is silently dropped.
+    #[test]
+    fn unknown_directive_is_dropped() {
+        let src = "before\n::: unknown\nafter\n";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        let body = &sections[0].body;
+        assert!(body.contains("before"));
+        assert!(body.contains("after"));
+        assert!(
+            !body.contains("::: unknown"),
+            "unknown directive was NOT dropped: {:?}",
+            body,
+        );
+    }
+
+    /// A `## Heading` names the section it precedes.
+    #[test]
+    fn heading_names_a_section() {
+        let src = "## Setup\nbody\n";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name.as_deref(), Some("Setup"));
+        assert_eq!(sections[0].body.trim(), "body");
+    }
+
+    /// A heading inside a fence does not start a new section.
+    #[test]
+    fn heading_inside_a_fence_is_body_text() {
+        let src = "::: when task=A\n## not a heading\nbody\n:::\n";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        assert!(
+            sections[0].name.is_none(),
+            "heading inside fence named the section"
+        );
+        assert!(sections[0].body.contains("## not a heading"));
+    }
+
+    /// An unterminated `::: when` fence is flushed at EOF, not dropped.
+    #[test]
+    fn unterminated_fence_still_emits() {
+        let src = "::: when task=X\nbody\n";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        assert!(matches!(sections[0].when, When::TaskType(ref x) if x == "X"));
+        assert!(sections[0].body.contains("body"));
+    }
+
+    /// An empty body between a fence open and close produces no
+    /// section.
+    #[test]
+    fn empty_fence_body_is_no_section() {
+        let src = "::: when task=X\n:::\n";
+        assert!(parse_agents_md(src, &from()).is_empty());
+    }
+
+    /// A lone `\r` at the end of input is normalized to a `\r\n`
+    /// line ending when the parser re-emits the body. Pinned because
+    /// the first draft of `prop_plain_text_is_one_section` compared
+    /// `body.lines()` against `src.lines()` and the `\r` was stripped
+    /// on one side only — the parser's behavior is correct, the
+    /// line-comparison was wrong.
+    #[test]
+    fn trailing_lone_cr_is_normalized() {
+        let src = "A\r";
+        let sections = parse_agents_md(src, &from());
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].body, "A\r\n");
+    }
+}
