@@ -433,3 +433,114 @@ mod tests {
         assert!(b.is_empty());
     }
 }
+
+#[cfg(test)]
+mod drain_proptests {
+    //! Conservation properties for `YieldQueue::drain`.
+    //!
+    //! The 14 example tests pin each drain mode in isolation. This
+    //! round pins the conservation invariants across arbitrary
+    //! sequences of register + drain.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn register_entry(q: &YieldQueue, skip_idle: bool, payload: &str) {
+        let s = payload.to_string();
+        q.register("test", skip_idle, move || Some(s));
+    }
+
+    proptest! {
+        /// `drain(Streaming)` processes every entry; the queue is
+        /// empty after.
+        #[test]
+        fn prop_streaming_empties_queue(n in 0usize..=10) {
+            let q = YieldQueue::new();
+            for i in 0..n {
+                register_entry(&q, i % 2 == 0, &format!("p{i}"));
+            }
+            let _ = q.drain_streaming();
+            prop_assert_eq!(q.len(), 0);
+        }
+
+        /// `drain(Idle)` renders every non-skip entry and keeps
+        /// every skip entry. The queue after has exactly the skip
+        /// count.
+        #[test]
+        fn prop_idle_keeps_skip_entries(
+            n_skip in 0usize..=5,
+            n_regular in 0usize..=5,
+        ) {
+            let q = YieldQueue::new();
+            for i in 0..n_skip {
+                register_entry(&q, true, &format!("s{i}"));
+            }
+            for i in 0..n_regular {
+                register_entry(&q, false, &format!("r{i}"));
+            }
+            let batch = q.drain_idle();
+            prop_assert_eq!(batch.messages.len(), n_regular);
+            prop_assert_eq!(q.len(), n_skip);
+        }
+
+        /// Streaming after Idle renders the entries that Idle
+        /// skipped.
+        #[test]
+        fn prop_streaming_after_idle_renders_skipped(n_skip in 1usize..=5) {
+            let q = YieldQueue::new();
+            for i in 0..n_skip {
+                register_entry(&q, true, &format!("s{i}"));
+            }
+            let idle = q.drain_idle();
+            prop_assert_eq!(idle.messages.len(), 0);
+            let streaming = q.drain_streaming();
+            prop_assert_eq!(streaming.messages.len(), n_skip);
+            prop_assert_eq!(q.len(), 0);
+        }
+
+        /// While idle flush is disabled, `drain_idle` returns
+        /// empty and leaves the queue untouched.
+        #[test]
+        fn prop_disabled_idle_is_noop(n in 1usize..=5) {
+            let q = YieldQueue::new();
+            for i in 0..n {
+                register_entry(&q, false, &format!("p{i}"));
+            }
+            q.cancel_idle_flush_scheduling();
+            let before = q.len();
+            let batch = q.drain_idle();
+            prop_assert_eq!(batch.messages.len(), 0);
+            prop_assert_eq!(q.len(), before);
+        }
+    }
+
+    /// Control: empty queue drains empty under both modes.
+    #[test]
+    fn control_empty_drains_empty() {
+        let q = YieldQueue::new();
+        assert!(q.drain_streaming().is_empty());
+        assert!(q.drain_idle().is_empty());
+    }
+
+    /// Control: registration order is preserved within a drain.
+    #[test]
+    fn control_order_is_preserved() {
+        let q = YieldQueue::new();
+        register_entry(&q, false, "first");
+        register_entry(&q, false, "second");
+        register_entry(&q, false, "third");
+        let b = q.drain_streaming();
+        assert_eq!(b.messages, vec!["first", "second", "third"]);
+    }
+
+    /// Control: a `None` render counts as dropped, not as a message.
+    #[test]
+    fn control_none_render_counts_as_dropped() {
+        let q = YieldQueue::new();
+        q.register("t", false, || None);
+        register_entry(&q, false, "kept");
+        let b = q.drain_streaming();
+        assert_eq!(b.messages, vec!["kept"]);
+        assert_eq!(b.dropped, 1);
+    }
+}
