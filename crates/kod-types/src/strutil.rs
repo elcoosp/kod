@@ -398,3 +398,118 @@ mod strutil_proptests {
         }
     }
 }
+
+#[cfg(test)]
+mod truncate_monotonicity {
+    //! **Metamorphic monotonicity.** A property the arc has not used
+    //! before: instead of asserting one output against a spec, assert
+    //! a relation between two outputs of one function at two inputs.
+    //!
+    //! The relation: **truncation is monotone in its budget**. For
+    //! `n <= m`, `truncate(s, n)` is a prefix of `truncate(s, m)`.
+    //! Every correct truncator satisfies this (it either cuts the
+    //! same place or cuts later). It is not vacuous — it catches any
+    //! "smart" post-processing that is not a pure prefix operation:
+    //! if someone adds `.trim_end()` to `truncate_chars`, then
+    //! `truncate_chars("abc  ", 5)` = `"abc  "` and
+    //! `truncate_chars("abc  ", 6)` = `"abc"`, and `"abc  "` is not
+    //! a prefix of `"abc"`.
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Mixed ASCII, spaces, and 2/3/4-byte characters: the alphabet
+    /// where byte length and char count disagree, and where a
+    /// byte-oriented truncator panics.
+    fn arb_text() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                prop::char::range('a', 'z'),
+                Just(' '),
+                Just('é'),
+                Just('中'),
+                Just('🦀'),
+            ],
+            0..30,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    /// A monotone pair `(n, m)` with `n <= m`, built by construction
+    /// so no `prop_assume!` filter is needed.
+    fn arb_pair() -> impl Strategy<Value = (usize, usize)> {
+        (0usize..40, 0usize..40).prop_map(|(a, b)| if a <= b { (a, b) } else { (b, a) })
+    }
+
+    proptest! {
+        /// `truncate_chars(s, n)` is a prefix of `truncate_chars(s, m)`
+        /// for `n <= m`.
+        #[test]
+        fn prop_truncate_chars_is_monotone(s in arb_text(), (n, m) in arb_pair()) {
+            let shorter = truncate_chars(&s, n);
+            let longer = truncate_chars(&s, m);
+            prop_assert!(
+                longer.starts_with(shorter),
+                "n={} m={} s={:?} shorter={:?} longer={:?}",
+                n, m, s, shorter, longer,
+            );
+        }
+
+        /// `truncate_bytes(s, n)` is a prefix of `truncate_bytes(s, m)`
+        /// for `n <= m`. Multibyte chars make the byte budget
+        /// non-linear (`bytes 4` and `bytes 5` may land on different
+        /// char boundaries), which is exactly what makes this
+        /// non-vacuous.
+        #[test]
+        fn prop_truncate_bytes_is_monotone(s in arb_text(), (n, m) in arb_pair()) {
+            let shorter = truncate_bytes(&s, n);
+            let longer = truncate_bytes(&s, m);
+            prop_assert!(
+                longer.starts_with(shorter),
+                "n={} m={} s={:?} shorter={:?} longer={:?}",
+                n, m, s, shorter, longer,
+            );
+        }
+
+        /// The output of either truncator is always a prefix of the
+        /// input — a corollary of monotonicity at `m = s.len()`, but
+        /// worth pinning on its own because it is the contract a
+        /// caller actually reads.
+        #[test]
+        fn prop_truncate_chars_is_a_prefix_of_input(s in arb_text(), n in 0usize..40) {
+            prop_assert!(s.starts_with(truncate_chars(&s, n)));
+        }
+
+        #[test]
+        fn prop_truncate_bytes_is_a_prefix_of_input(s in arb_text(), n in 0usize..40) {
+            prop_assert!(s.starts_with(truncate_bytes(&s, n)));
+        }
+    }
+
+    /// **The bug class the property catches**, stated as a
+    /// deterministic case. A "helpful" truncator that also trims
+    /// trailing whitespace is not monotone: `"abc  "` is not a
+    /// prefix of `"abc"`. Pinning the correct behavior here means a
+    /// future implementation that adds trimming fails this test, not
+    /// just the property.
+    #[test]
+    fn trailing_whitespace_is_not_trimmed() {
+        assert_eq!(truncate_chars("abc  ", 5), "abc  ");
+        assert_eq!(truncate_chars("abc  ", 6), "abc  ");
+        assert_eq!(truncate_bytes("abc  ", 5), "abc  ");
+        assert_eq!(truncate_bytes("abc  ", 6), "abc  ");
+    }
+
+    /// A concrete monotone case with a multibyte char at the boundary.
+    /// `"aaaé"` is 5 bytes, 4 chars. Byte budgets 3 and 4 both cut at
+    /// byte 3 (inside `é` is not a boundary, so it floors), while 5
+    /// cuts at the whole string.
+    #[test]
+    fn multibyte_boundary_is_monotone() {
+        let s = "aaaé";
+        assert_eq!(truncate_bytes(s, 3), "aaa");
+        assert_eq!(truncate_bytes(s, 4), "aaa"); // floors to 3
+        assert_eq!(truncate_bytes(s, 5), "aaaé"); // full
+        assert!(truncate_bytes(s, 4).starts_with(truncate_bytes(s, 3)));
+        assert!(truncate_bytes(s, 5).starts_with(truncate_bytes(s, 4)));
+    }
+}
