@@ -356,8 +356,8 @@ pub fn route(advice: &Advice, primary_state: PrimaryState) -> Delivery {
 // ---------------------------------------------------------------------------
 
 /// Normalize a note for the dedupe and noise checks: lowercase, keep
-/// only ASCII alphanumerics. `"Stop."` → `"stop"`; `"LGTM!"` →
-/// `"lgtm"`; `"  no issues  "` → `"noissues"`.
+/// only alphanumerics. `"Stop."` → `"stop"`; `"LGTM!"` → `"lgtm"`;
+/// `"  no issues  "` → `"noissues"`.
 ///
 /// # Deferred: NFKC
 ///
@@ -370,7 +370,7 @@ pub fn route(advice: &Advice, primary_state: PrimaryState) -> Delivery {
 /// so a reader does not assume full NFKC.
 pub fn normalize(note: &str) -> String {
     note.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
+        .filter(|c| c.is_alphanumeric())
         .flat_map(|c| c.to_lowercase())
         .collect()
 }
@@ -845,5 +845,139 @@ mod tests {
         assert!(!Admission::RejectNoise.accepted());
         assert!(!Admission::RejectDuplicate.accepted());
         assert!(!Admission::RejectBudget.accepted());
+    }
+}
+
+#[cfg(test)]
+mod normalize_non_ascii_proptests {
+    //! Properties for `normalize` and its use as `EmissionGuard`'s
+    //! dedupe key.
+    //!
+    //! `normalize` filters on `is_ascii_alphanumeric`, so a note
+    //! containing only non-ASCII characters normalizes to the empty
+    //! string. Two distinct CJK advisories (`請勿打擾` and `重新檢查`)
+    //! therefore share the empty dedupe key: the first is admitted,
+    //! the second is rejected as a duplicate.
+    //!
+    //! The doc comment says "ASCII traffic is expected" and defers
+    //! NFKC. Those are different limitations: NFKC concerns composed
+    //! vs decomposed forms (`é` vs `e` + combining acute); the CJK
+    //! collision is a straight consequence of filtering to ASCII, and
+    //! the doc doesn't name it.
+    //!
+    //! **A real bug.** `prop_normalize_distinguishes_non_ascii` and
+    //! `prop_cjk_blockers_are_distinct` fail on the pre-fix code.
+    //! The fix (below, same commit) widens the filter from
+    //! `is_ascii_alphanumeric` to `is_alphanumeric`. ASCII behaviour
+    //! is unchanged: every ASCII alphanumeric is alphanumeric, and
+    //! `to_lowercase` (already Unicode-aware) folds ASCII the same
+    //! way as before.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cjk_char() -> impl Strategy<Value = char> {
+        prop::sample::select(vec![
+            '中', '国', '建', '設', '計', '師', '文', '字', '力', '心', '請', '勿', '打', '擾',
+            '重', '新', '檢', '查',
+        ])
+    }
+
+    fn cjk_string(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(cjk_char(), min_len..=max_len)
+            .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        /// **The bug, primitive level.** Two distinct non-ASCII
+        /// strings normalize to distinct keys. Pre-fix they both
+        /// normalize to `""`.
+        #[test]
+        fn prop_normalize_distinguishes_non_ascii(
+            a in cjk_string(1, 6),
+            b in cjk_string(1, 6),
+        ) {
+            prop_assume!(a != b);
+            let na = normalize(&a);
+            let nb = normalize(&b);
+            prop_assert_ne!(
+                na.clone(), nb,
+                "distinct CJK notes {:?} and {:?} both normalize to the same key {:?}",
+                a, b, na,
+            );
+        }
+
+        /// **The bug, composed level.** Two distinct CJK Blocker
+        /// advisories are both admitted. Pre-fix the second is
+        /// rejected as a duplicate of the first (they share the
+        /// empty dedupe key). Blockers bypass the budget, so the
+        /// only thing that can reject the second is dedupe.
+        #[test]
+        fn prop_cjk_blockers_are_distinct(
+            a in cjk_string(1, 6),
+            b in cjk_string(1, 6),
+        ) {
+            prop_assume!(a != b);
+            let mut guard = EmissionGuard::new();
+            let first = guard.admit(&Advice::new(a.clone(), Severity::Blocker));
+            prop_assert!(first.accepted(), "first CJK blocker {:?} rejected: {:?}", a, first);
+            let second = guard.admit(&Advice::new(b.clone(), Severity::Blocker));
+            prop_assert!(
+                second.accepted(),
+                "second CJK blocker {:?} rejected as {:?} — same empty key as {:?}",
+                b, second, a,
+            );
+        }
+
+        /// `normalize` is deterministic.
+        #[test]
+        fn prop_normalize_deterministic(s in cjk_string(0, 8)) {
+            prop_assert_eq!(normalize(&s), normalize(&s));
+        }
+    }
+
+    // ---- controls: the ASCII contract is unchanged ----------------
+
+    /// Control: an ASCII note with punctuation still normalizes
+    /// the documented way. `"Stop."` -> `"stop"`, `"LGTM!"` ->
+    /// `"lgtm"`, `"  no issues  "` -> `"noissues"`. These are the
+    /// exact examples from the doc comment.
+    #[test]
+    fn control_ascii_shape_preserved() {
+        assert_eq!(normalize("Stop."), "stop");
+        assert_eq!(normalize("LGTM!"), "lgtm");
+        assert_eq!(normalize("  no issues  "), "noissues");
+    }
+
+    /// Control: punctuation and whitespace are still stripped.
+    #[test]
+    fn control_punctuation_still_stripped() {
+        assert_eq!(normalize("---"), "");
+        assert_eq!(normalize("!!! ???"), "");
+        assert_eq!(normalize("   \t\n"), "");
+    }
+
+    /// Control: an empty ASCII-only note still normalizes to empty.
+    /// Widening the filter must not start admitting the empty
+    /// string as its own key.
+    #[test]
+    fn control_empty_input_empty_key() {
+        assert_eq!(normalize(""), "");
+        assert_eq!(normalize("---"), "");
+    }
+
+    /// Control: pure ASCII input is unaffected by the widened
+    /// filter. Every ASCII alphanumeric is alphanumeric, so the
+    /// output is identical pre- and post-fix.
+    #[test]
+    fn control_ascii_letters_and_digits_unchanged() {
+        for s in ["hello", "HELLO", "Hello123", "abc-123_xyz", "0123456789"] {
+            let lower = s.to_ascii_lowercase();
+            let expected: String = lower
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
+            assert_eq!(normalize(s), expected, "input {:?}", s);
+        }
     }
 }
