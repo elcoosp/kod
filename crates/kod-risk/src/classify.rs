@@ -1966,3 +1966,126 @@ mod property_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tokenize_proptests {
+    //! Properties for the shell-command tokenizer.
+    //!
+    //! `tokenize` is what every downstream classification sees. The
+    //! two existing proptests call `assess`, which uses it
+    //! internally; none pin `tokenize`'s own contract. The invariant
+    //! that matters most for a security classifier is operator
+    //! splitting: an operator glued to its neighbours must become its
+    //! own token, or `x|rm -rf /` never yields the `rm` token and the
+    //! destructive half is invisible.
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Totality: any input, no panic. A panic here crashes the
+        /// caller.
+        #[test]
+        fn prop_tokenize_never_panics(cmd in "\\PC{0,200}") {
+            let _ = tokenize(&cmd);
+        }
+
+        #[test]
+        fn prop_tokenize_is_deterministic(cmd in "\\PC{0,200}") {
+            prop_assert_eq!(tokenize(&cmd), tokenize(&cmd));
+        }
+
+        /// No token is ever empty. The loop pushes on transitions and
+        /// never pushes `current` unless non-empty; operators and the
+        /// sentinel are non-empty by construction. An empty token in
+        /// the vec would confuse every `args.get(i)` walker
+        /// downstream.
+        #[test]
+        fn prop_no_empty_tokens(cmd in "\\PC{0,200}") {
+            for (i, t) in tokenize(&cmd).iter().enumerate() {
+                prop_assert!(!t.is_empty(), "empty token at {i} in {:?}", cmd);
+            }
+        }
+
+        /// A plain word — no whitespace, quotes, operators, or
+        /// escapes — tokenizes to exactly itself.
+        #[test]
+        fn prop_simple_word_is_one_token(word in "[a-zA-Z0-9_]{1,10}") {
+            prop_assert_eq!(tokenize(&word), vec![word.clone()]);
+        }
+
+        /// Whitespace-only input yields no tokens.
+        #[test]
+        fn prop_whitespace_only_is_empty(ws in "[ \\t]{0,20}") {
+            prop_assert!(tokenize(&ws).is_empty(), "got {:?}", tokenize(&ws));
+        }
+
+        /// An unquoted `|` between two words is its own token. The
+        /// pre-SEC-A-04a fall-through glued `a|b` into `["a|b"]`, so
+        /// `split_segments` never saw the pipe.
+        #[test]
+        fn prop_bare_pipe_is_its_own_token(
+            a in "[a-z]{1,8}",
+            b in "[a-z]{1,8}",
+        ) {
+            let s = format!("{}|{}", a, b);
+            prop_assert_eq!(
+                tokenize(&s),
+                vec![a.clone(), "|".to_string(), b.clone()],
+            );
+        }
+
+        /// `&&` is one two-character token, not two `&` tokens.
+        #[test]
+        fn prop_double_ampersand_is_one_token(
+            a in "[a-z]{1,8}",
+            b in "[a-z]{1,8}",
+        ) {
+            let s = format!("{} && {}", a, b);
+            prop_assert_eq!(
+                tokenize(&s),
+                vec![a.clone(), "&&".to_string(), b.clone()],
+            );
+        }
+
+        /// `||` is one two-character token.
+        #[test]
+        fn prop_double_pipe_is_one_token(
+            a in "[a-z]{1,8}",
+            b in "[a-z]{1,8}",
+        ) {
+            let s = format!("{} || {}", a, b);
+            prop_assert_eq!(
+                tokenize(&s),
+                vec![a.clone(), "||".to_string(), b.clone()],
+            );
+        }
+    }
+
+    /// A single-quoted string containing a space is one token, and
+    /// the quotes are preserved in it — `unquote`/`strip_quotes` are
+    /// applied later per token. This is deterministic, not a
+    /// property.
+    #[test]
+    fn quoted_space_is_one_token_with_quotes_preserved() {
+        assert_eq!(tokenize("'a b'"), vec!["'a b'".to_string()]);
+    }
+
+    /// A backslash-escaped character is taken literally: the shell
+    /// strips the backslash before word-splitting, so `r\m` runs
+    /// `rm`. SEC-A-03.
+    #[test]
+    fn backslash_escapes_the_next_character() {
+        assert_eq!(tokenize("r\\m"), vec!["rm".to_string()]);
+    }
+
+    /// An unterminated heredoc emits the escalation sentinel (T5-C2).
+    #[test]
+    fn unterminated_heredoc_emits_sentinel() {
+        let toks = tokenize("cat <<EOF\nbody");
+        assert!(
+            toks.iter().any(|t| t == "__kod_heredoc_unterminated__"),
+            "got {:?}",
+            toks,
+        );
+    }
+}
