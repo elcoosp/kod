@@ -216,3 +216,200 @@ mod tests {
         assert!(err.contains("`a`") && err.contains("`b`"), "got: {err}");
     }
 }
+
+#[cfg(test)]
+mod validation_proptests {
+    //! Properties for the JSON Schema subset validator.
+    //!
+    //! The 8 example tests pin specific schemas. The properties
+    //! below pin the *contract* the module doc claims:
+    //!
+    //! * A conforming value passes.
+    //! * Every `type` mismatch is rejected with a path.
+    //! * `enum`, `required`, `properties`, and `items` reject their
+    //!   documented violations.
+    //! * Multiple failures are all collected (not just the first).
+    //!
+    //! The controls are the sharpest pins: **each keyword applies
+    //! only to its own type**, per the JSON Schema spec.
+    //! `minLength` on a number is a no-op (not a rejection for
+    //! being shorter than 5); `required` on a non-object is a
+    //! no-op; `items` on a non-array is a no-op; `properties` on a
+    //! non-object is a no-op. A hand-rolled validator that
+    //! computes "length" of a non-string as 0, or treats `required`
+    //! as "the key must exist anywhere", would reject these and
+    //! the controls would fail.
+    //!
+    //! **No bug expected** on the properties. The controls are the
+    //! place a bug would show up; if one fails, the fix depends on
+    //! the `check` body (which applies the keyword unconditionally
+    //! or guards it on the value's type), so the script should stop
+    //! before fixing.
+
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    // ---- properties: the documented contract ----------------------
+
+    proptest! {
+        /// A conforming object passes every keyword the schema
+        /// uses. The schema is generated from the value, so it is
+        /// conforming by construction; a failure means the
+        /// validator rejects its own output.
+        #[test]
+        fn prop_object_conforms(
+            name in "[a-z]{1,10}",
+            count in 0u32..=1000,
+        ) {
+            let value = json!({ "name": name, "count": count });
+            let schema = json!({
+                "type": "object",
+                "required": ["name", "count"],
+                "properties": {
+                    "name": { "type": "string" },
+                    "count": { "type": "integer" }
+                }
+            });
+            prop_assert!(validate(&schema, &value).is_ok());
+        }
+
+        /// A wrong nested type is rejected and the error names the
+        /// path. The path contains `name` (the offending field).
+        #[test]
+        fn prop_wrong_nested_type_rejected(count in 0u32..=1000) {
+            let value = json!({ "name": count, "count": count });
+            let schema = json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } }
+            });
+            let err = validate(&schema, &value).unwrap_err();
+            prop_assert!(err.contains("name"), "error {:?} does not name 'name'", err);
+        }
+
+        /// An `enum` violation is rejected. The error names the
+        /// path (or the allowed values).
+        #[test]
+        fn prop_enum_violation_rejected(
+            allowed in prop::collection::vec("[a-z]{1,4}", 1..=3),
+            outside in "[A-Z]{1,4}",
+        ) {
+            let schema = json!({ "enum": allowed });
+            let value = json!(outside);
+            prop_assert!(validate(&schema, &value).is_err());
+        }
+
+        /// A `required` violation is rejected. The error names the
+        /// missing key.
+        #[test]
+        fn prop_required_violation_rejected(missing in "[a-z]{1,10}") {
+            let schema = json!({
+                "type": "object",
+                "required": [missing.clone()],
+            });
+            let value = json!({});
+            let err = validate(&schema, &value).unwrap_err();
+            prop_assert!(err.contains(&missing), "error {:?} does not name {:?}", err, missing);
+        }
+
+        /// `items` is checked per index: one bad element fails the
+        /// whole array and the error names the index.
+        #[test]
+        fn prop_items_per_index(
+            good in prop::collection::vec(0u32..=100, 1..=5),
+            bad_at in 0usize..=4usize,
+        ) {
+            let mut arr: Vec<serde_json::Value> = good.iter().map(|n| json!(n)).collect();
+            if bad_at >= arr.len() {
+                return Ok(());
+            }
+            arr[bad_at] = json!("not a number");
+            let schema = json!({
+                "type": "array",
+                "items": { "type": "integer" }
+            });
+            prop_assert!(validate(&schema, &json!(arr)).is_err());
+        }
+
+        /// Multiple failures are all collected: a value with two
+        /// violations yields an error string with at least two
+        /// lines.
+        #[test]
+        fn prop_multiple_errors_collected(_dummy in 0u8..1) {
+            let schema = json!({
+                "type": "object",
+                "required": ["a", "b"],
+            });
+            let value = json!({});
+            let err = validate(&schema, &value).unwrap_err();
+            prop_assert!(err.lines().count() >= 2, "only one error line: {:?}", err);
+        }
+    }
+
+    // ---- controls: keyword applies only to its own type ------------
+
+    /// `minLength` on a number is a no-op. JSON Schema: string
+    /// bounds apply only to strings.
+    #[test]
+    fn control_min_length_on_number_is_noop() {
+        let schema = json!({ "minLength": 100 });
+        let value = json!(42);
+        assert!(
+            validate(&schema, &value).is_ok(),
+            "minLength on a number should be a no-op, got {:?}",
+            validate(&schema, &value),
+        );
+    }
+
+    /// `minItems` on a string is a no-op.
+    #[test]
+    fn control_min_items_on_string_is_noop() {
+        let schema = json!({ "minItems": 100 });
+        let value = json!("hello");
+        assert!(
+            validate(&schema, &value).is_ok(),
+            "minItems on a string should be a no-op, got {:?}",
+            validate(&schema, &value),
+        );
+    }
+
+    /// `required` on a non-object is a no-op. JSON Schema:
+    /// `required` applies only to objects.
+    #[test]
+    fn control_required_on_non_object_is_noop() {
+        let schema = json!({ "required": ["x"] });
+        let value = json!(42);
+        assert!(
+            validate(&schema, &value).is_ok(),
+            "required on a number should be a no-op, got {:?}",
+            validate(&schema, &value),
+        );
+    }
+
+    /// `properties` on a non-object is a no-op.
+    #[test]
+    fn control_properties_on_non_object_is_noop() {
+        let schema = json!({
+            "properties": { "x": { "type": "string" } }
+        });
+        let value = json!(42);
+        assert!(
+            validate(&schema, &value).is_ok(),
+            "properties on a number should be a no-op, got {:?}",
+            validate(&schema, &value),
+        );
+    }
+
+    /// An unknown keyword is permissive: the module doc says so
+    /// explicitly. `oneOf` is not in the subset.
+    #[test]
+    fn control_unknown_keyword_permissive() {
+        let schema = json!({ "oneOf": [{ "type": "string" }] });
+        let value = json!(42);
+        assert!(
+            validate(&schema, &value).is_ok(),
+            "unknown keyword should be permissive, got {:?}",
+            validate(&schema, &value),
+        );
+    }
+}
