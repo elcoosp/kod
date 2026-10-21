@@ -1074,3 +1074,232 @@ mod tests {
         assert!(got.is_none());
     }
 }
+
+#[cfg(test)]
+mod jev_redaction_proptests {
+    //! Properties for the Jev state redaction and cache key.
+    //!
+    //! `redact_state_paths` hashes absolute-path-shaped tokens before
+    //! the state goes to the external Jev service. The existing three
+    //! examples cover one path, the disabled branch, and a non-path.
+    //! They do not cover the property that matters: **no absolute path
+    //! survives the walk** — including at the edge of a string, in
+    //! nested arrays/objects, with Windows drive syntax, or with
+    //! punctuation attached.
+    //!
+    //! `cache_key`'s separator bytes (`0`) prevent prefix collisions:
+    //! `("a", state, "bc")` must not equal `("ab", state, "c")`. The
+    //! existing tests check "differs for different kind/state/question"
+    //! but never two calls whose concatenation would collide without
+    //! the separators.
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::{Value, json};
+
+    /// A Unix absolute path built from a random suffix. Long enough
+    /// to be distinctive (so a false positive cannot accidentally
+    /// contain it), short enough to keep the test fast.
+    fn unix_path() -> impl Strategy<Value = String> {
+        "[a-z]{8,12}".prop_map(|s| format!("/srv/data/{s}"))
+    }
+
+    /// A Windows absolute path: one letter, colon, backslash, then
+    /// two segments. The `is_abs` check is `as_bytes()[1] == b':'`
+    /// and `as_bytes()[0].is_ascii_alphabetic()`.
+    fn windows_path() -> impl Strategy<Value = String> {
+        "[a-z]{8,12}".prop_map(|s| format!("C:\\Users\\{s}\\file.txt"))
+    }
+
+    /// A short safe token that will never look like a path.
+    fn safe_word() -> impl Strategy<Value = String> {
+        "[a-z]{1,10}".prop_map(|s| format!("w{s}"))
+    }
+
+    proptest! {
+        /// **The security invariant, Unix form.** A `Value::String`
+        /// carrying a single absolute path, walked through
+        /// `redact_state_paths`, must not contain the literal path
+        /// bytes anywhere in its redacted output. Covers the case
+        /// where the path is the *entire* string — the tokenizer's
+        /// `None` branch, which the existing one-path example does
+        /// not exercise.
+        #[test]
+        fn prop_unix_path_never_survives(path in unix_path()) {
+            let input = json!(path);
+            let out = redact_state_paths(&input, true);
+            let out_str = out.as_str().expect("string");
+            prop_assert!(
+                !out_str.contains(&path),
+                "absolute path survived: input={:?} output={:?}",
+                path, out_str,
+            );
+            prop_assert!(
+                out_str.starts_with("path-"),
+                "path was not redacted to a hash marker: {:?}", out_str,
+            );
+        }
+
+        /// **The security invariant, Windows form.** The `is_abs`
+        /// check treats `C:` as absolute; a walk that misses it leaks
+        /// a Windows path.
+        #[test]
+        fn prop_windows_path_never_survives(path in windows_path()) {
+            let input = json!(path);
+            let out = redact_state_paths(&input, true);
+            let out_str = out.as_str().expect("string");
+            prop_assert!(
+                !out_str.contains(&path),
+                "Windows path survived: input={:?} output={:?}",
+                path, out_str,
+            );
+        }
+
+        /// **Nested structures.** The walk recurses through arrays
+        /// and objects. A leak in the recursion is a leak in a real
+        /// request body — the state sent to Jev is an object tree.
+        #[test]
+        fn prop_nested_paths_are_all_redacted(
+            p1 in unix_path(),
+            p2 in unix_path(),
+            s1 in safe_word(),
+        ) {
+            let input = json!({
+                "outer": {
+                    "inner": [s1.clone(), p1.clone(), p2.clone()],
+                    "second": {"deep": p2.clone()},
+                },
+                "safe": s1.clone(),
+            });
+            let out = redact_state_paths(&input, true);
+            let serialized = serde_json::to_string(&out).expect("serialize");
+            prop_assert!(!serialized.contains(&p1), "p1 leaked: {}", serialized);
+            prop_assert!(!serialized.contains(&p2), "p2 leaked: {}", serialized);
+            // Safe word survives — redaction is not "delete everything".
+            prop_assert!(serialized.contains(&s1), "safe word lost: {}", serialized);
+        }
+
+        /// **Whitespace-preservation.** The `walk` string branch has
+        /// three sub-branches (whitespace found / not found / trailing
+        /// whitespace). Round-trip: the count of whitespace characters
+        /// is unchanged, and the literal paths are gone.
+        #[test]
+        fn prop_whitespace_shape_preserved(
+            p in unix_path(),
+            ws in "[ \\t]{1,3}",
+        ) {
+            let input_str = format!("{p}{ws}tail");
+            let input = json!(input_str);
+            let out = redact_state_paths(&input, true);
+            let out_str = out.as_str().expect("string");
+            let in_ws = input_str.chars().filter(|c| c.is_whitespace()).count();
+            let out_ws = out_str.chars().filter(|c| c.is_whitespace()).count();
+            prop_assert_eq!(in_ws, out_ws, "whitespace count changed");
+            prop_assert!(!out_str.contains(&p), "path survived");
+        }
+
+        /// **Disabled is a true no-op.** The `enabled=false` branch
+        /// must return the input unchanged, byte for byte. The
+        /// existing test uses a single fixed value; this exercises
+        /// arbitrary strings.
+        #[test]
+        fn prop_disabled_is_identity(prefix in "[a-z ]{0,10}", p in unix_path()) {
+            let input = json!(format!("{prefix}{p}"));
+            let out = redact_state_paths(&input, false);
+            prop_assert_eq!(out, input);
+        }
+
+        /// **cache_key is a deterministic function of its inputs.**
+        /// Same `(kind, state, question)` → same key, always.
+        #[test]
+        fn prop_cache_key_deterministic(
+            kind in "[a-z_]{1,10}",
+            state_text in "[a-zA-Z0-9 ]{0,40}",
+            question in "[a-zA-Z0-9 ?]{0,40}",
+        ) {
+            let state = json!({"text": state_text});
+            let k1 = cache_key(&kind, &state, &question);
+            let k2 = cache_key(&kind, &state, &question);
+            prop_assert_eq!(k1, k2);
+        }
+
+        /// **The separator-byte property.** `("a", s, "bc")` must
+        /// differ from `("ab", s, "c")`. Without the `0` separators
+        /// the concatenation would be identical and the cache would
+        /// return the wrong decision. This is the shape the three
+        /// existing cache-key tests never exercise — they vary one
+        /// field at a time, never in a prefix-colliding way.
+        #[test]
+        fn prop_cache_key_separators_prevent_prefix_collision(
+            state_text in "[a-z]{0,20}",
+        ) {
+            let state = json!({"text": state_text});
+            let k1 = cache_key("a", &state, "bc");
+            let k2 = cache_key("ab", &state, "c");
+            prop_assert_ne!(
+                k1, k2,
+                "prefix-collision: ('a', s, 'bc') and ('ab', s, 'c') produced the same key",
+            );
+            // Same for kind/question position.
+            let k3 = cache_key("a", &state, "b c");
+            let k4 = cache_key("a b", &state, "c");
+            prop_assert_ne!(k3, k4, "space-vs-kind prefix collision");
+        }
+
+        /// Different state → different key. The existing example
+        /// uses `{"a":1}` vs `{"a":2}`; this varies the state tree.
+        #[test]
+        fn prop_cache_key_varies_with_state(
+            a in "[a-z]{1,8}",
+            b in "[a-z]{1,8}",
+        ) {
+            prop_assume!(a != b);
+            let s1 = json!({"text": a});
+            let s2 = json!({"text": b});
+            prop_assert_ne!(
+                cache_key("kind", &s1, "q"),
+                cache_key("kind", &s2, "q"),
+                "different state, same key",
+            );
+        }
+    }
+
+    /// Concrete pin: the `None` branch (no whitespace) is what fires
+    /// when the whole string is one path. The example test covers
+    /// the multi-token case; this pins the single-token case.
+    #[test]
+    fn whole_string_path_is_redacted() {
+        let p = "/home/user/secret";
+        let out = redact_state_paths(&json!(p), true);
+        let s = out.as_str().expect("string");
+        assert!(!s.contains(p), "single-token path survived: {s:?}");
+        assert!(s.starts_with("path-"));
+    }
+
+    /// Concrete pin: a path with punctuation attached. `redact_token`
+    /// only checks the *first* byte; `/home/user/x:` starts with `/`
+    /// and is redacted as a whole, so the punctuation goes into the
+    /// hash and does not appear in the output. That is the current
+    /// behaviour; the test makes it visible.
+    #[test]
+    fn path_with_trailing_punctuation_is_redacted() {
+        let p = "/home/user/x:";
+        let out = redact_state_paths(&json!(p), true);
+        let s = out.as_str().expect("string");
+        assert!(
+            !s.contains("/home/user/x"),
+            "trailing-punctuation path survived: {s:?}"
+        );
+    }
+
+    /// Concrete pin: leading whitespace is preserved, the path after
+    /// it is redacted. The `find` loop with `Some(0)` whitespace
+    /// starts by pushing the (empty) token before the first
+    /// whitespace — a subtle branch.
+    #[test]
+    fn leading_whitespace_preserved() {
+        let out = redact_state_paths(&json!("  /etc/passwd"), true);
+        let s = out.as_str().expect("string");
+        assert!(s.starts_with("  "), "leading whitespace lost: {s:?}");
+        assert!(!s.contains("/etc/passwd"), "path survived: {s:?}");
+    }
+}
