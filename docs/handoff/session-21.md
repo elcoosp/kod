@@ -174,3 +174,98 @@ Also noted and deliberately **not** changed: `classify_rejection` does not lower
 ### Gate status
 
 Green at `1b0c5ba` (5035/5035) and again at `e1c1cdf` (5044/5044). `af7a8b8` is test-only in one crate, verified at 33/33 there, and is covered by the gate this record precedes.
+
+## Update — survey exhausted, three findings left actionable
+
+Gate green three more times since the last record: **5054** at `af7a8b8`,
+**5060** at `2d54484`, **5070** at `3a54ee0`, **5081** at `aecd9af`.
+Every delta is accounted for by the round that preceded it.
+
+Commits after the previous update:
+
+| Commit | Crate | Outcome |
+|---|---|---|
+| `2d54484` | kod-tui | `split_hunks`: 5 props + 1 check. Harden. Losslessness (`header + hunks.concat() == diff`) is the property that catches a silently-wrong approved patch. |
+| `3a54ee0` | kod-tui | `format_friendly_duration` tier boundaries + `format_k` shape: 5 checks + 5 props. Harden. |
+| `aecd9af` | kod-core | `parse_subtasks`: 6 props + 4 characterizations. Harden. Three unpinned behaviors named, not frozen. |
+
+### The pure-function survey is exhausted
+
+Every crate surveyed this session now has either full property coverage
+or remaining surface that needs infrastructure:
+
+- **kod-swarm**: recon returns **zero** files with shape functions and
+  no proptest. All nine files with a `proptest!` block are confirmed.
+- **kod-types, kod-core, kod-tools, kod-core-quality, kod-schema-dialect,
+  kod-stats**: remaining targets are `&mut self` state machines, async
+  read loops, or need `tempfile` / `git init` / a live engine.
+- **kod-tui**: pure formatters done (`split_hunks`, `format_k`,
+  `format_friendly_duration`). The rest is render/state.
+
+Continuing to add harden rounds past this point would pad the commit
+count without improving the code. The honest next work is
+integration-shaped (a different discipline), or one of the three
+findings below.
+
+### Three findings, each needing a decision rather than a test
+
+**1. `patch.rs` trailing newline — two real defects, unfixed.**
+
+`apply_unified_diff` loses a trailing newline that a patch *adds* to a
+file that previously lacked one (seed: `old = "A"`, `new = " \n"` →
+applied `" "`). A naive one-line fix was attempted and **reverted three
+times**, each caught by a different property. The last attempt's
+failure showed `has_add` is also insufficient — an `Add` early in a
+hunk does not imply the output's last line comes from it.
+
+Untested candidate, from reading `similar`'s format: drop
+`had_trailing_newline` from the condition entirely and trust only the
+patch's own `\ No newline` marker placement, which is what the
+unified-diff spec guarantees. **Not tested.** A fresh session should
+try it first and immediately run the full `kod-tools` suite
+(`test_patch_file_creates_a_new_file_from_dev_null_diff` is the test
+that catches the regression).
+
+**2. `parse_subtasks` aborts the whole batch on one malformed item.**
+
+An item with an *empty* `description` is skipped (`continue`); an item
+*missing* `description` aborts the whole parse (`?` → `None`). The
+caller at `swarm_runner.rs:2267` treats `None` as "the model ignored
+the JSON" and falls back to **N identical copies of the goal** — so one
+bad item in a 5-item array discards the other 4 and replaces the plan
+with N copies.
+
+Characterized by `missing_description_aborts_the_whole_batch` and
+`missing_name_aborts_the_whole_batch`. Whether this is a bug depends on
+the decompose prompt's contract (are `name`/`description` required?),
+which no round this session had. **Decision needed before fix.**
+
+**3. `parse_subtasks` with `max = 0` returns one item.**
+
+The `out.len() >= max` check runs after the push, so the first valid
+item always lands. Characterized by `max_zero_returns_one_item`. If
+`max_agents` can ever be 0, this produces a 1-agent swarm when the
+config said 0 — a real off-by-one. If callers always pass `>= 1`, it is
+unreachable. **Check the config validation before deciding.**
+
+### And one smaller open question
+
+`classify_rejection` (`kod-schema-dialect/src/recovery.rs`) does not
+lowercase its input; its sibling `contains_word` in
+`kod-core/src/router.rs` does. An all-uppercase provider body misses
+every candidate. No documented contract settles which is right.
+Characterized in commit `af7a8b8`'s message, not pinned as intent.
+
+### Session-21 final state
+
+- HEAD `aecd9af`, tree clean, **29 commits ahead** of `origin/main`.
+- Tag `v0.1.15` still the only tag, still on origin.
+- Gate green at 5081/5081; every commit since `1b0c5ba` is covered.
+- 2 real bugs fixed this session with committed seeds
+  (`resolve_tool_name`, bash-interceptor newline).
+- 1 real bug documented and deferred (`patch.rs`).
+- 2 findings needing a design decision (`parse_subtasks` ×2).
+- 1 unpinned behavior (`classify_rejection` case).
+
+The code side of the tag question is settled: green gate, clean tree,
+every fix honest about its stakes. The remaining decision is the user's.
