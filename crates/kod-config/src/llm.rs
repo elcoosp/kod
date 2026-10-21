@@ -1332,11 +1332,7 @@ mod proptests {
                 Just(2000usize),
                 (2001usize..=(i64::MAX as usize)),
             ],
-            prop_oneof![
-                Just(0u64),
-                Just(1u64),
-                (2u64..=(i64::MAX as u64)),
-            ],
+            prop_oneof![Just(0u64), Just(1u64), (2u64..=(i64::MAX as u64)),],
             prop::option::of("[a-z]{0,15}"),
         )
             .prop_map(
@@ -1377,11 +1373,13 @@ mod proptests {
                 prop::collection::vec(("[a-z_-]{0,15}", "[a-z_]{0,10}"), 0..3),
                 prop::option::of("[a-z_]{0,10}"),
             )
-                .prop_map(|(by_task_pairs, fallback, swarm_pairs, plan)| RoutingConfig {
-                    by_task: by_task_pairs.into_iter().collect(),
-                    fallback,
-                    swarm: swarm_pairs.into_iter().collect(),
-                    plan,
+                .prop_map(|(by_task_pairs, fallback, swarm_pairs, plan)| {
+                    RoutingConfig {
+                        by_task: by_task_pairs.into_iter().collect(),
+                        fallback,
+                        swarm: swarm_pairs.into_iter().collect(),
+                        plan,
+                    }
                 }),
         )
     }
