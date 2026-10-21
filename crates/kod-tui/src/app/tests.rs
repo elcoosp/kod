@@ -2016,3 +2016,129 @@ mod coverage_split_hunks {
         assert!(view.rows.len() > 1);
     }
 }
+
+mod split_hunks_proptests {
+    //! Properties for the splitter that backs partial-hunk approval.
+    //!
+    //! The seven example tests in `coverage_split_hunks` pin the happy
+    //! paths. These pin the invariants: the split is **lossless**
+    //! (`header + hunks.concat() == diff`), every hunk begins with the
+    //! `@@` marker, the header contains no marker line, and the count
+    //! of hunks equals the count of marker lines. A regression in any
+    //! of them silently corrupts the approved patch, which is the
+    //! failure mode the module doc calls out.
+    use crate::app::*;
+    use proptest::prelude::*;
+
+    /// A diff line that can never be mistaken for a hunk marker unless
+    /// it is the explicit marker: the fallback alphabet always starts
+    /// with a space, so `starts_with("@@")` is true only for the two
+    /// literal marker arms. This keeps the generated text's marker
+    /// count equal to the number of markers actually emitted, which
+    /// the count property relies on.
+    fn arb_line() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("--- a/f.rs".to_string()),
+            Just("+++ b/f.rs".to_string()),
+            Just("index 1..2 100644".to_string()),
+            Just("@@ -1,2 +1,2 @@".to_string()),
+            Just("@@ -5 +5 @@".to_string()),
+            Just(" context".to_string()),
+            Just("-old".to_string()),
+            Just("+new".to_string()),
+            Just(String::new()),
+            " [ -~]{0,20}".prop_map(|s| s),
+        ]
+    }
+
+    fn arb_diff() -> impl Strategy<Value = String> {
+        (prop::collection::vec(arb_line(), 0..10), any::<bool>()).prop_map(|(lines, trailing)| {
+            let mut s = lines.join("\n");
+            if trailing && !s.is_empty() {
+                s.push('\n');
+            }
+            s
+        })
+    }
+
+    proptest! {
+        /// The single sharpest invariant: the split is lossless.
+        /// Concatenating the header and the hunks in order reproduces
+        /// the input byte for byte. A misattributed line (header text
+        /// absorbed into the first hunk, a hunk whose trailing newline
+        /// is dropped) breaks this, and the approved patch is wrong.
+        #[test]
+        fn prop_reconstructs_input(diff in arb_diff()) {
+            let (header, hunks) = split_hunks(&diff);
+            let rebuilt = format!("{header}{}", hunks.concat());
+            prop_assert_eq!(rebuilt, diff);
+        }
+
+        /// Every hunk begins with the `@@` marker: that is the split
+        /// point, and a hunk that does not begin with it would be
+        /// spliced at the wrong offset by the patch applier.
+        #[test]
+        fn prop_every_hunk_starts_with_marker(diff in arb_diff()) {
+            let (_, hunks) = split_hunks(&diff);
+            for (i, h) in hunks.iter().enumerate() {
+                prop_assert!(
+                    h.starts_with("@@"),
+                    "hunk {i} does not start with @@: {:?}",
+                    h,
+                );
+            }
+        }
+
+        /// The header carries no hunk marker: if it did, the first
+        /// hunk was split too late and a `@@` line was left behind.
+        #[test]
+        fn prop_header_has_no_marker_line(diff in arb_diff()) {
+            let (header, _) = split_hunks(&diff);
+            for line in header.lines() {
+                prop_assert!(
+                    !line.starts_with("@@"),
+                    "marker line {line:?} leaked into the header",
+                );
+            }
+        }
+
+        /// One hunk per marker line, no more and no fewer. The count
+        /// is what `begin_hunk_selection` allocates `selected` from;
+        /// a mismatch misaligns every checkbox.
+        #[test]
+        fn prop_hunk_count_equals_marker_count(diff in arb_diff()) {
+            let (_, hunks) = split_hunks(&diff);
+            let markers = diff
+                .split_inclusive('\n')
+                .filter(|l| l.starts_with("@@"))
+                .count();
+            prop_assert_eq!(hunks.len(), markers);
+        }
+
+        /// Determinism: the split is a pure function of its input.
+        #[test]
+        fn prop_deterministic(diff in arb_diff()) {
+            let a = split_hunks(&diff);
+            let b = split_hunks(&diff);
+            prop_assert_eq!(a.0, b.0);
+            prop_assert_eq!(a.1, b.1);
+        }
+    }
+
+    /// The no-trailing-newline asymmetry, pinned deterministically:
+    /// `split_inclusive('\n')` leaves the final element without a
+    /// newline, and `split_hunks` does not re-add one. The last hunk
+    /// therefore ends without `\n` when the diff does. That is the
+    /// current contract; the reconstruction property above holds for
+    /// it, and the existing example tests never exercise it.
+    #[test]
+    fn last_hunk_keeps_a_missing_trailing_newline() {
+        let diff = "--- a/x\n@@ -1 +1 @@\n-a\n+A";
+        let (header, hunks) = split_hunks(diff);
+        assert_eq!(header, "--- a/x\n");
+        assert_eq!(hunks.len(), 1);
+        assert!(hunks[0].ends_with("+A"), "got {:?}", hunks[0]);
+        assert!(!hunks[0].ends_with('\n'), "got {:?}", hunks[0]);
+        assert_eq!(format!("{header}{}", hunks.concat()), diff);
+    }
+}
