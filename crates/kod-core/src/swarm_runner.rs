@@ -3152,3 +3152,172 @@ mod swarm_runner_error_path_leak {
         );
     }
 }
+
+#[cfg(test)]
+mod parse_subtasks_proptests {
+    //! Properties and characterizations for `parse_subtasks`.
+    //!
+    //! The four example tests cover one input each. These pin the
+    //! invariants a caller relies on (prefix-of-input, length bounded
+    //! by `max`, cleaned entries) and characterize three behaviors
+    //! that are *not* documented and may not be intended:
+    //!
+    //! 1. An item missing `name` or `description` aborts the whole
+    //!    batch (`?` on the required fields), while an item with an
+    //!    *empty* `description` is skipped (`continue`). The presence
+    //!    of a key decides between "skip this one" and "discard all".
+    //! 2. The caller treats the batch-abort `None` as "the model
+    //!    ignored the JSON", which falls back to N identical copies
+    //!    of the goal — so one malformed item replaces the whole
+    //!    decomposition.
+    //! 3. `max = 0` still returns one item, because the `out.len()
+    //!    >= max` check is at the end of the loop body.
+    //!
+    //! Whether (1) and (2) should be changed depends on the decompose
+    //! prompt's contract (are `name`/`description` required?), which
+    //! this round does not have. The characterizations name the
+    //! behavior so a future change is noticed; they do not assert it
+    //! is correct.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn valid_item(i: usize) -> String {
+        format!(r#"{{"name":"s{i}","description":"do {i}"}}"#)
+    }
+
+    proptest! {
+        /// Totality: arbitrary text never panics.
+        #[test]
+        fn prop_never_panics(text in "\\PC{0,400}", max in 0usize..8) {
+            let _ = parse_subtasks(&text, max);
+        }
+
+        /// Length is bounded by `max` for any `max >= 1`. (`max = 0`
+        /// is characterized deterministically below.)
+        #[test]
+        fn prop_len_bounded_by_max_for_positive_max(
+            items in prop::collection::vec(0usize..6, 1..10),
+            max in 1usize..6,
+        ) {
+            let body: Vec<String> = items.iter().map(|i| valid_item(*i)).collect();
+            let text = format!("[{}]", body.join(","));
+            let v = parse_subtasks(&text, max).expect("valid array parses");
+            prop_assert!(v.len() <= max, "len {} > max {}", v.len(), max);
+        }
+
+        /// With `max >= n`, every item appears in order and unmangled.
+        #[test]
+        fn prop_all_items_preserved_when_max_is_large(
+            items in prop::collection::vec(0usize..20, 1..8),
+        ) {
+            let body: Vec<String> = items.iter().map(|i| valid_item(*i)).collect();
+            let text = format!("[{}]", body.join(","));
+            let v = parse_subtasks(&text, items.len().max(1)).expect("valid array parses");
+            prop_assert_eq!(v.len(), items.len());
+            for (got, want) in v.iter().zip(items.iter()) {
+                prop_assert_eq!(&got.name, &format!("s{want}"));
+                prop_assert_eq!(&got.description, &format!("do {want}"));
+            }
+        }
+
+        /// Every returned entry is clean: non-whitespace description,
+        /// and every `expected_writes` / `depends_on` entry is
+        /// non-empty after trim. The body filters all three; a
+        /// regression that drops a filter would leak empties.
+        #[test]
+        fn prop_returned_entries_are_clean(items in prop::collection::vec(0usize..6, 1..8)) {
+            let body: Vec<String> = items.iter().map(|i| valid_item(*i)).collect();
+            let text = format!("[{}]", body.join(","));
+            let v = parse_subtasks(&text, items.len()).expect("valid array parses");
+            for s in &v {
+                prop_assert!(!s.description.trim().is_empty());
+                for w in &s.expected_writes {
+                    prop_assert!(!w.trim().is_empty(), "empty glob leaked: {w:?}");
+                }
+                for d in &s.depends_on {
+                    prop_assert!(!d.trim().is_empty(), "empty dep leaked: {d:?}");
+                }
+            }
+        }
+
+        /// Determinism: same input, same output.
+        #[test]
+        fn prop_deterministic(text in "\\PC{0,200}", max in 0usize..5) {
+            let a = parse_subtasks(&text, max);
+            let b = parse_subtasks(&text, max);
+            match (a, b) {
+                (None, None) => {}
+                (Some(x), Some(y)) => {
+                    prop_assert_eq!(x.len(), y.len());
+                    for (p, q) in x.iter().zip(y.iter()) {
+                        prop_assert_eq!(&p.name, &q.name);
+                        prop_assert_eq!(&p.description, &q.description);
+                    }
+                }
+                _ => prop_assert!(false, "nondeterministic Some/None"),
+            }
+        }
+
+        /// Prose around the array is tolerated: the first `[` to the
+        /// last `]` is the span that is parsed.
+        #[test]
+        fn prop_surrounding_prose_is_tolerated(
+            pre in "[a-z ]{0,20}",
+            post in "[a-z ]{0,20}",
+        ) {
+            let text = format!("{pre}[{}]{post}", valid_item(1));
+            let v = parse_subtasks(&text, 5).expect("prose-wrapped array parses");
+            prop_assert_eq!(v.len(), 1);
+            prop_assert_eq!(&v[0].name, "s1");
+        }
+    }
+
+    /// Characterization: an item with an **empty** `description` is
+    /// skipped, and the rest survive.
+    #[test]
+    fn empty_description_is_skipped_not_fatal() {
+        let text = r#"[{"name":"a","description":""},{"name":"b","description":"do b"}]"#;
+        let v = parse_subtasks(text, 5).expect("parses");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "b");
+    }
+
+    /// Characterization: an item **missing** `description` aborts the
+    /// whole batch, even when the other items are fine. The caller
+    /// treats this `None` as "the model ignored the JSON" and falls
+    /// back to N identical copies of the goal — so the good items are
+    /// lost. Whether this should instead skip the bad item is a
+    /// prompt-contract decision, not pinned here as correct.
+    #[test]
+    fn missing_description_aborts_the_whole_batch() {
+        let text = r#"[{"name":"a","description":"do a"},{"name":"b"}]"#;
+        assert!(parse_subtasks(text, 5).is_none());
+    }
+
+    /// Characterization: the same aborts when `name` is missing.
+    #[test]
+    fn missing_name_aborts_the_whole_batch() {
+        let text = r#"[{"description":"do a"},{"name":"b","description":"do b"}]"#;
+        assert!(parse_subtasks(text, 5).is_none());
+    }
+
+    /// Characterization: `max = 0` returns one item, not zero. The
+    /// `out.len() >= max` check runs after the push, so the first
+    /// valid item always lands. With `max >= 1` the length bound
+    /// property above holds; `max = 0` is this edge.
+    #[test]
+    fn max_zero_returns_one_item() {
+        let text = format!("[{}]", valid_item(1));
+        let v = parse_subtasks(&text, 0).expect("parses");
+        assert_eq!(v.len(), 1);
+    }
+
+    /// Characterization: an empty array is `Some(vec![])`, not `None`
+    /// — the caller's `.unwrap_or_default()` + `!v.is_empty()` check
+    /// treats both the same, but the distinction is real.
+    #[test]
+    fn empty_array_is_some_empty() {
+        let v = parse_subtasks("[]", 5).expect("empty array is Some");
+        assert!(v.is_empty());
+    }
+}
