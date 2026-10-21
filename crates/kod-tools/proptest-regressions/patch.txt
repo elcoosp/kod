@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 0fb17fb4d306e117dc1e16139c4724058edc1e412e3a2f30d9f778a0ed190bab # shrinks to old = "a", new = "0\n"
+cc 8db8208938cdb342edea4188ffb4efde403884bb257a646a1daaf32b3c575557 # shrinks to old = " \n\n", new = "\n\n"

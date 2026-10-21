@@ -209,8 +209,14 @@ findings below.
 
 ### Three findings, each needing a decision rather than a test
 
-**1. `patch.rs` trailing newline — FIXED in `8e62f47`.** (History below,
-kept because the six failed attempts are the useful part.)
+**1. `patch.rs` trailing newline — INCOMPLETE.** `8e62f47` fixed three
+compounding defects (empty-split phantom, original-shape inference, and
+the positional marker), and its crate-local suite went green. The
+full-workspace gate at `8e62f47` then found a fourth case via a
+different proptest seed: 5083/5084, with a new seed written to
+`crates/kod-tools/proptest-regressions/patch.txt`. The fix is not done;
+the failing case is recorded in the seed file. History below is kept
+because the attempts are the useful part.
 
 `apply_unified_diff` loses a trailing newline that a patch *adds* to a
 file that previously lacked one (seed: `old = "A"`, `new = " \n"` →
@@ -311,3 +317,24 @@ happened.
 Findings 2 and 3 (`parse_subtasks` batch-abort, `max = 0`) still need a
 design decision, not a test. `classify_rejection` case-sensitivity is
 still unpinned. Those are unchanged.
+
+### Correction: the gate found a fourth case
+
+`8e62f47` passed its crate-local suite (465/465) and the two new
+properties. The full-workspace gate then ran it and **failed one test**:
+`prop_render_apply_round_trip`, 5083/5084, with a fresh seed written to
+`patch.txt`. A different proptest seed found a case the crate-local run
+did not.
+
+**The fix is incomplete.** The three defects `8e62f47` fixed were real
+and are still fixed; a fourth case exists. The failing pair is in the
+seed file — read it before attempting anything.
+
+Process note, on this session's own rule: the crate-local suite passing
+is **not** evidence a property holds, because proptest is a
+randomized search. The workspace gate runs the same property with a
+different seed and is the real check. A fix that goes green locally and
+red in the gate means "not verified," not "regressed."
+
+The doc commit `f7ab00b` claimed "patch.rs closed" before the gate ran.
+That was premature; this correction supersedes it.
