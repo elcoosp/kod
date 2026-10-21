@@ -1214,3 +1214,93 @@ mod proptests {
         }
     }
 }
+
+#[cfg(test)]
+mod recover_sections_proptests {
+    //! Properties for `recover_sections`'s return-shape contract.
+    //!
+    //! The existing `prop_recovery_preserves_valid_section_and_defaults_broken`
+    //! covers the `Ok(Some(cfg))` branch: valid TOML with one
+    //! broken section keeps the valid sections. The other two
+    //! branches — `Ok(None)` for an unreadable file and for
+    //! fully-broken TOML — have no direct test. The
+    //! `config_version` `u32::try_from` fix likewise has no test
+    //! asserting the fix's observable behaviour.
+    //!
+    //! These are regression guards on documented branches, not bug
+    //! probes: the bodies return exactly what the doc comments
+    //! claim, and these tests pin that.
+
+    use super::*;
+
+    /// An unreadable file (path does not exist) returns `Ok(None)`.
+    #[test]
+    fn control_missing_file_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.toml");
+        let r = KodConfig::recover_sections(&path).expect("io error is swallowed");
+        assert!(r.is_none(), "missing file must return Ok(None)");
+    }
+
+    /// A file with invalid TOML syntax returns `Ok(None)`: the
+    /// `toml::Table` parse fails before per-section recovery.
+    #[test]
+    fn control_syntactically_broken_toml_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "not = valid = toml\n").unwrap();
+        let r = KodConfig::recover_sections(&path).expect("parse error is swallowed");
+        assert!(
+            r.is_none(),
+            "syntactically invalid TOML must return Ok(None), got {:?}",
+            r,
+        );
+    }
+
+    /// `config_version = -1` does not become `4294967295`: the
+    /// `u32::try_from` guard rejects the negative i64 and the
+    /// default (2) survives.
+    #[test]
+    fn control_negative_config_version_uses_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "config_version = -1\n").unwrap();
+        let cfg = KodConfig::recover_sections(&path)
+            .expect("no parse error")
+            .expect("valid TOML is recoverable");
+        assert_eq!(
+            cfg.config_version, 2,
+            "config_version = -1 must fall back to the default 2, not 4294967295",
+        );
+    }
+
+    /// `config_version = 4294967296` (u32::MAX + 1) also overflows.
+    /// `u32::try_from` rejects it and the default survives.
+    #[test]
+    fn control_out_of_range_config_version_uses_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "config_version = 4294967296\n").unwrap();
+        let cfg = KodConfig::recover_sections(&path)
+            .expect("no parse error")
+            .expect("valid TOML is recoverable");
+        assert_eq!(
+            cfg.config_version, 2,
+            "config_version = 2^32 must fall back to the default 2",
+        );
+    }
+
+    /// A valid `config_version = 3` (a future schema) is preserved:
+    /// the field accepts any u32, and a later `effective_version`
+    /// pass decides how to handle it.
+    #[test]
+    fn control_future_config_version_is_preserved() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "config_version = 3\n").unwrap();
+        let cfg = KodConfig::recover_sections(&path)
+            .expect("no parse error")
+            .expect("valid TOML is recoverable");
+        assert_eq!(cfg.config_version, 3);
+    }
+}
