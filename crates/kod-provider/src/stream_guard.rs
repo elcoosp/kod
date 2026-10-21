@@ -611,3 +611,139 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod stream_guard_proptests {
+    //! Properties for the two stall detectors.
+    //!
+    //! Module-doc thresholds: a short period (`p <= 60`) needs four
+    //! repeats and 180 bytes; a long period (`60 < p <= 1024`) needs
+    //! three repeats and 1024 bytes. A missed cycle streams forever;
+    //! a false positive cuts legitimate output.
+    //!
+    //! Every generator here is BOUNDED. `any::<usize>()` was used for
+    //! the header-count case in the first draft and produced a count
+    //! large enough to make `std::iter::repeat(..).take(count)`
+    //! effectively hang; the count is capped at 40, which is past the
+    //! detector's 36-heading threshold and finite.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn short_period_tail() -> impl Strategy<Value = Vec<u8>> {
+        "[a-z]{1,30}".prop_map(|period| {
+            let p_len = period.len();
+            let needed = 180usize.div_ceil(p_len).max(4) + 2;
+            period.repeat(needed).into_bytes()
+        })
+    }
+
+    fn long_period_tail() -> impl Strategy<Value = Vec<u8>> {
+        "[a-z]{61,200}".prop_map(|period| {
+            let p_len = period.len();
+            let needed = 1024usize.div_ceil(p_len).max(3) + 2;
+            period.repeat(needed).into_bytes()
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_cycle_never_panics(tail in "\\PC{0,300}") {
+            let _ = detect_exact_cycle(tail.as_bytes());
+        }
+
+        #[test]
+        fn prop_cycle_deterministic(tail in "\\PC{0,300}") {
+            let a = detect_exact_cycle(tail.as_bytes());
+            let b = detect_exact_cycle(tail.as_bytes());
+            prop_assert_eq!(a, b);
+        }
+
+        #[test]
+        fn prop_short_tail_is_none(tail in "[a-z]{0,179}") {
+            let result = detect_exact_cycle(tail.as_bytes());
+            prop_assert_eq!(result, None);
+        }
+
+        /// **Soundness.** If a period is reported, the tail is
+        /// p-periodic.
+        #[test]
+        fn prop_returned_period_is_genuine(tail in "\\PC{0,300}") {
+            let bytes = tail.as_bytes();
+            let n = bytes.len();
+            if let Some(p) = detect_exact_cycle(bytes) {
+                prop_assert!(p >= 1, "returned p = {}", p);
+                prop_assert!(p < n, "returned p = {} for n = {}", p, n);
+                prop_assert_eq!(
+                    &bytes[p..],
+                    &bytes[..n - p],
+                    "returned p={} but tail is not p-periodic",
+                    p,
+                );
+            }
+        }
+
+        #[test]
+        fn prop_short_period_fires(tail in short_period_tail()) {
+            let result = detect_exact_cycle(&tail);
+            prop_assert!(result.is_some(), "missed a short-period cycle in {} bytes", tail.len());
+        }
+
+        #[test]
+        fn prop_long_period_fires(tail in long_period_tail()) {
+            let result = detect_exact_cycle(&tail);
+            prop_assert!(result.is_some(), "missed a long-period cycle in {} bytes", tail.len());
+        }
+
+        /// **Bounded count.** 0..40 spans the detector's 36-heading
+        /// threshold without making the generator allocate an
+        /// unbounded string.
+        #[test]
+        fn prop_header_runaway_threshold(count in 0usize..40) {
+            let text: String = std::iter::repeat("## heading\n")
+                .take(count)
+                .collect();
+            let fired = detect_header_runaway(text.as_bytes());
+            if count >= 36 {
+                prop_assert!(fired, "missed {} headings", count);
+            } else {
+                prop_assert!(!fired, "fired on {} headings", count);
+            }
+        }
+
+        #[test]
+        fn prop_header_never_panics(tail in "\\PC{0,300}") {
+            let _ = detect_header_runaway(tail.as_bytes());
+        }
+
+        #[test]
+        fn prop_prose_resets_header_run(a in 0usize..35, b in 0usize..35) {
+            let block_a: String = std::iter::repeat("## heading\n").take(a).collect();
+            let block_b: String = std::iter::repeat("## heading\n").take(b).collect();
+            let text = format!("{}\nplain prose line\n\n{}", block_a, block_b);
+            let fired = detect_header_runaway(text.as_bytes());
+            prop_assert!(!fired, "fired with {} + prose + {} headings", a, b);
+        }
+    }
+
+    #[test]
+    fn short_input_is_clean() {
+        assert_eq!(detect_exact_cycle(b"hello"), None);
+        assert_eq!(detect_exact_cycle(b""), None);
+    }
+
+    #[test]
+    fn period_three_long_enough_fires() {
+        let tail = "abc".repeat(70);
+        let result = detect_exact_cycle(tail.as_bytes());
+        assert_eq!(result, Some(3), "expected period 3, got {:?}", result);
+    }
+
+    #[test]
+    fn near_periodic_does_not_fire() {
+        let mut tail: Vec<u8> = "abcdefghij".repeat(30).into_bytes();
+        assert!(tail.len() > 180);
+        tail[150] = b'X';
+        let result = detect_exact_cycle(&tail);
+        assert_eq!(result, None, "near-periodic tail fired: {:?}", result);
+    }
+}
