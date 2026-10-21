@@ -217,6 +217,18 @@ impl Question {
                 "question id {id:?} must be a single token (no whitespace)"
             )));
         }
+        // ':' is the delimiter in the response format
+        // ("<id>: <label>"). A question with ':' in its id would
+        // round-trip out of validate but never match in
+        // parse_response (which splits on the FIRST ':'), silently
+        // dropping every answer to that question. Reject it here,
+        // where the caller gets a clear error, rather than
+        // producing a question whose answers can never be read.
+        if id.contains(':') {
+            return Err(JudgmentError::Malformed(format!(
+                "question id {id:?} must not contain ':' (reserved as the                  response-format delimiter)"
+            )));
+        }
         if self.text().trim().is_empty() {
             return Err(JudgmentError::Malformed(format!(
                 "question {id:?} has empty text"
@@ -1207,5 +1219,184 @@ mod tests {
         assert_eq!(o.max_tokens, 4096);
         assert_eq!(o.temperature, 0.0);
         assert_eq!(o.max_format_retries, 1);
+    }
+}
+
+#[cfg(test)]
+mod judgment_parse_proptests {
+    //! Properties for `parse_response` and `escape_xml`.
+    //!
+    //! **A real probe on `parse_response`.** `Question::validate`
+    //! rejects empty ids, whitespace in ids, empty text, empty
+    //! labels, and duplicate labels. The visible body does not
+    //! reject `:` in an id. `parse_response` splits the response
+    //! line on the *first* `:`, so a line `routing:intent: yes`
+    //! yields id `routing`, which never matches the registered
+    //! `routing:intent`. The answer is silently lost.
+    //!
+    //! `prop_validate_accepted_id_round_trips` probes this: if
+    //! `validate` accepts a colon-containing id, the answer must
+    //! be recoverable, and the property fails on the pre-fix code.
+    //! If `validate` rejects it, the property passes trivially and
+    //! the control documents the current behavior.
+    //!
+    //! `escape_xml` properties are cheap: `escape_xml` iterates
+    //! chars (not chained `replace`), so double-escaping is
+    //! structurally impossible, and CJK passes through unchanged.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn q_choice(id: &str, labels: &[&str]) -> Question {
+        Question::Choice {
+            id: id.to_string(),
+            text: "some question text".to_string(),
+            criteria: labels
+                .iter()
+                .map(|l| (l.to_string(), "description".to_string()))
+                .collect(),
+        }
+    }
+
+    // ---- escape_xml properties -------------------------------------
+
+    proptest! {
+        /// A string with none of `<>&"'` is returned unchanged.
+        #[test]
+        fn prop_escape_identity_on_safe_text(s in "[a-zA-Z0-9 .,:;!?_ ]{0,100}") {
+            prop_assert_eq!(escape_xml(&s), s);
+        }
+
+        /// A string containing `<` is changed and the output
+        /// contains the entity.
+        #[test]
+        fn prop_escape_angle_bracket(left in "[a-zA-Z]{0,5}", right in "[a-zA-Z]{0,5}") {
+            let s = format!("{left}<{right}");
+            let out = escape_xml(&s);
+            prop_assert!(out.contains("&lt;"), "output {:?} has no &lt; for input {:?}", out, s);
+            prop_assert!(!out.contains('<'), "output {:?} still has a raw '<'", out);
+        }
+
+        /// CJK characters pass through: they are neither special
+        /// nor erased.
+        #[test]
+        fn prop_escape_preserves_cjk(
+            a in "[中-龥]{1,4}",
+            b in "[中-龥]{1,4}",
+        ) {
+            let s = format!("{a}&{b}");
+            let out = escape_xml(&s);
+            prop_assert!(out.contains(&a), "output {:?} lost {:?}", out, a);
+            prop_assert!(out.contains(&b), "output {:?} lost {:?}", out, b);
+            prop_assert!(out.contains("&amp;"), "output {:?} did not escape &", out);
+        }
+
+        /// The output is at least as long as the input: escaping
+        /// only expands.
+        #[test]
+        fn prop_escape_never_shrinks(s in "\\PC{0,100}") {
+            prop_assert!(escape_xml(&s).len() >= s.len());
+        }
+    }
+
+    // ---- parse_response properties ---------------------------------
+
+    proptest! {
+        /// A question with a validation-accepted id (no whitespace,
+        /// no colon, by the generator's alphabet) round-trips.
+        #[test]
+        fn prop_valid_id_round_trips(
+            id in "[a-zA-Z][a-zA-Z0-9_]{0,10}",
+            label in "[a-z]{1,8}",
+        ) {
+            let q = q_choice(&id, &[&label, "no"]);
+            let response = format!("{id}: {label}");
+            let answers = parse_response(&response, &[q]);
+            prop_assert_eq!(answers.get(&id), Some(label.as_str()));
+        }
+
+        /// First occurrence wins when an id repeats.
+        #[test]
+        fn prop_first_occurrence_wins(id in "[a-z]{1,6}") {
+            let q = q_choice(&id, &["yes", "no"]);
+            let response = format!("{id}: yes\n{id}: no\n");
+            let answers = parse_response(&response, &[q]);
+            prop_assert_eq!(answers.get(&id), Some("yes"));
+        }
+
+        /// A line for an id the batch does not contain is dropped.
+        #[test]
+        fn prop_unknown_id_dropped(known in "[a-z]{1,6}", unknown in "[a-z]{1,6}") {
+            prop_assume!(known != unknown);
+            let q = q_choice(&known, &["yes", "no"]);
+            let response = format!("{unknown}: yes");
+            let answers = parse_response(&response, &[q]);
+            prop_assert!(answers.is_empty());
+        }
+
+        /// **The probe.** If `validate` accepts a colon-containing
+        /// id, `parse_response` must recover its answer.
+        #[test]
+        fn prop_validate_accepted_id_round_trips(
+            left in "[a-z]{1,4}",
+            right in "[a-z]{1,4}",
+            label in "[a-z]{1,6}",
+        ) {
+            let id = format!("{left}:{right}");
+            let q = q_choice(&id, &[&label, "no"]);
+            if q.validate().is_err() {
+                return Ok(()); // validate rejects colon ids; the case is moot
+            }
+            let response = format!("{id}: {label}");
+            let answers = parse_response(&response, &[q]);
+            prop_assert_eq!(
+                answers.get(&id), Some(label.as_str()),
+                "validate accepted id {:?} but parse_response could not recover it; \
+                 split-on-first-colon gives id {:?}",
+                id, &id[..id.find(':').unwrap_or(0)],
+            );
+        }
+    }
+
+    // ---- controls: the current shape, pinned ----------------------
+
+    /// Control: empty response -> empty answers.
+    #[test]
+    fn control_empty_response_is_empty() {
+        let q = q_choice("a", &["yes", "no"]);
+        assert!(parse_response("", &[q]).is_empty());
+    }
+
+    /// Control: a line with no colon is dropped.
+    #[test]
+    fn control_no_colon_line_dropped() {
+        let q = q_choice("a", &["yes", "no"]);
+        assert!(parse_response("this line has no colon", &[q]).is_empty());
+    }
+
+    /// Control: colon-in-id documents the current behavior. If
+    /// `validate` accepts a colon id but `parse_response` cannot
+    /// recover it, the property above fires; this control is the
+    /// human-readable version of the same fact.
+    #[test]
+    fn control_colon_in_id_documented() {
+        let q = q_choice("routing:intent", &["yes", "no"]);
+        let validates = q.validate().is_ok();
+        let response = "routing:intent: yes";
+        let answers = parse_response(response, &[q]);
+        // If validate rejects colon ids, the case never reaches
+        // parse_response in production; the control is a no-op.
+        if !validates {
+            return;
+        }
+        // validate accepts the id; parse_response must be able to
+        // recover it. If this assertion fires, that is the bug the
+        // property is probing.
+        assert!(
+            !answers.is_empty(),
+            "validate accepts id \"routing:intent\" but parse_response drops \
+             the answer line \"{response}\" (first-colon split yields id \
+             \"routing\")",
+        );
     }
 }
