@@ -243,3 +243,178 @@ mod tests {
         assert_eq!(Veracity::Tool.as_str(), "tool");
     }
 }
+
+#[cfg(test)]
+mod veracity_proptests {
+    //! Properties for the numeric contracts in `veracity`.
+    //!
+    //! The 17 example tests pin discrete points: a re-mention
+    //! raises confidence, confidence saturates at one, a stated
+    //! fact starts at a half. The properties below pin the
+    //! *continuous-domain* shape: monotone in each argument,
+    //! bounded, fixed-point structure. A future change to
+    //! `raise_confidence`'s formula that broke monotonicity would
+    //! pass every example test and fail here.
+    //!
+    //! `should_supersede` is `>` on `f64`. Three properties pin
+    //! that: strict (no self-supersede), antisymmetric, and
+    //! equivalent to `>` for finite inputs.
+    //!
+    //! **No bug expected.** The bodies are three-liners with
+    //! `clamp` on both ends. Two controls pin the NaN edge (NaN
+    //! propagates through `clamp`, and NaN comparisons are false),
+    //! which the current code handles by never superseding and by
+    //! returning NaN — the caller's production inputs are finite,
+    //! so NaN is unreachable, but the contract is worth pinning.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn finite_unit() -> impl Strategy<Value = f64> {
+        (0.0f64..=1.0f64)
+    }
+
+    proptest! {
+        /// `raise_confidence` is monotone non-decreasing in
+        /// `confidence` for a fixed weight.
+        #[test]
+        fn prop_raise_monotone_in_confidence(
+            c1 in finite_unit(),
+            c2 in finite_unit(),
+            w in finite_unit(),
+        ) {
+            let (lo, hi) = if c1 <= c2 { (c1, c2) } else { (c2, c1) };
+            let a = raise_confidence(lo, w);
+            let b = raise_confidence(hi, w);
+            prop_assert!(
+                a <= b,
+                "raise({}, {}) = {} > raise({}, {}) = {}",
+                lo, w, a, hi, w, b,
+            );
+        }
+
+        /// `raise_confidence` is monotone non-decreasing in weight
+        /// for a fixed confidence. At `c = 1.0` it is flat: any
+        /// weight gives 1.0 (the saturation case).
+        #[test]
+        fn prop_raise_monotone_in_weight(
+            c in finite_unit(),
+            w1 in finite_unit(),
+            w2 in finite_unit(),
+        ) {
+            let (lo, hi) = if w1 <= w2 { (w1, w2) } else { (w2, w1) };
+            let a = raise_confidence(c, lo);
+            let b = raise_confidence(c, hi);
+            prop_assert!(
+                a <= b,
+                "raise({}, {}) = {} > raise({}, {}) = {}",
+                c, lo, a, c, hi, b,
+            );
+        }
+
+        /// The output is in `[0, 1]` for finite input. Both inputs
+        /// are clamped, so the output cannot escape.
+        #[test]
+        fn prop_raise_bounded(
+            c in any::<f64>(),
+            w in any::<f64>(),
+        ) {
+            prop_assume!(c.is_finite() && w.is_finite());
+            let out = raise_confidence(c, w);
+            prop_assert!(
+                (0.0..=1.0).contains(&out),
+                "raise({}, {}) = {} not in [0, 1]", c, w, out,
+            );
+        }
+
+        /// `raise_confidence` never decreases a confidence in
+        /// `[0, 1]` for a non-negative weight.
+        #[test]
+        fn prop_raise_never_decreases(
+            c in finite_unit(),
+            w in 0.0f64..=1.0f64,
+        ) {
+            let out = raise_confidence(c, w);
+            prop_assert!(
+                out >= c,
+                "raise({}, {}) = {} < {}", c, w, out, c,
+            );
+        }
+
+        /// `raise_confidence` saturates at 1.0 for any weight.
+        #[test]
+        fn prop_raise_saturates_at_one(w in finite_unit()) {
+            prop_assert_eq!(raise_confidence(1.0, w), 1.0, "w = {}", w);
+        }
+
+        /// A zero weight is a fixed point.
+        #[test]
+        fn prop_raise_zero_weight_fixed_point(c in finite_unit()) {
+            prop_assert_eq!(raise_confidence(c, 0.0), c, "c = {}", c);
+        }
+
+        /// `should_supersede` is strictly greater: no value
+        /// supersedes itself, and a tie keeps the incumbent (the
+        /// doc comment says so explicitly).
+        #[test]
+        fn prop_supersede_strict(x in any::<f64>()) {
+            prop_assume!(x.is_finite());
+            prop_assert!(!should_supersede(x, x), "x = {}", x);
+        }
+
+        /// Antisymmetric: at most one direction can supersede.
+        #[test]
+        fn prop_supersede_antisymmetric(
+            challenger in any::<f64>(),
+            incumbent in any::<f64>(),
+        ) {
+            prop_assume!(challenger.is_finite() && incumbent.is_finite());
+            let a = should_supersede(challenger, incumbent);
+            let b = should_supersede(incumbent, challenger);
+            prop_assert!(!(a && b), "both directions superseded: {} vs {}", challenger, incumbent);
+        }
+
+        /// Equivalent to `>` for finite inputs. The body is `>`,
+        /// so this is a tautology today; it exists so a change
+        /// from `>` to `>=` (or to a tolerance-based comparison)
+        /// fails here.
+        #[test]
+        fn prop_supersede_equivalent_to_gt(
+            challenger in any::<f64>(),
+            incumbent in any::<f64>(),
+        ) {
+            prop_assume!(challenger.is_finite() && incumbent.is_finite());
+            prop_assert_eq!(
+                should_supersede(challenger, incumbent),
+                challenger > incumbent,
+            );
+        }
+    }
+
+    // ---- controls: NaN edges -------------------------------------
+
+    /// `should_supersede(NaN, x)` is false for any `x`, because
+    /// `NaN > x` is false in IEEE 754. The production callers
+    /// pass finite confidences, so NaN is unreachable; pinned so a
+    /// future `partial_cmp` + `Ordering::Greater` refactor (which
+    /// would return `None` and might panic on `unwrap`) is a
+    /// visible decision.
+    #[test]
+    fn control_nan_challenger_never_supersedes() {
+        assert!(!should_supersede(f64::NAN, 0.5));
+        assert!(!should_supersede(f64::NAN, 0.0));
+        assert!(!should_supersede(f64::NAN, 1.0));
+    }
+
+    /// `raise_confidence(NaN, w)` is NaN. `f64::clamp` panics when
+    /// min > max, and returns NaN when the value is NaN — so the
+    /// output is NaN. Production inputs are finite (memory entries
+    /// store finite f32 confidences; the weights are a fixed f64
+    /// table); pinned so a future "sanitize NaN to 0" (or a
+    /// `debug_assert` on finiteness) is a visible decision.
+    #[test]
+    fn control_nan_confidence_propagates() {
+        assert!(raise_confidence(f64::NAN, 0.3).is_nan());
+        assert!(raise_confidence(f64::NAN, 0.0).is_nan());
+    }
+}
