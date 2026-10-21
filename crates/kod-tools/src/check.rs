@@ -1063,3 +1063,157 @@ mod proptests {
         }
     }
 }
+
+#[cfg(test)]
+mod location_parser_differential {
+    //! **Differential test** between the two location parsers.
+    //!
+    //! `parse_location_colon` reads the bare `file:line:col` form;
+    //! `parse_location_colon_prefix` reads `file:line:col: <message>`.
+    //! They are two implementations of one positional contract, and
+    //! nothing in the workspace checks that they agree.
+    //!
+    //! Four divergences are characterized below, none fixed:
+    //!
+    //! 1. `_colon` rejects line/col 0 (1-based guard); `_prefix` does not.
+    //! 2. `_colon` rejects an empty file; `_prefix` returns `Some(("", …))`.
+    //! 3. A single-letter file (`"a"`) makes `_prefix` treat `a:` as a
+    //!    Windows drive letter and skip the first colon, so the whole
+    //!    parse yields `None`; `_colon` parses it normally.
+    //! 4. None of this is asserted correct — it is named so a future
+    //!    reader sees the asymmetry.
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A file path with no `:` and **at least two characters**. The
+    /// length bound matters: a single-letter name followed by `:`
+    /// matches the drive-letter heuristic in `_prefix`
+    /// (`bytes[0].is_ascii_alphabetic() && bytes[1] == b':'`), which
+    /// consumes the first separator. The single-letter case is
+    /// characterized separately below.
+    fn arb_file() -> impl Strategy<Value = String> {
+        "[a-z_./\\\\]{2,20}"
+    }
+
+    /// Line and column are 1-based, so `_colon`'s guard accepts them.
+    fn arb_pos() -> impl Strategy<Value = u32> {
+        1u32..1000
+    }
+
+    proptest! {
+        /// **The equivalence.** `_prefix` on `file:line:col: msg` must
+        /// return exactly what `_colon` returns on `file:line:col`,
+        /// for every well-formed position and a non-ambiguous path.
+        #[test]
+        fn prop_prefix_agrees_with_colon_on_well_formed(
+            file in arb_file(),
+            line in arb_pos(),
+            col in arb_pos(),
+            msg in "[a-zA-Z ]{0,20}",
+        ) {
+            let bare = format!("{}:{}:{}", file, line, col);
+            let with_msg = format!("{}:{}:{}: {}", file, line, col, msg);
+            let from_bare = parse_location_colon(&bare);
+            let from_prefix = parse_location_colon_prefix(&with_msg);
+            let expected = Some((file.clone(), line, col));
+            prop_assert_eq!(&from_bare, &expected, "bare form {:?}", bare);
+            prop_assert_eq!(&from_prefix, &expected, "prefixed form {:?}", with_msg);
+        }
+
+        /// A trailing message does not shift the file, line, or
+        /// column — the suffix is ignored.
+        #[test]
+        fn prop_suffix_does_not_shift_position(
+            file in arb_file(),
+            line in arb_pos(),
+            col in arb_pos(),
+            a in "[a-zA-Z]{0,10}",
+            b in "[a-zA-Z]{0,10}",
+        ) {
+            let t1 = format!("{}:{}:{}: {}", file, line, col, a);
+            let t2 = format!("{}:{}:{}: {}", file, line, col, b);
+            prop_assert_eq!(
+                parse_location_colon_prefix(&t1),
+                parse_location_colon_prefix(&t2),
+                "suffix changed the parsed position",
+            );
+        }
+    }
+
+    /// **Characterization 1.** `_colon` rejects line/col 0 (the
+    /// 1-based guard); `_prefix` does not.
+    #[test]
+    fn zero_position_diverge_between_the_two_parsers() {
+        assert_eq!(
+            parse_location_colon("a.rs:0:5"),
+            None,
+            "_colon should reject a zero line"
+        );
+        assert_eq!(
+            parse_location_colon_prefix("a.rs:0:5: err"),
+            Some(("a.rs".to_string(), 0, 5)),
+            "_prefix does not reject a zero line",
+        );
+    }
+
+    /// **Characterization 2.** `_colon` rejects an empty file;
+    /// `_prefix` returns `Some(("", line, col))`.
+    #[test]
+    fn empty_file_diverge_between_the_two_parsers() {
+        assert_eq!(
+            parse_location_colon(":5:3"),
+            None,
+            "_colon should reject an empty file"
+        );
+        assert_eq!(
+            parse_location_colon_prefix(":5:3: err"),
+            Some((String::new(), 5, 3)),
+            "_prefix accepts an empty file",
+        );
+    }
+
+    /// **Characterization 3.** A single-letter file is treated as a
+    /// Windows drive by `_prefix`: `a:` matches the drive-letter
+    /// skip, the first colon is consumed, and the 3-colon scan finds
+    /// only two separators. `_colon` parses the same path normally.
+    /// This is why `arb_file` requires at least two characters.
+    #[test]
+    fn single_letter_file_breaks_prefix_but_not_colon() {
+        assert_eq!(
+            parse_location_colon("a:1:1"),
+            Some(("a".to_string(), 1, 1)),
+            "_colon parses a single-letter file",
+        );
+        assert_eq!(
+            parse_location_colon_prefix("a:1:1: err"),
+            None,
+            "_prefix mistakes a: for a drive letter",
+        );
+    }
+
+    /// The Windows drive-letter skip does fire on a real drive path,
+    /// which is the case it exists for.
+    #[test]
+    fn prefix_skips_a_windows_drive_letter() {
+        let got = parse_location_colon_prefix(r"C:\src\main.rs:42:5: err");
+        assert_eq!(got, Some((r"C:\src\main.rs".to_string(), 42, 5)));
+    }
+
+    /// A line with fewer than three colons is `None` from `_prefix`.
+    #[test]
+    fn prefix_requires_three_colons() {
+        assert_eq!(parse_location_colon_prefix("a.rs:42:5"), None);
+        assert_eq!(parse_location_colon_prefix("a.rs:42"), None);
+        assert_eq!(parse_location_colon_prefix("a.rs"), None);
+    }
+
+    /// A non-numeric line or column in either form is `None`, not a
+    /// default.
+    #[test]
+    fn non_numeric_positions_are_none() {
+        assert_eq!(parse_location_colon("a.rs:x:5"), None);
+        assert_eq!(parse_location_colon("a.rs:42:y"), None);
+        assert_eq!(parse_location_colon_prefix("a.rs:x:5: err"), None);
+        assert_eq!(parse_location_colon_prefix("a.rs:42:y: err"), None);
+    }
+}
