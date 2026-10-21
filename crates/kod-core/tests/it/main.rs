@@ -44,6 +44,7 @@ mod structured_prompt_shape;
 mod structured_provider_path;
 mod swarm_failed_dep_gates;
 mod swarm_from_config;
+mod swarm_mock_e2e;
 mod swarm_runner;
 mod tool_loop;
 mod tool_loop_guard_integration;
