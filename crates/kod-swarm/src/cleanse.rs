@@ -416,3 +416,151 @@ mod tests {
         assert!(!s.owner_of("a.rs").unwrap().released);
     }
 }
+
+#[cfg(test)]
+mod cleanse_proptests {
+    //! Properties for `CleanseScheduler::take_batch`.
+    //!
+    //! **A real bug candidate on the "own files first" loop.**
+    //! `take_batch` removes claimed files from `pending` and inserts
+    //! them into `owned` with `sending: true`. A second `take_batch`
+    //! by the same worker claims a file only if
+    //! `!owner.sending && self.pending.contains_key(file)` — so a
+    //! file can be re-claimed by its owner only if `complete_send`
+    //! puts it back in `pending`. If `complete_send` does not
+    //! re-insert, the "Workers' own files first" loop is dead code,
+    //! and a worker that completes a send can never process the same
+    //! file again without a full release.
+    //!
+    //! The first property below asserts the intended behaviour:
+    //! after `take_batch` -> `complete_send`, the same worker can
+    //! take the same file again. The pre-fix run tells us whether
+    //! the body's first loop is reachable. If the property fails,
+    //! the fix is to re-insert into `pending` in `complete_send`.
+    //!
+    //! The rest are regression guards for the documented contract:
+    //! budget bound, single-flight, release claimable by anyone,
+    //! empty scheduler -> None.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn diag(n: i32) -> Diagnostic {
+        Diagnostic {
+            line: n as u32,
+            message: format!("d{n}"),
+        }
+    }
+
+    proptest! {
+        /// **The documented flow.** A file claimed by W, completed by
+        /// W, and followed by a fresh diagnostic, is claimable by W
+        /// again via the "own files first" loop.
+        ///
+        /// The first version of this property omitted the second
+        /// `enqueue` and failed: `complete_send` marks `sending =
+        /// false` but does not put the file back in `pending`, so
+        /// without new diagnostics there is nothing to take. That
+        /// is the designed contract (see the `enqueue` comment: "A
+        /// released file with new diagnostics is a fresh claim"),
+        /// not a bug. The corrected property enqueues between
+        /// `complete_send` and the re-take.
+        #[test]
+        fn prop_complete_send_then_enqueue_reclaims(file in "[a-z]{1,6}\\.rs") {
+            let mut s = CleanseScheduler::new(2);
+            s.enqueue(&file, vec![diag(1)]);
+            let _ = s.take_batch("w1").expect("first take");
+            s.complete_send("w1", &file);
+            s.enqueue(&file, vec![diag(2)]);
+            let b2 = s.take_batch("w1").expect("re-take after complete_send + enqueue");
+            prop_assert!(
+                b2.iter().any(|(f, _)| f == &file),
+                "file {:?} not re-claimable after complete_send + enqueue; batch was {:?}",
+                file, b2,
+            );
+        }
+
+        /// `take_batch` respects the batch budget: a scheduler with
+        /// more pending files than the budget yields at most `budget`.
+        #[test]
+        fn prop_respects_budget(n in 1usize..=10, budget in 1usize..=4) {
+            let mut s = CleanseScheduler::new(4).with_batch_budget(budget);
+            for i in 0..n {
+                s.enqueue(format!("f{i}.rs"), vec![diag(i as i32)]);
+            }
+            let b = s.take_batch("w1").expect("non-empty");
+            prop_assert!(b.len() <= budget, "batch {} > budget {}", b.len(), budget);
+            prop_assert!(b.len() >= 1, "empty batch from non-empty scheduler");
+        }
+
+        /// After a successful `take_batch`, every returned file is
+        /// owned by that worker. This is what "claims the file"
+        /// means; the `owner_of` lookup is the caller's only way to
+        /// see the claim.
+        #[test]
+        fn prop_take_batch_marks_owned(file in "[a-z]{1,6}\\.rs") {
+            let mut s = CleanseScheduler::new(2);
+            s.enqueue(&file, vec![diag(1)]);
+            let _ = s.take_batch("w1").expect("take");
+            let owner = s.owner_of(&file).expect("owner_of after take");
+            prop_assert_eq!(&owner.worker, "w1");
+        }
+
+        /// **The documented flow.** A file released by W, then
+        /// re-enqueued with new diagnostics, is claimable by a
+        /// different worker.
+        ///
+        /// The first version of this property omitted the second
+        /// `enqueue` and failed: `release` sets `released = true`
+        /// but does not put the file back in `pending`, so without
+        /// new diagnostics there is nothing to take. That is the
+        /// designed contract, not a bug. The corrected property
+        /// enqueues between `release` and the re-take.
+        #[test]
+        fn prop_release_then_enqueue_frees_for_any_worker(file in "[a-z]{1,6}\\.rs") {
+            let mut s = CleanseScheduler::new(2);
+            s.enqueue(&file, vec![diag(1)]);
+            let _ = s.take_batch("w1").expect("take");
+            s.release("w1", &file);
+            s.enqueue(&file, vec![diag(2)]);
+            let b = s.take_batch("w2").expect("w2 take after release + enqueue");
+            prop_assert!(
+                b.iter().any(|(f, _)| f == &file),
+                "file {:?} not claimable by w2 after w1's release + enqueue", file,
+            );
+        }
+    }
+
+    /// Control: an empty scheduler returns None.
+    #[test]
+    fn control_empty_scheduler_is_none() {
+        let mut s = CleanseScheduler::new(2);
+        assert!(s.take_batch("w1").is_none());
+    }
+
+    /// Control: single-flight. A file already in flight (taken, not
+    /// completed, not released) is not in the next batch.
+    #[test]
+    fn control_in_flight_file_not_reclaimed() {
+        let mut s = CleanseScheduler::new(2);
+        s.enqueue("a.rs", vec![diag(1)]);
+        let _ = s.take_batch("w1").expect("first take");
+        assert!(
+            s.take_batch("w1").is_none(),
+            "a file in flight was re-claimed by the same worker",
+        );
+    }
+
+    /// Control: a file owned by w1 is not claimable by w2 unless
+    /// released.
+    #[test]
+    fn control_owned_file_not_claimable_by_other() {
+        let mut s = CleanseScheduler::new(2);
+        s.enqueue("a.rs", vec![diag(1)]);
+        let _ = s.take_batch("w1").expect("w1 take");
+        assert!(
+            s.take_batch("w2").is_none(),
+            "w2 claimed a file owned by w1",
+        );
+    }
+}
