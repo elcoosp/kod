@@ -379,3 +379,180 @@ mod post_semaphore_is_bounded {
         );
     }
 }
+
+#[cfg(test)]
+mod parse_headers_proptests {
+    //! Properties and a characterization for `parse_headers`.
+    //!
+    //! The format is a comma-separated list of `key=value` pairs,
+    //! each half trimmed. The contract a caller relies on:
+    //!
+    //! - a pair with no `=` is dropped (not an error);
+    //! - an empty key is dropped;
+    //! - `=` inside a value is kept: the split is on the FIRST `=`,
+    //!   so `a=b=c` is `("a", "b=c")`;
+    //! - duplicate keys are preserved in order, not deduped.
+    //!
+    //! The format has one inherent limitation, pinned below as a
+    //! characterization: a value cannot contain a comma, because the
+    //! comma is the pair separator.
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A key with no `=`, `,`, or whitespace at the edges — the
+    /// characters the format treats specially.
+    fn arb_key() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9_.-]{1,12}"
+    }
+
+    /// A value with no `,` — the format's pair separator — so the
+    /// pair survives split-on-comma. `=` IS allowed because the
+    /// parser splits on the first one only.
+    fn arb_value() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9_.:/-]{0,20}"
+    }
+
+    proptest! {
+        #[test]
+        fn prop_never_panics(raw in "\\PC{0,300}") {
+            let _ = parse_headers(Some(&raw));
+        }
+
+        #[test]
+        fn prop_deterministic(raw in "\\PC{0,300}") {
+            prop_assert_eq!(parse_headers(Some(&raw)), parse_headers(Some(&raw)));
+        }
+
+        /// `None` is the empty list, not a panic and not a default
+        /// pair.
+        #[test]
+        fn prop_none_is_empty(_seed in any::<u8>()) {
+            prop_assert!(parse_headers(None).is_empty());
+        }
+
+        /// A single `key=value` parses to exactly that pair, trimmed.
+        #[test]
+        fn prop_single_pair_round_trips(k in arb_key(), v in arb_value()) {
+            let raw = format!("{}={}", k, v);
+            let got = parse_headers(Some(&raw));
+            prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
+            let (gk, gv) = (&got[0].0, &got[0].1);
+            prop_assert_eq!(gk.as_str(), k.as_str());
+            prop_assert_eq!(gv.as_str(), v.as_str());
+        }
+
+        /// Every pair in the output has a non-empty key and no
+        /// untrimmed whitespace on either side. This is what the
+        /// consumer — an HTTP-header setter — relies on.
+        #[test]
+        fn prop_output_pairs_are_clean(raw in "\\PC{0,300}") {
+            for (k, v) in parse_headers(Some(&raw)) {
+                prop_assert!(!k.is_empty(), "empty key in {:?}", raw);
+                prop_assert_eq!(k.trim(), k.as_str(), "untrimmed key in {:?}", raw);
+                prop_assert_eq!(v.trim(), v.as_str(), "untrimmed value in {:?}", raw);
+            }
+        }
+
+        /// `=` inside a value is kept: the split is on the first `=`.
+        #[test]
+        fn prop_equals_inside_value_is_kept(
+            k in arb_key(),
+            mid in "[a-zA-Z0-9]{1,8}",
+            tail in "[a-zA-Z0-9]{1,8}",
+        ) {
+            let raw = format!("{}={}={}", k, mid, tail);
+            let got = parse_headers(Some(&raw));
+            prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
+            let (gk, gv) = (&got[0].0, &got[0].1);
+            prop_assert_eq!(gk.as_str(), k.as_str());
+            let expected = format!("{}={}", mid, tail);
+            prop_assert_eq!(gv.as_str(), expected.as_str(), "raw={:?}", raw);
+        }
+
+        /// Duplicate keys are preserved in order — this is a
+        /// multi-value header format.
+        #[test]
+        fn prop_duplicate_keys_preserved(k in arb_key(), a in arb_value(), b in arb_value()) {
+            let raw = format!("{}={},{}={}", k, a, k, b);
+            let got = parse_headers(Some(&raw));
+            prop_assert_eq!(got.len(), 2, "raw={:?}", raw);
+            prop_assert_eq!(got[0].0.as_str(), k.as_str());
+            prop_assert_eq!(got[0].1.as_str(), a.as_str());
+            prop_assert_eq!(got[1].0.as_str(), k.as_str());
+            prop_assert_eq!(got[1].1.as_str(), b.as_str());
+        }
+
+        /// A pair with no `=` is dropped; the others survive.
+        #[test]
+        fn prop_pair_without_equals_is_dropped(
+            good_k in arb_key(),
+            good_v in arb_value(),
+            junk in "[a-zA-Z0-9]{1,10}",
+        ) {
+            prop_assume!(!junk.contains('='));
+            let raw = format!("{}={},{}", good_k, good_v, junk);
+            let got = parse_headers(Some(&raw));
+            prop_assert_eq!(got.len(), 1, "raw={:?} got={:?}", raw, got);
+            prop_assert_eq!(got[0].0.as_str(), good_k.as_str());
+        }
+
+        /// Whitespace around either half is trimmed.
+        #[test]
+        fn prop_whitespace_is_trimmed(k in arb_key(), v in arb_value()) {
+            let raw = format!("   {}   =   {}   ", k, v);
+            let got = parse_headers(Some(&raw));
+            prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
+            let (gk, gv) = (&got[0].0, &got[0].1);
+            prop_assert_eq!(gk.as_str(), k.as_str());
+            prop_assert_eq!(gv.as_str(), v.as_str());
+        }
+    }
+
+    /// **Characterization.** An empty key is dropped: `=value` is
+    /// not a header.
+    #[test]
+    fn empty_key_is_dropped() {
+        assert!(parse_headers(Some("=orphan")).is_empty());
+        let h = parse_headers(Some("good=1,=orphan,other=2"));
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].0, "good");
+        assert_eq!(h[1].0, "other");
+    }
+
+    /// **Characterization.** A comma in a value is not expressible:
+    /// `a=b,c` is two pairs, not one pair with value `b,c`. The
+    /// format has no quoting; a caller that needs a comma in a value
+    /// must use a different mechanism.
+    #[test]
+    fn comma_in_value_is_not_expressible() {
+        let h = parse_headers(Some("a=b,c"));
+        // `b,c` splits into `a=b` (kept) and `c` (dropped for no `=`).
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].0, "a");
+        assert_eq!(h[0].1, "b");
+    }
+
+    /// A trailing comma produces no extra pair.
+    #[test]
+    fn trailing_comma_is_ignored() {
+        let h = parse_headers(Some("a=1,b=2,"));
+        assert_eq!(h.len(), 2);
+    }
+
+    /// A bare comma (no pairs at all) is empty.
+    #[test]
+    fn commas_only_is_empty() {
+        assert!(parse_headers(Some(",")).is_empty());
+        assert!(parse_headers(Some(",,")).is_empty());
+    }
+
+    /// `=""` is a pair with an empty value, not a dropped pair —
+    /// the key is what makes a header, not the value.
+    #[test]
+    fn empty_value_is_kept() {
+        let h = parse_headers(Some("a="));
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].0, "a");
+        assert_eq!(h[0].1, "");
+    }
+}
