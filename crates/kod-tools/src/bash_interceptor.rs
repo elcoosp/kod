@@ -77,7 +77,7 @@ fn split_shell_words(s: &str) -> Vec<&str> {
     let mut i = 0;
     while i < bytes.len() {
         // Skip leading whitespace.
-        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n') {
             i += 1;
         }
         if i >= bytes.len() {
@@ -119,7 +119,7 @@ fn split_shell_words(s: &str) -> Vec<&str> {
                     i += 2;
                     end = i.min(bytes.len());
                 }
-                b' ' | b'\t' => break,
+                b' ' | b'\t' | b'\n' => break,
                 _ => {
                     i += 1;
                     end = i;
@@ -158,7 +158,7 @@ fn has_top_level_operator(s: &str) -> bool {
         match c {
             b'\'' => in_single = true,
             b'"' => in_double = true,
-            b'|' | b';' | b'&' | b'>' | b'<' => return true,
+            b'|' | b';' | b'&' | b'>' | b'<' | b'\n' => return true,
             b'(' | b')' => return true,
             b'`' => return true,
             // Only `$(` is a subshell. `$VAR` passes.
@@ -466,5 +466,58 @@ mod tests {
     fn subshell_and_backtick_pass_through() {
         assert!(intercept("grep $(cat file) other").is_none());
         assert!(intercept("grep `cat file` other").is_none());
+    }
+}
+
+#[cfg(test)]
+mod bash_interceptor_proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    fn operator_chars() -> impl Strategy<Value = &'static str> {
+        select(vec!["|", ";", "&", ">", "<", "(", ")", "`", "$("])
+    }
+
+    proptest! {
+        #[test]
+        fn prop_split_no_panic(s in "\\PC{0,80}") {
+            let _ = split_shell_words(&s);
+        }
+
+        #[test]
+        fn prop_operator_unquoted_detected(a in "[a-z]{1,8}", op in operator_chars()) {
+            let s = format!("{a}{op}b");
+            prop_assert!(has_top_level_operator(&s), "missed {op:?} in {s:?}");
+        }
+
+        #[test]
+        fn prop_operator_in_single_quotes_ignored(a in "[a-z]{1,8}", op in operator_chars()) {
+            let s = format!("{a}'{op}b'");
+            prop_assert!(!has_top_level_operator(&s), "false positive on {s:?}");
+        }
+
+        #[test]
+        fn prop_operator_in_double_quotes_ignored(a in "[a-z]{1,8}", op in operator_chars()) {
+            let s = format!("{a}\"{op}b\"");
+            prop_assert!(!has_top_level_operator(&s), "false positive on {s:?}");
+        }
+
+        /// A newline is a top-level command separator in shell, exactly
+        /// like `;`. The interceptor's contract is "anything with a
+        /// top-level operator passes through to the shell", so a
+        /// multi-statement command must not be treated as one grep.
+        #[test]
+        fn prop_newline_is_top_level(a in "[a-z]{1,8}", b in "[a-z]{1,8}") {
+            let s = format!("{a}\n{b}");
+            prop_assert!(has_top_level_operator(&s), "newline not seen as separator in {s:?}");
+        }
+
+        #[test]
+        fn prop_split_splits_newline(a in "[a-z]{1,8}", b in "[a-z]{1,8}") {
+            let s = format!("{a}\n{b}");
+            let toks = split_shell_words(&s);
+            prop_assert_eq!(toks, vec![a.as_str(), b.as_str()], "newline not a split point in {:?}", s);
+        }
     }
 }
