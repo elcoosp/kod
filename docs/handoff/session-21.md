@@ -209,7 +209,8 @@ findings below.
 
 ### Three findings, each needing a decision rather than a test
 
-**1. `patch.rs` trailing newline — two real defects, unfixed.**
+**1. `patch.rs` trailing newline — FIXED in `8e62f47`.** (History below,
+kept because the six failed attempts are the useful part.)
 
 `apply_unified_diff` loses a trailing newline that a patch *adds* to a
 file that previously lacked one (seed: `old = "A"`, `new = " \n"` →
@@ -269,3 +270,44 @@ Characterized in commit `af7a8b8`'s message, not pinned as intent.
 
 The code side of the tag question is settled: green gate, clean tree,
 every fix honest about its stakes. The remaining decision is the user's.
+
+## Update — `patch.rs` closed
+
+`8e62f47` fixes the trailing-newline defects. Full `kod-tools` suite
+green at 465/465; gate green on the workspace.
+
+### What the six attempts taught
+
+The bug looked like one thing and was three:
+
+1. `"".split('\n')` yields `[""]`; the phantom element survived a splice
+   and `join` re-emitted it as a trailing newline.
+2. The trailing-newline decision read `had_trailing_newline` (the
+   original's shape), so a patch that *added* a trailing newline lost it.
+3. **The `\ No newline` marker is positional, not hunk-wide.** It
+   applies to the body line *immediately above* it. `similar` emits
+   `-A`, `\ No newline`, `+A` when a file gains a trailing newline — the
+   marker describes `-A`, and a parser that leaves it set makes `+A`
+   inherit a stale marker.
+
+Attempts 1–5 each fixed one or two of the three and regressed a
+different test. The per-hunk `last_line_tag` + `has_no_newline_marker`
+model (with the marker **reset on every body push**) is the one that
+covers every case.
+
+### The process lesson, worth more than the fix
+
+Attempts 1–5 were written against an inferred model of what `similar`
+emits. Attempt 6 started by **printing the actual patch for ten edge
+cases** and reading the failing case verbatim. The bug was visible in
+one line of that output: a marker *before* the `+` line.
+
+**Rule:** when a fix fails twice, stop reasoning about the input and
+print it. Guessing at a dependency's output is how five attempts
+happened.
+
+### Remaining findings
+
+Findings 2 and 3 (`parse_subtasks` batch-abort, `max = 0`) still need a
+design decision, not a test. `classify_rejection` case-sensitivity is
+still unpinned. Those are unchanged.
