@@ -865,3 +865,179 @@ mod secret_vault_proptests {
         assert_eq!(count, 1);
     }
 }
+
+#[cfg(test)]
+mod secret_vault_state_machine {
+    //! **Model-based / state-machine test.** A sequence of operations
+    //! is applied to the real `SecretVault` and to a shadow model in
+    //! lockstep; after each step the two must agree. Every other test
+    //! in this file exercises one call. This one exercises
+    //! **sequences**, which is where cache-invalidation bugs live: the
+    //! `sorted` vector (F2c-12) is cleared by `register`, and a
+    //! single-call test cannot tell a correctly-invalidated cache from
+    //! a stale one.
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        Register(String),
+        Obfuscate(String),
+        RoundTrip(String),
+    }
+
+    /// Distinctive `sk-` prefix so a generated text is extremely
+    /// unlikely to contain a registered secret by accident.
+    fn arb_secret() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9]{6,16}".prop_map(|s| format!("sk-{s}"))
+    }
+
+    /// No `«`, `»`, or `Credential-` — text that could not contain a
+    /// placeholder, so a random substring match cannot confuse the
+    /// round-trip.
+    fn arb_text() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 .,!?-]{0,40}"
+    }
+
+    fn arb_op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            arb_secret().prop_map(Op::Register),
+            arb_text().prop_map(Op::Obfuscate),
+            arb_text().prop_map(Op::RoundTrip),
+        ]
+    }
+
+    fn arb_ops() -> impl Strategy<Value = Vec<Op>> {
+        prop::collection::vec(arb_op(), 0..15)
+    }
+
+    fn vault() -> SecretVault {
+        SecretVault::with_key([42u8; 32])
+    }
+
+    proptest! {
+        /// **The state machine.** Apply operations in sequence;
+        /// verify the vault matches the model after each step.
+        #[test]
+        fn prop_state_machine(ops in arb_ops()) {
+            let v = vault();
+            let mut model: BTreeSet<String> = BTreeSet::new();
+            for (step, op) in ops.iter().enumerate() {
+                match op {
+                    Op::Register(s) => {
+                        v.register(s);
+                        model.insert(s.clone());
+                        prop_assert_eq!(
+                            v.len(),
+                            model.len(),
+                            "step {}: Register({:?})",
+                            step,
+                            s,
+                        );
+                    }
+                    Op::Obfuscate(t) => {
+                        let out = v.obfuscate(t);
+                        for s in &model {
+                            if t.contains(s.as_str()) {
+                                prop_assert!(
+                                    !out.contains(s.as_str()),
+                                    "step {}: secret {:?} survived obfuscate of {:?} -> {:?}",
+                                    step, s, t, out,
+                                );
+                            }
+                        }
+                    }
+                    Op::RoundTrip(t) => {
+                        let obf = v.obfuscate(t);
+                        let (deobf, _n) = v.deobfuscate(&obf);
+                        prop_assert_eq!(
+                            &deobf,
+                            t,
+                            "step {}: RoundTrip({:?}) obf={:?}",
+                            step,
+                            t,
+                            obf,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **Registration order is irrelevant.** Registering the same set
+    /// of secrets in two different orders produces the same `len`,
+    /// the same `placeholder_for` for each, and the same `obfuscate`
+    /// output. If the `sorted` cache keeps a stale order after a
+    /// re-register, this fires.
+    #[test]
+    fn registration_is_order_independent() {
+        let secrets = ["sk-alpha1", "sk-beta12", "sk-gamma3"];
+        let text = "prefix sk-alpha1 middle sk-beta12 suffix sk-gamma3 tail";
+
+        let a = vault();
+        let b = vault();
+        for s in secrets {
+            a.register(s);
+        }
+        for s in secrets.iter().rev() {
+            b.register(*s);
+        }
+
+        assert_eq!(a.len(), b.len(), "different lengths after reorder");
+        for s in secrets {
+            assert_eq!(
+                a.placeholder_for(s),
+                b.placeholder_for(s),
+                "placeholder for {:?} depends on order",
+                s,
+            );
+        }
+        assert_eq!(
+            a.obfuscate(text),
+            b.obfuscate(text),
+            "obfuscate output depends on registration order",
+        );
+    }
+
+    /// **Re-registering does not invalidate the semantic contract.**
+    /// A secret registered, obfuscated, then registered again must
+    /// still be found by the next `obfuscate`.
+    #[test]
+    fn re_register_then_obfuscate_still_finds_it() {
+        let v = vault();
+        let p1 = v.register("sk-first");
+        assert_eq!(v.obfuscate("a sk-first b"), format!("a {p1} b"));
+
+        let p2 = v.register("sk-first");
+        assert_eq!(p1, p2, "re-register returned a different placeholder");
+        assert_eq!(
+            v.obfuscate("a sk-first b"),
+            format!("a {p1} b"),
+            "re-register invalidated the cache incorrectly",
+        );
+
+        let p3 = v.register("sk-second");
+        assert_eq!(
+            v.obfuscate("a sk-first b sk-second c"),
+            format!("a {p1} b {p3} c"),
+            "new secret after cache warm-up was missed",
+        );
+    }
+
+    /// The warm-cache sequence: register, obfuscate (warms sorted),
+    /// register, obfuscate (must see both), deobfuscate.
+    #[test]
+    fn warm_cache_sequence() {
+        let v = vault();
+        let _ = v.register("sk-a");
+        let _ = v.obfuscate("warm the sorted cache");
+        let _ = v.register("sk-b");
+        let text = "x sk-a y sk-b z";
+        let obf = v.obfuscate(text);
+        assert!(!obf.contains("sk-a"), "sk-a survived: {:?}", obf);
+        assert!(!obf.contains("sk-b"), "sk-b survived: {:?}", obf);
+        let (deobf, _) = v.deobfuscate(&obf);
+        assert_eq!(deobf, text);
+    }
+}
