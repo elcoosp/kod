@@ -1606,3 +1606,256 @@ mod provider_stream_deadline {
         );
     }
 }
+
+#[cfg(test)]
+mod parse_response_proptests {
+    //! Properties and a characterization for `parse_response`.
+    //!
+    //! Three contracts a caller relies on:
+    //!
+    //! 1. **Usage arithmetic.** `prompt_tokens` folds Anthropic's
+    //!    three input fields into one total, and
+    //!    `total_tokens == prompt_tokens + completion_tokens`.
+    //! 2. **Variant selection** follows block composition.
+    //! 3. **`cache_creation_1h_tokens` is clamped** to the flat total.
+    //!
+    //! One behavior is CHARACTERIZED: when the flat
+    //! `cache_creation_input_tokens` is absent but the nested 1h
+    //! field is present, the clamp makes it `Some(0)`, not `None`.
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::{Value, json};
+
+    #[derive(Debug, Clone)]
+    enum Block {
+        Text(String),
+        ToolUse { id: Option<String>, name: String },
+        Ignored,
+    }
+
+    fn arb_block() -> impl Strategy<Value = Block> {
+        prop_oneof![
+            "[a-zA-Z0-9 ]{0,15}".prop_map(Block::Text),
+            (prop::option::of("[a-zA-Z0-9_]{1,10}"), "[a-z_]{1,12}")
+                .prop_map(|(id, name)| Block::ToolUse { id, name }),
+            Just(Block::Ignored),
+        ]
+    }
+
+    fn arb_blocks() -> impl Strategy<Value = Vec<Block>> {
+        prop::collection::vec(arb_block(), 0..4)
+    }
+
+    fn blocks_to_value(blocks: &[Block]) -> Value {
+        let content: Vec<Value> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::Text(t) => json!({"type": "text", "text": t}),
+                Block::ToolUse { id, name } => {
+                    let mut m = json!({"type": "tool_use", "name": name, "input": {}});
+                    if let Some(i) = id {
+                        m["id"] = json!(i);
+                    }
+                    m
+                }
+                Block::Ignored => json!({"type": "thinking", "text": "ignored"}),
+            })
+            .collect();
+        json!({ "content": content })
+    }
+
+    fn expected_from(blocks: &[Block]) -> (String, usize) {
+        let mut text = String::new();
+        let mut calls = 0usize;
+        for b in blocks {
+            match b {
+                Block::Text(t) => text.push_str(t),
+                Block::ToolUse { .. } => calls += 1,
+                Block::Ignored => {}
+            }
+        }
+        (text, calls)
+    }
+
+    fn arb_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(Value::from),
+            "[a-zA-Z0-9 ]{0,10}".prop_map(Value::from),
+        ];
+        leaf.prop_recursive(2, 8, 3, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..3).prop_map(Value::Array),
+                prop::collection::vec(("[a-z]{1,5}", inner), 0..3)
+                    .prop_map(|pairs| Value::Object(pairs.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_never_panics(v in arb_value()) {
+            let _ = parse_response(&v);
+        }
+
+        #[test]
+        fn prop_deterministic(v in arb_value()) {
+            let a = parse_response(&v);
+            let b = parse_response(&v);
+            prop_assert_eq!(format!("{:?}", a), format!("{:?}", b));
+        }
+
+        #[test]
+        fn prop_variant_matches_blocks(blocks in arb_blocks()) {
+            let v = blocks_to_value(&blocks);
+            let (expected_text, expected_calls) = expected_from(&blocks);
+            let got = parse_response(&v).expect("parse");
+            if expected_calls == 0 {
+                match got {
+                    GenerationResponse::Text { content, .. } => {
+                        prop_assert_eq!(content, expected_text);
+                    }
+                    other => prop_assert!(false, "expected Text, got {:?}", other),
+                }
+            } else if expected_text.is_empty() {
+                match got {
+                    GenerationResponse::ToolCalls { calls, .. } => {
+                        prop_assert_eq!(calls.len(), expected_calls);
+                    }
+                    other => prop_assert!(false, "expected ToolCalls, got {:?}", other),
+                }
+            } else {
+                match got {
+                    GenerationResponse::Mixed { content, calls, .. } => {
+                        prop_assert_eq!(content, expected_text);
+                        prop_assert_eq!(calls.len(), expected_calls);
+                    }
+                    other => prop_assert!(false, "expected Mixed, got {:?}", other),
+                }
+            }
+        }
+
+        #[test]
+        fn prop_usage_arithmetic(
+            input in 0u64..10_000,
+            output in 0u64..10_000,
+            read in prop::option::of(0u64..10_000),
+            creation in prop::option::of(0u64..10_000),
+        ) {
+            let mut usage = json!({
+                "input_tokens": input,
+                "output_tokens": output,
+            });
+            if let Some(r) = read {
+                usage["cache_read_input_tokens"] = json!(r);
+            }
+            if let Some(c) = creation {
+                usage["cache_creation_input_tokens"] = json!(c);
+            }
+            let v = json!({
+                "content": [{"type": "text", "text": "x"}],
+                "usage": usage,
+            });
+            let got = parse_response(&v).expect("parse");
+            let u = match got {
+                GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
+                other => panic!("expected Text, got {:?}", other),
+            };
+            let expected_prompt = input + read.unwrap_or(0) + creation.unwrap_or(0);
+            prop_assert_eq!(u.prompt_tokens, expected_prompt as usize);
+            prop_assert_eq!(u.completion_tokens, output as usize);
+            prop_assert_eq!(u.total_tokens, (expected_prompt + output) as usize);
+            prop_assert_eq!(u.cache_read_tokens, read);
+            prop_assert_eq!(u.cache_creation_tokens, creation);
+        }
+
+        #[test]
+        fn prop_cache_1h_is_clamped(
+            input in 0u64..1_000,
+            output in 0u64..1_000,
+            creation in prop::option::of(0u64..10_000),
+            nested in 0u64..10_000,
+        ) {
+            let mut usage = json!({
+                "input_tokens": input,
+                "output_tokens": output,
+                "cache_creation": {"ephemeral_1h_input_tokens": nested},
+            });
+            if let Some(c) = creation {
+                usage["cache_creation_input_tokens"] = json!(c);
+            }
+            let v = json!({
+                "content": [{"type": "text", "text": "x"}],
+                "usage": usage,
+            });
+            let got = parse_response(&v).expect("parse");
+            let u = match got {
+                GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
+                other => panic!("expected Text, got {:?}", other),
+            };
+            if let Some(h) = u.cache_creation_1h_tokens {
+                let cap = creation.unwrap_or(0);
+                prop_assert!(
+                    h <= cap,
+                    "1h ({}) exceeded flat total ({}); input={} output={}",
+                    h, cap, input, output,
+                );
+            }
+        }
+    }
+
+    /// **Characterization.** When the flat `cache_creation_input_tokens`
+    /// is absent but the nested `1h` is present, the clamp makes the
+    /// 1h field `Some(0)`, not `None`.
+    #[test]
+    fn nested_1h_with_no_flat_total_becomes_some_zero() {
+        let v = json!({
+            "content": [{"type": "text", "text": "x"}],
+            "usage": {
+                "cache_creation": {"ephemeral_1h_input_tokens": 500}
+            }
+        });
+        let got = parse_response(&v).expect("parse");
+        let u = match got {
+            GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
+            other => panic!("expected Text, got {other:?}"),
+        };
+        assert_eq!(u.cache_creation_1h_tokens, Some(0));
+        assert_eq!(u.cache_creation_tokens, None);
+    }
+
+    /// An empty usage object is `Some(TokenUsage::default())`, not `None`.
+    #[test]
+    fn empty_usage_object_is_some_with_zeroes() {
+        let v = json!({
+            "content": [{"type": "text", "text": "x"}],
+            "usage": {}
+        });
+        let got = parse_response(&v).expect("parse");
+        let u = match got {
+            GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
+            other => panic!("expected Text, got {other:?}"),
+        };
+        assert_eq!(u.prompt_tokens, 0);
+        assert_eq!(u.completion_tokens, 0);
+        assert_eq!(u.total_tokens, 0);
+        assert_eq!(u.cache_read_tokens, None);
+        assert_eq!(u.cache_creation_tokens, None);
+    }
+
+    /// No `usage` key at all is `None`, distinct from `Some(zero)`.
+    #[test]
+    fn absent_usage_is_none() {
+        let v = json!({
+            "content": [{"type": "text", "text": "x"}]
+        });
+        let got = parse_response(&v).expect("parse");
+        match got {
+            GenerationResponse::Text { usage, .. } => {
+                assert!(usage.is_none(), "expected None, got {usage:?}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+}
