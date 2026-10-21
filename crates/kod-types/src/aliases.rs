@@ -22,11 +22,15 @@
 /// Returns the input unchanged when no alias matches, so a caller can
 /// use this unconditionally.
 pub fn resolve_tool_name(name: &str) -> &str {
-    // Strip a `functions.` prefix, which some OpenAI-compatible
-    // gateways add. Everything below operates on the bare form, and
-    // every return path returns a slice of `name` or a `'static`
-    // table entry — never a temporary.
-    let bare = name.strip_prefix("functions.").unwrap_or(name);
+    // Strip any number of `functions.` prefixes. Some
+    // OpenAI-compatible gateways add one; a chained gateway can add
+    // its own on top of an upstream one. Everything below operates
+    // on the bare form, and every return path returns a slice of
+    // `name` or a `'static` table entry — never a temporary.
+    let mut bare = name;
+    while let Some(stripped) = bare.strip_prefix("functions.") {
+        bare = stripped;
+    }
 
     // Exact alias match.
     if let Some((_, kod)) = TABLE.iter().find(|(alias, _)| *alias == bare) {
@@ -178,6 +182,85 @@ mod tests {
             assert!(
                 REGISTERED.contains(kod),
                 "alias {alias:?} maps to {kod:?}, which is not a registered tool",
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod aliases_proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::string::string_regex;
+
+    fn arb_toolish() -> impl Strategy<Value = String> {
+        prop_oneof![
+            string_regex("[a-z_]{0,16}").unwrap(),
+            string_regex("[A-Za-z_]{0,16}").unwrap(),
+            string_regex("functions\\.[a-z_]{0,16}").unwrap(),
+            string_regex("functions\\.functions\\.[a-z_]{0,16}").unwrap(),
+            Just("read_file".to_string()),
+            Just("Read_File".to_string()),
+            Just("shell_exec".to_string()),
+            Just("SHELL_EXEC".to_string()),
+        ]
+    }
+
+    fn is_alias_ci(s: &str) -> bool {
+        let bare = s.strip_prefix("functions.").unwrap_or(s);
+        TABLE.iter().any(|(a, _)| a.eq_ignore_ascii_case(bare))
+    }
+
+    proptest! {
+        #[test]
+        fn prop_alias_table_resolves(_seed in any::<u8>()) {
+            for (alias, kod) in TABLE {
+                prop_assert_eq!(resolve_tool_name(alias), *kod);
+                let upper = alias.to_ascii_uppercase();
+                prop_assert_eq!(resolve_tool_name(&upper), *kod);
+            }
+        }
+
+        #[test]
+        fn prop_every_target_is_a_fixed_point(_seed in any::<u8>()) {
+            for (_, kod) in TABLE {
+                prop_assert_eq!(resolve_tool_name(kod), *kod);
+            }
+        }
+
+        #[test]
+        fn prop_unknown_without_prefix_passes_through(name in arb_toolish()) {
+            prop_assume!(!name.contains("functions."));
+            prop_assume!(!is_alias_ci(&name));
+            prop_assert_eq!(resolve_tool_name(&name), name.as_str());
+        }
+
+        /// A `functions.` prefix must be transparent: prefixing a name
+        /// with it must not change the resolved result. This fails
+        /// pre-fix when the name already carries a prefix.
+        #[test]
+        fn prop_prefix_is_transparent(name in arb_toolish()) {
+            let prefixed = format!("functions.{name}");
+            prop_assert_eq!(
+                resolve_tool_name(&prefixed),
+                resolve_tool_name(&name),
+                "functions.{} did not resolve like {}",
+                name,
+                name
+            );
+        }
+
+        /// The resolver is a canonicalizer: resolving twice must equal
+        /// resolving once.
+        #[test]
+        fn prop_resolve_is_idempotent(name in arb_toolish()) {
+            let once = resolve_tool_name(&name);
+            prop_assert_eq!(
+                resolve_tool_name(once),
+                once,
+                "resolve(resolve({:?})) != resolve({:?})",
+                name,
+                name
             );
         }
     }
