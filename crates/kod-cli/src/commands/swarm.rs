@@ -153,6 +153,8 @@ pub async fn run_swarm(
             db_path: None,
             install_embedder: true,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;

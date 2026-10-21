@@ -661,6 +661,8 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
             db_path: Some(db_path),
             install_embedder: true,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;

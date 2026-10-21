@@ -200,6 +200,8 @@ pub async fn run_chat(
             db_path: None,
             install_embedder: true,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;
@@ -795,6 +797,8 @@ pub async fn run_agent(
             db_path: None,
             install_embedder: true,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;
@@ -846,6 +850,8 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
             db_path: db_path_override,
             install_embedder: false,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;

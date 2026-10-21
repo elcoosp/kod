@@ -9,6 +9,7 @@ pub mod common;
 mod config_migrate;
 mod integration_tests;
 mod policy_explain;
+mod prompt_mock;
 mod replay;
 mod truncate_helper_sites;
 #[cfg(unix)]

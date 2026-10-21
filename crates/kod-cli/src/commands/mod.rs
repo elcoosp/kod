@@ -35,7 +35,7 @@ mod admin;
 pub(crate) use admin::*;
 
 /// `kod prompt`, `kod run`, and the `--remote` variants.
-mod prompt;
+pub mod prompt;
 pub(crate) use prompt::*;
 
 /// Inspection subcommands (jev / budget / limits / plan / decisions / trace).
@@ -86,30 +86,45 @@ async fn install_policy_async(
 /// (`set_session_recorder`, `set_jev_client`, `set_sandbox_mode` for
 /// the interactive-only flag). It does NOT call `engine.start()`: the
 /// caller does that after installing whatever else it needs.
-struct EngineBootstrapOptions<'a> {
-    model_override: Option<&'a str>,
-    cli_preset: Option<&'a str>,
-    /// When true, `sandbox_mode = Require` is installed on the engine;
-    /// when false, the config's setting is left alone.
-    require_sandbox: bool,
-    /// When true, MCP servers from the config are installed. `kod replay`
-    /// turns this off — it wants the replay to be hermetic.
-    install_mcp: bool,
-    /// Optional explicit DB path. When `None`, the default
-    /// `~/.kod/data/kod.redb` is used. ACP uses `KOD_TEST_DB` for tests;
-    /// serve uses `config.memory_db_path()`.
-    db_path: Option<std::path::PathBuf>,
-    /// When false, no embedding client is built (the engine keeps
-    /// keyword+recency retrieval). ACP and the daemon historically
-    /// did not build one; they now default to false to keep behaviour.
-    install_embedder: bool,
-    /// When false, the helper does not install a PolicyEngine. The
-    /// daemon sets its own (against its own cwd); tests that drive
-    /// the engine directly also skip it.
-    install_policy: bool,
+pub struct EngineBootstrapOptions<'a> {
+    pub model_override: Option<&'a str>,
+    pub cli_preset: Option<&'a str>,
+    pub require_sandbox: bool,
+    pub install_mcp: bool,
+    pub db_path: Option<std::path::PathBuf>,
+    pub install_embedder: bool,
+    pub install_policy: bool,
+    /// When true, install the per-process secret-placeholder vault.
+    /// Tests set this to `false` so they do not touch the developer's
+    /// `~/.kod/secret-placeholder.key`. `Default` is `true`.
+    pub install_secret_vault: bool,
+    /// A pre-built provider registry. When `Some`, the helper installs
+    /// it instead of calling `kod_core::build_registry` against the
+    /// config's endpoint list. `None` in production.
+    pub provider_override: Option<(
+        std::sync::Arc<kod_provider::ProviderRegistry>,
+        kod_provider::ModelRef,
+        Option<kod_config::RoutingConfig>,
+    )>,
 }
 
-async fn engine_from_config(
+impl<'a> Default for EngineBootstrapOptions<'a> {
+    fn default() -> Self {
+        Self {
+            model_override: None,
+            cli_preset: None,
+            require_sandbox: false,
+            install_mcp: false,
+            db_path: None,
+            install_embedder: false,
+            install_policy: false,
+            install_secret_vault: true,
+            provider_override: None,
+        }
+    }
+}
+
+pub async fn engine_from_config(
     config: &KodConfig,
     opts: EngineBootstrapOptions<'_>,
 ) -> Result<Arc<KodEngine>> {
@@ -155,7 +170,9 @@ async fn engine_from_config(
     // secret-shaped environment variable. Best-effort: a failure to
     // load the key file leaves the engine running without
     // placeholders, which is the pre-§14.1 behavior.
-    if let Err(e) = engine.install_default_secret_vault().await {
+    if opts.install_secret_vault
+        && let Err(e) = engine.install_default_secret_vault().await
+    {
         // `kod-cli` does not depend on `tracing`; the user-facing
         // surface is stderr, and a vault that could not be created
         // is exactly the kind of startup note a user wants to see.
@@ -174,10 +191,16 @@ async fn engine_from_config(
             .saturating_mul(3),
     );
 
-    // Provider registry.
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
+    match opts.provider_override {
+        Some((registry, default_model, routing)) => {
+            engine.set_registry(registry, default_model, routing).await;
+        }
+        None => {
+            let (registry, default_model, routing) =
+                kod_core::build_registry(&config.llm, Some(&model_name))?;
+            engine.set_registry(registry, default_model, routing).await;
+        }
+    }
 
     // H-RL1: rate-limit auto-retry budget from the endpoint config
     // (`None` → the shared default; `0` → legacy fail-fast).

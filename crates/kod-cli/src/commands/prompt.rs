@@ -108,6 +108,29 @@ pub async fn run_prompt(
     no_log: bool,
     sandbox: bool,
 ) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let opts = EngineBootstrapOptions {
+        model_override: model.as_deref(),
+        cli_preset: None,
+        require_sandbox: sandbox,
+        install_mcp: true,
+        db_path: None,
+        install_embedder: true,
+        install_policy: true,
+        ..Default::default()
+    };
+    let text = run_prompt_inner(prompt, &config, opts, no_log).await?;
+    println!("{}", text.trim_end());
+    Ok(())
+}
+
+/// The testable core of [`run_prompt`].
+pub async fn run_prompt_inner(
+    prompt: String,
+    config: &KodConfig,
+    opts: EngineBootstrapOptions<'_>,
+    no_log: bool,
+) -> Result<String> {
     let input = if prompt.trim() == "-" {
         use std::io::Read;
         let mut buf = String::new();
@@ -123,44 +146,19 @@ pub async fn run_prompt(
         return Err(KodError::Config("empty prompt".to_string()));
     }
 
-    let config = KodConfig::load_default()?;
-
-    // S10: one bootstrap for every engine-building command. The P0-1
-    // bug (policy installed on three of seven paths) is exactly what
-    // the pre-extraction duplication produced.
-    let engine = engine_from_config(
-        &config,
-        EngineBootstrapOptions {
-            model_override: model.as_deref(),
-            cli_preset: None,
-            require_sandbox: sandbox,
-            install_mcp: true,
-            db_path: None,
-            install_embedder: true,
-            install_policy: true,
-        },
-    )
-    .await?;
-
+    let engine = engine_from_config(config, opts).await?;
     engine.start().await?;
 
     install_session_recorder(&engine, no_log);
-    install_jev(&engine, &config);
+    install_jev(&engine, config);
 
-    // F2h-19: capture the result so `engine.shutdown()` runs even when
-    // the prompt errored. Propagating with `?` here skipped teardown,
-    // leaving MCP children and the redb handle to process exit.
     let result = engine.process(&input).await;
     let shutdown = engine.shutdown().await;
     let resp = result?;
     let text = resp.text.unwrap_or_default();
 
-    // Print only the reply to stdout — a script gets exactly what it
-    // asked for. Anything else goes to stderr.
-    println!("{}", text.trim_end());
-
     shutdown?;
-    Ok(())
+    Ok(text)
 }
 
 pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Result<()> {
@@ -191,6 +189,8 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
             db_path: None,
             install_embedder: true,
             install_policy: true,
+
+            ..Default::default()
         },
     )
     .await?;
