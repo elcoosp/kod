@@ -769,3 +769,153 @@ mod tests {
         assert_eq!(text, "ONE\ntwo\n");
     }
 }
+
+#[cfg(test)]
+mod edit_hashline_proptests {
+    //! Properties for the anchor-edit parser.
+    use super::*;
+    use proptest::prelude::*;
+
+    fn header() -> &'static str {
+        "[a.txt#00ff]"
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_never_panics(text in "\\PC{0,300}") {
+            let _ = parse(&text);
+        }
+
+        #[test]
+        fn prop_parse_is_deterministic(text in "\\PC{0,300}") {
+            prop_assert_eq!(parse(&text), parse(&text));
+        }
+
+        #[test]
+        fn prop_body_without_header_is_malformed(body in "[^\\[\\]]{0,80}") {
+            prop_assume!(!body.contains('['));
+            prop_assume!(!body.contains(']'));
+            match parse(&body) {
+                Ok(_) => prop_assert!(false, "parsed without a header: {:?}", body),
+                Err(EditError::Malformed(_)) => {}
+                Err(e) => prop_assert!(false, "expected Malformed, got {:?}", e),
+            }
+        }
+
+        #[test]
+        fn prop_orphan_payload_is_malformed(payload in "[ -~]{0,20}") {
+            let text = format!("{}\n+{}", header(), payload);
+            match parse(&text) {
+                Ok(_) => prop_assert!(false, "orphan payload parsed: {:?}", text),
+                Err(EditError::Malformed(msg)) => {
+                    prop_assert!(msg.contains("payload"), "wrong message: {:?}", msg);
+                }
+                Err(e) => prop_assert!(false, "expected Malformed, got {:?}", e),
+            }
+        }
+
+        #[test]
+        fn prop_second_header_is_malformed(ops in "[ -~]{0,20}") {
+            let text = format!(
+                "{}\nPUT 1.=1:\n+first\n[b.txt#00ff]\nPUT 2.=2:\n+{}\n",
+                header(), ops,
+            );
+            match parse(&text) {
+                Ok(_) => prop_assert!(false, "second header accepted: {:?}", text),
+                Err(EditError::Malformed(msg)) => {
+                    prop_assert!(msg.contains("second"), "wrong message: {:?}", msg);
+                }
+                Err(e) => prop_assert!(false, "expected Malformed, got {:?}", e),
+            }
+        }
+
+        /// **BUG-D-04.** The payload is the RAW line, trailing
+        /// whitespace included.
+        #[test]
+        fn prop_payload_preserves_trailing_whitespace(
+            body in "[a-zA-Z0-9]{1,10}",
+            pad in "[ \\t]{1,6}",
+        ) {
+            let text = format!("{}\nPUT 1.=1:\n+{}{}\n", header(), body, pad);
+            let (_, _, ops) = parse(&text).expect("well-formed edit parses");
+            prop_assert_eq!(ops.len(), 1);
+            let expected = vec![format!("{}{}", body, pad)];
+            prop_assert_eq!(&ops[0].payload, &expected, "trailing whitespace was stripped");
+        }
+
+        #[test]
+        fn prop_single_put_round_trips(n in 1usize..100, body in "[a-zA-Z0-9 ]{0,20}") {
+            let text = format!("{}\nPUT {}:\n+{}\n", header(), n, body);
+            let (path, tag, ops) = parse(&text).expect("well-formed edit parses");
+            prop_assert_eq!(path, "a.txt");
+            prop_assert_eq!(tag, 0x00ffu16.to_be_bytes());
+            prop_assert_eq!(ops.len(), 1);
+            prop_assert_eq!(ops[0].start, n);
+            prop_assert_eq!(ops[0].end, n);
+            prop_assert_eq!(ops[0].append, false);
+            let expected = vec![body];
+            prop_assert_eq!(&ops[0].payload, &expected);
+        }
+
+        #[test]
+        fn prop_append_sentinel(body in "[a-zA-Z0-9 ]{0,20}") {
+            let text = format!("{}\nPUT >$:\n+{}\n", header(), body);
+            let (_, _, ops) = parse(&text).expect("append parses");
+            prop_assert_eq!(ops.len(), 1);
+            prop_assert_eq!(ops[0].start, 0);
+            prop_assert_eq!(ops[0].end, 0);
+            prop_assert_eq!(ops[0].append, true);
+        }
+    }
+
+    #[test]
+    fn parse_range_single_line() {
+        assert_eq!(parse_range("5").unwrap(), (5, 5));
+        assert_eq!(parse_range(" 5 ").unwrap(), (5, 5));
+    }
+
+    #[test]
+    fn parse_range_explicit() {
+        assert_eq!(parse_range("3.=7").unwrap(), (3, 7));
+        // Spaces around the whole range are trimmed; spaces *inside*
+        // the `.=` separator are not part of the format. `"3 . = 7"`
+        // has no adjacent `.=` and correctly falls through to the
+        // single-line branch, where `"3 . = 7".parse::<usize>()`
+        // fails → Malformed.
+        assert_eq!(parse_range(" 3.=7 ").unwrap(), (3, 7));
+        assert!(matches!(
+            parse_range("3 . = 7"),
+            Err(EditError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn parse_range_rejects_garbage() {
+        for bad in ["abc", "3.=abc", "=7", ""] {
+            assert!(
+                matches!(parse_range(bad), Err(EditError::Malformed(_))),
+                "range {bad:?} should be Malformed",
+            );
+        }
+    }
+
+    #[test]
+    fn parse_range_never_panics() {
+        proptest!(|(s in "\\PC{0,20}")| {
+            let _ = parse_range(&s);
+        });
+    }
+
+    #[test]
+    fn two_ops_parse_in_order() {
+        let text = "[src/main.rs#a1b2]\nPUT 2.=2:\n+new\nCUT 5.=6\n";
+        let (path, tag, ops) = parse(text).expect("parses");
+        assert_eq!(path, "src/main.rs");
+        assert_eq!(tag, 0xa1b2u16.to_be_bytes());
+        assert_eq!(ops.len(), 2);
+        assert_eq!((ops[0].start, ops[0].end), (2, 2));
+        assert_eq!(ops[0].payload, vec!["new".to_string()]);
+        assert_eq!((ops[1].start, ops[1].end), (5, 6));
+        assert!(ops[1].payload.is_empty());
+    }
+}
