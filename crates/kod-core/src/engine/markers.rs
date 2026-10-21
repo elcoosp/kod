@@ -402,3 +402,178 @@ mod tests {
         assert_eq!(name, "read_file");
     }
 }
+
+#[cfg(test)]
+mod markers_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_field() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                Just('\0'),
+                Just(':'),
+                Just(' '),
+                Just('{'),
+                Just('}'),
+                Just('"'),
+                Just(','),
+                prop::char::range('a', 'z'),
+                prop::char::range('A', 'Z'),
+                prop::char::range('0', '9'),
+            ],
+            0..40,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    fn arb_json() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                Just('\0'),
+                Just(':'),
+                Just(' '),
+                Just('{'),
+                Just('}'),
+                Just('"'),
+                Just(','),
+                Just('['),
+                Just(']'),
+                prop::char::range('a', 'z'),
+                prop::char::range('0', '9'),
+            ],
+            0..60,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    proptest! {
+        #[test]
+        fn prop_tool_done_round_trip(
+            cid in arb_field(),
+            header in arb_field(),
+            summary in arb_field(),
+            duration in any::<u64>(),
+        ) {
+            let marker = tool_done_marker(&cid, &header, &summary, duration);
+            let parsed = parse_tool_done(&marker);
+            let expected_cid = clean_call_id(&cid);
+            let expected_header = header.replace('\0', " ");
+            let expected_summary = summary.replace('\0', " ");
+            prop_assert_eq!(
+                parsed,
+                Some((
+                    expected_cid.as_str(),
+                    expected_header.as_str(),
+                    expected_summary.as_str(),
+                    duration,
+                )),
+            );
+        }
+
+        #[test]
+        fn prop_turn_round_trip(turn in any::<u32>()) {
+            prop_assert_eq!(parse_turn_marker(&turn_marker(turn)), Some(turn));
+        }
+
+        #[test]
+        fn prop_tool_approval_round_trip(id in any::<u64>(), json in arb_json()) {
+            let marker = tool_approval_marker(id, &json);
+            let expected_json = json.replace('\0', " ");
+            prop_assert_eq!(parse_tool_approval(&marker), Some((id, expected_json.as_str())));
+        }
+
+        #[test]
+        fn prop_tool_approval_batch_round_trip(id in any::<u64>(), json in arb_json()) {
+            let marker = tool_approval_batch_marker(id, &json);
+            let expected_json = json.replace('\0', " ");
+            prop_assert_eq!(
+                parse_tool_approval_batch(&marker),
+                Some((id, expected_json.as_str())),
+            );
+        }
+
+        #[test]
+        fn prop_duration_format_shape(ms in any::<u64>()) {
+            let out = format_duration_ms(ms);
+            prop_assert!(!out.is_empty());
+            if ms < 1000 {
+                prop_assert!(out.ends_with("ms"), "got {out}");
+            } else {
+                prop_assert!(out.ends_with('s'), "got {out}");
+            }
+            if ms >= 60_000 {
+                prop_assert!(out.contains('m'), "got {out}");
+            }
+        }
+
+        #[test]
+        fn prop_wait_marker_round_trip_clamps(
+            secs in any::<u64>(),
+            attempt in any::<u32>(),
+            max_attempts in any::<u32>(),
+        ) {
+            let rl = rate_limit_wait_marker(secs, attempt, max_attempts);
+            prop_assert_eq!(
+                parse_rate_limit_wait(&rl),
+                Some((secs, attempt.max(1), max_attempts.max(1))),
+            );
+            let sb = server_busy_wait_marker(secs, attempt, max_attempts);
+            prop_assert_eq!(
+                parse_server_busy_wait(&sb),
+                Some((secs, attempt.max(1), max_attempts.max(1))),
+            );
+        }
+    }
+
+    fn check_exclusive(own: &str, chunk: &str) {
+        let checks: &[(&str, bool)] = &[
+            ("rate_limit", parse_rate_limit_wait(chunk).is_some()),
+            ("server_busy", parse_server_busy_wait(chunk).is_some()),
+            ("tool_start", parse_tool_start(chunk).is_some()),
+            ("tool_args", parse_tool_args(chunk).is_some()),
+            ("tool_done", parse_tool_done(chunk).is_some()),
+            ("turn", parse_turn_marker(chunk).is_some()),
+            ("activity", parse_activity_marker(chunk).is_some()),
+            ("usage", parse_usage_marker(chunk).is_some()),
+            ("thinking", is_thinking_marker(chunk)),
+            ("stream_reset", is_stream_reset_marker(chunk)),
+            ("question", parse_question(chunk).is_some()),
+            ("approval", parse_tool_approval(chunk).is_some()),
+            ("approval_batch", parse_tool_approval_batch(chunk).is_some()),
+        ];
+        for (name, accepted) in checks {
+            if *name == own {
+                assert!(
+                    *accepted,
+                    "own parser {own} rejected its own marker: {chunk:?}"
+                );
+            } else {
+                assert!(
+                    !*accepted,
+                    "parser {name} claimed a {own} marker: {chunk:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_marker_is_claimed_by_exactly_one_parser() {
+        check_exclusive("rate_limit", &rate_limit_wait_marker(60, 1, 2));
+        check_exclusive("server_busy", &server_busy_wait_marker(60, 1, 2));
+        check_exclusive("tool_start", &tool_start_marker("c1", "read_file"));
+        check_exclusive("tool_args", &tool_args_marker("c1", "ls -la"));
+        check_exclusive("tool_done", &tool_done_marker("c1", "h", "s", 42));
+        check_exclusive("turn", &turn_marker(3));
+        check_exclusive("activity", &activity_marker("saving memories"));
+        check_exclusive("usage", &usage_marker(12_000, 340));
+        check_exclusive("thinking", &thinking_marker());
+        check_exclusive("stream_reset", &stream_reset_marker());
+        check_exclusive("question", &question_marker(1, "{}"));
+        check_exclusive("approval", &tool_approval_marker(1, r#"{"a":1}"#));
+        check_exclusive(
+            "approval_batch",
+            &tool_approval_batch_marker(1, r#"{"items":[]}"#),
+        );
+    }
+}
