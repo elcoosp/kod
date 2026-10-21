@@ -27,9 +27,9 @@
 //! (each `it` file is its own binary; small duplication is the
 //! convention here).
 
+use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};
 use kod_core::KodEngine;
 use kod_core::router::RouterConfig;
-use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};
 use kod_provider::testkit::{MockProvider, Script};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -48,9 +48,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, msg: &Value) -> std::io::
 
 /// Read one `Content-Length`-framed ACP message. `Ok(None)` on clean
 /// EOF.
-async fn read_frame<R: AsyncRead + Unpin>(
-    r: &mut BufReader<R>,
-) -> std::io::Result<Option<Value>> {
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut BufReader<R>) -> std::io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -69,7 +67,9 @@ async fn read_frame<R: AsyncRead + Unpin>(
     let len = content_length.expect("frame with no Content-Length");
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).await?;
-    Ok(Some(serde_json::from_slice(&buf).expect("frame body is JSON")))
+    Ok(Some(
+        serde_json::from_slice(&buf).expect("frame body is JSON"),
+    ))
 }
 
 /// Read frames until one arrives with `want_id` and no `method`
@@ -90,9 +90,8 @@ async fn read_until_response<R: AsyncRead + Unpin>(
             Ok(Err(e)) => panic!("frame read error: {e}"),
             Err(_) => panic!("timed out waiting for response to id={want_id}"),
         };
-        let is_response =
-            frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
-                && frame.get("method").is_none();
+        let is_response = frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
+            && frame.get("method").is_none();
         if is_response {
             return frame;
         }
@@ -196,7 +195,6 @@ async fn engine_with(
     engine.start().await.unwrap();
     engine
 }
-
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_cancel_reaches_the_engine_and_maps_to_cancelled_stop_reason() {

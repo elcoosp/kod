@@ -45,9 +45,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, msg: &Value) -> std::io::
     Ok(())
 }
 
-async fn read_frame<R: AsyncRead + Unpin>(
-    r: &mut BufReader<R>,
-) -> std::io::Result<Option<Value>> {
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut BufReader<R>) -> std::io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -66,13 +64,12 @@ async fn read_frame<R: AsyncRead + Unpin>(
     let len = content_length.expect("frame with no Content-Length");
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).await?;
-    Ok(Some(serde_json::from_slice(&buf).expect("frame body is JSON")))
+    Ok(Some(
+        serde_json::from_slice(&buf).expect("frame body is JSON"),
+    ))
 }
 
-async fn read_until_response<R: AsyncRead + Unpin>(
-    r: &mut BufReader<R>,
-    want_id: i64,
-) -> Value {
+async fn read_until_response<R: AsyncRead + Unpin>(r: &mut BufReader<R>, want_id: i64) -> Value {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let frame = match tokio::time::timeout_at(deadline, read_frame(r)).await {
@@ -81,9 +78,8 @@ async fn read_until_response<R: AsyncRead + Unpin>(
             Ok(Err(e)) => panic!("frame read error: {e}"),
             Err(_) => panic!("timed out waiting for response to id={want_id}"),
         };
-        let is_response =
-            frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
-                && frame.get("method").is_none();
+        let is_response = frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
+            && frame.get("method").is_none();
         if is_response {
             return frame;
         }
@@ -117,10 +113,7 @@ where
         .to_string()
 }
 
-async fn engine_with_script(
-    tmp: &tempfile::TempDir,
-    script: Vec<Script>,
-) -> Arc<KodEngine> {
+async fn engine_with_script(tmp: &tempfile::TempDir, script: Vec<Script>) -> Arc<KodEngine> {
     let cfg = RouterConfig {
         embedder: None,
         skill_threshold: 0.3,
@@ -159,7 +152,11 @@ async fn engine_with_script(
 /// for a prompt while another is in flight; every test here asserts
 /// the busy guard has *released* before the next prompt.
 fn assert_not_busy(resp: &Value, context: &str) {
-    if let Some(code) = resp.get("error").and_then(|e| e.get("code")).and_then(|v| v.as_i64()) {
+    if let Some(code) = resp
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(|v| v.as_i64())
+    {
         assert_ne!(
             code, -32002,
             "{context}: session must not be wedged busy after the previous \

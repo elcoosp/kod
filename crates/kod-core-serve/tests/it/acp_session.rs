@@ -39,9 +39,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, msg: &Value) -> std::io::
 
 /// Read one `Content-Length`-framed ACP message. Returns `Ok(None)` on
 /// clean EOF (the server side exits when its reader does).
-async fn read_frame<R: AsyncRead + Unpin>(
-    r: &mut BufReader<R>,
-) -> std::io::Result<Option<Value>> {
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut BufReader<R>) -> std::io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -60,7 +58,9 @@ async fn read_frame<R: AsyncRead + Unpin>(
     let len = content_length.expect("frame with no Content-Length");
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).await?;
-    Ok(Some(serde_json::from_slice(&buf).expect("frame body is JSON")))
+    Ok(Some(
+        serde_json::from_slice(&buf).expect("frame body is JSON"),
+    ))
 }
 
 /// Read frames until one carries `id`, collecting any notifications
@@ -91,10 +91,7 @@ async fn read_until_response<R: AsyncRead + Unpin>(
 
 /// Build a started engine whose provider answers every prompt with
 /// `text`. The engine is what `serve_io` will drive.
-async fn engine_with_text_reply(
-    temp: &tempfile::TempDir,
-    text: &str,
-) -> Arc<KodEngine> {
+async fn engine_with_text_reply(temp: &tempfile::TempDir, text: &str) -> Arc<KodEngine> {
     let cfg = RouterConfig {
         embedder: None,
         skill_threshold: 0.3,
@@ -139,9 +136,10 @@ async fn full_session_prompt_round_trips_in_process() {
     let (client_w, server_r) = tokio::io::duplex(64 * 1024);
     let (server_w, client_r) = tokio::io::duplex(64 * 1024);
 
-    let serve_handle = tokio::spawn(async move {
-        kod_core_serve::acp::serve_io(engine, server_r, server_w).await
-    });
+    let serve_handle =
+        tokio::spawn(
+            async move { kod_core_serve::acp::serve_io(engine, server_r, server_w).await },
+        );
 
     let mut cw = client_w;
     let mut cr = BufReader::new(client_r);
@@ -220,9 +218,7 @@ async fn full_session_prompt_round_trips_in_process() {
     let streamed: String = notifs
         .iter()
         .filter(|n| n["method"].as_str() == Some("session/update"))
-        .filter(|n| {
-            n["params"]["update"]["sessionUpdate"].as_str() == Some("agent_message_chunk")
-        })
+        .filter(|n| n["params"]["update"]["sessionUpdate"].as_str() == Some("agent_message_chunk"))
         .filter_map(|n| {
             n["params"]["update"]["content"]["text"]
                 .as_str()

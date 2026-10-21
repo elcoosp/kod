@@ -20,9 +20,9 @@
 //! The setup mirrors acp_session.rs: `serve_io` over a duplex pair, a
 //! `MockProvider`-backed engine, no subprocess or network.
 
+use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};
 use kod_core::KodEngine;
 use kod_core::router::RouterConfig;
-use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};
 use kod_provider::testkit::{MockProvider, Script};
 use kod_types::ToolCall;
 use serde_json::{Value, json};
@@ -43,9 +43,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, msg: &Value) -> std::io::
 
 /// Read one `Content-Length`-framed ACP message. `Ok(None)` on clean
 /// EOF (server side closed its writer when the reader finished).
-async fn read_frame<R: AsyncRead + Unpin>(
-    r: &mut BufReader<R>,
-) -> std::io::Result<Option<Value>> {
+async fn read_frame<R: AsyncRead + Unpin>(r: &mut BufReader<R>) -> std::io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -64,7 +62,9 @@ async fn read_frame<R: AsyncRead + Unpin>(
     let len = content_length.expect("frame with no Content-Length");
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).await?;
-    Ok(Some(serde_json::from_slice(&buf).expect("frame body is JSON")))
+    Ok(Some(
+        serde_json::from_slice(&buf).expect("frame body is JSON"),
+    ))
 }
 
 /// What `read_until_response` saw while waiting for the prompt's
@@ -112,10 +112,7 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         let method = frame.get("method").and_then(|m| m.as_str());
 
         // Response to our prompt request?
-        if has_id
-            && method.is_none()
-            && frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
-        {
+        if has_id && method.is_none() && frame.get("id").and_then(|v| v.as_i64()) == Some(want_id) {
             return ReadOutcome {
                 response: frame,
                 notifications,
@@ -141,7 +138,9 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     }
                 }
             });
-            write_frame(w, &reply).await.expect("write permission reply");
+            write_frame(w, &reply)
+                .await
+                .expect("write permission reply");
             permissions.push(frame);
             continue;
         }
@@ -186,10 +185,7 @@ fn ask_write_file_policy() -> PolicyEngine {
     PolicyEngine::from_effective_for_tests(effective)
 }
 
-async fn engine_with_policy(
-    tmp: &tempfile::TempDir,
-    policy: PolicyEngine,
-) -> Arc<KodEngine> {
+async fn engine_with_policy(tmp: &tempfile::TempDir, policy: PolicyEngine) -> Arc<KodEngine> {
     let cfg = RouterConfig {
         embedder: None,
         skill_threshold: 0.3,
