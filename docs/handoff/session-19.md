@@ -159,15 +159,15 @@ fix or lesson matters; the starting document stays short.
 
 | | |
 |---|---|
-| HEAD | `e97e344` (`perf(kod-stats): shrink cap_file_body's property by 32x`) |
-| tag | **`v0.1.14` at `0980469`** (released in session 19) |
-| previous tag | `v0.1.13` at `087d6e1` |
+| HEAD | `612d26e` (`chore(release): v0.1.15`) |
+| tag | **`v0.1.15` at `612d26e`** (released post-session-19-close) |
+| previous tag | `v0.1.14` at `0980469` |
 | tree | clean |
 | `session-18.md` | 340 lines (the starting document) |
 | `session-18-detail.md` | 1618 lines (the narrative) |
 | `session-19-detail.md` | ~320 lines (R1–R6, the v0.1.14 release note) |
-| commits since v0.1.13 | 69 |
-| last full-workspace gate | `e97e344` — `Summary [  47.800s] 4813 tests run: 4813 passed, 5 skipped` (wall 103s) |
+| commits since v0.1.13 | 87 |
+| last full-workspace gate | `612d26e` — `Summary [ 105.708s] 4891 tests run: 4891 passed, 5 skipped` |
 
 ### Gate verification at session open
 

@@ -367,3 +367,82 @@ followed by an inner attribute, which is invalid Rust. The inner
 attribute must be the first item in the macro body. A module
 rewrite with the config at the top fixed it.
 
+
+## Release: v0.1.15 (`612d26e`)
+
+Tagged and pushed at `612d26e`. Six production bug fixes since
+`v0.1.14`, all found by property tests in the workspace during
+the post-close burst.
+
+### The six fixes
+
+| Commit | Crate | Bug |
+|---|---|---|
+| `65ddd95` | kod-memory | `prompt_is_eligible` compared `len()` (bytes) to a `*_CHARS` constant. 15 CJK chars (45 bytes) passed a 16-character minimum; 15 ASCII chars did not. |
+| `92884ce` | kod-skills | `MIN_*_MATCH_CHARS` (three sites) had the same bug. A 1-CJK-char query reverse-matched a longer tag or name, reproducing the M-10 spurious-match bug in a different alphabet. |
+| `9865642` | kod-tui | `parse_overnight_duration` used three plain multiplications where `checked_mul` was needed. Debug builds panicked, release builds wrapped. |
+| `610b487` | kod-swarm, kod-stats | `Blackboard::render_prompt_block` and `cap_file_body` compared `len()` to a `max_chars` parameter. CJK content truncated at ~1/3 the intended budget. The follow-on `&body[..end]` in `cap_file_body` was also byte-sliced. |
+| `697820f` | kod-core-serve | `CappedLines::next_line` counted the trailing `\n` toward the cap. Same content admitted at EOF but rejected with a terminator at the boundary. |
+| `b37a059` | kod-swarm | `normalize` filtered on `is_ascii_alphanumeric`, so a CJK-only note became the empty string. Two distinct CJK advisories shared the empty dedupe key in `EmissionGuard::admit`; the second was rejected as `RejectDuplicate` of the first. |
+
+### The finding classes
+
+Six bugs, three classes:
+
+- **byte-vs-char** (4 sites across 4 crates): the largest single
+  class. Every site compared a byte count to a constant or a
+  parameter named in chars.
+- **overflow** (1 site): a plain multiplication where the value
+  was attacker-supplied.
+- **off-by-one** (1 site): a terminator counted toward a content
+  cap.
+
+None is a security bug. Each is a real correctness bug, and
+each is user-visible — three of them only on CJK input.
+
+### The test-code round costs
+
+Every fix round took 3+ attempts at the test code to land one
+clean fix. The recurring failure shapes:
+
+- **`prop_assert_ne!` move semantics** (2 attempts): the macro
+  moves both operands into the macro before evaluating the
+  trailing format args. `na.clone()` in the first arg, bare `na`
+  in the format, is the correct shape.
+- **generator too weak** (multiple): `format!(...).prop_map(...)`
+  is not a strategy; empty-string in a generator that needed
+  non-empty; `\PC{0,200}` when the property wanted specific
+  shapes.
+- **empty-string boundary** (2 attempts): `normalize("")` and
+  `CappedLines` both have empty-input special cases that a
+  generator including `""` tripped.
+- **fixture sizing** (1 attempt): `cap_file_body`'s 133_333-char
+  fixture tripped a branch but cost 3x the iterations of the
+  minimum that trips the same branch.
+
+The pattern is consistent: the *test code* was wrong more often
+than the code, and each round's compile and pre-fix gates caught
+it. That's the checker doing its job — but it's also the round
+cost being high enough that the useful bug rate (1 per 5 rounds
+by the end) got expensive.
+
+### Release caveat
+
+Two fixes change visible behavior for CJK input:
+`prompt_is_eligible` now rejects CJK prompts below 16 chars
+that it previously accepted (bytes were miscounted), and
+`normalize` now distinguishes CJK advisories that it previously
+collapsed to one dedupe key. Both are corrections to buggy
+behavior; callers with a CJK workflow will see different output.
+
+### Gate at the release commit
+
+    4813 tests at d6a6671
+    4891 tests at 612d26e   (+78 from post-close rounds)
+    105.708s wall, 5 skipped, 0 leaks
+
+The 47.8s wall at `e97e344` grew to 105.7s. Not a single
+`cap_file_body`-class property this time — the growth is
+distributed across the 15 property modules added since, with
+the Redactor properties alone at 2.7s. Worth noting for the
+next session: a `--workspace` gate is now ~2 minutes.
