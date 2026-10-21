@@ -243,3 +243,123 @@ mod json_extract_property_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod structured_extract_proptests {
+    //! Properties and a characterization for `extract_json`.
+    //!
+    //! The extractor anchors on `{` or `[`: it scans for a balanced
+    //! object or array after the whole text fails to parse. A
+    //! **scalar in prose** (a bare `42`, `null`, or `true` wrapped in
+    //! words) has neither anchor, so it is never found — that is the
+    //! contract, pinned below as a characterization.
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::{Map, Value};
+
+    /// Prose with no `{`, `}`, `[`, `]`, or ```` ``` ```` — those
+    /// would give the extractor an anchor it is not meant to find in
+    /// the surrounding text.
+    fn arb_prose() -> impl Strategy<Value = String> {
+        "[^\\[\\]{}`]{0,30}"
+    }
+
+    fn arb_object() -> impl Strategy<Value = Value> {
+        prop::collection::vec(("[a-z]{1,5}", -1000i64..1000), 1..4).prop_map(|pairs| {
+            let mut m = Map::new();
+            for (k, v) in pairs {
+                m.insert(k, Value::from(v));
+            }
+            Value::Object(m)
+        })
+    }
+
+    fn arb_array() -> impl Strategy<Value = Value> {
+        prop::collection::vec(-1000i64..1000, 1..5)
+            .prop_map(|v| Value::Array(v.into_iter().map(Value::from).collect()))
+    }
+
+    proptest! {
+        #[test]
+        fn prop_extract_never_panics(text in "\\PC{0,300}") {
+            let _ = extract_json(&text);
+        }
+
+        #[test]
+        fn prop_extract_deterministic(text in "\\PC{0,300}") {
+            prop_assert_eq!(extract_json(&text), extract_json(&text));
+        }
+
+        /// An object wrapped in prose is found and returned whole.
+        #[test]
+        fn prop_object_in_prose_round_trips(
+            v in arb_object(),
+            pre in arb_prose(),
+            post in arb_prose(),
+        ) {
+            let text = format!("{}{}{}", pre, v, post);
+            let got = extract_json(&text);
+            prop_assert_eq!(got, Some(v), "text={:?}", text);
+        }
+
+        /// An array wrapped in prose is found and returned whole.
+        #[test]
+        fn prop_array_in_prose_round_trips(
+            v in arb_array(),
+            pre in arb_prose(),
+            post in arb_prose(),
+        ) {
+            let text = format!("{}{}{}", pre, v, post);
+            let got = extract_json(&text);
+            prop_assert_eq!(got, Some(v), "text={:?}", text);
+        }
+
+        /// An object inside a fenced code block is found. The fence
+        /// body is `{"k":v}` with no surrounding prose.
+        #[test]
+        fn prop_fenced_object_round_trips(v in arb_object()) {
+            let text = format!("Here you go:\n```json\n{}\n```\n", v);
+            let got = extract_json(&text);
+            prop_assert_eq!(got, Some(v), "text={:?}", text);
+        }
+    }
+
+    /// **Characterization.** A bare scalar parses through the
+    /// whole-text branch.
+    #[test]
+    fn scalar_alone_parses() {
+        assert_eq!(extract_json("null"), Some(Value::Null));
+        assert_eq!(extract_json("42"), Some(Value::from(42)));
+        assert_eq!(extract_json("true"), Some(Value::Bool(true)));
+        assert_eq!(extract_json("\"hi\""), Some(Value::from("hi")));
+    }
+
+    /// **Characterization.** A scalar wrapped in prose is NOT found:
+    /// there is no `{` or `[` for the balanced scan to anchor on, and
+    /// the whole text does not parse.
+    #[test]
+    fn scalar_in_prose_is_not_found() {
+        assert_eq!(extract_json("the answer is 42, obviously"), None);
+        assert_eq!(extract_json("value: null here"), None);
+        assert_eq!(extract_json("it is true that"), None);
+        assert_eq!(extract_json("called \"hi\" by everyone"), None);
+    }
+
+    /// A `}` inside a string literal must not close the object.
+    /// The existing example test pins one case; this one pins the
+    /// structural rule with nested braces inside strings.
+    #[test]
+    fn braces_inside_strings_do_not_close_the_object() {
+        let text = r#"prefix {"a": "}", "b": {"c": "}}"}} suffix"#;
+        let got = extract_json(text).expect("must find the object");
+        assert_eq!(got["a"], Value::from("}"));
+        assert_eq!(got["b"]["c"], Value::from("}}"));
+    }
+
+    /// An unterminated object returns None, never a partial value.
+    #[test]
+    fn unterminated_object_is_none() {
+        assert_eq!(extract_json(r#"{"a": 1"#), None);
+        assert_eq!(extract_json(r#"[1, 2"#), None);
+    }
+}
