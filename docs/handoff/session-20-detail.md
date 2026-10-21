@@ -6,12 +6,14 @@ contain.
 
 ## State at the end of the session
 
-- HEAD: `0b9c9c7` (bash interceptor newline fix).
+- HEAD: `1b0c5ba` (strutil properties).
 - Tag: `v0.1.15` -> `612d26e`, still on origin. **No new tag cut.**
-- 19 commits ahead of `origin/main` (`a37f8a4`). Nothing pushed.
-- Working tree clean. `cargo nextest run -p kod-tools` green at 462/462;
-  `kod-types` green at 237/237.
-- The full-workspace gate has **not** run since `5ba0dec` (4973/4973).
+- 21 commits ahead of `origin/main` (`a37f8a4`). Nothing pushed.
+- Working tree clean.
+- **Full-workspace gate GREEN at `1b0c5ba`:** 5035/5035 passed, 1 leaky,
+  5 skipped, exit 0, 80 s. First full run since `5ba0dec` (4973/4973);
+  the host was quiet, no `EAGAIN`. The 62-test delta is this session's
+  new properties plus the pre-existing drift.
 
 ## The 19 local commits
 
@@ -146,6 +148,31 @@ Six production fixes beyond `v0.1.15` (`tool_quota` saturation,
 `has_touched` poison gap, `judgment` colon drop, `resolve_tool_name`
 double prefix, plus the bash-interceptor newline) — that count matches
 the release cadence (`v0.1.13` three, `v0.1.14` three, `v0.1.15` six).
-The blocker before a tag is the full-workspace gate, which has not run
-since `5ba0dec` and may `EAGAIN` under host contention. `error[E...]` is
-the real classifier; "gate failed" is not.
+The gate has now run green at `1b0c5ba` (5035/5035), so the code side of
+the tag question is settled. What remains is the user's decision: cut
+`v0.1.16` and push (which fires the six-target release workflow), or
+hold. `EAGAIN` on a future run is host contention, not code;
+`error[E...]` is the real classifier.
+
+## Update — full gate and one more round
+
+Since the body above was written, two commits landed:
+
+| Commit | Crate | Outcome |
+|---|---|---|
+| `63f4f26` | docs | This file. |
+| `1b0c5ba` | kod-types | `floor_char_boundary` maximality + `truncate_with_ellipsis` contract: 5 props. Harden. `truncate_bytes` / `truncate_chars` were already covered in `tests/it/string_safety.rs`; `floor_char_boundary` had boundary-validity there but nothing pinning maximality, and `truncate_with_ellipsis` had no property at all. Closes next-target item 3. |
+
+Then the full-workspace gate ran at `1b0c5ba`:
+
+    cargo nextest run --workspace --no-fail-fast
+    Summary [80.043s] 5035 tests run: 5035 passed (1 leaky), 5 skipped
+
+Exit 0. No `EAGAIN`. This is the first full verification since
+`5ba0dec`; it covers every commit this session added, and it confirms
+the `patch.rs` revert left the tree sound.
+
+The `patch.rs` defects remain open and are unaffected by this run — the
+revert restored the tree at `0b9c9c7` and the gate is green on top.
+Next target remains `patch.rs` (write-tests-first, per-line markers,
+full-crate verification), then `kod-core-quality/src/preflight.rs`.
