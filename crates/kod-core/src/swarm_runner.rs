@@ -1517,23 +1517,29 @@ impl SwarmRunner {
                                 Some(self.worker_effort),
                             );
 
-                            let outcome: std::result::Result<crate::router::TaskResponse, String> =
-                                if agent_timeout_secs == 0 {
-                                    run.await.map_err(|e| e.to_string())
-                                } else {
-                                    match tokio::time::timeout(
-                                        std::time::Duration::from_secs(agent_timeout_secs),
-                                        run,
-                                    )
-                                    .await
-                                    {
-                                        Ok(Ok(resp)) => Ok(resp),
-                                        Ok(Err(e)) => Err(e.to_string()),
-                                        Err(_) => {
-                                            Err(format!("timed out after {agent_timeout_secs}s"))
-                                        }
+                            let outcome: std::result::Result<
+                                crate::router::TaskResponse,
+                                (String, bool),
+                            > = if agent_timeout_secs == 0 {
+                                run.await.map_err(|e| (e.to_string(), e.is_retryable()))
+                            } else {
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(agent_timeout_secs),
+                                    run,
+                                )
+                                .await
+                                {
+                                    Ok(Ok(resp)) => Ok(resp),
+                                    Ok(Err(e)) => Err((e.to_string(), e.is_retryable())),
+                                    Err(_) => {
+                                        Err((
+                                            format!("timed out after {agent_timeout_secs}s"),
+                                            // A timeout is transient: retry it.
+                                            true,
+                                        ))
                                     }
-                                };
+                                }
+                            };
 
                             // Drop the chunk sender, wait for the pump to
                             // drain, and clear the transcript + cancel flag
@@ -1558,7 +1564,7 @@ impl SwarmRunner {
                                     let text = resp.text.unwrap_or_default();
                                     return (id, name, subtask, writes, Ok(text));
                                 }
-                                Err(err) => {
+                                Err((err, retryable)) => {
                                     last_error = Some(err.clone());
                                     if attempt >= max_attempts {
                                         return (id, name, subtask, Vec::new(), Err(err));
@@ -1589,11 +1595,41 @@ impl SwarmRunner {
                                                     .to_string()),
                                             );
                                         }
-                                        Some(CancelReason::WatchdogRetry) | None => {
-                                            // Retry: clear the watchdog's
-                                            // cancel so the next attempt
-                                            // starts clean.
+                                        Some(CancelReason::WatchdogRetry) => {
+                                            // The watchdog set this cancel
+                                            // because the agent was wedged —
+                                            // a hung process or a stalled
+                                            // stream. That is a transient
+                                            // condition the classifier cannot
+                                            // see from the error message
+                                            // (which is often generic, e.g.
+                                            // "wedged" or "attempt failed"),
+                                            // so the watchdog's retry outranks
+                                            // is_retryable(). Clear the cancel
+                                            // and fall through to retry.
                                             engine.clear_cancel_for(&transcript_key);
+                                        }
+                                        None => {
+                                            // No cancel signal: an ordinary
+                                            // error. A permanent one
+                                            // (InvalidParameters, NotFound,
+                                            // PermissionDenied, …) will not
+                                            // succeed on a retry — fail now
+                                            // with the real reason instead of
+                                            // announcing an AgentRetrying for a
+                                            // condition that cannot clear.
+                                            // `is_retryable()` is the same
+                                            // classifier every engine-level
+                                            // retry ladder uses
+                                            // (process.rs:1024,
+                                            // agent_loop.rs:480); the swarm's
+                                            // loop previously bypassed it
+                                            // because the KodError was
+                                            // stringified at the .map_err
+                                            // boundary before the decision.
+                                            if !retryable {
+                                                return (id, name, subtask, Vec::new(), Err(err));
+                                            }
                                         }
                                     }
                                     // Announce the retry so a live UI can show
