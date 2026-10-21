@@ -11,6 +11,7 @@ mod integration_tests;
 mod policy_explain;
 mod prompt_mock;
 mod replay;
+mod swarm_cli_mock;
 mod truncate_helper_sites;
 #[cfg(unix)]
 mod tui_e2e;

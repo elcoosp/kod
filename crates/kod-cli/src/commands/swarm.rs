@@ -135,50 +135,62 @@ pub async fn run_swarm(
     merge: bool,
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
+    let opts = EngineBootstrapOptions {
+        model_override: model.as_deref(),
+        cli_preset: None,
+        require_sandbox: false,
+        install_mcp: true,
+        db_path: None,
+        install_embedder: true,
+        install_policy: true,
+        ..Default::default()
+    };
+    let resp = run_swarm_inner(goal, agents, merge, &config, opts).await?;
+    print_swarm_response(&resp);
+    Ok(())
+}
+
+/// The testable core of [`run_swarm`]. Takes the config and bootstrap
+/// options as arguments; returns the [`kod_core::SwarmResponse`]
+/// without printing it, so an integration test can assert on the
+/// structured output.
+pub async fn run_swarm_inner(
+    goal: String,
+    agents: Option<usize>,
+    merge: bool,
+    config: &KodConfig,
+    opts: EngineBootstrapOptions<'_>,
+) -> Result<kod_core::SwarmResponse> {
+    // Read install_skills BEFORE `opts` moves into engine_from_config.
+    let install_skills = opts.install_skills;
     // H-C3: the requested agent count was parsed but discarded; the
     // swarm runner read the config-only value, so `kod swarm -n 8` with
     // `max_agents = 3` produced 3 agents. Honour the CLI override.
     let requested_agents = agents.unwrap_or(config.swarm.max_agents);
 
-    // S10: shared bootstrap. `model_override` is the CLI's `--model`
-    // flag; the swarm's per-capability routing still wins for
-    // individual agents (see `SwarmRunner::from_config`).
-    let engine = engine_from_config(
-        &config,
-        EngineBootstrapOptions {
-            model_override: model.as_deref(),
-            cli_preset: None,
-            require_sandbox: false,
-            install_mcp: true,
-            db_path: None,
-            install_embedder: true,
-            install_policy: true,
-
-            ..Default::default()
-        },
-    )
-    .await?;
-
+    let engine = engine_from_config(config, opts).await?;
     engine.start().await?;
 
-    // Skills, same as the single-agent path so a swarm agent sees the
-    // same instructions a single agent would.
-    let skills_dirs = config.skills_dirs()?;
-    match engine.load_skills_from_dirs(&skills_dirs).await {
-        Ok(0) => {}
-        Ok(n) => println!("Loaded {} skill file(s)", n),
-        Err(e) => eprintln!("Could not load skills: {}", e),
-    }
-    if config.skills.enable_hot_reload {
-        for dir in &skills_dirs {
-            if dir.is_dir()
-                && let Err(e) = engine.enable_hot_reload(dir).await
-            {
-                eprintln!(
-                    "Could not enable skill hot reload for {}: {}",
-                    dir.display(),
-                    e
-                );
+    // Skills, same as the single-agent path. Gated on the local
+    // `install_skills` captured before `opts` moved.
+    if install_skills {
+        let skills_dirs = config.skills_dirs()?;
+        match engine.load_skills_from_dirs(&skills_dirs).await {
+            Ok(0) => {}
+            Ok(n) => println!("Loaded {} skill file(s)", n),
+            Err(e) => eprintln!("Could not load skills: {}", e),
+        }
+        if config.skills.enable_hot_reload {
+            for dir in &skills_dirs {
+                if dir.is_dir()
+                    && let Err(e) = engine.enable_hot_reload(dir).await
+                {
+                    eprintln!(
+                        "Could not enable skill hot reload for {}: {}",
+                        dir.display(),
+                        e
+                    );
+                }
             }
         }
     }
@@ -332,21 +344,28 @@ pub async fn run_swarm(
         }
     };
 
+    engine.shutdown().await?;
+    Ok(resp)
+}
+
+/// Print the final response of a swarm run.
+fn print_swarm_response(resp: &kod_core::SwarmResponse) {
     if !resp.conflicts.is_empty() {
         println!("\n{} file conflict(s):", resp.conflicts.len());
         for c in &resp.conflicts {
-            println!("  ⚠ {} — written by {}", c.file, c.agents.join(", "));
+            println!(
+                "  \u{26a0} {} \u{2014} written by {}",
+                c.file,
+                c.agents.join(", ")
+            );
         }
     }
 
     println!("\n================ merged ================\n");
     println!("{}", resp.merged);
     if !resp.merged_by_model {
-        println!("\n(merged by concatenation — LLM synthesis was disabled or failed)");
+        println!("\n(merged by concatenation \u{2014} LLM synthesis was disabled or failed)");
     }
-
-    engine.shutdown().await?;
-    Ok(())
 }
 
 pub(super) fn print_swarm_event(v: &serde_json::Value) {

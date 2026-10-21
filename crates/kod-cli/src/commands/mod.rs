@@ -23,7 +23,7 @@ mod memory;
 pub(crate) use memory::*;
 
 /// `kod swarm`.
-mod swarm;
+pub mod swarm;
 pub(crate) use swarm::*;
 
 /// `kod chat`, `kod agent`, `kod acp`.
@@ -98,6 +98,10 @@ pub struct EngineBootstrapOptions<'a> {
     /// Tests set this to `false` so they do not touch the developer's
     /// `~/.kod/secret-placeholder.key`. `Default` is `true`.
     pub install_secret_vault: bool,
+    /// When true, `run_swarm_inner` loads the skill directories from
+    /// the config. Tests set this to false so they do not read the
+    /// developer's `~/.kod/skills`. `Default` is `true`.
+    pub install_skills: bool,
     /// A pre-built provider registry. When `Some`, the helper installs
     /// it instead of calling `kod_core::build_registry` against the
     /// config's endpoint list. `None` in production.
@@ -119,6 +123,7 @@ impl<'a> Default for EngineBootstrapOptions<'a> {
             install_embedder: false,
             install_policy: false,
             install_secret_vault: true,
+            install_skills: true,
             provider_override: None,
         }
     }
