@@ -415,3 +415,130 @@ mod render_block_proptests {
         assert!(out.contains("## Team knowledge"));
     }
 }
+
+#[cfg(test)]
+mod put_history_proptests {
+    //! Properties for `Blackboard::put`'s history semantics.
+    //!
+    //! The existing `render_block_proptests` module pins
+    //! `render_prompt_block`'s char budget. This module pins `put`
+    //! itself: the `history` field is documented as "prior values,
+    //! newest first, bounded to 16", and the body appends only when
+    //! the value changes. The existing
+    //! `same_value_does_not_grow_history` test pins one direction;
+    //! the properties below pin both.
+
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    fn put_value(b: &Blackboard, key: &str, v: u8) {
+        b.put(key, json!(v), "author", AuthorKind::Agent, vec![]);
+    }
+
+    proptest! {
+        /// History length equals the number of consecutive value
+        /// changes, capped at 16. A run of equal values contributes
+        /// zero; each transition contributes one, until the
+        /// 16-entry bound truncates.
+        #[test]
+        fn prop_history_counts_changes_capped(
+            values in prop::collection::vec(any::<u8>(), 1..=30),
+        ) {
+            let b = Blackboard::new();
+            for v in &values {
+                put_value(&b, "k", *v);
+            }
+            let entry = b.get("k").expect("key present after put");
+            let changes = values.windows(2).filter(|w| w[0] != w[1]).count();
+            prop_assert_eq!(
+                entry.history.len(),
+                changes.min(16),
+                "put sequence {:?} ({} changes, cap 16)", values, changes,
+            );
+        }
+
+        /// A first put produces empty history: nothing changed.
+        #[test]
+        fn prop_first_put_empty_history(v in any::<u8>()) {
+            let b = Blackboard::new();
+            put_value(&b, "k", v);
+            let entry = b.get("k").expect("key present");
+            prop_assert!(entry.history.is_empty(), "history after first put: {:?}", entry.history);
+        }
+
+        /// History is newest-first: the most recent prior value is
+        /// at index 0.
+        #[test]
+        fn prop_history_newest_first(
+            a in any::<u8>(),
+            b_val in any::<u8>(),
+            c in any::<u8>(),
+        ) {
+            prop_assume!(a != b_val && b_val != c);
+            let b = Blackboard::new();
+            put_value(&b, "k", a);
+            put_value(&b, "k", b_val);
+            put_value(&b, "k", c);
+            let entry = b.get("k").expect("present");
+            prop_assert_eq!(entry.history.len(), 2);
+            // Newest-first: index 0 holds b_val (the value before c).
+            prop_assert_eq!(&entry.history[0].1, &json!(b_val));
+            prop_assert_eq!(&entry.history[1].1, &json!(a));
+        }
+
+        /// Determinism: same put sequence, same final history
+        /// length and same final value.
+        #[test]
+        fn prop_deterministic(values in prop::collection::vec(any::<u8>(), 1..=10)) {
+            let a = Blackboard::new();
+            let b = Blackboard::new();
+            for v in &values {
+                put_value(&a, "k", *v);
+                put_value(&b, "k", *v);
+            }
+            let ea = a.get("k").unwrap();
+            let eb = b.get("k").unwrap();
+            prop_assert_eq!(ea.history.len(), eb.history.len());
+            prop_assert_eq!(&ea.value, &eb.value);
+        }
+    }
+
+    /// Control: same value twice -> empty history.
+    #[test]
+    fn control_same_value_twice_no_history() {
+        let b = Blackboard::new();
+        put_value(&b, "k", 42);
+        put_value(&b, "k", 42);
+        let entry = b.get("k").expect("present");
+        assert!(entry.history.is_empty(), "history: {:?}", entry.history);
+    }
+
+    /// Control: a value changes once -> one history entry holding
+    /// the previous value.
+    #[test]
+    fn control_change_once_appends_previous() {
+        let b = Blackboard::new();
+        put_value(&b, "k", 1);
+        put_value(&b, "k", 2);
+        let entry = b.get("k").expect("present");
+        assert_eq!(entry.history.len(), 1);
+        assert_eq!(&entry.history[0].1, &json!(1u8));
+    }
+
+    /// Control: 20 distinct changes -> history capped at 16.
+    #[test]
+    fn control_history_capped_at_16() {
+        let b = Blackboard::new();
+        for v in 0u8..20 {
+            put_value(&b, "k", v);
+        }
+        let entry = b.get("k").expect("present");
+        assert_eq!(
+            entry.history.len(),
+            16,
+            "history: {:?}",
+            entry.history.len()
+        );
+    }
+}
