@@ -46,13 +46,23 @@ pub async fn run_jev_test() -> Result<()> {
 /// `kod jev tune` — print thresholds.
 pub async fn run_jev_tune_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
-    println!("Jev thresholds");
-    for name in kod_config::JevThresholds::NAMES {
-        if let Some(v) = cfg.jev.thresholds.get(name) {
-            println!("  {name:<24} {v:.2}");
-        }
+    for line in jev_tune_lines(&cfg) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The lines `run_jev_tune_show` prints, as data. Same Testable Core
+/// shape as `limits_lines`.
+pub fn jev_tune_lines(cfg: &KodConfig) -> Vec<String> {
+    let mut out = Vec::new();
+    out.push("Jev thresholds".to_string());
+    for name in kod_config::JevThresholds::NAMES {
+        if let Some(v) = cfg.jev.thresholds.get(name) {
+            out.push(format!("  {name:<24} {v:.2}"));
+        }
+    }
+    out
 }
 
 /// `kod jev tune set <name> <value>` — set a threshold and persist.
@@ -133,34 +143,54 @@ pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
 /// `kod limits show` — effective `[limits]` config.
 pub async fn run_limits_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
-    let l = &cfg.limits;
-    println!("Limits");
-    println!(
-        "  max_cost_usd_per_session:   {}",
-        l.max_cost_usd_per_session
-    );
-    println!("  max_cost_usd_per_turn:      {}", l.max_cost_usd_per_turn);
-    println!(
-        "  max_input_tokens_per_turn:  {}",
-        l.max_input_tokens_per_turn
-    );
-    println!(
-        "  max_output_tokens_per_turn: {}",
-        l.max_output_tokens_per_turn
-    );
-    println!("  on_exhausted:               {:?}", l.on_exhausted);
-    println!("  soft_warn_at:               {}", l.soft_warn_at);
-    if !l.tools.is_empty() {
-        println!();
-        println!("Per-tool quotas");
-        for (tool, q) in &l.tools {
-            println!(
-                "  {tool:<24} per_turn={} per_session={} per_command={}",
-                q.per_turn, q.per_session, q.per_command,
-            );
-        }
+    for line in limits_lines(&cfg) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The lines `run_limits_show` prints, as data.
+///
+/// Extracted so an integration test can assert on the content without
+/// capturing stdout. Same Testable Core pattern as
+/// `run_prompt_inner` and `run_swarm_inner`: the printer stays in the
+/// wrapper, the computation returns structured output.
+pub fn limits_lines(cfg: &KodConfig) -> Vec<String> {
+    let l = &cfg.limits;
+    let mut out = Vec::new();
+    out.push("Limits".to_string());
+    out.push(format!(
+        "  max_cost_usd_per_session:   {}",
+        l.max_cost_usd_per_session
+    ));
+    out.push(format!(
+        "  max_cost_usd_per_turn:      {}",
+        l.max_cost_usd_per_turn
+    ));
+    out.push(format!(
+        "  max_input_tokens_per_turn:  {}",
+        l.max_input_tokens_per_turn
+    ));
+    out.push(format!(
+        "  max_output_tokens_per_turn: {}",
+        l.max_output_tokens_per_turn
+    ));
+    out.push(format!(
+        "  on_exhausted:               {:?}",
+        l.on_exhausted
+    ));
+    out.push(format!("  soft_warn_at:               {}", l.soft_warn_at));
+    if !l.tools.is_empty() {
+        out.push(String::new());
+        out.push("Per-tool quotas".to_string());
+        for (tool, q) in &l.tools {
+            out.push(format!(
+                "  {tool:<24} per_turn={} per_session={} per_command={}",
+                q.per_turn, q.per_session, q.per_command,
+            ));
+        }
+    }
+    out
 }
 
 /// `kod plan show` — read state.json's plan for the default

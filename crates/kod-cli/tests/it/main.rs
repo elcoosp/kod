@@ -9,6 +9,7 @@ pub mod common;
 mod config_migrate;
 mod integration_tests;
 mod observability_paths;
+mod observability_render;
 mod policy_explain;
 mod prompt_mock;
 mod replay;
