@@ -909,3 +909,101 @@ impl KodEngine {
         self.history.write().await.insert(key.to_string(), turns);
     }
 }
+
+#[cfg(test)]
+mod compaction_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Totality: arbitrary text must not panic. The caller passes
+        /// a raw model reply, so prose, unbalanced brackets, and
+        /// non-JSON are all normal inputs.
+        #[test]
+        fn prop_parse_never_panics(text in "\\PC{0,500}") {
+            let _ = KodEngine::parse_plan_steps(&text);
+        }
+
+        /// Round-trip for string arrays: a non-empty vec of strings
+        /// with at least one non-whitespace element serializes to JSON
+        /// and parses back to the whitespace-filtered vec. This is the
+        /// functional contract: lossless on the shape it accepts.
+        #[test]
+        fn prop_round_trip_strings(v in prop::collection::vec("[ -~]{0,30}", 0..8)) {
+            let kept: Vec<String> = v
+                .iter()
+                .filter(|s| !s.trim().is_empty())
+                .cloned()
+                .collect();
+            prop_assume!(!kept.is_empty());
+            let json = serde_json::to_string(&v).unwrap();
+            prop_assert_eq!(KodEngine::parse_plan_steps(&json), Some(kept));
+        }
+
+        /// BUG-C-12's documented behavior: non-string elements coerce
+        /// to their JSON text rather than being silently dropped.
+        #[test]
+        fn prop_round_trip_numerics(v in prop::collection::vec(-1000i64..1000, 1..6)) {
+            let json = serde_json::to_string(&v).unwrap();
+            let expected: Vec<String> = v.iter().map(|n| n.to_string()).collect();
+            prop_assert_eq!(KodEngine::parse_plan_steps(&json), Some(expected));
+        }
+
+        /// A whitespace-only-only array is not a plan: every element
+        /// is filtered, the vec is empty, and the function returns None.
+        #[test]
+        fn prop_whitespace_only_is_none(v in prop::collection::vec("[ \\t]{0,5}", 1..6)) {
+            let json = serde_json::to_string(&v).unwrap();
+            prop_assert_eq!(KodEngine::parse_plan_steps(&json), None);
+        }
+
+        /// Text with no `[` at all cannot contain a plan.
+        #[test]
+        fn prop_no_open_bracket_is_none(text in "[^\\[]*") {
+            prop_assert_eq!(KodEngine::parse_plan_steps(&text), None);
+        }
+
+        /// When Some, the result satisfies the shape downstream
+        /// consumers rely on: non-empty and free of whitespace-only
+        /// strings.
+        #[test]
+        fn prop_result_is_clean(text in "\\PC{0,200}") {
+            if let Some(steps) = KodEngine::parse_plan_steps(&text) {
+                prop_assert!(!steps.is_empty());
+                for s in &steps {
+                    prop_assert!(
+                        !s.trim().is_empty(),
+                        "whitespace-only step leaked: {s:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The empty array is not a plan, whether bare or wrapped in prose.
+    #[test]
+    fn empty_array_is_none() {
+        assert_eq!(KodEngine::parse_plan_steps("[]"), None);
+        assert_eq!(KodEngine::parse_plan_steps("  []  "), None);
+        assert_eq!(KodEngine::parse_plan_steps("the plan: []"), None);
+    }
+
+    /// A lone `]` (no `[`) and a `]` before a `[` do not panic; the
+    /// `end <= start` guard and the missing-open early-return both
+    /// fire cleanly.
+    #[test]
+    fn lone_close_bracket_is_none() {
+        assert_eq!(KodEngine::parse_plan_steps("]"), None);
+        assert_eq!(KodEngine::parse_plan_steps("]a["), None);
+        assert_eq!(KodEngine::parse_plan_steps("abc]"), None);
+    }
+
+    /// Control: the documented "first `[` to last `]`" strategy means
+    /// two bracketed spans produce a non-JSON substring and return
+    /// None. This pins the limitation the docstring names, so a future
+    /// change that quietly widens it (or narrows it) is noticed.
+    #[test]
+    fn two_spans_are_documented_none() {
+        assert_eq!(KodEngine::parse_plan_steps("see [x] and [a,b]"), None);
+    }
+}
