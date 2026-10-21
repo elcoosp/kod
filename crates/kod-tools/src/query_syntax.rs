@@ -383,3 +383,220 @@ mod tests {
         assert_eq!(q.terms, vec!["d"]);
     }
 }
+
+#[cfg(test)]
+mod query_syntax_proptests {
+    //! Properties for the search-query parser.
+    //!
+    //! BUG-D-08: `-site:evil` was applied *as* `site = evil` before
+    //! the negated-route was added. The invariants here pin that
+    //! direction, the shape of positive operators, the `://` URL
+    //! guard, and the phrase/term/excluded split.
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    const KNOWN_KEYS: &[&str] = &[
+        "site", "filetype", "ext", "before", "after", "inurl", "intitle", "lang",
+    ];
+
+    fn known_key() -> impl Strategy<Value = &'static str> {
+        select(KNOWN_KEYS.to_vec())
+    }
+
+    fn nonempty_value() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9.]{1,8}"
+    }
+
+    /// The canonical form a recognized key takes in the parsed query.
+    /// `ext` is a user-facing alias for `filetype`; both map to the
+    /// same field and to the same name in `excluded_constraints`.
+    fn canonical(key: &str) -> &str {
+        if key == "ext" { "filetype" } else { key }
+    }
+
+    fn positive_field<'a>(p: &'a ParsedQuery, canonical: &str) -> Option<&'a str> {
+        match canonical {
+            "site" => p.site.as_deref(),
+            "filetype" => p.filetype.as_deref(),
+            "before" => p.before.as_deref(),
+            "after" => p.after.as_deref(),
+            "inurl" => p.inurl.as_deref(),
+            "intitle" => p.intitle.as_deref(),
+            "lang" => p.lang.as_deref(),
+            _ => unreachable!("unknown canonical key"),
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_never_panics(q in "\\PC{0,200}") {
+            let _ = parse(&q);
+        }
+
+        #[test]
+        fn prop_parse_deterministic(q in "\\PC{0,200}") {
+            let a = parse(&q);
+            let b = parse(&q);
+            prop_assert_eq!(a, b);
+        }
+
+        /// **BUG-D-08.** A negated known constraint leaves the
+        /// positive field untouched and lands in
+        /// `excluded_constraints` under its canonical name.
+        #[test]
+        fn prop_negated_known_constraint_goes_to_excluded(
+            key in known_key(),
+            value in nonempty_value(),
+        ) {
+            let q = format!("-{}:{}", key, value);
+            let parsed = parse(&q);
+            let canon = canonical(key);
+            let positive = positive_field(&parsed, canon);
+            prop_assert!(
+                positive.is_none(),
+                "negated {}:{} set positive {}: {:?}",
+                key, value, canon, positive,
+            );
+            let hit = parsed
+                .excluded_constraints
+                .iter()
+                .any(|(k, v)| *k == canon && *v == value);
+            prop_assert!(
+                hit,
+                "negated {}:{} not in excluded_constraints as ({}, {}): {:?}",
+                key, value, canon, value, parsed.excluded_constraints,
+            );
+        }
+
+        /// A positive known constraint sets the positive field and
+        /// adds no excluded entry.
+        #[test]
+        fn prop_positive_known_constraint_sets_field(
+            key in known_key(),
+            value in nonempty_value(),
+        ) {
+            let q = format!("{}:{}", key, value);
+            let parsed = parse(&q);
+            let canon = canonical(key);
+            let positive = positive_field(&parsed, canon);
+            prop_assert_eq!(positive, Some(value.as_str()));
+            prop_assert!(
+                parsed.excluded_constraints.is_empty(),
+                "positive {}:{} set an excluded entry: {:?}",
+                key, value, parsed.excluded_constraints,
+            );
+        }
+
+        /// A URL token is not parsed as an operator (the `://` guard).
+        #[test]
+        fn prop_url_is_not_an_operator(
+            scheme in "[a-z]{2,6}",
+            host in "[a-z]{2,10}",
+        ) {
+            let url = format!("{}://{}", scheme, host);
+            let parsed = parse(&url);
+            prop_assert!(parsed.site.is_none(), "URL became site: {:?}", url);
+            prop_assert!(parsed.filetype.is_none(), "URL became filetype: {:?}", url);
+            prop_assert!(parsed.before.is_none(), "URL became before: {:?}", url);
+            prop_assert!(parsed.after.is_none(), "URL became after: {:?}", url);
+            prop_assert!(parsed.inurl.is_none(), "URL became inurl: {:?}", url);
+            prop_assert!(parsed.intitle.is_none(), "URL became intitle: {:?}", url);
+            prop_assert!(parsed.lang.is_none(), "URL became lang: {:?}", url);
+            prop_assert!(
+                parsed.excluded_constraints.is_empty(),
+                "URL set an excluded entry: {:?}", url,
+            );
+        }
+
+        /// A negated plain term goes to `excluded` with the dash
+        /// stripped.
+        #[test]
+        fn prop_negated_term_goes_to_excluded(term in "[a-z]{2,10}") {
+            let q = format!("-{}", term);
+            let parsed = parse(&q);
+            prop_assert!(parsed.terms.is_empty(), "negated term leaked into terms: {:?}", parsed.terms);
+            prop_assert_eq!(parsed.excluded.len(), 1);
+            let first = parsed.excluded[0].as_str();
+            prop_assert_eq!(first, term.as_str());
+        }
+
+        /// A non-negated plain term goes to `terms`. `or` is excluded
+        /// because the OR arm consumes it as an operator.
+        #[test]
+        fn prop_plain_term_goes_to_terms(term in "[a-z]{2,10}") {
+            prop_assume!(!term.eq_ignore_ascii_case("or"));
+            let parsed = parse(&term);
+            prop_assert!(parsed.excluded.is_empty(), "plain term leaked into excluded: {:?}", parsed.excluded);
+            prop_assert_eq!(parsed.terms.len(), 1, "term not captured as one: {:?}", parsed.terms);
+            let first = parsed.terms[0].as_str();
+            prop_assert_eq!(first, term.as_str());
+        }
+
+        /// A quoted phrase becomes one `phrases` entry with the
+        /// surrounding quotes stripped.
+        #[test]
+        fn prop_quoted_phrase_is_one_entry(content in "[a-zA-Z ]{0,20}") {
+            let q = format!("\"{}\"", content);
+            let parsed = parse(&q);
+            prop_assert_eq!(parsed.phrases.len(), 1, "phrase not captured as one: {:?}", parsed);
+            let first = parsed.phrases[0].as_str();
+            prop_assert_eq!(first, content.as_str());
+        }
+
+        #[test]
+        fn prop_whitespace_query_is_default(ws in "[ \t\n]{0,20}") {
+            let parsed = parse(&ws);
+            prop_assert_eq!(parsed, ParsedQuery::default());
+        }
+    }
+
+    #[test]
+    fn unknown_operator_kept_as_term() {
+        let parsed = parse("weird:value");
+        assert!(
+            parsed.terms.iter().any(|t| t == "weird:value"),
+            "unknown operator lost: {:?}",
+            parsed.terms,
+        );
+    }
+
+    #[test]
+    fn negated_site_does_not_search_on_it() {
+        let parsed = parse("-site:evil.example");
+        assert!(
+            parsed.site.is_none(),
+            "negated site set positive: {:?}",
+            parsed.site
+        );
+        assert!(
+            parsed
+                .excluded_constraints
+                .iter()
+                .any(|(k, v)| *k == "site" && v == "evil.example"),
+            "negated site lost: {:?}",
+            parsed.excluded_constraints,
+        );
+    }
+
+    /// `ext` is an alias for `filetype`; the excluded entry uses the
+    /// canonical name. Pinned because the first draft of the negated
+    /// property asserted the alias name and failed.
+    #[test]
+    fn ext_alias_uses_canonical_name_in_excluded() {
+        let parsed = parse("-ext:rs");
+        assert!(
+            parsed.filetype.is_none(),
+            "negated ext set filetype: {:?}",
+            parsed.filetype
+        );
+        assert!(
+            parsed
+                .excluded_constraints
+                .iter()
+                .any(|(k, v)| *k == "filetype" && v == "rs"),
+            "negated ext not stored as filetype: {:?}",
+            parsed.excluded_constraints,
+        );
+    }
+}
