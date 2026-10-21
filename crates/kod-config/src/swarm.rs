@@ -245,3 +245,116 @@ mod coverage_swarm_config {
         assert!(SwarmConfig::default().merge_results);
     }
 }
+
+#[cfg(test)]
+mod swarm_config_proptests {
+    //! **Serde round-trip (oracle) test.** A config type deriving
+    //! `Serialize + Deserialize` is a fixed point through TOML.
+    //! `SwarmConfig` carries a container-level `#[serde(default)]` and
+    //! two field-level `#[serde(default = "...")]` attributes; the
+    //! existing `full_config_round_trips_through_toml` example checks
+    //! only five of the eight fields, so a rename mismatch or a
+    //! default-not-reapplied bug in `isolation`, `root_effort`, or
+    //! `worker_effort` passes it unnoticed.
+    //!
+    //! The property runs serialize → parse → re-serialize and asserts
+    //! the two serialized forms are byte-identical (the metamorphic
+    //! fixed point), plus a field-by-field comparison for the fields
+    //! whose types derive `PartialEq` (catching the case where two
+    //! fields are swapped and re-serialize back to the same string).
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_isolation() -> impl Strategy<Value = Isolation> {
+        prop::sample::select(vec![
+            Isolation::Shared,
+            Isolation::Worktree,
+            Isolation::Auto,
+        ])
+    }
+
+    proptest! {
+        #[test]
+        fn prop_toml_round_trip_is_fixed_point(
+            max_agents in 0usize..100,
+            merge_results in any::<bool>(),
+            agent_timeout_secs in 0u64..10_000,
+            agent_retries in 0u32..10,
+            timeout_secs in 0u64..100_000,
+            isolation in arb_isolation(),
+        ) {
+            let c = SwarmConfig {
+                max_agents,
+                merge_results,
+                agent_timeout_secs,
+                agent_retries,
+                timeout_secs,
+                isolation,
+                root_effort: default_root_effort(),
+                worker_effort: default_worker_effort(),
+            };
+
+            let toml1 = toml::to_string(&c).expect("serialize");
+            let parsed: SwarmConfig = toml::from_str(&toml1).expect("deserialize");
+
+            // Field-by-field for the types that derive PartialEq.
+            prop_assert_eq!(parsed.max_agents, c.max_agents);
+            prop_assert_eq!(parsed.merge_results, c.merge_results);
+            prop_assert_eq!(parsed.agent_timeout_secs, c.agent_timeout_secs);
+            prop_assert_eq!(parsed.agent_retries, c.agent_retries);
+            prop_assert_eq!(parsed.timeout_secs, c.timeout_secs);
+            prop_assert_eq!(parsed.isolation, c.isolation);
+
+            // Metamorphic fixed point: re-serialize. Catches the
+            // effort fields (whose type may not derive PartialEq), a
+            // rename mismatch, and a #[serde(default)] that does not
+            // re-apply the same value.
+            let toml2 = toml::to_string(&parsed).expect("re-serialize");
+            prop_assert_eq!(toml1, toml2);
+        }
+    }
+
+    /// Every `Isolation` variant round-trips through the lowercase
+    /// form the `#[serde(rename_all = "lowercase")]` attribute
+    /// produces.
+    #[test]
+    fn isolation_variants_round_trip() {
+        for variant in [Isolation::Shared, Isolation::Worktree, Isolation::Auto] {
+            let c = SwarmConfig {
+                isolation: variant,
+                ..Default::default()
+            };
+            let toml_str = toml::to_string(&c).expect("serialize");
+            let parsed: SwarmConfig = toml::from_str(&toml_str).expect("deserialize");
+            assert_eq!(
+                parsed.isolation, variant,
+                "isolation did not round-trip: {toml_str}",
+            );
+        }
+    }
+
+    /// A partial TOML with only `max_agents` fills every **other**
+    /// field with its default. The existing example test checks three
+    /// fields; this one checks all eight, including the two effort
+    /// fields via their serialized form (so `EffortLevel` does not
+    /// need to gain a `PartialEq` derive purely to serve a test).
+    #[test]
+    fn partial_toml_fills_every_default() {
+        let parsed: SwarmConfig = toml::from_str("max_agents = 3").expect("parse");
+        let d = SwarmConfig::default();
+        assert_eq!(parsed.max_agents, 3);
+        assert_eq!(parsed.merge_results, d.merge_results);
+        assert_eq!(parsed.agent_timeout_secs, d.agent_timeout_secs);
+        assert_eq!(parsed.agent_retries, d.agent_retries);
+        assert_eq!(parsed.timeout_secs, d.timeout_secs);
+        assert_eq!(parsed.isolation, d.isolation);
+        // Effort compared via `toml::Value` so no derive is forced on
+        // a production type for the test's sake.
+        let p_root = toml::Value::try_from(&parsed.root_effort).expect("root serialize");
+        let d_root = toml::Value::try_from(&d.root_effort).expect("root default serialize");
+        assert_eq!(p_root, d_root, "root_effort default not reapplied");
+        let p_worker = toml::Value::try_from(&parsed.worker_effort).expect("worker serialize");
+        let d_worker = toml::Value::try_from(&d.worker_effort).expect("worker default serialize");
+        assert_eq!(p_worker, d_worker, "worker_effort default not reapplied");
+    }
+}
