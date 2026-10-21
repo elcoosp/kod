@@ -1,9 +1,10 @@
 # kod — current handoff
 
-**Tag:** `v0.1.16` (`1bb1feb`), on origin. Release workflow fired.
+**Tag:** `v0.1.17`, on origin. Release workflow fired.
 **Branch:** `main`, level with `origin/main`.
-**Gate:** green at `0287c95` — 5257/5257 passed, 5 skipped.
+**Gate:** green at the v0.1.17 commit (full workspace).
 **Tree:** clean.
+
 
 Everything below is the state a session should start from. The
 historical per-session notes are gone from the working tree; they are
