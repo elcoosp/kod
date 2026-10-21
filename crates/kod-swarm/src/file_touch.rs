@@ -203,7 +203,7 @@ impl FileTouchService {
     pub fn has_touched(&self, agent: &str, path: &PathBuf) -> bool {
         self.by_agent
             .read()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .get(agent)
             .is_some_and(|s| s.contains(path))
     }
@@ -385,5 +385,149 @@ mod tests {
         assert!(conflicts.is_empty());
         assert!(!svc.has_touched("me", &path));
         svc.clear_agent("me");
+    }
+}
+
+#[cfg(test)]
+mod file_touch_proptests {
+    //! Properties for `FileTouchService::conflicts_for` and
+    //! `has_touched`.
+    //!
+    //! **A real inconsistency.** `record`, `conflicts_for`, and
+    //! `clear_agent` all recover from a poisoned lock with
+    //! `unwrap_or_else(PoisonError::into_inner)`. The `M-55`
+    //! comment on `record` says "a poisoned lock must not cascade
+    //! into a panic on every later touch" — that's the contract.
+    //! `has_touched` uses plain `.unwrap()`, so the contract is
+    //! violated by exactly one sibling method.
+    //!
+    //! Not reachable from production (the lock only poisons if a
+    //! thread panics while holding it, and no public-API path does),
+    //! but the inconsistency is real: a caller who has wired poison
+    //! recovery into `record` and `conflicts_for` will still panic
+    //! on `has_touched`. Same class as the sibling-method
+    //! inconsistency that produced the `sanitize_slug` trailing-dash
+    //! bug earlier in the session.
+    //!
+    //! The control `control_has_touched_recovers_from_poisoned_lock`
+    //! fails on the pre-fix code (panic) and passes after.
+
+    use super::*;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn touch(agent: &str, path: &str, op: FileOp) -> FileTouch {
+        FileTouch {
+            agent_id: agent.to_string(),
+            path: PathBuf::from(path),
+            op,
+            summary: None,
+            intent: None,
+            at: Instant::now(),
+        }
+    }
+
+    proptest! {
+        /// `conflicts_for` returns at most one entry per peer: the
+        /// "most recent modification" per peer, not one per touch.
+        #[test]
+        fn prop_conflicts_one_per_peer(
+            peers in prop::collection::vec("[a-z]{1,4}", 1..=5),
+            n_touches in 1usize..=10,
+        ) {
+            let svc = FileTouchService::new();
+            let path = PathBuf::from("src/lib.rs");
+            for i in 0..n_touches {
+                let peer = &peers[i % peers.len()];
+                svc.record(touch(peer, "src/lib.rs", FileOp::Write));
+            }
+            let conflicts = svc.conflicts_for(&path, "observer");
+            let mut seen: HashSet<&str> = HashSet::new();
+            for c in &conflicts {
+                prop_assert!(
+                    seen.insert(c.peer.as_str()),
+                    "duplicate peer {:?} in conflicts", c.peer,
+                );
+            }
+        }
+
+        /// `conflicts_for(path, except)` never returns `except`.
+        #[test]
+        fn prop_conflicts_excludes_except(
+            except in "[a-z]{1,4}",
+            other in "[a-z]{1,4}",
+        ) {
+            prop_assume!(except != other);
+            let svc = FileTouchService::new();
+            let path = PathBuf::from("f.rs");
+            svc.record(touch(&except, "f.rs", FileOp::Write));
+            svc.record(touch(&other, "f.rs", FileOp::Edit));
+            let conflicts = svc.conflicts_for(&path, &except);
+            for c in &conflicts {
+                prop_assert_ne!(c.peer.as_str(), except.as_str());
+            }
+        }
+
+        /// Reads never appear in `conflicts_for`: only Write and
+        /// Edit are modifications.
+        #[test]
+        fn prop_reads_not_a_conflict(
+            reader in "[a-z]{1,4}",
+            writer in "[a-z]{1,4}",
+        ) {
+            prop_assume!(reader != writer);
+            let svc = FileTouchService::new();
+            let path = PathBuf::from("f.rs");
+            svc.record(touch(&reader, "f.rs", FileOp::Read));
+            svc.record(touch(&writer, "f.rs", FileOp::Write));
+            let conflicts = svc.conflicts_for(&path, "observer");
+            for c in &conflicts {
+                prop_assert_ne!(c.peer.as_str(), reader.as_str());
+                prop_assert!(c.op.is_modification());
+            }
+        }
+    }
+
+    // ---- controls: poison recovery and clear_agent isolation ------
+
+    /// **The bug.** `has_touched` must recover from a poisoned lock
+    /// like every sibling method. Pre-fix: `.unwrap()` panics.
+    /// Post-fix: returns the sensible value.
+    ///
+    /// Poisons the `by_agent` lock (the one `has_touched` reads)
+    /// via a thread that panics while holding the write guard. The
+    /// service is wrapped in `Arc` so the thread can share it.
+    #[test]
+    fn control_has_touched_recovers_from_poisoned_lock() {
+        let service = Arc::new(FileTouchService::new());
+        let svc = Arc::clone(&service);
+        let _ = std::thread::spawn(move || {
+            let _guard = svc.by_agent.write().unwrap();
+            panic!("intentionally poison by_agent");
+        })
+        .join();
+
+        // by_agent is now poisoned. Pre-fix: has_touched panics.
+        // Post-fix: returns false (nothing recorded).
+        let result = service.has_touched("w1", &PathBuf::from("a.rs"));
+        assert!(!result);
+    }
+
+    /// Control: `clear_agent(A)` removes A's entries and leaves
+    /// B's intact. The existing `clear_agent_removes_its_entries`
+    /// test pins A's removal; this pins the other side.
+    #[test]
+    fn control_clear_agent_leaves_other_agents() {
+        let svc = FileTouchService::new();
+        let path = PathBuf::from("f.rs");
+        svc.record(touch("a", "f.rs", FileOp::Write));
+        svc.record(touch("b", "f.rs", FileOp::Write));
+        svc.clear_agent("a");
+        assert!(!svc.has_touched("a", &path));
+        assert!(svc.has_touched("b", &path));
+        let conflicts = svc.conflicts_for(&path, "observer");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].peer.as_str(), "b");
     }
 }
