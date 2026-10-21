@@ -254,3 +254,58 @@ impl KodApp {
         self.session_output_tokens = self.session_output_tokens.saturating_add(completion_tokens);
     }
 }
+
+#[cfg(test)]
+mod format_k_tests {
+    //! Boundary and shape tests for `format_k`.
+    //!
+    //! `format_k` has no test of any kind. It is a one-branch
+    //! formatter, but the branch (`n >= 1_000`) and the rounding
+    //! (`{:.1}`) both have observable boundaries: 1000 is the first
+    //! value that gets the `k` suffix, 1500 rounds to `1.5k`, and
+    //! 1950 rounds *up* to `2.0k` — the rounding direction is part
+    //! of the contract even when it surprises.
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn threshold_is_exactly_one_thousand() {
+        assert_eq!(KodApp::format_k(0), "0");
+        assert_eq!(KodApp::format_k(999), "999");
+        assert_eq!(KodApp::format_k(1000), "1.0k");
+    }
+
+    #[test]
+    fn rounding_is_to_one_decimal_place() {
+        assert_eq!(KodApp::format_k(1500), "1.5k");
+        assert_eq!(KodApp::format_k(10_000), "10.0k");
+        // Deliberately not pinned: values that land exactly on a .x5
+        // decimal boundary. `1950 / 1000.0` is not exactly 1.95 in
+        // f64 (it is ~1.9499999...), so `{:.1}` renders "1.9", not
+        // "2.0". That is float-representation behavior, not this
+        // function's contract, and pinning it would freeze an
+        // implementation detail. The suffix property above covers the
+        // shape without depending on it.
+    }
+
+    proptest! {
+        /// Totality: no usize panics.
+        #[test]
+        fn prop_never_panics(n in any::<usize>()) {
+            let _ = KodApp::format_k(n);
+        }
+
+        /// Shape: below 1000 the output is the plain decimal; at or
+        /// above it always ends with `k`.
+        #[test]
+        fn prop_suffix_matches_threshold(n in any::<usize>()) {
+            let s = KodApp::format_k(n);
+            if n < 1_000 {
+                prop_assert!(!s.ends_with('k'), "{n} got a k suffix: {s:?}");
+                prop_assert_eq!(s, n.to_string());
+            } else {
+                prop_assert!(s.ends_with('k'), "{n} lost its k suffix: {s:?}");
+            }
+        }
+    }
+}

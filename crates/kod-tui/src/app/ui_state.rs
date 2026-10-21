@@ -928,3 +928,88 @@ mod tests {
         assert_eq!(f(Duration::from_secs(4500)), "1h15m");
     }
 }
+
+#[cfg(test)]
+mod friendly_duration_boundaries {
+    //! Boundary and totality tests for `format_friendly_duration`.
+    //!
+    //! The tier test in `super::tests` picks one example per tier but
+    //! never the exact transition point. `ms < 1000` means 1000 must
+    //! render as seconds; `s < 60` means 60_000 must render as
+    //! minutes; `s < 3600` means 3_600_000 must render as hours. An
+    //! off-by-one in any of the three `<` comparisons is invisible to
+    //! the example test and visible to a user at exactly those values.
+    use super::KodApp;
+    use proptest::prelude::*;
+    use std::time::Duration;
+
+    #[test]
+    fn tier_transitions_are_exclusive_of_the_lower_tier() {
+        let f = KodApp::format_friendly_duration;
+        // 999ms is the last millisecond-tier value.
+        assert_eq!(f(Duration::from_millis(999)), "999ms");
+        // 1000ms is the first second-tier value.
+        assert_eq!(f(Duration::from_millis(1000)), "1.0s");
+        // 59_999ms is the last second-tier value.
+        assert_eq!(f(Duration::from_millis(59_999)), "60.0s");
+        // 60_000ms is the first minute-tier value.
+        assert_eq!(f(Duration::from_millis(60_000)), "1m00s");
+        // 3_599_999ms is the last minute-tier value (59m59s).
+        assert_eq!(f(Duration::from_millis(3_599_999)), "59m59s");
+        // 3_600_000ms is the first hour-tier value.
+        assert_eq!(f(Duration::from_millis(3_600_000)), "1h00m");
+    }
+
+    #[test]
+    fn hour_tier_drops_seconds() {
+        // Documented: `2h03m`, not `2h03m15s`. Seconds are elided in
+        // the hour tier because a turn that long is not measured in
+        // seconds by a user reading the TUI.
+        let f = KodApp::format_friendly_duration;
+        assert_eq!(f(Duration::from_secs(2 * 3600 + 3 * 60 + 15)), "2h03m");
+    }
+
+    proptest! {
+        /// Totality: any Duration, including `Duration::MAX`, renders
+        /// without panic. The body saturates the `u128 -> u64` cast
+        /// with `.min(u128::from(u64::MAX))`; that path is only
+        /// exercised by a Duration whose `as_millis()` exceeds `u64`,
+        /// which is never reachable from real elapsed time but is
+        /// reachable from a caller that constructs one.
+        #[test]
+        fn prop_never_panics_any_duration(ms in any::<u64>()) {
+            let _ = KodApp::format_friendly_duration(Duration::from_millis(ms));
+        }
+
+        #[test]
+        fn prop_duration_max_does_not_panic(_seed in any::<u8>()) {
+            let _ = KodApp::format_friendly_duration(Duration::MAX);
+        }
+
+        /// Unit shape: a sub-second value ends in `ms`; any value at
+        /// or above one second ends in neither `ms` nor `h` on its
+        /// own (it carries an `s` or `m` component). This catches a
+        /// tier that renders the wrong unit for its magnitude.
+        #[test]
+        fn prop_unit_shape_matches_tier(ms in any::<u64>()) {
+            let s = KodApp::format_friendly_duration(Duration::from_millis(ms));
+            if ms < 1000 {
+                prop_assert!(s.ends_with("ms"), "expected ms for {ms}, got {s:?}");
+            } else {
+                prop_assert!(
+                    s.contains('s') || s.contains('m'),
+                    "expected s or m for {ms}, got {s:?}",
+                );
+                prop_assert!(!s.ends_with("ms"), "sub-second unit for {ms}, got {s:?}");
+            }
+        }
+
+        /// Monotonic tier: the hour tier only appears at or above
+        /// 3_600_000ms. A value below that must never produce `h`.
+        #[test]
+        fn prop_hour_tier_only_at_or_above_an_hour(ms in 0u64..3_600_000) {
+            let s = KodApp::format_friendly_duration(Duration::from_millis(ms));
+            prop_assert!(!s.contains('h'), "{ms}ms produced hour tier: {s:?}");
+        }
+    }
+}
