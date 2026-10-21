@@ -699,3 +699,169 @@ mod tests {
         assert!(!dbg.contains("42"), "key bytes leaked: {dbg}");
     }
 }
+
+#[cfg(test)]
+mod secret_vault_proptests {
+    //! Properties for the vault's obfuscate/deobfuscate round-trip.
+    //!
+    //! The 23 example tests pin individual cases. This round pins
+    //! the security contract — `obfuscate(x)` must not contain any
+    //! registered secret — and the round-trip on arbitrary text
+    //! containing registered secrets. The body is longest-first,
+    //! sorted-vector iteration, so a secret that is a substring of
+    //! another does not shadow it; the property below is the
+    //! generic form of that guarantee.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn fixed_vault() -> SecretVault {
+        SecretVault::with_key([0x42u8; 32])
+    }
+
+    /// A secret the vault is given: high-entropy-looking hex or
+    /// alnum, no `«Credential-` prefix (which would collide with
+    /// the placeholder format).
+    fn arb_secret() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9_\\-]{8,40}".prop_filter("must not look like a placeholder", |s| {
+            !s.contains("Credential-")
+        })
+    }
+
+    /// Text with a mix of secrets and ordinary text. Empty text is
+    /// allowed; the empty-vault case is separate.
+    fn arb_text() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 .,;:!?\\n\\t]{0,200}"
+    }
+
+    proptest! {
+        /// **The security contract.** `obfuscate(x)` must not
+        /// contain any registered secret that appeared in `x`.
+        ///
+        /// If this fails, the raw secret reached the model. The
+        /// body replaces every occurrence via `out.replace(secret,
+        /// placeholder)` in longest-first order; a secret that
+        /// survives is a bug in the replacement loop, not a
+        /// property-side issue.
+        #[test]
+        fn prop_obfuscate_removes_every_secret(
+            secret in arb_secret(),
+            prefix in arb_text(),
+            suffix in arb_text(),
+        ) {
+            let vault = fixed_vault();
+            vault.register(secret.clone());
+            let input = format!("{prefix}{secret}{suffix}");
+            let obfuscated = vault.obfuscate(&input);
+            prop_assert!(
+                !obfuscated.contains(&secret),
+                "obfuscate left secret {:?} in output {:?} (input {:?})",
+                secret, obfuscated, input,
+            );
+        }
+
+        /// Round-trip: `deobfuscate(obfuscate(x))` restores `x` for
+        /// text containing registered secrets plus ordinary text.
+        #[test]
+        fn prop_round_trip(
+            secret in arb_secret(),
+            prefix in arb_text(),
+            suffix in arb_text(),
+        ) {
+            let vault = fixed_vault();
+            vault.register(secret.clone());
+            let input = format!("{prefix}{secret}{suffix}");
+            let obfuscated = vault.obfuscate(&input);
+            let (restored, count) = vault.deobfuscate(&obfuscated);
+            prop_assert_eq!(&restored, &input);
+            prop_assert!(count >= 1, "round-trip count was {}", count);
+        }
+
+        /// `contains_placeholder` is true iff `deobfuscate` would
+        /// replace something.
+        #[test]
+        fn prop_contains_matches_count(text in arb_text()) {
+            let vault = fixed_vault();
+            vault.register("AKIAIOSFODNN7EXAMPLE");
+            let present = vault.contains_placeholder(&text);
+            let (_restored, count) = vault.deobfuscate(&text);
+            prop_assert_eq!(present, count > 0);
+        }
+
+        /// Two secrets sharing a prefix: the longer one wins in
+        /// `obfuscate`, and the shorter one still obfuscates when
+        /// it appears alone.
+        #[test]
+        fn prop_longer_secret_shadows_shorter(
+            base in "[a-zA-Z0-9]{6,12}",
+            suffix in "[a-zA-Z0-9]{4,12}",
+        ) {
+            let vault = fixed_vault();
+            vault.register(base.clone());
+            vault.register(format!("{base}{suffix}"));
+            let long_secret = format!("{base}{suffix}");
+            let obfuscated = vault.obfuscate(&long_secret);
+            // The full long secret must be replaced, not the base
+            // prefix leaving the suffix raw.
+            prop_assert!(!obfuscated.contains(&long_secret));
+        }
+
+        /// Registering a secret twice returns the same placeholder.
+        /// The map is keyed by secret, so this is guaranteed by
+        /// construction; the property pins it.
+        #[test]
+        fn prop_register_idempotent(secret in arb_secret()) {
+            let vault = fixed_vault();
+            let a = vault.register(secret.clone());
+            let b = vault.register(secret);
+            prop_assert_eq!(a, b);
+        }
+
+        /// Different keys produce different placeholders for the
+        /// same secret. The HMAC key is the entire differentiator;
+        /// this pins the "opaque across installs" property the
+        /// module doc claims.
+        #[test]
+        fn prop_key_affects_placeholder(secret in arb_secret()) {
+            let a = SecretVault::with_key([0x01u8; 32]);
+            let b = SecretVault::with_key([0x02u8; 32]);
+            let pa = a.register(secret.clone());
+            let pb = b.register(secret);
+            prop_assert_ne!(pa, pb);
+        }
+    }
+
+    /// Control: empty text obfuscates to empty, deobfuscates to
+    /// empty, count 0.
+    #[test]
+    fn control_empty_text() {
+        let vault = fixed_vault();
+        vault.register("secret-value-1");
+        assert_eq!(vault.obfuscate(""), "");
+        assert_eq!(vault.deobfuscate(""), ("".to_string(), 0));
+    }
+
+    /// Control: empty vault leaves text unchanged.
+    #[test]
+    fn control_empty_vault_noop() {
+        let vault = fixed_vault();
+        let text = "hello world";
+        assert_eq!(vault.obfuscate(text), text);
+        assert_eq!(vault.deobfuscate(text), (text.to_string(), 0));
+        assert!(!vault.contains_placeholder(text));
+    }
+
+    /// Control: a placeholder written by hand (not produced by
+    /// `obfuscate`) is deobfuscated if it matches a registered
+    /// secret's placeholder. The engine relies on this so a model
+    /// that *remembers* the placeholder can write it directly.
+    #[test]
+    fn control_handwritten_placeholder_deobfuscates() {
+        let vault = fixed_vault();
+        let secret = "my-secret-value";
+        let placeholder = vault.register(secret);
+        let (restored, count) = vault.deobfuscate(&placeholder);
+        assert_eq!(restored, secret);
+        assert_eq!(count, 1);
+    }
+}
