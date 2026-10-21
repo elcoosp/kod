@@ -314,3 +314,87 @@ mod truncate_with_ellipsis_tests {
         assert_eq!(truncate_with_ellipsis("hello", 0, "…"), "…");
     }
 }
+
+#[cfg(test)]
+mod strutil_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Mixed ASCII / CJK / emoji / combining marks: the alphabet where
+    /// byte length and char count disagree.
+    fn arb_text() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                prop::char::range('a', 'z'),
+                prop::char::range('0', '9'),
+                Just('é'),
+                Just('中'),
+                Just('🦀'),
+                Just('\u{0301}'),
+                Just(' '),
+            ],
+            0..40,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    proptest! {
+        /// `floor_char_boundary` is a valid index, never past `max`, and
+        /// is the *largest* boundary at or below it — a smaller answer
+        /// would silently drop a character that fits.
+        #[test]
+        fn prop_floor_boundary_is_maximal(s in arb_text(), max in any::<usize>()) {
+            let i = floor_char_boundary(&s, max);
+            prop_assert!(i <= s.len());
+            prop_assert!(i <= max);
+            prop_assert!(s.is_char_boundary(i), "index {i} splits a char in {s:?}");
+            if i < s.len() {
+                prop_assert!(!s.is_char_boundary(i + 1) || i + 1 > max,
+                    "a larger boundary <= max existed at {} for max {max}", i + 1);
+            }
+        }
+
+        /// `max >= len` is the identity, and `max == 0` is 0.
+        #[test]
+        fn prop_floor_boundary_edges(s in arb_text()) {
+            prop_assert_eq!(floor_char_boundary(&s, s.len()), s.len());
+            prop_assert_eq!(floor_char_boundary(&s, s.len() + 1), s.len());
+            prop_assert_eq!(floor_char_boundary(&s, 0), 0);
+        }
+
+        /// The ellipsis is added iff the text was actually cut, the
+        /// shown prefix is a char-boundary prefix of the input, and an
+        /// uncut result is byte-identical to the input.
+        #[test]
+        fn prop_ellipsis_contract(s in arb_text(), max in 0usize..12) {
+            let out = truncate_with_ellipsis(&s, max, "…");
+            let shown = truncate_chars(&s, max);
+            prop_assert!(s.starts_with(shown));
+            if shown.len() < s.len() {
+                let expected = format!("{shown}…");
+                prop_assert_eq!(out.as_str(), expected.as_str());
+                prop_assert!(s.chars().count() > max);
+            } else {
+                prop_assert_eq!(out.as_str(), s.as_str());
+                prop_assert!(s.chars().count() <= max);
+            }
+        }
+
+        /// An empty ellipsis never adds bytes; it degrades to
+        /// `truncate_chars`.
+        #[test]
+        fn prop_empty_ellipsis_is_truncate_chars(s in arb_text(), max in 0usize..12) {
+            let got = truncate_with_ellipsis(&s, max, "");
+            prop_assert_eq!(got.as_str(), truncate_chars(&s, max));
+        }
+
+        /// `truncate_bytes` output is a boundary prefix within the byte
+        /// budget.
+        #[test]
+        fn prop_truncate_bytes_budget(s in arb_text(), max in any::<usize>()) {
+            let out = truncate_bytes(&s, max);
+            prop_assert!(out.len() <= max);
+            prop_assert!(s.starts_with(out));
+        }
+    }
+}
