@@ -2709,6 +2709,13 @@ impl SwarmRunner {
 /// Extract a JSON array of `{name, description}` objects from a model
 /// reply that may carry prose around it. Finds the first `[` and the
 /// matching `]` and parses that slice.
+///
+/// An item missing `name` or `description`, or with an empty
+/// `description`, is skipped — matching how `expected_writes`,
+/// `capability`, and `depends_on` degrade when absent or malformed.
+/// An empty result (`Some(vec![])`) means the reply carried no usable
+/// subtask; the caller treats that exactly like a failed parse and
+/// falls back to its N-copies-of-the-goal path.
 fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
     let start = text.find('[')?;
     let end = text.rfind(']')?;
@@ -2719,8 +2726,20 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
     let arr = v.as_array()?;
     let mut out = Vec::new();
     for item in arr {
-        let name = item.get("name")?.as_str()?.to_string();
-        let description = item.get("description")?.as_str()?.to_string();
+        // A missing required field skips the item, matching the
+        // empty-description skip just below and the graceful
+        // degradation of every optional field. The pre-fix `?` made
+        // one malformed item abort the whole batch, and the caller
+        // turns that `None` into N identical copies of the goal —
+        // strictly worse than a partial plan.
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = name.to_string();
+        let Some(description) = item.get("description").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let description = description.to_string();
         if description.trim().is_empty() {
             continue;
         }
@@ -3282,23 +3301,33 @@ mod parse_subtasks_proptests {
         assert_eq!(v[0].name, "b");
     }
 
-    /// Characterization: an item **missing** `description` aborts the
-    /// whole batch, even when the other items are fine. The caller
-    /// treats this `None` as "the model ignored the JSON" and falls
-    /// back to N identical copies of the goal — so the good items are
-    /// lost. Whether this should instead skip the bad item is a
-    /// prompt-contract decision, not pinned here as correct.
+    /// An item **missing** `description` is skipped; the valid items
+    /// survive. Matches the empty-description branch and every
+    /// optional field's degradation. The pre-fix `?` aborted the
+    /// whole batch here.
     #[test]
-    fn missing_description_aborts_the_whole_batch() {
+    fn missing_description_is_skipped() {
         let text = r#"[{"name":"a","description":"do a"},{"name":"b"}]"#;
-        assert!(parse_subtasks(text, 5).is_none());
+        let v = parse_subtasks(text, 5).expect("parses");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "a");
     }
 
-    /// Characterization: the same aborts when `name` is missing.
+    /// The same for a missing `name`.
     #[test]
-    fn missing_name_aborts_the_whole_batch() {
+    fn missing_name_is_skipped() {
         let text = r#"[{"description":"do a"},{"name":"b","description":"do b"}]"#;
-        assert!(parse_subtasks(text, 5).is_none());
+        let v = parse_subtasks(text, 5).expect("parses");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "b");
+    }
+
+    /// When every item is malformed the result is `Some(vec![])`,
+    /// which the caller treats exactly like `[]`.
+    #[test]
+    fn all_malformed_is_empty() {
+        let text = r#"[{"name":"a"},{"description":"b"}]"#;
+        assert!(parse_subtasks(text, 5).expect("parses").is_empty());
     }
 
     /// Characterization: `max = 0` returns one item, not zero. The
