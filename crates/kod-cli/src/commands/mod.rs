@@ -39,7 +39,7 @@ pub mod prompt;
 pub(crate) use prompt::*;
 
 /// Inspection subcommands (jev / budget / limits / plan / decisions / trace).
-mod observability;
+pub mod observability;
 pub(crate) use observability::*;
 
 /// `kod fixture` — golden-transcript capture and replay.
