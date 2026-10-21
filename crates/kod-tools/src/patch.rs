@@ -23,6 +23,16 @@ pub struct Hunk {
     pub new_start: usize,
     pub new_lines: usize,
     pub lines: Vec<HunkLine>,
+    /// Tag of the last body line (`+`, `-`, or space); `None` if the
+    /// hunk has no body. Decides whether the patch changed the file's
+    /// last line.
+    pub last_line_tag: Option<char>,
+    /// True when a `\ No newline at end of file` marker appears
+    /// *after* the last body line. `similar` places it immediately
+    /// after the line it applies to; a marker before a later body
+    /// line belongs to the earlier line, so every body push resets
+    /// this to `false`.
+    pub has_no_newline_marker: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,16 +60,28 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
     // line — Windows checkouts and `core.autocrlf` hit this on the
     // first edit.
     let uses_crlf = original.contains("\r\n");
-    let mut lines: Vec<String> = original
-        .split('\n')
-        .map(|s| s.strip_suffix('\r').unwrap_or(s).to_string())
-        .collect();
+    let mut lines: Vec<String> = if original.is_empty() {
+        Vec::new()
+    } else {
+        original
+            .split('\n')
+            .map(|s| s.strip_suffix('\r').unwrap_or(s).to_string())
+            .collect()
+    };
     let had_trailing_newline = original.ends_with('\n');
     if had_trailing_newline && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
         lines.pop();
     }
 
+    let patch_strips_trailing_newline = patch
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.starts_with("\\ No newline at end of file"))
+        .unwrap_or(false);
+
     let mut offset: isize = 0;
+    let mut eof_trailing: Option<bool> = None;
     for hunk in &hunks {
         // H-R14: a `@@ -0,0 +1,N @@` (new file) header gives
         // old_start == 0. `0 - 1 = -1` as usize wraps to a huge
@@ -147,8 +169,17 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
                 ),
             });
         }
+        let reaches_eof = cursor == lines.len();
+        let changed_last = matches!(hunk.last_line_tag, Some('+') | Some('-'));
         lines.splice(target..cursor, new_lines);
         offset += hunk.new_lines as isize - hunk.old_lines as isize;
+        if reaches_eof {
+            eof_trailing = Some(if changed_last {
+                !hunk.has_no_newline_marker
+            } else {
+                had_trailing_newline && !patch_strips_trailing_newline
+            });
+        }
     }
 
     // H-R14: re-emit with the file's dominant EOL. A CRLF file stays
@@ -168,14 +199,11 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
     // explicitly adds a newline where none existed produces a
     // final `+` line ending in a newline in the diff, and the
     // applier's `lines.join(sep)` emits that newline.)
-    let patch_strips_trailing_newline = patch
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.starts_with("\\ No newline at end of file"))
-        .unwrap_or(false);
-
-    if had_trailing_newline && !lines.is_empty() && !patch_strips_trailing_newline {
+    let result_trailing = match eof_trailing {
+        Some(b) => b,
+        None => had_trailing_newline && !patch_strips_trailing_newline,
+    };
+    if result_trailing && !lines.is_empty() {
         out.push_str(sep);
     }
     Ok(out)
@@ -223,17 +251,28 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
         };
         let text = text.to_string();
         match tag {
-            " " => h.lines.push(HunkLine::Context(text)),
-            "-" => h.lines.push(HunkLine::Remove(text)),
-            "+" => h.lines.push(HunkLine::Add(text)),
+            " " => {
+                h.lines.push(HunkLine::Context(text));
+                h.last_line_tag = Some(' ');
+                // The marker belongs to the line *before* it, so a
+                // new body line invalidates any marker seen since the
+                // previous body line.
+                h.has_no_newline_marker = false;
+            }
+            "-" => {
+                h.lines.push(HunkLine::Remove(text));
+                h.last_line_tag = Some('-');
+                h.has_no_newline_marker = false;
+            }
+            "+" => {
+                h.lines.push(HunkLine::Add(text));
+                h.last_line_tag = Some('+');
+                h.has_no_newline_marker = false;
+            }
             "\\" => {
-                // T1-C11: `\ No newline at end of file` marks the
-                // preceding line as having no trailing newline. The
-                // marker is only meaningful when it precedes the end
-                // of the patch, but recording it here is harmless:
-                // the applier checks the last line for the marker.
-                // Nothing to do at parse time — the applier reads
-                // the raw `patch` string directly.
+                // T1-C11: `\ No newline at end of file` applies to
+                // the body line just above it.
+                h.has_no_newline_marker = true;
             }
             _ => {
                 return Err(KodError::InvalidParameters {
@@ -271,6 +310,8 @@ fn parse_hunk_header(line: &str) -> Result<Hunk> {
         new_start,
         new_lines,
         lines: Vec::new(),
+        last_line_tag: None,
+        has_no_newline_marker: false,
     })
 }
 
@@ -713,5 +754,51 @@ mod coverage_render_unified {
         let d = render_unified_diff(&old, &new, "f");
         let applied = apply_unified_diff(&old, &d).unwrap();
         assert_eq!(applied, new);
+    }
+}
+
+#[cfg(test)]
+mod patch_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_text() -> impl Strategy<Value = String> {
+        (prop::collection::vec("[ -~]{0,10}", 0..5), any::<bool>()).prop_map(|(lines, trailing)| {
+            let mut s = lines.join("\n");
+            if trailing && !s.is_empty() {
+                s.push('\n');
+            }
+            s
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_render_apply_round_trip(old in arb_text(), new in arb_text()) {
+            prop_assume!(old != new);
+            let diff = render_unified_diff(&old, &new, "f.rs");
+            match apply_unified_diff(&old, &diff) {
+                Ok(applied) => prop_assert_eq!(applied, new),
+                Err(e) => prop_assert!(false, "self-rendered diff failed: {e}"),
+            }
+        }
+
+        #[test]
+        fn prop_never_panics(original in arb_text(), patch in arb_text()) {
+            let _ = apply_unified_diff(&original, &patch);
+        }
+
+        #[test]
+        fn prop_all_context_is_identity(text in arb_text()) {
+            prop_assume!(!text.is_empty());
+            let lines: Vec<&str> = text.split('\n').collect();
+            let body: Vec<&str> = if text.ends_with('\n') {
+                lines[..lines.len() - 1].to_vec()
+            } else { lines.clone() };
+            prop_assume!(!body.is_empty());
+            let mut patch = format!("@@ -1,{} +1,{} @@\n", body.len(), body.len());
+            for l in &body { patch.push(' '); patch.push_str(l); patch.push('\n'); }
+            prop_assert_eq!(apply_unified_diff(&text, &patch).unwrap(), text);
+        }
     }
 }
