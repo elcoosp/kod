@@ -1920,3 +1920,120 @@ mod coverage_git_write_deny {
             .expect("git-tools/ must be writable");
     }
 }
+
+#[cfg(test)]
+mod context_proptests {
+    //! Properties for the fail-mode of path matching.
+    //!
+    //! `matches_pattern_inner` delegates matching to `globset`, but
+    //! the **fail direction** on an invalid pattern is kod-authored
+    //! and security-relevant. The H-R16 comment records the pre-fix
+    //! failure: the function returned `false` unconditionally on a
+    //! bad pattern, so every `forbidden_paths` entry a user had
+    //! configured was silently disabled. The contract today is
+    //! fail-closed for the forbid list and fail-open for the allow
+    //! list (whose caller default is already "no match").
+    //!
+    //! The matcher itself is private; the properties go through the
+    //! public `is_path_allowed`, which is the production entry point.
+    use super::*;
+    use kod_types::ToolPermissions;
+    use proptest::prelude::*;
+
+    fn ctx_with(forbidden: Vec<String>, allowed: Vec<String>) -> ToolContext {
+        ToolContext::new("/tmp/kod-proptest-wd").with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            forbidden_paths: forbidden,
+            allowed_paths: allowed,
+            ..Default::default()
+        })
+    }
+
+    /// A malformed glob, constructed rather than filtered: an
+    /// unclosed character class `[` is rejected by `globset::Glob::new`.
+    fn malformed_pattern() -> impl Strategy<Value = String> {
+        "[a-z]{1,12}".prop_map(|s| format!("{}[", s))
+    }
+
+    proptest! {
+        /// **The H-R16 contract.** A malformed pattern in the forbid
+        /// list must DENY every path. Pre-fix the invalid pattern
+        /// returned false, so nothing was forbidden.
+        #[test]
+        fn prop_malformed_forbidden_denies_everything(
+            pat in malformed_pattern(),
+            path in "[a-z/]{1,20}",
+        ) {
+            let c = ctx_with(vec![pat.clone()], Vec::new());
+            let allowed = c.is_path_allowed(Path::new(&path)).expect("no io");
+            prop_assert!(
+                !allowed,
+                "malformed forbidden pattern {:?} admitted {:?}",
+                pat, path,
+            );
+        }
+
+        /// The symmetric case: a malformed pattern in the allow list
+        /// must never grant access. The allow path fails open (no
+        /// match), so with only the malformed pattern in the list,
+        /// every path is denied.
+        #[test]
+        fn prop_malformed_allowed_grants_nothing(
+            pat in malformed_pattern(),
+            path in "[a-z/]{1,20}",
+        ) {
+            let c = ctx_with(Vec::new(), vec![pat.clone()]);
+            let allowed = c.is_path_allowed(Path::new(&path)).expect("no io");
+            prop_assert!(
+                !allowed,
+                "malformed allowed pattern {:?} admitted {:?}",
+                pat, path,
+            );
+        }
+
+        /// Empty allow list means "no allow-list restriction": every
+        /// path is admitted unless a forbid matches. A valid
+        /// forbid that does not match must not deny.
+        #[test]
+        fn prop_no_lists_admits(path in "[a-z/]{1,20}") {
+            let c = ctx_with(Vec::new(), Vec::new());
+            let allowed = c.is_path_allowed(Path::new(&path)).expect("no io");
+            prop_assert!(allowed, "empty lists denied {:?}", path);
+        }
+
+        /// `is_path_allowed` is deterministic.
+        #[test]
+        fn prop_is_path_allowed_deterministic(
+            forbid in prop::collection::vec(malformed_pattern(), 0..3),
+            allow in prop::collection::vec(malformed_pattern(), 0..3),
+            path in "[a-z/]{1,20}",
+        ) {
+            let c = ctx_with(forbid, allow);
+            let a = c.is_path_allowed(Path::new(&path)).expect("no io");
+            let b = c.is_path_allowed(Path::new(&path)).expect("no io");
+            prop_assert_eq!(a, b);
+        }
+    }
+
+    /// Concrete pin alongside the properties: the pre-fix behavior
+    /// would have admitted this path.
+    #[test]
+    fn unclosed_class_in_forbidden_denies() {
+        let c = ctx_with(vec!["secret[".to_string()], Vec::new());
+        assert!(
+            !c.is_path_allowed(Path::new("anything.txt")).expect("no io"),
+            "a malformed forbidden pattern must deny",
+        );
+    }
+
+    /// And the allow-list direction.
+    #[test]
+    fn unclosed_class_in_allowed_denies() {
+        let c = ctx_with(Vec::new(), vec!["allowed[".to_string()]);
+        assert!(
+            !c.is_path_allowed(Path::new("anything.txt")).expect("no io"),
+            "a malformed allowed pattern must not grant access",
+        );
+    }
+}
