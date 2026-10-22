@@ -271,7 +271,7 @@ mod veracity_proptests {
     use proptest::prelude::*;
 
     fn finite_unit() -> impl Strategy<Value = f64> {
-        (0.0f64..=1.0f64)
+        0.0f64..=1.0f64
     }
 
     proptest! {

@@ -490,7 +490,7 @@ mod cleanse_proptests {
             }
             let b = s.take_batch("w1").expect("non-empty");
             prop_assert!(b.len() <= budget, "batch {} > budget {}", b.len(), budget);
-            prop_assert!(b.len() >= 1, "empty batch from non-empty scheduler");
+            prop_assert!(!b.is_empty(), "empty batch from non-empty scheduler");
         }
 
         /// After a successful `take_batch`, every returned file is

@@ -101,7 +101,7 @@ async fn fixture_replay_over_empty_fixture_is_ok() {
 
     let result = run_fixture_replay("empty", false, false).await;
     assert!(
-        matches!(result, Ok(_)),
+        result.is_ok(),
         "empty fixture must complete its bootstrap, got {result:?}",
     );
 }

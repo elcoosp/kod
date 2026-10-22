@@ -805,17 +805,6 @@ mod plan_proptests {
 
     use super::*;
     use proptest::prelude::*;
-
-    fn status_strategy() -> impl Strategy<Value = PlanStatus> {
-        prop::sample::select(vec![
-            PlanStatus::Pending,
-            PlanStatus::InProgress,
-            PlanStatus::Done,
-            PlanStatus::Blocked,
-            PlanStatus::Skipped,
-        ])
-    }
-
     /// A plan of 0..=8 steps, each with a short text.
     fn plan_strategy() -> impl Strategy<Value = Plan> {
         prop::collection::vec("[a-z ]{1,20}", 0..=8).prop_map(|texts| Plan::new("test goal", texts))

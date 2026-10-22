@@ -51,6 +51,12 @@ field_reassign_with_default = "allow"
 # wrong about the fix. Leave the docs as prose and allow the lint.
 doc_lazy_continuation = "allow"
 
+# `doc_overindented_list_items`: the same class of warning as
+# `doc_lazy_continuation` -- clippy's Markdown-list indentation rules are
+# stricter than the doc comments in this workspace use. Fires on the
+# same continuation-line pattern. Allowed for the same reason.
+doc_overindented_list_items = "allow"
+
 # `too_many_arguments`: several functions legitimately thread many
 # independent pieces of context (the engine's telemetry, the trace
 # builder's fields). The lint is correct that these are hard to

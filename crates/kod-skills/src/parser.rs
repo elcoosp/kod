@@ -202,10 +202,7 @@ impl SkillParser {
         // T5-C31: double quotes first, then single.
         let pattern = format!("{}=\"", attr);
         let mut search_at = 0;
-        loop {
-            let Some(found) = tag[search_at..].find(&pattern) else {
-                break;
-            };
+        while let Some(found) = tag[search_at..].find(&pattern) {
             let idx = search_at + found;
             let preceded_ok = tag[..idx].chars().last().is_none_or(|c| c.is_whitespace());
             if preceded_ok {

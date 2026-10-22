@@ -1007,12 +1007,6 @@ mod extract_retry_hints_proptests {
     fn retry_after_header() -> impl Strategy<Value = (String, String)> {
         (0u64..10_000u64).prop_map(|n| hdr("Retry-After", &n.to_string()))
     }
-
-    /// A valid `retry-after-ms` header.
-    fn retry_after_ms_header() -> impl Strategy<Value = (String, String)> {
-        (0u64..60_000u64).prop_map(|n| hdr("retry-after-ms", &n.to_string()))
-    }
-
     /// An arbitrary header pair, header name from a finite set that
     /// includes the four the function recognises and one it does not.
     fn arbitrary_header() -> impl Strategy<Value = (String, String)> {
@@ -1146,8 +1140,8 @@ mod extract_retry_hints_proptests {
         let at_cap =
             extract_retry_hints(Some(429), &[hdr("Retry-After", &cap_secs.to_string())], "");
         assert_eq!(at_cap.delay, Some(HINT_CAP));
-        assert_eq!(
-            at_cap.cap_declined, false,
+        assert!(
+            !at_cap.cap_declined,
             "a delay of exactly HINT_CAP must NOT decline (uses > not >=)",
         );
 
@@ -1191,6 +1185,6 @@ mod extract_retry_hints_proptests {
             "",
         );
         assert_eq!(r.delay, None);
-        assert_eq!(r.cap_declined, false);
+        assert!(!r.cap_declined);
     }
 }

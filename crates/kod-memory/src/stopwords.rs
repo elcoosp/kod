@@ -407,14 +407,6 @@ mod stopwords_proptests {
 
     use super::*;
     use proptest::prelude::*;
-
-    /// A word-like string with no `is_alphanumeric` gap: letters,
-    /// digits, and a common suffix. Keeps the generator inside the
-    /// stemmer's domain.
-    fn wordy() -> impl Strategy<Value = String> {
-        "[a-zA-Z]{2,20}"
-    }
-
     proptest! {
         /// **The contract.** No token in the output is a stopword.
         ///

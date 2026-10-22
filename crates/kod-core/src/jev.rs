@@ -1094,7 +1094,7 @@ mod jev_redaction_proptests {
     //! the separators.
     use super::*;
     use proptest::prelude::*;
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     /// A Unix absolute path built from a random suffix. Long enough
     /// to be distinctive (so a false positive cannot accidentally

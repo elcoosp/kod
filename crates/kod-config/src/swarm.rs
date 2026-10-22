@@ -350,11 +350,11 @@ mod swarm_config_proptests {
         assert_eq!(parsed.isolation, d.isolation);
         // Effort compared via `toml::Value` so no derive is forced on
         // a production type for the test's sake.
-        let p_root = toml::Value::try_from(&parsed.root_effort).expect("root serialize");
-        let d_root = toml::Value::try_from(&d.root_effort).expect("root default serialize");
+        let p_root = toml::Value::try_from(parsed.root_effort).expect("root serialize");
+        let d_root = toml::Value::try_from(d.root_effort).expect("root default serialize");
         assert_eq!(p_root, d_root, "root_effort default not reapplied");
-        let p_worker = toml::Value::try_from(&parsed.worker_effort).expect("worker serialize");
-        let d_worker = toml::Value::try_from(&d.worker_effort).expect("worker default serialize");
+        let p_worker = toml::Value::try_from(parsed.worker_effort).expect("worker serialize");
+        let d_worker = toml::Value::try_from(d.worker_effort).expect("worker default serialize");
         assert_eq!(p_worker, d_worker, "worker_effort default not reapplied");
     }
 }

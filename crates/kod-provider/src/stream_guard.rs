@@ -699,8 +699,7 @@ mod stream_guard_proptests {
         /// unbounded string.
         #[test]
         fn prop_header_runaway_threshold(count in 0usize..40) {
-            let text: String = std::iter::repeat("## heading\n")
-                .take(count)
+            let text: String = std::iter::repeat_n("## heading\n", count)
                 .collect();
             let fired = detect_header_runaway(text.as_bytes());
             if count >= 36 {
@@ -717,8 +716,8 @@ mod stream_guard_proptests {
 
         #[test]
         fn prop_prose_resets_header_run(a in 0usize..35, b in 0usize..35) {
-            let block_a: String = std::iter::repeat("## heading\n").take(a).collect();
-            let block_b: String = std::iter::repeat("## heading\n").take(b).collect();
+            let block_a: String = std::iter::repeat_n("## heading\n", a).collect();
+            let block_b: String = std::iter::repeat_n("## heading\n", b).collect();
             let text = format!("{}\nplain prose line\n\n{}", block_a, block_b);
             let fired = detect_header_runaway(text.as_bytes());
             prop_assert!(!fired, "fired with {} + prose + {} headings", a, b);

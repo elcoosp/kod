@@ -411,7 +411,7 @@ mod image_budget_proptests {
         let mut frames: Vec<ImageFrame> = Vec::new();
         let report = apply_image_budget(&mut frames, &ImageBudgetPolicy::default());
         assert!(frames.is_empty());
-        assert_eq!(report.any_dropped(), false);
+        assert!(!report.any_dropped());
         assert_eq!(report.total_dropped(), 0);
     }
 

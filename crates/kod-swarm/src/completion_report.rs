@@ -426,10 +426,10 @@ mod proptests {
             f1 in "[a-zA-Z0-9]{1,30}",
             f2 in "[a-zA-Z0-9]{1,30}",
         ) {
-            let text = valid_block(&status, &summary, &validation, &f1, &f2);
+            let text = valid_block(status, &summary, &validation, &f1, &f2);
             let r = parse(&text);
             prop_assert!(r.had_block);
-            prop_assert_eq!(r.status, ReportStatus::parse(&status));
+            prop_assert_eq!(r.status, ReportStatus::parse(status));
             prop_assert_eq!(r.summary, summary.trim());
             prop_assert_eq!(r.validation.as_deref(), Some(validation.trim()));
             prop_assert_eq!(r.followups.len(), 2);
@@ -460,7 +460,7 @@ mod proptests {
                 "<completion-report status={status}>\nsummary: x\n</completion-report>",
             );
             let r = parse(&text);
-            prop_assert_eq!(r.status, ReportStatus::parse(&status));
+            prop_assert_eq!(r.status, ReportStatus::parse(status));
         }
 
         /// **Failing-first.** An attribute containing the substring

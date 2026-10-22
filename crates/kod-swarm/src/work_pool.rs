@@ -898,7 +898,7 @@ mod take_batch_proptests {
             let before = pool.queued_len();
             let batch = pool.take_batch(&agent_id).expect("non-empty queue, non-zero budget");
             let after = pool.queued_len();
-            prop_assert!(batch.items.len() >= 1, "empty batch from non-empty queue");
+            prop_assert!(!batch.items.is_empty(), "empty batch from non-empty queue");
             prop_assert!(
                 batch.items.len() <= budget,
                 "batch of {} > budget {}", batch.items.len(), budget,
