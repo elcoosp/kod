@@ -167,3 +167,57 @@ files unconditionally.
 (18 pre-session + 2 rounds beyond the first handoff), gate green,
 coverage 51.9% → 66.25%, two test-side bugs found and fixed, the
 mock HTTP scaffold extracted and shared. The user's call.
+
+## Addendum 4 (2026-10-22, coverage after the wrapper rounds)
+
+Coverage at this commit: **67.89%** (4395 / 6474 lines).
+
+Two rounds since addendum 3:
+
+| Commit | What | Tests |
+|---|---|---|
+| `08959d3` | `run_agent` wrapper against a mock endpoint | 1 |
+| `e7c717e` | `run_chat` spawns, hits the mock, exits on quit/EOF | 2 |
+
+### `run_chat` is the last spawn-based wrapper
+
+`run_chat` reads stdin with `stdin.lock().read_line()`, not
+crossterm — so a piped child process drives it without a PTY.
+`run_chat_wrapper.rs` spawns the built binary with
+`tokio::process::Command`, feeds `hi\nquit\n`, and asserts on exit
+code + mock hit counter. The 20s timeout kills a hang faster than
+nextest's default 60s terminate-after.
+
+### The cheap tier is exhausted
+
+Every remaining uncovered target needs infrastructure the scriptable
+pattern cannot provide:
+
+- **`run_tui`** — PTY. `tui_e2e`'s `harness::TestEnv` is the
+  reference. Multi-round project.
+- **`run_acp` full session** — `acp_handshake.rs` covers the spawn +
+  `initialize` handshake; a `session/new` + `session/prompt` round
+  needs a protocol harness and a model.
+- **`run_tests`** — wraps `cargo test`, out of scope for a unit test.
+- **`run_if_bench`** — runs the if-bench eval against a live endpoint,
+  needs a real LLM.
+- **Small residuals** (`skills new/remove/rename/copy/export`,
+  `config init-from`, `memory add/forget`) — each 5–15 lines, and
+  the test code dwarfs the coverage win. A spawn-based sweep could
+  close another 50–100 lines, but that's the last scriptable round.
+
+### Session totals
+
+- Coverage: **51.9% → 67.89%**
+- Commits since `v0.1.19`: `git rev-list --count v0.1.19..HEAD`
+- Test files: 17 new, 2 extended
+- Shared scaffold: `tests/common/mock_llm.rs`
+- Bugs the tests found: 2 (`admin_models_mock` provider typo, `run_swarm` context window)
+
+### The tag
+
+`v0.1.20` is defensible at this commit: gate green, coverage materially
+higher, two test-side bugs fixed, the CI gap closed at `daedfab`. The
+one thing unverified by the local gate: `daedfab`'s `bubblewrap` install
+on `ubuntu-latest` runs only on a push. Watch `live-integrations` after
+pushing; `git revert daedfab` is the whole answer if it fails.
