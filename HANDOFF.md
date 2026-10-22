@@ -316,8 +316,8 @@ coverage. **`kod-memory` is done as a script target.**
 - Commits: 38 (31 unpushed)
 - Test files: 22 new across `kod-cli` (18) and `kod-memory` (4)
 - Coverage:
-  - `kod-cli`: 51.9% → 68.29%
-  - `kod-memory`: 91.1% → 91.32%
+  - `kod-cli`: 51.9% → 68.46%
+  - `kod-memory`: 91.1% → 91.57%
   - workspace: 83.78% → 83.80% (the 16.75-point move in `kod-cli` dominates)
 
 ### The scripted arc has ended
