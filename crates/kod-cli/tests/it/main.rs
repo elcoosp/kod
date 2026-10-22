@@ -22,6 +22,7 @@ mod fixtures_cli;
 mod fixture_save_traces;
 mod integration_tests;
 mod jev_edit_search;
+mod kod_prompt_mock;
 mod map_root_override;
 mod memory_admin_paths;
 mod memory_manager_paths;
