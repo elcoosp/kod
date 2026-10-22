@@ -10,6 +10,7 @@ mod config_migrate;
 mod fixtures_cli;
 mod integration_tests;
 mod memory_admin_paths;
+mod memory_paths;
 mod observability_json;
 mod observability_paths;
 mod observability_render;

@@ -45,8 +45,9 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                     content.len(),
                 ),
                 Err(e) => {
-                    eprintln!("Could not store memory entry: {e}");
-                    std::process::exit(1);
+                    return Err(KodError::Internal(format!(
+                        "could not store memory entry: {e}"
+                    )));
                 }
             }
             Ok(())
@@ -207,8 +208,9 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                     println!("Deleted {}", &entry.id.as_uuid().to_string()[..8]);
                 }
                 None => {
-                    eprintln!("No entry with id prefix {:?}.", id);
-                    std::process::exit(1);
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("no entry with id prefix {id:?}"),
+                    });
                 }
             }
             Ok(())
@@ -219,10 +221,9 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                 use std::io::Write;
                 let _ = std::io::stderr().flush();
                 let mut line = String::new();
-                if std::io::stdin().read_line(&mut line).is_err() {
-                    eprintln!("(input error — aborting)");
-                    std::process::exit(1);
-                }
+                std::io::stdin()
+                    .read_line(&mut line)
+                    .map_err(KodError::Io)?;
                 if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
                     println!("Aborted.");
                     return Ok(());
@@ -355,8 +356,9 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                 .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
             let dir = home.join(".kod").join("sessions");
             if !dir.is_dir() {
-                eprintln!("No session logs at {}.", dir.display());
-                std::process::exit(1);
+                return Err(KodError::FileNotFound {
+                    path: dir.display().to_string(),
+                });
             }
             let mut newest: Option<std::path::PathBuf> = None;
             for e in std::fs::read_dir(&dir).map_err(KodError::Io)? {
@@ -376,8 +378,9 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     Ok(())
                 }
                 None => {
-                    eprintln!("No .jsonl files in {}.", dir.display());
-                    std::process::exit(1);
+                    return Err(KodError::FileNotFound {
+                        path: dir.display().to_string(),
+                    });
                 }
             }
         }
@@ -461,10 +464,10 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     if !added.is_empty() {
                         eprintln!("  added tools:   {}", added.join(", "));
                     }
-                    eprintln!(
-                        "Pass --force to revive anyway, or rebuild the session with the tools it used.",
-                    );
-                    std::process::exit(1);
+                    return Err(KodError::PermissionDenied {
+                    action: "revive".to_string(),
+                    reason: "session references tools it cannot load; pass --force to revive anyway, or rebuild the session with the tools it used".to_string(),
+                });
                 }
             }
             Ok(())
