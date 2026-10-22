@@ -19,6 +19,7 @@ mod memory_paths;
 mod observability_json;
 mod observability_paths;
 mod observability_render;
+mod observability_tune_migrate;
 mod policy_explain;
 mod prompt_mock;
 mod prompt_remote_paths;
