@@ -503,6 +503,34 @@ jobs:
         cargo nextest run -p kod-mcp --locked --no-fail-fast \
           --run-ignored=only -E 'test(real_filesystem)'
 
+    # `sandbox_containment` is the same class of test as
+    # `real_filesystem` above: `#[ignore]`d by design, with a runtime
+    # prereq check inside the body. It was the only such test without
+    # a CI step, so a regression in the containment invariant could
+    # not be caught here. bwrap is not preinstalled on the runner;
+    # install it, and fail the job if the test body takes the
+    # "skipping:" branch -- a skipped containment test in CI is the
+    # gap this step exists to close.
+    - name: Install bubblewrap (sandbox primitive for containment tests)
+      run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+    - name: Sandbox containment tests (bwrap)
+      run: |
+        set -euo pipefail
+        LOG=$(mktemp)
+        if ! cargo test -p kod-tools --test it \
+          -- --ignored --nocapture sandbox_containment >"$LOG" 2>&1; then
+          echo "sandbox_containment failed; full output:" >&2
+          cat "$LOG" >&2
+          exit 1
+        fi
+        if grep -q 'skipping:' "$LOG"; then
+          echo "sandbox_containment skipped; bwrap not usable on the runner:" >&2
+          grep 'skipping:' "$LOG" >&2
+          exit 1
+        fi
+        echo "sandbox_containment passed with bwrap"
+
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
