@@ -552,6 +552,8 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
     let outcome = match call.await {
         Ok(r) => r,
         Err(e) => {
+            // Same rule: release before responding.
+            server.in_flight.lock().await.remove(&session_id);
             server
                 .respond_error(req_id, -32000, &format!("engine task panicked: {e}"))
                 .await;
@@ -563,6 +565,20 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
             // The turn ended. Text already streamed through
             // `session/update`; the response carries only the stop
             // reason, as the spec requires.
+            //
+            // Release the busy flag *before* the response frame is
+            // written. The wrapper (`tokio::spawn` in the dispatch
+            // arm) also removes it as a panic safety net, but only
+            // after `run_prompt` returns -- which is *after* the
+            // response is on the wire. A client that reads the
+            // response and immediately sends the next prompt can
+            // therefore see -32002 ("session is busy") if the
+            // wrapper has not run yet. On a busy scheduler that gap
+            // is real and reproducible; see
+            // `kod-core-serve/tests/it/in_flight_release.rs`.
+            // HashSet::remove on an absent key is a no-op, so the
+            // wrapper's cleanup remains safe.
+            server.in_flight.lock().await.remove(&session_id);
             server
                 .respond(req_id, json!({"stopReason": "end_turn"}))
                 .await;
@@ -574,6 +590,11 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
             } else {
                 "refusal"
             };
+            // Same ordering rule as the Ok arm: release in_flight
+            // before the response frame, so a client that reacts to
+            // the failure by retrying immediately is not rejected
+            // with -32002.
+            server.in_flight.lock().await.remove(&session_id);
             server.respond(req_id, json!({"stopReason": stop})).await;
         }
     }
