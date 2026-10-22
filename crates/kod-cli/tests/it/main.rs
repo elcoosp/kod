@@ -15,6 +15,7 @@ mod config_migrate;
 mod config_remaining_paths;
 mod fixtures_cli;
 mod integration_tests;
+mod map_root_override;
 mod memory_admin_paths;
 mod memory_manager_paths;
 mod memory_paths;

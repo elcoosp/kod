@@ -605,8 +605,18 @@ pub async fn run_tests() -> Result<()> {
 }
 
 pub async fn run_map(max_chars: usize) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| KodError::Config(format!("Could not determine working directory: {}", e)))?;
+    // `KOD_MAP_ROOT` overrides the directory the map is built from.
+    // The command is a read of the repo the caller is in; a test needs
+    // to point it at a temp dir without changing the process cwd (a
+    // global, unsafe under a parallel runner). Absent, behavior is
+    // unchanged. Same override idiom as `KOD_CONFIG_DIR`,
+    // `KOD_FIXTURES_DIR`, `KOD_SESSIONS_DIR`, and `KOD_UPDATE_URL`.
+    let cwd = match std::env::var_os("KOD_MAP_ROOT") {
+        Some(root) if !root.is_empty() => std::path::PathBuf::from(root),
+        _ => std::env::current_dir().map_err(|e| {
+            KodError::Config(format!("Could not determine working directory: {}", e))
+        })?,
+    };
     let map = kod_core_quality::repomap::build_repo_map(&cwd);
     let rendered = map.render(max_chars);
     print!("{}", rendered);
