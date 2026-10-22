@@ -479,8 +479,14 @@ pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<
         return Ok(());
     }
     if dest.exists() && !force {
-        eprintln!("Refusing to overwrite {} — pass --force.", dest.display());
-        std::process::exit(1);
+        // A library function must not terminate the process: the
+        // caller (`commands::run`) already maps `Err` to exit code 1,
+        // and `process::exit` here would skip `Drop` on everything
+        // still alive (the tracing subscriber's flush, any shutdown
+        // hooks) for a condition that is a plain argument mistake.
+        return Err(KodError::InvalidParameters {
+            reason: format!("refusing to overwrite {} — pass --force", dest.display()),
+        });
     }
     if let Some(parent) = dest.parent()
         && !parent.as_os_str().is_empty()

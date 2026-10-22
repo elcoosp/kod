@@ -16,6 +16,7 @@ mod observability_render;
 mod policy_explain;
 mod prompt_mock;
 mod replay;
+mod skills_config_cli;
 mod swarm_cli_mock;
 mod truncate_helper_sites;
 #[cfg(unix)]

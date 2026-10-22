@@ -11,11 +11,11 @@ use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
 /// `kod skills` subcommands (list / validate / new / show / edit / remove).
-mod skills;
+pub mod skills;
 pub(crate) use skills::*;
 
 /// `kod config` subcommands (show / path / edit / migrate / validate).
-mod config;
+pub mod config;
 pub(crate) use config::*;
 
 /// `kod memory`, `kod sessions`, `kod replay`, `kod checkpoint`.
