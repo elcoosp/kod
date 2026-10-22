@@ -5,6 +5,7 @@
 //! instead of one per file.
 
 mod acp_handshake;
+mod admin_models_mock;
 pub mod common;
 mod config_migrate;
 mod config_remaining_paths;
