@@ -304,3 +304,68 @@ coverage. **`kod-memory` is done as a script target.**
 | `kod-cli` | 2,034 | 68.2% | exhausted at the script level (addendum 5) |
 | **`kod-lsp`** | **449** | **63.9%** | **no — worth a recon** |
 | `kod-core-serve` | 413 | 80.5% | partially via `serve_roundtrip` and `acp_handshake` |
+
+## Addendum 8 (2026-10-22, session close)
+
+**Workspace coverage at this commit:** 83.80% (86360 / 103053 lines).
+**kod-cli:** 68.29% (last measured at `d44c542`; unchanged by the
+`kod-memory` rounds since).
+**kod-memory:** 91.32% (addendum 7).
+
+### Session totals since `v0.1.19`
+
+- Commits: 38 (31 unpushed)
+- Test files: 22 new across `kod-cli` (18) and `kod-memory` (4)
+- Coverage:
+  - `kod-cli`: 51.9% → 68.29%
+  - `kod-memory`: 91.1% → 91.32%
+  - workspace: 83.78% → 83.80% (the 16.75-point move in `kod-cli` dominates)
+
+### The scripted arc has ended
+
+The last round that added more than 50 lines was `8044aa6` (2026-10-22,
+`remote_clients`). Every round since has added 3–15 lines, and the
+failure rate has climbed from ~15% to ~80% across the last four
+`kod-memory` rounds. The failures were all plumbing, not test logic:
+
+| Round | Failure |
+|---|---|
+| `manager_untested` | `&` to a by-value `PathBuf` (E0308) |
+| `embedder_untested` | `awk` mod-insertion silently no-op'd; commit landed embedder-only |
+| `pending_memory_untested` (try 1) | `MemoryId` private re-export path (E0603); partial moves of non-`Copy` `MemoryId` (E0382) |
+| recon for `kod-lsp` / `kod-core-serve` | `cargo llvm-cov clean` wiped profdata; `report` returned empty |
+
+**The assertions and scenarios have been right every time since the
+`remove_batch` correction.** The codegen format's weak point is
+file-lifecycle: mod insertions, `git add` lists, import paths, and
+profdata state. A future session should either (a) treat each script
+as one small verifiable change with its own `cargo check`, or (b)
+write the tests by hand with the same guard discipline.
+
+### What's genuinely left, and why none of it is scriptable
+
+| Target | Missed | Why session-shaped |
+|---|---|---|
+| `kod-core/jev_advisor.rs` | 1,293 | every method starts `let jev = self.jev_client()?;` — needs a live Jev service |
+| `kod-core/engine/tool_dispatch.rs` | 564 | `pub(crate)` methods, needs in-src `#[cfg(test)]` + mock tools |
+| `kod-tui/main_loop.rs` | 3,060 | PTY + `TestEnv` harness; multi-round |
+| `kod-lsp/client.rs` | ~449 (crate total) | live rust-analyzer handshake, guarded by `binary_on_path` |
+| `kod-core-serve` ACP | ~413 | already has 5 test files (`acp_approval`, `acp_session`, `acp_cancel`, `in_flight_release`, `manager`); remaining lines need a scripted ACP peer |
+
+`kod-core-serve`'s ACP surface has more existing coverage than the
+2026-10-22 per-crate table showed — 5 test files plus 77 in-src tests.
+The remaining 413 missed lines are likely the socket transport and
+daemon lifecycle, which need real spawns, not another `run_*` call.
+
+### The tag
+
+`v0.1.20` is defensible at this commit: gate green at 83.80%,
+`kod-cli` up 16.75 points, one production CI fix (`daedfab`), one
+platform gate fix (`51fdc74`), two test-side bugs found and fixed
+(`admin_models_mock` provider typo, `run_swarm` context window). The
+one verification this session cannot provide: `daedfab`'s
+`bubblewrap` install on `ubuntu-latest` runs only on a push. Watch
+`live-integrations` after pushing; `git revert daedfab` is the
+whole answer if it fails.
+
+The tag itself is the user's call.
