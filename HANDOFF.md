@@ -1,9 +1,11 @@
 # kod — current handoff
 
-**Tag:** `v0.1.18`, on origin. 8 commits since `v0.1.17`.
+**Tag:** `v0.1.19`, on origin. 8 commits since `v0.1.18`.
 **Branch:** `main`, level with `origin/main`.
 **Gate:** green at the tagged commit (full workspace).
 **Tree:** clean.
+**kod-cli coverage:** 47.3% (3,057/6,461), up from 29.9% at `v0.1.16`.
+
 
 
 
