@@ -779,53 +779,60 @@ pub async fn run_agent(
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
 
-    // S10: one bootstrap for every engine-building command. The
-    // pre-extraction shape had each command install a different
-    // subset of config-derived settings — `run_agent` never set
-    // `network_access` or `generation_defaults`, `run_swarm` never
-    // set hooks or limits. That is exactly the drift the helper
-    // exists to prevent.
-    let engine = engine_from_config(
-        &config,
-        EngineBootstrapOptions {
-            model_override: model.as_deref(),
-            cli_preset: cli_preset.as_deref(),
-            // `kod agent` has no interactive consumer; a Require
-            // sandbox would fail every command with no UI to relax it.
-            require_sandbox: false,
-            install_mcp: true,
-            db_path: None,
-            install_embedder: true,
-            install_policy: true,
-
-            ..Default::default()
-        },
-    )
-    .await?;
-
-    engine.start().await?;
+    // S10: one bootstrap for every engine-building command.
+    let opts = EngineBootstrapOptions {
+        model_override: model.as_deref(),
+        cli_preset: cli_preset.as_deref(),
+        // `kod agent` has no interactive consumer; a Require
+        // sandbox would fail every command with no UI to relax it.
+        require_sandbox: false,
+        install_mcp: true,
+        db_path: None,
+        install_embedder: true,
+        install_policy: true,
+        ..Default::default()
+    };
 
     println!("Starting agent '{}' with goal: {}", name, goal);
+    let text = run_agent_inner(goal, &config, opts).await?;
+    if let Some(text) = text {
+        println!("Agent {}: {}", name, text);
+    }
+    Ok(())
+}
 
-    // H-C9: capture the result and shut down before propagating. The
-    // pre-fix `?` skipped `engine.shutdown()`, leaving MCP children
-    // and the redb handle to be torn down by process exit.
+/// The testable core of [`run_agent`].
+///
+/// Separated from the I/O wrapper so an integration test can drive a
+/// real agent run through a real engine (with a `MockProvider`
+/// installed via [`EngineBootstrapOptions::provider_override`])
+/// without reading `~/.kod`, spawning a process, or capturing stdout.
+/// `run_agent` keeps the two `println!`s — "Starting agent …" before
+/// and "Agent …: …" after — and delegates everything else here.
+///
+/// Returns `Ok(None)` when the engine produced no text (an empty
+/// completion, or a turn that only made tool calls). The wrapper
+/// prints nothing in that case.
+pub async fn run_agent_inner(
+    goal: String,
+    config: &KodConfig,
+    opts: EngineBootstrapOptions<'_>,
+) -> Result<Option<String>> {
+    let engine = engine_from_config(config, opts).await?;
+    engine.start().await?;
+
+    // H-C9: capture the result and shut down before propagating.
     let response_result = engine.process(&goal).await;
-    // Bug-hunt: the pre-fix shape dropped a shutdown
-    // failure. A failed shutdown leaves MCP children and
-    // background tasks to be killed by process exit rather
-    // than torn down cleanly. The process is about to end
-    // either way, but the user should see the failure.
+    // Bug-hunt: a failed shutdown leaves MCP children and background
+    // tasks to be killed by process exit rather than torn down
+    // cleanly. Surface it to stderr; the turn's own error (if any)
+    // is what the caller gets.
     if let Err(e) = engine.shutdown().await {
         eprintln!("warning: engine shutdown failed: {e}");
     }
     let response = response_result?;
 
-    if let Some(text) = response.text {
-        println!("Agent {}: {}", name, text);
-    }
-
-    Ok(())
+    Ok(response.text)
 }
 
 pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {

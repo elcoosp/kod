@@ -27,7 +27,7 @@ pub mod swarm;
 pub(crate) use swarm::*;
 
 /// `kod chat`, `kod agent`, `kod acp`.
-mod chat;
+pub mod chat;
 pub(crate) use chat::*;
 
 /// Administrative subcommands.
