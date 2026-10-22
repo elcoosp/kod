@@ -96,3 +96,74 @@ and this handoff accurate. The user's call.
 ## Session-arc totals (since `v0.1.16`)
 
 - Coverage: `kod-cli` **29.9% → 61.71%**
+
+## Addendum 3 (2026-10-22, session close)
+
+Coverage at the final commit: **66.25%** (4289 / 6474 lines).
+Two further rounds after addendum 2:
+
+| Commit | What | Tests |
+|---|---|---|
+| `473e47b` | refactor: extract shared `MockLlm` into `tests/common` | — |
+| `578eafc` | `run_swarm` wrapper against a scripted mock endpoint | 1 |
+| (this) | handoff addendum 3 | — |
+
+### The mock HTTP scaffold is now shared, and it pays off
+
+`tests/common/mock_llm.rs` is one axum server with `GET /v1/models`
+and `POST /v1/chat/completions` (SSE + non-streaming, branched on the
+request's `stream` field) plus a hit counter. Two callers:
+
+- `kod_prompt_mock.rs` — `run_prompt`, `run_streaming_prompt`
+- `run_swarm_wrapper.rs` — `run_swarm`
+
+`kod_prompt_mock.rs` shrank from 287 to ~130 lines with the same four
+tests; the `run_swarm` round that followed was ~110 lines of test
+code and one fix (the default `KodConfig` context window is too small
+for the swarm's tool schemas; set `ep.context_window = 32768`, the
+same value `swarm_cli_mock.rs` and `agent_mock.rs` use).
+
+Deliberately NOT extracted: `admin_models_mock` (its `/v1/models`
+handler is configurable per test) and `tui_e2e/mock_llm` (PTY-specific
+with `MockStep` scripting for tool calls). Their handlers have
+different jobs.
+
+### Two bugs the tests found
+
+1. `admin_models_mock.rs` used `provider = "openai_compatible"`
+   (underscore). The parser accepts `openai-compatible` (hyphen); with
+   the typo the whole `[[llm.endpoints]]` block was dropped and the
+   provider fell back to `localhost:11434`. The test passed anyway
+   because whatever answered there returned a plausible response.
+   Fixed at `476d73f`.
+2. `run_swarm`'s default `KodConfig` context window (6144-char prompt
+   budget) is too small for the swarm's tool schemas (~9700 chars).
+   The `run_swarm` test hit this as `Invalid tool parameters: the
+   request is too long for this model`. Fixed by setting
+   `context_window = 32768` in the test config (`578eafc`).
+
+### Remaining uncovered targets (each is a session opener)
+
+- `run_chat` / `run_tui` — PTY. `tui_e2e.rs`'s `harness::TestEnv`
+  is the reference; the `MockLlm` scaffold (now shared) is what the
+  mock LLM endpoint should be.
+- `run_acp` — stdin/stdout JSON-RPC framing. Needs a protocol harness.
+- `run_agent` full path — mostly covered by `agent_mock.rs`; the
+  wrapper itself is a 15-line function like `run_prompt` and could use
+  the shared `MockLlm` the same way, ~30 lines.
+- `run_tests` / `run_if_bench` — cargo/bench wrappers. Out of scope.
+
+### Note on the last two amend fixes
+
+Both `7990494` and `578eafc` were amended to include
+`crates/kod-cli/tests/it/main.rs` — the `mod` declaration for the new
+test file was written by a step that ran after `git add` had already
+staged only the test file. Every codegen round should `git add` both
+files unconditionally.
+
+### Tag
+
+`v0.1.20` is defensible at this commit: 20 commits since `v0.1.19`
+(18 pre-session + 2 rounds beyond the first handoff), gate green,
+coverage 51.9% → 66.25%, two test-side bugs found and fixed, the
+mock HTTP scaffold extracted and shared. The user's call.
