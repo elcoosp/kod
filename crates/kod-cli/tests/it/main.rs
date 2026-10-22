@@ -33,3 +33,4 @@ mod swarm_cli_mock;
 mod truncate_helper_sites;
 #[cfg(unix)]
 mod tui_e2e;
+mod update_mock;

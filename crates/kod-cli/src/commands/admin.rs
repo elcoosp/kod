@@ -257,7 +257,13 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
 pub async fn run_update() -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let repo = std::env::var("KOD_UPDATE_REPO").unwrap_or_else(|_| "elcoosp/kod".to_string());
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    // `KOD_UPDATE_URL` overrides the whole endpoint, not just the repo
+    // segment `KOD_UPDATE_REPO` fills. The override exists so a test
+    // can point the check at a loopback mock instead of GitHub's API —
+    // the same override idiom `KOD_CONFIG_DIR` and `KOD_FIXTURES_DIR`
+    // use. Absent, the URL is unchanged.
+    let url = std::env::var("KOD_UPDATE_URL")
+        .unwrap_or_else(|_| format!("https://api.github.com/repos/{repo}/releases/latest"));
 
     println!("Current: v{}", current);
     println!("Checking {} …", url);
