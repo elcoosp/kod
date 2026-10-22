@@ -16,6 +16,7 @@ mod observability_paths;
 mod observability_render;
 mod policy_explain;
 mod prompt_mock;
+mod prompt_remote_paths;
 mod replay;
 mod skills_config_cli;
 mod skills_missing_paths;

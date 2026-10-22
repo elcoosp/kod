@@ -49,7 +49,9 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
     write_half.flush().await.map_err(KodError::Io)?;
 
     let mut reader = BufReader::new(read_half).lines();
-    let mut errored = false;
+    // The daemon's error message, captured so the caller sees
+    // the real reason rather than a generic exit code.
+    let mut daemon_error: Option<String> = None;
     while let Some(line) = reader.next_line().await.map_err(KodError::Io)? {
         let v: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
@@ -84,15 +86,20 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
                     .and_then(|d| d.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("(no message)");
-                eprintln!("daemon error: {msg}");
-                errored = true;
+                daemon_error = Some(msg.to_string());
                 break;
             }
             _ => {}
         }
     }
-    if errored {
-        std::process::exit(1);
+    if let Some(msg) = daemon_error {
+        // A library function must not terminate the process: the
+        // caller (`commands::run`) already maps `Err` to exit code 1,
+        // and `process::exit` here would skip `Drop` on the tracing
+        // subscriber and any shutdown hooks for a daemon-side error
+        // the caller can act on. The M-49 fall-through below is the
+        // same shape; the two failure paths now agree.
+        return Err(KodError::InvalidState(format!("daemon error: {msg}")));
     }
     // M-49: the stream ended without a `done`/`error` frame — the
     // daemon died mid-stream. Exit non-zero so a truncated reply does
