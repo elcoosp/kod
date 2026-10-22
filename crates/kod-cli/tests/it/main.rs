@@ -37,6 +37,7 @@ mod prompt_mock;
 mod prompt_remote_daemon;
 mod prompt_remote_paths;
 mod replay;
+mod run_agent_wrapper;
 mod run_swarm_wrapper;
 #[cfg(unix)]
 mod remote_clients;
