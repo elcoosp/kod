@@ -10,6 +10,8 @@ mod admin_export_config;
 mod admin_init_profile_policy;
 mod admin_models_mock;
 mod agent_mock;
+#[cfg(unix)]
+mod chat_remote_guard;
 pub mod common;
 mod config_migrate;
 mod config_remaining_paths;
