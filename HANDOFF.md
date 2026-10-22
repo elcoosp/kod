@@ -308,9 +308,8 @@ coverage. **`kod-memory` is done as a script target.**
 ## Addendum 8 (2026-10-22, session close)
 
 **Workspace coverage at this commit:** 83.80% (86360 / 103053 lines).
-**kod-cli:** 68.29% (last measured at `d44c542`; unchanged by the
-`kod-memory` rounds since).
-**kod-memory:** 91.32% (addendum 7).
+**kod-cli:** 68.46% (4432 / 6474).
+**kod-memory:** 91.57% (5548 / 6059).
 
 ### Session totals since `v0.1.19`
 
