@@ -27,6 +27,7 @@ mod map_root_override;
 mod memory_admin_paths;
 mod memory_manager_paths;
 mod memory_paths;
+mod memory_residual;
 mod observability_json;
 mod observability_paths;
 mod observability_render;
