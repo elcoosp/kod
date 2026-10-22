@@ -1,9 +1,10 @@
 # kod — current handoff
 
-**Tag:** `v0.1.17`, on origin. Release workflow fired.
+**Tag:** `v0.1.18`, on origin. 8 commits since `v0.1.17`.
 **Branch:** `main`, level with `origin/main`.
-**Gate:** green at the v0.1.17 commit (full workspace).
+**Gate:** green at the tagged commit (full workspace).
 **Tree:** clean.
+
 
 
 Everything below is the state a session should start from. The
