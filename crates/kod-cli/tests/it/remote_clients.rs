@@ -60,7 +60,10 @@ async fn agent_remote_nonexistent_socket_is_invalid_state() {
         .await
         .expect_err("a nonexistent socket must be an error");
     let msg = err.to_string();
-    assert!(msg.contains("no daemon listening"), "unexpected error: {msg}");
+    assert!(
+        msg.contains("no daemon listening"),
+        "unexpected error: {msg}"
+    );
     assert!(msg.contains("kod serve"), "missing fix hint: {msg}");
 }
 
@@ -111,7 +114,10 @@ async fn swarm_remote_nonexistent_socket_is_invalid_state() {
         .await
         .expect_err("a nonexistent socket must be an error");
     let msg = err.to_string();
-    assert!(msg.contains("no daemon listening"), "unexpected error: {msg}");
+    assert!(
+        msg.contains("no daemon listening"),
+        "unexpected error: {msg}"
+    );
     assert!(msg.contains("kod serve"), "missing fix hint: {msg}");
 }
 

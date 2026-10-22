@@ -415,11 +415,7 @@ mod proptests {
     }
 
     fn arb_url_like() -> impl Strategy<Value = String> {
-        prop_oneof![
-            arb_valid_url(),
-            arb_adversarial(),
-            any::<String>(),
-        ]
+        prop_oneof![arb_valid_url(), arb_adversarial(), any::<String>(),]
     }
 
     proptest! {

@@ -19,9 +19,7 @@
 //! environment redirections are `HOME` (the fresh engine's DB) and
 //! `KOD_CONFIG_DIR` (its config load).
 use kod_cli::commands::observability::run_trace_replay;
-use kod_core_state::trace::{
-    RoundKind, RoundTrace, TurnOutcome, TurnTrace,
-};
+use kod_core_state::trace::{RoundKind, RoundTrace, TurnOutcome, TurnTrace};
 use kod_core_state::trace_writer::TraceWriter;
 use serial_test::serial;
 

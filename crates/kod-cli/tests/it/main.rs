@@ -18,8 +18,8 @@ mod config_remaining_paths;
 mod dispatch_arms;
 mod doctor_fix_paths;
 mod fixture_replay_serve;
-mod fixtures_cli;
 mod fixture_save_traces;
+mod fixtures_cli;
 mod integration_tests;
 mod jev_edit_search;
 mod kod_prompt_mock;
@@ -37,13 +37,13 @@ mod prompt_mock;
 #[cfg(unix)]
 mod prompt_remote_daemon;
 mod prompt_remote_paths;
+#[cfg(unix)]
+mod remote_clients;
 mod replay;
+mod residual_paths;
 mod run_agent_wrapper;
 mod run_chat_wrapper;
 mod run_swarm_wrapper;
-#[cfg(unix)]
-mod remote_clients;
-mod residual_paths;
 #[cfg(unix)]
 mod serve_roundtrip;
 mod sessions_dir_override;

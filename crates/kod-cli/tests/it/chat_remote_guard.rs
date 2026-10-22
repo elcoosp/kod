@@ -21,8 +21,5 @@ async fn chat_remote_nonexistent_socket_is_invalid_state() {
         msg.contains("no daemon listening"),
         "unexpected error: {msg}",
     );
-    assert!(
-        msg.contains("kod serve"),
-        "missing fix hint in: {msg}",
-    );
+    assert!(msg.contains("kod serve"), "missing fix hint in: {msg}",);
 }

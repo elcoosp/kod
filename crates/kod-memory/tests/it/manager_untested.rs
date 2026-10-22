@@ -158,8 +158,12 @@ async fn clear_short_term_leaves_long_term_alone() {
     let dir = TempDir::new().unwrap();
     let mgr = manager_in(dir.path());
 
-    mgr.store(MemoryType::ShortTerm, "short").await.expect("store");
-    mgr.store(MemoryType::LongTerm, "long").await.expect("store");
+    mgr.store(MemoryType::ShortTerm, "short")
+        .await
+        .expect("store");
+    mgr.store(MemoryType::LongTerm, "long")
+        .await
+        .expect("store");
 
     mgr.clear_short_term();
 
@@ -182,14 +186,24 @@ async fn clear_all_empties_both_tiers() {
     let dir = TempDir::new().unwrap();
     let mgr = manager_in(dir.path());
 
-    mgr.store(MemoryType::ShortTerm, "short").await.expect("store");
-    mgr.store(MemoryType::LongTerm, "long").await.expect("store");
+    mgr.store(MemoryType::ShortTerm, "short")
+        .await
+        .expect("store");
+    mgr.store(MemoryType::LongTerm, "long")
+        .await
+        .expect("store");
 
     mgr.clear_all().await.expect("clear_all");
 
-    assert!(mgr.get_all_short_term().is_empty(), "short-term after clear_all");
     assert!(
-        mgr.get_all_long_term().await.expect("read long-term").is_empty(),
+        mgr.get_all_short_term().is_empty(),
+        "short-term after clear_all"
+    );
+    assert!(
+        mgr.get_all_long_term()
+            .await
+            .expect("read long-term")
+            .is_empty(),
         "long-term after clear_all",
     );
 }
@@ -208,7 +222,9 @@ async fn close_releases_the_db_handle() {
     // takes `db_path: PathBuf` by value, and the reopen needs its own
     // path after the first handle consumed it.
     let mgr = MemoryManager::new(dir.path().join("m.redb"), 100).expect("manager");
-    mgr.store(MemoryType::LongTerm, "persisted").await.expect("store");
+    mgr.store(MemoryType::LongTerm, "persisted")
+        .await
+        .expect("store");
     mgr.close().await;
 
     // Reopen; a leaked lock would fail here.

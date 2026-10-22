@@ -15,9 +15,9 @@
 //! branch that `embedder_name` exists to report.
 use async_trait::async_trait;
 use kod_error::Result;
+use kod_memory::EmbeddingClient;
 use kod_memory::embedding::NoEmbedder;
 use kod_memory::manager::MemoryManager;
-use kod_memory::EmbeddingClient;
 use std::sync::Arc;
 use tempfile::TempDir;
 

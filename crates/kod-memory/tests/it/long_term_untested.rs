@@ -60,7 +60,10 @@ async fn get_all_on_empty_store_is_empty() {
     let tmp = TempDir::new().unwrap();
     let memory = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
     let all = memory.get_all().await.unwrap();
-    assert!(all.is_empty(), "empty store must yield empty vec, got {all:?}");
+    assert!(
+        all.is_empty(),
+        "empty store must yield empty vec, got {all:?}"
+    );
 }
 
 // ---- store_batch ---------------------------------------------------
@@ -72,11 +75,7 @@ async fn store_batch_writes_every_entry() {
     let tmp = TempDir::new().unwrap();
     let memory = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
 
-    let batch = vec![
-        create_entry("a"),
-        create_entry("b"),
-        create_entry("c"),
-    ];
+    let batch = vec![create_entry("a"), create_entry("b"), create_entry("c")];
     memory.store_batch(batch).await.unwrap();
 
     assert_eq!(

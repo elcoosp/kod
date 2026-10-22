@@ -7,7 +7,7 @@
 mod complete_retry;
 mod contracts;
 mod live;
+mod malformed_sse;
 mod prompt_cache_stability;
 mod stream_retry;
-mod malformed_sse;
 mod truncate_helper_sites;

@@ -67,7 +67,10 @@ fn memory_add_then_search_round_trips() {
     write_config(tmp.path());
     let env = env_for(tmp.path());
 
-    let add = run_kod(&["memory", "add", "remember this", "--tags", "demo,rust"], &env);
+    let add = run_kod(
+        &["memory", "add", "remember this", "--tags", "demo,rust"],
+        &env,
+    );
     assert!(
         add.status.success(),
         "memory add must exit 0: {}",

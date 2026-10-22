@@ -10,12 +10,10 @@
 //! the success arm builds an engine and is out of scope for this
 //! round.
 use kod_cli::commands::CheckpointAction;
+use kod_cli::commands::memory::run_checkpoint;
 use kod_cli::commands::observability::run_trace_replay;
 use kod_cli::commands::skills::{run_skills_validate, run_skills_validate_strict};
-use kod_cli::commands::memory::run_checkpoint;
-use kod_core_state::trace::{
-    RoundKind, RoundTrace, TurnOutcome, TurnTrace,
-};
+use kod_core_state::trace::{RoundKind, RoundTrace, TurnOutcome, TurnTrace};
 use kod_core_state::trace_writer::TraceWriter;
 use serial_test::serial;
 

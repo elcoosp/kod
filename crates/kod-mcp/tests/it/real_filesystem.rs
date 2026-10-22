@@ -137,7 +137,10 @@ async fn real_filesystem_server_reads_a_written_file() {
 
     // read_file: real path, real content.
     let args = serde_json::json!({ "path": target.to_string_lossy() });
-    let result = client.call_tool("read_file", args).await.expect("read_file");
+    let result = client
+        .call_tool("read_file", args)
+        .await
+        .expect("read_file");
     let rendered = result.render_text();
     assert!(
         rendered.contains("hello from a real MCP filesystem server"),

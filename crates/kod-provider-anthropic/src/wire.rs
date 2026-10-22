@@ -2217,8 +2217,8 @@ mod proptests {
             any::<usize>(),
             prop::collection::hash_map(0usize..100, "[a-z]{0,10}", 0..3),
         )
-            .prop_map(
-                |(finished, stream_error, inp, cr, cc, c1h, blocks)| AnthropicStreamState {
+            .prop_map(|(finished, stream_error, inp, cr, cc, c1h, blocks)| {
+                AnthropicStreamState {
                     finished,
                     stream_error,
                     input_tokens: inp,
@@ -2238,8 +2238,8 @@ mod proptests {
                             )
                         })
                         .collect::<HashMap<_, _>>(),
-                },
-            )
+                }
+            })
     }
 
     fn arb_line() -> impl Strategy<Value = String> {

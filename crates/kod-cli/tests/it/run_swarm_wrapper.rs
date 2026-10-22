@@ -74,11 +74,8 @@ fn write_swarm_config(cfg_dir: &std::path::Path, base_url: &str) {
 async fn run_swarm_hits_the_mock_endpoint() {
     let tmp = tempfile::TempDir::new().unwrap();
     let decompose = r#"[{"name":"alpha","description":"do the thing","expected_writes":[],"capability":"coding","depends_on":[]}]"#;
-    let mock = MockLlm::start_scripted(vec![
-        decompose.to_string(),
-        "agent said done".to_string(),
-    ])
-    .await;
+    let mock =
+        MockLlm::start_scripted(vec![decompose.to_string(), "agent said done".to_string()]).await;
     write_swarm_config(tmp.path(), &mock.base_url);
     let _home = EnvGuard::set("HOME", tmp.path());
     let _cfg = EnvGuard::set("KOD_CONFIG_DIR", tmp.path());

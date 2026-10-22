@@ -289,11 +289,9 @@ mod proptest_symbols {
     fn valid_snippets(lang: Lang) -> &'static [&'static str] {
         match lang {
             Lang::Python => &["def foo():\n    pass\n", "class Bar:\n    pass\n"],
-            Lang::JavaScript | Lang::TypeScript | Lang::Tsx => &[
-                "function f() {}\n",
-                "class C {}\n",
-                "const X = 1;\n",
-            ],
+            Lang::JavaScript | Lang::TypeScript | Lang::Tsx => {
+                &["function f() {}\n", "class C {}\n", "const X = 1;\n"]
+            }
             Lang::Go => &["func f() {}\n", "type T struct{}\n"],
             Lang::Ruby => &["def f; end\n", "class C; end\n", "module M; end\n"],
             Lang::Java => &["public class C {}\n", "interface I {}\n"],
@@ -305,9 +303,7 @@ mod proptest_symbols {
     fn allowed_kinds(lang: Lang) -> &'static [&'static str] {
         match lang {
             Lang::Python => &["def", "class"],
-            Lang::JavaScript | Lang::TypeScript | Lang::Tsx => {
-                &["function", "class", "const"]
-            }
+            Lang::JavaScript | Lang::TypeScript | Lang::Tsx => &["function", "class", "const"],
             Lang::Go => &["func", "type"],
             Lang::Ruby => &["def", "class", "module"],
             Lang::Java => &["class", "interface"],

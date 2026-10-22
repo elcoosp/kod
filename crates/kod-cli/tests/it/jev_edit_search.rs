@@ -6,8 +6,8 @@
 //! `KOD_CONFIG_DIR`; both edit commands read `$EDITOR`, which the
 //! tests set to `:` (the POSIX no-op builtin) so the spawn is
 //! deterministic and exits 0.
-use kod_cli::commands::config::run_config_edit;
 use kod_cli::commands::admin::run_jev_stats;
+use kod_cli::commands::config::run_config_edit;
 use kod_cli::commands::skills::{run_skills_edit, run_skills_search};
 use kod_core_state::session_log::SessionEntry;
 use serial_test::serial;

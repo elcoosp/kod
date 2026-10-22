@@ -127,10 +127,7 @@ fn trace_list_without_a_file_exits_zero() {
 #[test]
 fn fixture_list_on_empty_dir_exits_zero() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let out = run_kod(
-        &["fixture", "list"],
-        &[("KOD_FIXTURES_DIR", tmp.path())],
-    );
+    let out = run_kod(&["fixture", "list"], &[("KOD_FIXTURES_DIR", tmp.path())]);
     assert!(
         out.status.success(),
         "fixture list on empty dir must exit 0: {}",
@@ -233,7 +230,10 @@ fn _unused(_p: PathBuf) {}
 #[test]
 fn init_on_fresh_dir_exits_zero() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let out = run_kod(&["init"], &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())]);
+    let out = run_kod(
+        &["init"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
     assert!(
         out.status.success(),
         "init on a fresh config dir must exit 0: {}",
@@ -268,10 +268,7 @@ fn init_is_idempotent() {
 #[test]
 fn budget_show_without_a_log_exits_one() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let out = run_kod(
-        &["budget", "show"],
-        &[("KOD_SESSIONS_DIR", tmp.path())],
-    );
+    let out = run_kod(&["budget", "show"], &[("KOD_SESSIONS_DIR", tmp.path())]);
     assert_eq!(
         out.status.code(),
         Some(1),

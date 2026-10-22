@@ -7,10 +7,10 @@
 mod consolidate_panic;
 mod consolidation;
 mod embed_safe_lint;
-mod embedder_untested;
 mod embedder_panic;
+mod embedder_untested;
 mod long_term;
 mod long_term_untested;
 mod manager_untested;
-mod short_term;
 mod pending_memory_untested;
+mod short_term;

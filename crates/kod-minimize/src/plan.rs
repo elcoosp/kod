@@ -299,10 +299,7 @@ mod proptest_classify {
     /// input, the classifier must return `Single`.
     fn clean_cmd() -> impl Strategy<Value = String> {
         ".{0,100}".prop_filter("clean input", |s| {
-            !s.trim().is_empty()
-                && !s
-                    .chars()
-                    .any(|c| "|&;<>(){}\'\"\\".contains(c))
+            !s.trim().is_empty() && !s.chars().any(|c| "|&;<>(){}\'\"\\".contains(c))
         })
     }
 

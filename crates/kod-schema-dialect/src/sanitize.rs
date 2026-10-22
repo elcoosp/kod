@@ -675,8 +675,7 @@ mod proptest_sanitize {
     fn any_json() -> impl Strategy<Value = serde_json::Value> {
         any_leaf().prop_recursive(6, 64, 8, |inner| {
             prop_oneof![
-                prop::collection::vec(inner.clone(), 0..4)
-                    .prop_map(serde_json::Value::Array),
+                prop::collection::vec(inner.clone(), 0..4).prop_map(serde_json::Value::Array),
                 prop::collection::vec((".{1,12}", inner), 0..4).prop_map(|entries| {
                     let mut map = serde_json::Map::new();
                     for (k, v) in entries {

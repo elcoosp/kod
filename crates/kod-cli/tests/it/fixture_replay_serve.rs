@@ -59,7 +59,8 @@ async fn fixture_replay_rejects_a_path_like_name() {
         .await
         .expect_err("a path-like name must not resolve to a fixture path");
     assert!(
-        err.to_string().contains("could not determine fixtures directory"),
+        err.to_string()
+            .contains("could not determine fixtures directory"),
         "unexpected error: {err}",
     );
 }
