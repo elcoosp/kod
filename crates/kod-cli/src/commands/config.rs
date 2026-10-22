@@ -376,12 +376,12 @@ pub async fn run_config_validate() -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("{}: INVALID.", path.display());
-            eprintln!("  {}", e);
-            eprintln!();
-            eprintln!("Fix the file, or delete it to fall back to defaults:");
-            eprintln!("  rm {}", path.display());
-            std::process::exit(1);
+            return Err(KodError::Config(format!(
+                "{}: INVALID.\n  {}\n\nFix the file, or delete it to fall back to defaults:\n  rm {}",
+                path.display(),
+                e,
+                path.display(),
+            )));
         }
     }
 }
@@ -447,8 +447,9 @@ pub async fn run_config_show_raw() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
     if !path.exists() {
-        eprintln!("No config file at {}.", path.display());
-        std::process::exit(1);
+        return Err(KodError::FileNotFound {
+            path: path.display().to_string(),
+        });
     }
     let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
     print!("{}", content);

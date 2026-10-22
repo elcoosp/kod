@@ -7,6 +7,7 @@
 mod acp_handshake;
 pub mod common;
 mod config_migrate;
+mod config_remaining_paths;
 mod fixtures_cli;
 mod integration_tests;
 mod memory_admin_paths;
