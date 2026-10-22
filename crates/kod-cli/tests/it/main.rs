@@ -48,6 +48,7 @@ mod skills_config_cli;
 mod skills_missing_paths;
 mod skills_success_paths;
 mod swarm_cli_mock;
+mod trace_replay_success;
 mod truncate_helper_sites;
 #[cfg(unix)]
 mod tui_e2e;
