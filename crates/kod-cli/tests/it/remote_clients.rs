@@ -140,3 +140,31 @@ async fn swarm_remote_error_frame_is_err() {
         .expect_err("an error frame must be an Err");
     server.await.expect("fake daemon must not panic");
 }
+
+/// A `swarm_event` frame of kind `decomposed` followed by a `done`
+/// frame: `run_swarm_remote` prints the subtask list (via
+/// `print_swarm_event`) and then returns `Ok`. The other event kinds
+/// (`worktrees_merged`, `agent_retrying`, etc.) share the same dispatch
+/// and are not exercised here — one variant is enough to prove the
+/// `Some("swarm_event") => print_swarm_event` arm is reached.
+#[tokio::test]
+async fn swarm_remote_decomposed_event_is_ok() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (sock, server) = fake_daemon(
+        tmp.path(),
+        concat!(
+            "{\"v\":1,\"id\":\"swarm-1\",\"type\":\"swarm_event\",",
+            "\"data\":{\"kind\":\"decomposed\",\"subtasks\":[",
+            "{\"name\":\"alpha\",\"description\":\"do a\"},",
+            "{\"name\":\"beta\",\"description\":\"do b\"}",
+            "]}}\n",
+            "{\"v\":1,\"id\":\"swarm-1\",\"type\":\"done\",",
+            "\"data\":{\"merged\":\"synthesized\"}}\n",
+        )
+        .as_bytes(),
+    );
+    run_swarm_remote("hello".to_string(), None, false, Some(sock))
+        .await
+        .expect("decomposed event then done must be Ok");
+    server.await.expect("fake daemon must not panic");
+}

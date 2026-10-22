@@ -107,3 +107,51 @@ async fn closed_stream_without_done_is_err() {
         "unexpected error: {err}"
     );
 }
+
+/// A `chunk` frame with ordinary text: the client prints the text
+/// (via `print!`) and continues reading. The `done` frame that follows
+/// ends the prompt with `Ok`. The assertion is the return value; the
+/// coverage is the `Some("chunk") => print!` arm, which no other test
+/// in this file reaches (they only send `done` / `error` / nothing).
+#[tokio::test]
+async fn chunk_frames_print_and_continue() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (sock, server) = fake_daemon(
+        tmp.path(),
+        concat!(
+            "{\"v\":1,\"id\":\"prompt-1\",\"type\":\"chunk\",\"data\":\"hello \"}\n",
+            "{\"v\":1,\"id\":\"prompt-1\",\"type\":\"chunk\",\"data\":\"world\"}\n",
+            "{\"v\":1,\"id\":\"prompt-1\",\"type\":\"done\"}\n",
+        )
+        .as_bytes(),
+    );
+    run_prompt_remote("hello".to_string(), Some(sock))
+        .await
+        .expect("two chunks then done must end the prompt with Ok");
+    server.await.expect("fake daemon must not panic");
+}
+
+/// A `chunk` frame carrying a `\0kod-*` control marker: the client
+/// drops it (`is_control_marker` returns true, `continue`) and reads
+/// the next frame. The `done` frame that follows ends with `Ok`.
+///
+/// The test cannot observe the print/not-print distinction without a
+/// stdout capture, so the assertion is the return value; the coverage
+/// is the `if is_control_marker(data) { continue; }` branch, which the
+/// print test above would skip past.
+#[tokio::test]
+async fn chunk_with_control_marker_is_skipped() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (sock, server) = fake_daemon(
+        tmp.path(),
+        concat!(
+            "{\"v\":1,\"id\":\"prompt-1\",\"type\":\"chunk\",\"data\":\"\\u0000kod-test\"}\n",
+            "{\"v\":1,\"id\":\"prompt-1\",\"type\":\"done\"}\n",
+        )
+        .as_bytes(),
+    );
+    run_prompt_remote("hello".to_string(), Some(sock))
+        .await
+        .expect("a marker chunk then done must end the prompt with Ok");
+    server.await.expect("fake daemon must not panic");
+}
