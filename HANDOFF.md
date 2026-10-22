@@ -243,3 +243,64 @@ full session summary. The tag commands are:
 `git push origin main`, then
 `git tag -a v0.1.20 -m 'test(kod-cli): coverage arc — 51.9% to 68.29%'`,
 then `git push origin main --tags`.
+
+## Addendum 7 (2026-10-22, kod-memory and beyond)
+
+Coverage at this commit: `kod-memory` **91.32%** (5,481 / 6,002 lines);
+`kod-cli` unchanged at 68.29% (from addendum 5); workspace total
+~68.4%.
+
+### kod-memory: four rounds, honest numbers
+
+| Commit | What | Tests |
+|---|---|---|
+| `f0e3f1e` | `LongTermMemory` batch/mutation surface (6 methods) | 9 |
+| `2f85f2e` | `MemoryManager` setters, short-term ops, `clear_all`, `close` | 9 |
+| `1533c77` | `set_embedder` states (configured, unusable, replacement) | 3 |
+| `2d34093` | `PendingMemory` snapshot, freshness, revalidation | 5 |
+
+**91.1% → 91.32%: +0.22 points from 27 tests.** Three of the four
+rounds needed a repair commit or an in-round fix:
+
+1. `manager_untested` — passed `&PathBuf` to `MemoryManager::new`,
+   which takes `PathBuf` by value (E0308, one-line fix).
+2. `embedder_untested` — the round's `mod` insertion step silently
+   no-op'd; the commit landed embedder-only, with the
+   PendingMemory file sitting untracked.
+3. `pending_memory_untested` (first attempt) — `MemoryId` is
+   re-imported into `kod_types/memory.rs` with `use crate::ids::`
+   rather than `pub use`, so `kod_types::memory::MemoryId` is a
+   private path (E0603); and three partial-moves of `MemoryId`
+   (not `Copy`) out of `MemoryEntry` (E0382). Fixed in the second
+   attempt.
+
+The pattern across all three: **the test logic and assertions were
+right every time; the failures were imports, `mod` declarations, and
+one by-value/by-ref mismatch.** The lesson for future codegen: bundle
+fewer file-lifecycle steps per script, verify `cargo check` before
+running, and default to `use kod_types::{MemoryEntry, MemoryId, ...}`
+(the root re-export) rather than `kod_types::memory::MemoryId`.
+
+### What is left in kod-memory (not scriptable)
+
+`manager.rs` and `long_term.rs` have ~390 missed lines between them,
+concentrated in:
+- `consolidate` (archival + fusion + pruning, needs a populated store
+  and an embedder to exercise the meaningful branches)
+- `retrieve_long_term_hybrid` (cold vector index, then embed call)
+- `LongTermMemory::supersede`, `link_contradiction`,
+  `find_by_content_hash` (need the content-hash computation and
+  supersession semantics)
+
+Each round on those would be 40+ lines of test code per 5-10 lines of
+coverage. **`kod-memory` is done as a script target.**
+
+### Next targets, from the 2026-10-22 whole-workspace scan
+
+| Crate | Missed | Pct | Untried? |
+|---|---|---|---|
+| `kod-core` | 5,658 | 73.5% | partially; `jev_advisor.rs` 1,293 missed needs a live Jev service |
+| `kod-tui` | 4,117 | 71.0% | partially; `main_loop.rs` 3,060 missed needs PTY |
+| `kod-cli` | 2,034 | 68.2% | exhausted at the script level (addendum 5) |
+| **`kod-lsp`** | **449** | **63.9%** | **no — worth a recon** |
+| `kod-core-serve` | 413 | 80.5% | partially via `serve_roundtrip` and `acp_handshake` |
