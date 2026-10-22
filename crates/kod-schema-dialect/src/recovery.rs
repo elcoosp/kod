@@ -118,6 +118,7 @@ fn contains_word_ci(lower_text: &str, word: &str) -> bool {
 /// Whether `text` contains `word` as a whole token — not as a
 /// substring of a longer identifier. `oneOf` matches in "rejected
 /// oneOf", not in "someoneOfNote".
+#[cfg(test)]
 fn contains_word(text: &str, word: &str) -> bool {
     let bytes = text.as_bytes();
     let w = word.as_bytes();
