@@ -15,6 +15,7 @@ mod config_remaining_paths;
 mod fixtures_cli;
 mod integration_tests;
 mod memory_admin_paths;
+mod memory_manager_paths;
 mod memory_paths;
 mod observability_json;
 mod observability_paths;
