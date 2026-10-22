@@ -86,7 +86,7 @@ network_access = false
 
 [[llm.endpoints]]
 name = "mock"
-provider = "openai_compatible"
+provider = "openai-compatible"
 base_url = "{base_url}"
 model = "test-model"
 max_tokens = 128
