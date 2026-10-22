@@ -6,6 +6,7 @@
 
 mod acp_handshake;
 mod admin_config_only;
+mod admin_export_config;
 mod admin_init_profile_policy;
 mod admin_models_mock;
 mod agent_mock;
