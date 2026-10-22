@@ -34,6 +34,7 @@ mod prompt_mock;
 mod prompt_remote_daemon;
 mod prompt_remote_paths;
 mod replay;
+mod residual_paths;
 mod sessions_dir_override;
 mod sessions_paths;
 mod skills_config_cli;
