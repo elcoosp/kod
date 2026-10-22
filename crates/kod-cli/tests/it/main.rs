@@ -16,6 +16,7 @@ mod config_remaining_paths;
 mod doctor_fix_paths;
 mod fixtures_cli;
 mod integration_tests;
+mod jev_edit_search;
 mod map_root_override;
 mod memory_admin_paths;
 mod memory_manager_paths;
