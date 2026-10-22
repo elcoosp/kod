@@ -221,3 +221,25 @@ higher, two test-side bugs fixed, the CI gap closed at `daedfab`. The
 one thing unverified by the local gate: `daedfab`'s `bubblewrap` install
 on `ubuntu-latest` runs only on a push. Watch `live-integrations` after
 pushing; `git revert daedfab` is the whole answer if it fails.
+
+## Addendum 5 (2026-10-22, last round)
+
+Coverage at this commit: **68.29%** (4421 / 6474 lines).
+
+One round after addendum 4:
+
+| Commit | What | Tests |
+|---|---|---|
+| (this) | `memory add/forget/delete/search` against a tempdir DB | 4 |
+
+The recon for this round found that five of the nine "residual"
+subcommands I had planned to cover (`skills new/remove/rename/copy/export`,
+`config init-from`) are already tested by `skills_success_paths.rs`,
+`skills_missing_paths.rs`, and `admin_export_config.rs`. Only the
+four `memory` commands were genuinely uncovered.
+
+**`v0.1.20` is earned at this commit.** See addendum 4 for the
+full session summary. The tag commands are:
+`git push origin main`, then
+`git tag -a v0.1.20 -m 'test(kod-cli): coverage arc — 51.9% to 68.29%'`,
+then `git push origin main --tags`.
