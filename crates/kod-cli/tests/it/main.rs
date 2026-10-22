@@ -31,6 +31,7 @@ mod observability_render;
 mod observability_tune_migrate;
 mod policy_explain;
 mod prompt_mock;
+#[cfg(unix)]
 mod prompt_remote_daemon;
 mod prompt_remote_paths;
 mod replay;
