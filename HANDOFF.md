@@ -368,3 +368,45 @@ one verification this session cannot provide: `daedfab`'s
 whole answer if it fails.
 
 The tag itself is the user's call.
+
+## Addendum 11 (2026-10-22, Windows portability finding)
+
+Windows beta CI failed on five tests, all in session-created files:
+
+- `kod_prompt_mock::run_streaming_prompt_hits_the_mock_endpoint`
+- `memory_residual::memory_add_then_search_round_trips`
+- `memory_residual::memory_forget_unknown_key_exits_zero`
+- `memory_residual::memory_search_on_empty_store_exits_zero`
+- `run_chat_wrapper::run_chat_exits_after_quit_and_hits_the_mock`
+
+**Root cause:** all three files redirect the DB via a `HOME` env-var
+override (`EnvGuard::set("HOME", tmp)`), so `run_prompt`'s
+`db_path: None` and the spawned `kod` subprocess's config load resolve
+to the tempdir rather than `~/.kod/data/kod.redb`. That mechanism
+does not work on Windows: the `dirs` crate's `home_dir()` calls
+`SHGetKnownFolderPath(FOLDERID_Profile)`, which ignores `HOME`. On a
+CI runner two tests in the same binary run in parallel (nextest
+default), both open the real profile DB, and one loses the redb file
+lock.
+
+**Fix:** `#[cfg(unix)]` on the three `mod` declarations, the same
+pattern already applied to `prompt_remote_daemon`,
+`chat_remote_guard`, and `remote_clients`. The tests run on ubuntu
+and macos; the coverage work they carry is verified where the
+mechanism works.
+
+**Proper fix deferred:** a production seam -- a `KOD_HOME` env var
+honoured by `KodConfig::load_default`, or an explicit `db_path`
+override in `EngineBootstrapOptions`. Both are production changes;
+this is a testing-ergonomics issue, not a bug in `kod` itself.
+
+### Verification policy update
+
+The session's local verification loop was
+`cargo check -p <crate> --tests` plus
+`cargo nextest run -p <crate>`. It did not include `cargo fmt --check`
+nor `cargo clippy --workspace --all-targets -- -D warnings` (both now
+fixed), nor did it exercise the tests on Windows (impossible locally;
+only CI runs `windows-latest`). **Every future session should assume
+that env-var-based config redirection in tests is Unix-only until a
+`KOD_HOME` seam exists.**
