@@ -19,7 +19,7 @@ mod config;
 pub(crate) use config::*;
 
 /// `kod memory`, `kod sessions`, `kod replay`, `kod checkpoint`.
-mod memory;
+pub mod memory;
 pub(crate) use memory::*;
 
 /// `kod swarm`.
@@ -31,7 +31,7 @@ mod chat;
 pub(crate) use chat::*;
 
 /// Administrative subcommands.
-mod admin;
+pub mod admin;
 pub(crate) use admin::*;
 
 /// `kod prompt`, `kod run`, and the `--remote` variants.
