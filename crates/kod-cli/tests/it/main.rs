@@ -34,6 +34,8 @@ mod prompt_mock;
 mod prompt_remote_daemon;
 mod prompt_remote_paths;
 mod replay;
+#[cfg(unix)]
+mod remote_clients;
 mod residual_paths;
 mod sessions_dir_override;
 mod sessions_paths;
