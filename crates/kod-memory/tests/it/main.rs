@@ -9,4 +9,5 @@ mod consolidation;
 mod embed_safe_lint;
 mod embedder_panic;
 mod long_term;
+mod long_term_untested;
 mod short_term;
