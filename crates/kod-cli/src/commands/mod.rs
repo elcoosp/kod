@@ -4143,3 +4143,21 @@ mod parse_kv_args_proptests {
         assert_eq!(v["a"], 1);
     }
 }
+
+/// Where session logs live: `$KOD_SESSIONS_DIR` when set (non-empty),
+/// else `~/.kod/sessions`.
+///
+/// The override exists so a test can point the session-log walks at a
+/// temp dir without touching the developer's home — the same idiom
+/// `KOD_CONFIG_DIR`, `KOD_FIXTURES_DIR`, and `KOD_UPDATE_URL` already
+/// use. `var_os` preserves non-UTF-8 paths; an empty value falls
+/// through to the default rather than producing an empty path.
+pub(crate) fn sessions_dir() -> Option<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("KOD_SESSIONS_DIR") {
+        let p = std::path::PathBuf::from(dir);
+        if !p.as_os_str().is_empty() {
+            return Some(p);
+        }
+    }
+    dirs::home_dir().map(|h| h.join(".kod").join("sessions"))
+}

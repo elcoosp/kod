@@ -26,6 +26,7 @@ mod policy_explain;
 mod prompt_mock;
 mod prompt_remote_paths;
 mod replay;
+mod sessions_dir_override;
 mod sessions_paths;
 mod skills_config_cli;
 mod skills_missing_paths;

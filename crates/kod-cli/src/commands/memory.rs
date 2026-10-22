@@ -315,9 +315,8 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             Ok(())
         }
         SessionsAction::Count => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
-            let dir = home.join(".kod").join("sessions");
+            let dir =
+                sessions_dir().ok_or_else(|| KodError::Config("no home directory".to_string()))?;
             if !dir.is_dir() {
                 println!("0 session logs (no directory at {}).", dir.display());
                 return Ok(());
@@ -352,9 +351,8 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             Ok(())
         }
         SessionsAction::Latest => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
-            let dir = home.join(".kod").join("sessions");
+            let dir =
+                sessions_dir().ok_or_else(|| KodError::Config("no home directory".to_string()))?;
             if !dir.is_dir() {
                 return Err(KodError::FileNotFound {
                     path: dir.display().to_string(),

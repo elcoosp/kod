@@ -268,10 +268,9 @@ pub(super) fn is_control_marker(s: &str) -> bool {
 }
 
 pub(super) fn newest_session_log() -> Result<Option<std::path::PathBuf>> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(dir) = sessions_dir() else {
         return Ok(None);
     };
-    let dir = home.join(".kod").join("sessions");
     if !dir.is_dir() {
         return Ok(None);
     }
