@@ -39,10 +39,16 @@ async fn a_background_command_delivers_an_interrupt_on_completion() {
 
     // The command is `echo`, so completion is near-immediate, but the
     // watcher runs on the runtime and must be given a turn. Poll for
-    // up to two seconds rather than sleeping a fixed amount — a slower
-    // CI box should not make the test flaky.
+    // up to ten seconds rather than sleeping a fixed amount. The
+    // earlier 2s budget was insufficient on a fully-loaded CI runner
+    // (5,484 tests in parallel, each in its own process): the `echo`
+    // subprocess itself never took more than ~50ms locally, but the
+    // 10ms sleeps overshoot under load and the total wall-clock budget
+    // closed before the watcher woke. 10s is generous enough that no
+    // realistic CI contention can reach it, and the loop still exits
+    // as soon as delivery happens.
     let mut delivered = false;
-    for _ in 0..200 {
+    for _ in 0..1000 {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let steers = engine.pending_steers_for("session").await;
         if steers.iter().any(|s| {
