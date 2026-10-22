@@ -43,7 +43,7 @@ pub mod observability;
 pub(crate) use observability::*;
 
 /// `kod fixture` — golden-transcript capture and replay.
-mod fixtures;
+pub mod fixtures;
 pub(crate) use fixtures::*;
 
 /// Parse a `--preset` argument into a `kod_config::Preset`. Returns

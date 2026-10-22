@@ -180,6 +180,16 @@ impl Fixture {
     /// `<home>/.kod/fixtures/`. Returns `None` when no home dir is
     /// available.
     pub fn fixtures_dir() -> Option<std::path::PathBuf> {
+        // `KOD_FIXTURES_DIR` overrides the default `~/.kod/fixtures` —
+        // the same override idiom `KOD_SESSION_LOG` uses in this
+        // file's error messages — so a test can point the four
+        // `run_fixture_*` subcommands at a temp dir without writing
+        // into the developer's home. `var_os` is used so a non-UTF-8
+        // path works. Absent, the default is used and behaviour is
+        // unchanged.
+        if let Some(dir) = std::env::var_os("KOD_FIXTURES_DIR") {
+            return Some(std::path::PathBuf::from(dir));
+        }
         dirs::home_dir().map(|h| h.join(".kod").join("fixtures"))
     }
 

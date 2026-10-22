@@ -42,6 +42,7 @@ globset = { workspace = true }
 toml = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
+serial_test = { workspace = true }
 portable-pty = "0.8"
 # E2E TUI testing through a PTY (terminal-testlib is the renamed
 # successor of ratatui-testlib; the rename landed on `main` but has
