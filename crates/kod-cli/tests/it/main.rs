@@ -38,6 +38,8 @@ mod replay;
 #[cfg(unix)]
 mod remote_clients;
 mod residual_paths;
+#[cfg(unix)]
+mod serve_roundtrip;
 mod sessions_dir_override;
 mod sessions_paths;
 mod skills_config_cli;
