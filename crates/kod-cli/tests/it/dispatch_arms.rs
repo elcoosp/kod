@@ -224,3 +224,157 @@ fn checkpoint_diff_unknown_id_exits_nonzero() {
 // Silence the unused import if `PathBuf` ends up unused.
 #[allow(dead_code)]
 fn _unused(_p: PathBuf) {}
+
+// ---- second wave: eight more dispatch arms -------------------------
+
+/// `kod init` on a fresh `KOD_CONFIG_DIR`: writes a default config,
+/// prints next-steps, exits 0. Idempotent — a second run is also 0,
+/// which the second test here pins.
+#[test]
+fn init_on_fresh_dir_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(&["init"], &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())]);
+    assert!(
+        out.status.success(),
+        "init on a fresh config dir must exit 0: {}",
+        both_io(&out),
+    );
+    assert!(
+        tmp.path().join("config.toml").exists(),
+        "init must have written config.toml under KOD_CONFIG_DIR",
+    );
+}
+
+/// `kod init` is documented idempotent. The second run sees the
+/// config the first wrote and must not fail or rewrite it.
+#[test]
+fn init_is_idempotent() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let env: &[(&str, &Path)] = &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())];
+    let first = run_kod(&["init"], env);
+    assert!(first.status.success(), "first init: {}", both_io(&first));
+    let second = run_kod(&["init"], env);
+    assert!(
+        second.status.success(),
+        "second init (idempotent) must exit 0: {}",
+        both_io(&second),
+    );
+}
+
+/// `kod budget show` with no session log: the command reports the
+/// missing log and exits 1. That's the first dispatch-arm branch —
+/// the "session log absent" case, distinct from the "log present"
+/// case (already covered by `memory_manager_paths`).
+#[test]
+fn budget_show_without_a_log_exits_one() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["budget", "show"],
+        &[("KOD_SESSIONS_DIR", tmp.path())],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "budget show with no session log must exit 1, got: {}",
+        both_io(&out),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.to_lowercase().contains("log"),
+        "budget show must mention the missing log, got: {stderr}",
+    );
+}
+
+/// `kod limits show` reads the `[limits]` block from the default
+/// config and prints it. No state to seed; exit 0 with the empty
+/// defaults.
+#[test]
+fn limits_show_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["limits", "show"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
+    assert!(
+        out.status.success(),
+        "limits show must exit 0: {}",
+        both_io(&out),
+    );
+}
+
+/// `kod plan show` on a session with no plan: prints the empty case
+/// and exits 0. If the code exits non-zero on empty state (a
+/// different design choice), the assertion names it and the next
+/// round adjusts — the failure text carries the actual exit code.
+#[test]
+fn plan_show_on_empty_session_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["plan", "show"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
+    assert!(
+        out.status.success(),
+        "plan show with no persisted plan must exit 0, got: {}",
+        both_io(&out),
+    );
+}
+
+/// `kod decisions show` — same shape as `plan show`.
+#[test]
+fn decisions_show_on_empty_session_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["decisions", "show"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
+    assert!(
+        out.status.success(),
+        "decisions show with no persisted decisions must exit 0, got: {}",
+        both_io(&out),
+    );
+}
+
+/// `kod theme list` prints the built-in theme names. Pure read; no
+/// state to seed.
+#[test]
+fn theme_list_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["theme", "list"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
+    assert!(
+        out.status.success(),
+        "theme list must exit 0: {}",
+        both_io(&out),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.trim().is_empty(),
+        "theme list must print at least one theme name, got empty stdout",
+    );
+}
+
+/// `kod tools` (no subcommand) lists every registered tool. This is
+/// the subcommand-less form, which recon showed exits 0 — the
+/// dispatch arm is `Command::Tools(ToolsAction::List)`, distinct from
+/// the `tools show <name>` arm.
+#[test]
+fn tools_without_subcommand_exits_zero() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = run_kod(
+        &["tools"],
+        &[("HOME", tmp.path()), ("KOD_CONFIG_DIR", tmp.path())],
+    );
+    assert!(
+        out.status.success(),
+        "tools (default list) must exit 0: {}",
+        both_io(&out),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.trim().is_empty(),
+        "tools must list at least one tool, got empty stdout",
+    );
+}
