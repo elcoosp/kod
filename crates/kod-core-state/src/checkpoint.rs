@@ -116,6 +116,20 @@ impl CheckpointManager {
     /// Returns `None` when the home directory cannot be determined
     /// (a stripped container, a test).
     pub fn for_working_dir(working_dir: &Path) -> Option<Self> {
+        // `KOD_CHECKPOINT_DIR` overrides the whole root, not just the
+        // per-project hash beneath it: when set, every working
+        // directory's manager shares one root. The override exists so
+        // a test can point the checkpoints at a temp dir without
+        // touching the developer's `~/.kod/checkpoints` — the same
+        // idiom `KOD_CONFIG_DIR`, `KOD_FIXTURES_DIR`,
+        // `KOD_SESSIONS_DIR`, and `KOD_MAP_ROOT` already use. An
+        // empty value falls through to the default.
+        if let Some(dir) = std::env::var_os("KOD_CHECKPOINT_DIR") {
+            let p = std::path::PathBuf::from(dir);
+            if !p.as_os_str().is_empty() {
+                return Some(Self::new(p));
+            }
+        }
         let home = dirs::home_dir()?;
         let canonical =
             std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());

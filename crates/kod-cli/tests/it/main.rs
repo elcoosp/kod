@@ -13,6 +13,7 @@ mod agent_mock;
 pub mod common;
 mod config_migrate;
 mod config_remaining_paths;
+mod doctor_fix_paths;
 mod fixtures_cli;
 mod integration_tests;
 mod map_root_override;
