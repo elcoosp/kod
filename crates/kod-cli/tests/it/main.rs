@@ -22,11 +22,13 @@ mod fixture_save_traces;
 mod fixtures_cli;
 mod integration_tests;
 mod jev_edit_search;
+#[cfg(unix)]
 mod kod_prompt_mock;
 mod map_root_override;
 mod memory_admin_paths;
 mod memory_manager_paths;
 mod memory_paths;
+#[cfg(unix)]
 mod memory_residual;
 mod observability_json;
 mod observability_paths;
@@ -42,6 +44,7 @@ mod remote_clients;
 mod replay;
 mod residual_paths;
 mod run_agent_wrapper;
+#[cfg(unix)]
 mod run_chat_wrapper;
 mod run_swarm_wrapper;
 #[cfg(unix)]
