@@ -24,6 +24,7 @@ mod prompt_remote_paths;
 mod replay;
 mod skills_config_cli;
 mod skills_missing_paths;
+mod skills_success_paths;
 mod swarm_cli_mock;
 mod truncate_helper_sites;
 #[cfg(unix)]
