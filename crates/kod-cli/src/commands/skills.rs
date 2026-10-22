@@ -115,7 +115,9 @@ pub async fn run_skills_validate() -> Result<()> {
     );
 
     if !failed.is_empty() {
-        std::process::exit(1);
+        return Err(KodError::SkillValidationFailed {
+            reason: format!("{} skill(s) failed validation", failed.len()),
+        });
     }
     Ok(())
 }
@@ -212,11 +214,9 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!(
-                "No skill named {:?} in any configured skills directory.",
-                name
-            );
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?} in any configured skills directory."),
+            });
         }
     };
 
@@ -230,11 +230,13 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
         canonical.starts_with(&cd)
     });
     if !safe {
-        eprintln!(
-            "Refusing to delete {}: it is not inside a configured skills directory.",
-            path.display()
-        );
-        std::process::exit(1);
+        return Err(KodError::PermissionDenied {
+            action: "delete".to_string(),
+            reason: format!(
+                "Refusing to delete {}: it is not inside a configured skills directory.",
+                path.display()
+            ),
+        });
     }
 
     if !yes {
@@ -242,10 +244,9 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
         use std::io::Write;
         let _ = std::io::stderr().flush();
         let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_err() {
-            eprintln!("(input error — aborting)");
-            std::process::exit(1);
-        }
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(KodError::Io)?;
         if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
             println!("Aborted.");
             return Ok(());
@@ -261,11 +262,9 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!(
-                "No skill named {:?} in any configured skills directory.",
-                name
-            );
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?} in any configured skills directory."),
+            });
         }
     };
 
@@ -298,11 +297,9 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!(
-                "No skill named {:?} in any configured skills directory.",
-                name
-            );
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?} in any configured skills directory."),
+            });
         }
     };
     let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
@@ -384,11 +381,9 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!(
-                "No skill named {:?} in any configured skills directory.",
-                name
-            );
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?} in any configured skills directory."),
+            });
         }
     };
     let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
@@ -413,11 +408,12 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
     };
 
     if target.exists() && !force {
-        eprintln!(
-            "Refusing to overwrite {} — pass --force to replace it.",
-            target.display()
-        );
-        std::process::exit(1);
+        return Err(KodError::InvalidParameters {
+            reason: format!(
+                "Refusing to overwrite {} — pass --force to replace it.",
+                target.display()
+            ),
+        });
     }
 
     if let Some(parent) = target.parent()
@@ -435,8 +431,9 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
     let dirs = config.skills_dirs()?;
     let q = query.to_lowercase();
     if q.is_empty() {
-        eprintln!("Usage: kod skills search <query>");
-        std::process::exit(1);
+        return Err(KodError::InvalidParameters {
+            reason: "usage: kod skills search <query>".to_string(),
+        });
     }
 
     let parser = kod_skills::SkillParser::new();
@@ -560,7 +557,9 @@ pub async fn run_skills_validate_strict() -> Result<()> {
         failed.len()
     );
     if !failed.is_empty() {
-        std::process::exit(1);
+        return Err(KodError::SkillValidationFailed {
+            reason: format!("{} skill(s) failed validation", failed.len()),
+        });
     }
     Ok(())
 }
@@ -581,11 +580,9 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!(
-                "No skill named {:?} in any configured skills directory.",
-                name
-            );
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?} in any configured skills directory."),
+            });
         }
     };
     let parent = src
@@ -593,11 +590,12 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
         .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
     let dest = parent.join(format!("{new_name}.md"));
     if dest.exists() {
-        eprintln!(
-            "Destination {} already exists — refusing to overwrite.",
-            dest.display()
-        );
-        std::process::exit(1);
+        return Err(KodError::InvalidParameters {
+            reason: format!(
+                "Destination {} already exists — refusing to overwrite.",
+                dest.display()
+            ),
+        });
     }
 
     // Rewrite the `name:` field. A simple line scan that preserves the
@@ -649,8 +647,9 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?}.", name);
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?}."),
+            });
         }
     };
     let parent = src
@@ -658,11 +657,12 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
         .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
     let dest = parent.join(format!("{new_name}.md"));
     if dest.exists() {
-        eprintln!(
-            "Destination {} already exists — refusing to overwrite.",
-            dest.display()
-        );
-        std::process::exit(1);
+        return Err(KodError::InvalidParameters {
+            reason: format!(
+                "Destination {} already exists — refusing to overwrite.",
+                dest.display()
+            ),
+        });
     }
 
     // Reuse the copy path so the `name:` rewrite logic lives in one
@@ -685,8 +685,9 @@ pub async fn run_skills_source(name: &str) -> Result<()> {
             Ok(())
         }
         None => {
-            eprintln!("No skill named {:?}.", name);
-            std::process::exit(1);
+            return Err(KodError::InvalidParameters {
+                reason: format!("No skill named {name:?}."),
+            });
         }
     }
 }

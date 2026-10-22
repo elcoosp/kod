@@ -17,6 +17,7 @@ mod policy_explain;
 mod prompt_mock;
 mod replay;
 mod skills_config_cli;
+mod skills_missing_paths;
 mod swarm_cli_mock;
 mod truncate_helper_sites;
 #[cfg(unix)]
