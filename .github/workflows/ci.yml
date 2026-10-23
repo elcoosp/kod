@@ -534,33 +534,24 @@ jobs:
         cargo test -p kod-mcp --test it \
           -- --ignored real_filesystem --nocapture
 
-    # `sandbox_containment` is the same class of test as
-    # `real_filesystem` above: `#[ignore]`d by design, with a runtime
-    # prereq check inside the body. It was the only such test without
-    # a CI step, so a regression in the containment invariant could
-    # not be caught here. bwrap is not preinstalled on the runner;
-    # install it, and fail the job if the test body takes the
-    # "skipping:" branch -- a skipped containment test in CI is the
-    # gap this step exists to close.
-    - name: Install bubblewrap (sandbox primitive for containment tests)
-      run: sudo apt-get update && sudo apt-get install -y bubblewrap
-
-    - name: Sandbox containment tests (bwrap)
-      run: |
-        set -euo pipefail
-        LOG=$(mktemp)
-        if ! cargo test -p kod-tools --test it \
-          -- --ignored --nocapture sandbox_containment >"$LOG" 2>&1; then
-          echo "sandbox_containment failed; full output:" >&2
-          cat "$LOG" >&2
-          exit 1
-        fi
-        if grep -q 'skipping:' "$LOG"; then
-          echo "sandbox_containment skipped; bwrap not usable on the runner:" >&2
-          grep 'skipping:' "$LOG" >&2
-          exit 1
-        fi
-        echo "sandbox_containment passed with bwrap"
+    # `sandbox_containment` is deliberately NOT run in CI.
+    #
+    # The tests are `#[ignore]`d by design and maintainer-run only.
+    # daedfab (2026-10-22) added an Install-bubblewrap step and a
+    # step to run them, on the premise that apt-installing bwrap would
+    # make them work. Both steps were written blind -- the LSP step
+    # failed first every CI run until c8d91f2 (2026-10-23), so the
+    # containment step had never actually executed.
+    #
+    # The first time it ran (5b39ecc6, 2026-10-23), `Install bubblewrap`
+    # succeeded and `Sandbox containment tests` failed: bwrap needs
+    # unprivileged user namespaces that the GitHub-hosted runner
+    # restricts. That is an environment constraint, not a bug in the
+    # tests, and it is not fixable by installing a package.
+    #
+    # Reverted (revert of daedfab, plus this comment). The tests remain
+    # #[ignore]`d and maintainer-run -- their state before daedfab
+    # touched them. See HANDOFF.md addendum 14 for the full record.
 
   benchmark:
     name: Benchmarks
