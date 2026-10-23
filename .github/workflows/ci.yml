@@ -522,10 +522,17 @@ jobs:
     # tests, not the default suite. npx downloads
     # `@modelcontextprotocol/server-filesystem` on first run; the
     # cache step above keeps it warm across jobs.
+    # `cargo test` rather than `cargo nextest run`: this job does not
+    # install cargo-nextest (the Test job does, but the install was
+    # not replicated here). Before this change the step failed at
+    # "error: no such command: nextest" the moment the LSP step above
+    # stopped blocking it. `cargo test --ignored` runs the same
+    # `#[ignore]`d tests nextest's --run-ignored=only would have
+    # selected, and matches the containment step below.
     - name: MCP real-filesystem test (npx @modelcontextprotocol/server-filesystem)
       run: |
-        cargo nextest run -p kod-mcp --locked --no-fail-fast \
-          --run-ignored=only -E 'test(real_filesystem)'
+        cargo test -p kod-mcp --test it \
+          -- --ignored real_filesystem --nocapture
 
     # `sandbox_containment` is the same class of test as
     # `real_filesystem` above: `#[ignore]`d by design, with a runtime
