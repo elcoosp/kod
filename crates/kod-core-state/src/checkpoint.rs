@@ -987,6 +987,30 @@ mod sweep_tests {
         }
     }
 
+    /// Like `touch_project`, but sets an explicit mtime on the
+    /// directory.
+    ///
+    /// `sweep_drops_the_oldest_project_dirs` needs a *total order* on
+    /// the project dirs' mtimes. Without this, 1003 `create_dir_all`
+    /// calls in a tight loop tie on filesystems with millisecond
+    /// timestamp resolution; `sort_by_key` (stable) then preserves
+    /// `read_dir` order, and `read_dir` order does not match creation
+    /// order on ext4 with `dir_index`. The sweep removes three dirs
+    /// -- but not necessarily the three the test expected.
+    fn touch_project_with_mtime(
+        root: &Path,
+        name: &str,
+        snapshots: usize,
+        mtime: std::time::SystemTime,
+    ) {
+        touch_project(root, name, snapshots);
+        filetime::set_file_mtime(
+            &root.join(name),
+            filetime::FileTime::from_system_time(mtime),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn sweep_below_the_cap_is_a_noop() {
         let tmp = TempDir::new().unwrap();
@@ -1005,8 +1029,14 @@ mod sweep_tests {
         let root = tmp.path();
         // The manager's own dir is one project; the sweep operates on
         // its parent, so build the tree there.
+        //
+        // Each dir gets a distinct explicit mtime (1ms apart) so the
+        // sweep's `sort_by_key` has a total order regardless of the
+        // filesystem's timestamp resolution. See `touch_project_with_mtime`.
+        let base = std::time::SystemTime::now();
         for n in 0..(MAX_PROJECT_DIRS + 3) {
-            touch_project(root, &format!("p{n:05}"), 1);
+            let mtime = base + std::time::Duration::from_millis(n as u64);
+            touch_project_with_mtime(root, &format!("p{n:05}"), 1, mtime);
         }
         // The first three were created first, so their directory
         // mtimes are the oldest; the sweep keeps the newest MAX.

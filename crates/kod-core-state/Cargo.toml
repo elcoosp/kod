@@ -29,6 +29,7 @@ kod-config = { path = "../kod-config" }
 kod-provider = { path = "../kod-provider" }
 kod-tools = { path = "../kod-tools" }
 [dev-dependencies]
+filetime = "0.2"
 serial_test = { workspace = true }
 tempfile = "3.8"
 rstest = { workspace = true }
