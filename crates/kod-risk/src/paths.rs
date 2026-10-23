@@ -504,6 +504,7 @@ mod paths_proptests {
             prop_assert_eq!(once, twice);
         }
 
+        #[cfg(unix)]
         #[test]
         fn prop_normalize_absolute_stays_absolute(base in arb_base_components()) {
             let raw = format!("/{}", base.join("/"));
@@ -568,6 +569,7 @@ mod paths_proptests {
         assert_eq!(d, PathDanger::Catastrophic);
     }
 
+    #[cfg(unix)]
     #[test]
     fn traversal_into_etc_is_still_catastrophic() {
         let (d, _) = classify("/tmp/../etc/passwd", &ctx());
