@@ -274,23 +274,32 @@ pub fn tokenize(command: &str) -> Vec<String> {
         if let Some(term) = &heredoc_terminator {
             // Inside a heredoc body: skip whole lines until the
             // terminator.
-            let line_end = command[..]
-                .char_indices()
-                .skip(i)
-                .find(|(_, ch)| *ch == '\n')
-                .map(|(idx, _)| idx)
-                .unwrap_or(command.len());
-            let _ = line_end;
-            let rest: String = chars[i..].iter().collect();
-            let mut lines = rest.splitn(2, '\n');
-            let this_line = lines.next().unwrap_or("");
+            //
+            // Find this line's end *in the chars vector* and collect
+            // only the line. Pre-fix this scanned `command[..]` for
+            // the next newline (linear in the whole command), then
+            // collected `chars[i..]` into a fresh String (linear in
+            // the remaining body), then split it — so a heredoc with
+            // N lines cost O(N^2) and allocated the tail on every
+            // iteration. The `line_end` it computed was discarded
+            // (`let _ = line_end;`). This collects exactly the line
+            // and advances by it: O(line length) per iteration.
+            let line_end = chars[i..]
+                .iter()
+                .position(|&ch| ch == '\n')
+                .map(|offset| i + offset)
+                .unwrap_or(chars.len());
+            let this_line: String = chars[i..line_end].iter().collect();
             if this_line.trim() == term.as_str() {
                 heredoc_terminator = None;
-                // advance past this line's newline
-                i += this_line.chars().count() + 1;
-                continue;
             }
-            i += this_line.chars().count() + 1;
+            // line_end is the index of the newline, or chars.len()
+            // when the body has no trailing newline. i moves past
+            // it: to the first char of the next line when there is
+            // a newline, or past chars.len() (which exits the while
+            // loop) when there is none. saturating_add guards the
+            // theoretical usize::MAX case, not the boundary itself.
+            i = line_end.saturating_add(1);
             continue;
         }
 
