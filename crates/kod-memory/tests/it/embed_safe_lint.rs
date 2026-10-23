@@ -40,6 +40,7 @@ fn body_range(src: &str, start_marker: &str, end_marker: &str) -> (usize, usize)
 fn every_foreground_embed_call_goes_through_embed_safe() {
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/manager.rs",))
         .expect("read src/manager.rs");
+    let src = src.replace("\r\n", "\n");
 
     // The panic barrier itself — its body contains the unwrapped
     // `.embed(` call by design.

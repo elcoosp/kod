@@ -1,0 +1,10 @@
+# Force LF in source files regardless of platform checkout.
+# The source-lint tests (cost.rs spend_window, embed_safe_lint)
+# read their own .rs file and find byte offsets on multi-line
+# patterns; CRLF breaks those finds on Windows CI.
+* text=auto
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

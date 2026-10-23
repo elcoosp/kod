@@ -463,6 +463,12 @@ mod spend_window_uses_monotonic_clock {
     fn spend_window_uses_monotonic_clock() {
         let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cost.rs"))
             .expect("read cost.rs");
+        // Normalise CRLF. A Windows checkout with core.autocrlf=true
+        // writes \r\n, so the `find("\n}\n")` boundary below never
+        // matches and the body slice extends to EOF — picking up
+        // comments that mention `SystemTime::now` and tripping the
+        // negative assertion. Same shape as the embed_safe_lint fix.
+        let src = src.replace("\r\n", "\n");
 
         let start = src
             .find("impl SpendWindow")
