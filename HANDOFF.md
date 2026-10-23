@@ -745,3 +745,133 @@ failed-prompt test" claim (it was in the normal-prompt test; the
 test name was inferred from line proximity rather than checked).
 Both corrected in addenda 15 and 16. The pattern is the session's
 recurring lesson: read the code, not the edge of the output.
+
+## Addendum 17 (2026-10-23, bug-hunting session -- two bugs fixed)
+
+A bug-hunting session over the code the coverage arc touched, plus
+adjacent code where findings cluster. **Two real bugs found and
+fixed. Six high-severity hypotheses eliminated. Zero security or
+data-integrity bugs.**
+
+### Bug 1: quadratic tokenizer heredoc loop (fixed at `33e00a3d`)
+
+`kod-risk/src/classify.rs`, the heredoc-body branch of `tokenize`.
+For each line of a heredoc body:
+
+1. scanned `command[..].char_indices().skip(i).find(newline)` --
+   the whole command from position 0
+2. collected `chars[i..]` into a fresh String -- the entire
+   remaining body
+3. `splitn(2, '\n')` on that string
+
+O(N²) in the heredoc body length, and allocated the tail on every
+iteration. The `line_end` computed in step 1 was discarded
+(`let _ = line_end;`) -- dead code.
+
+**Fixed:** find the newline in the chars vector relative to `i`,
+collect exactly the line, advance by it. O(N) total, same output.
+96/96 in `kod-risk` pass unchanged.
+
+**Severity: low-to-medium.** The classifier's *verdict* is
+unaffected -- only its cost. Not a bypass; a pathological heredoc
+would slow the gate, but the classifier runs before the tool
+executes and no timeout is enforced on it.
+
+### Bug 2: cancel during streaming ignored (fixed at `e9191055`)
+
+`kod-core/src/engine/agent_loop.rs`, `stream_round`'s inner loop.
+The only `is_cancelled_for` checks in this file are at round
+boundaries (lines 22 and 339); the inner loop had none. A cancel
+arriving while the model was mid-stream was unobserved until the
+stream ended naturally -- up to `stream_idle_timeout` (120s
+default, scaled to 480s at Max effort). Worse: if the model had
+already emitted tool-call chunks when the cancel arrived, the
+caller ran those tools before the next round's cancel check fired,
+so a cancel could have side effects.
+
+**Fixed:** wrap `stream.next()` in `tokio::select!` with a 100ms
+poll of `is_cancelled_for(holder)`. On cancel, return
+`Err(InvalidState)` directly -- not through `stream_error` /
+`partial_error`, which is the path that runs partial tool calls on
+a non-retryable error. The 100ms interval matches the ACP approval
+wait's poll (`policy_gate.rs`).
+
+**Test:** `stream_cancel.rs` uses a `BlockingStreamer` provider
+that yields one text chunk then sleeps 60s. Without the fix,
+`process_streaming` hangs for the full 60s; with it, the 100ms
+poll fires and the function returns within 2s. `MockProvider`
+cannot express this -- its scripts stream to completion
+immediately -- so the test defines its own provider, matching
+`pause_gate_integration.rs`'s pattern (including overriding
+`stream_completion` directly: the trait's default delegates to
+`generate_with_tools`, which the test provider deliberately does
+not implement).
+
+**Severity: medium.** User-facing: a cancel mid-stream kept the
+model generating for the full idle timeout and could execute
+partial tool calls. The fix reduces cancel latency to ~100ms.
+
+### Eliminated by the recon
+
+Six high-severity hypotheses, each confirmed correct:
+
+| Area | Hypothesis | Verdict |
+|---|---|---|
+| `kod-tools/src/web.rs` SSRF filter | IPv4-mapped IPv6 bypass | **Handled**: `to_ipv4_mapped()` then re-check, tested at 1140-1147 |
+| Same | DNS rebinding between check and connect | **Handled**: per-hop re-resolve, `.resolve(&host, pinned)` |
+| `kod-memory/src/long_term.rs` `remove_batch` | TOCTOU between index-read and entry-remove | **Handled**: one `begin_write()` transaction |
+| `kod-core-serve/src/acp.rs` `in_flight` | Key normalization | **Not needed**: UUID, server-generated |
+| `kod-core/src/engine/at_refs.rs` `sweep_background_spools` | Delete a live spool | **Handled**: interrupt delivery is unconditional |
+| `kod-core-serve/src/serve.rs` `stop_daemon` | Silent success if the daemon never processes | **Not silent**: `serve_roundtrip`'s wait catches it |
+
+Plus the `let _ =` audit: two sites, both documented intentional
+(`retry.rs:510` "accepted for future use"; `plan.rs:561` explains
+why the tempdir-mode assertion is skipped).
+
+### The `background_shell` Linux bug
+
+Still open. This session's bug-hunt eliminated the `sweep_background_spools`
+hypothesis, which was #5. What remains needs `strace -f` or a
+`tracing` subscriber. Addendum 12 has the starting point.
+
+### The recon's own errors (again, on the record)
+
+The recon drew two conclusions before reading the full code:
+
+1. **"`Err` arm of `run_prompt` is missing `in_flight.remove`."** It
+   wasn't; a truncated `sed` range cut it off. Corrected in
+   addendum 15.
+2. **"The 100ms barrier is in the failed-prompt test."** It was in
+   the normal-prompt test; the test name was inferred from line
+   proximity. Corrected in addendum 16.
+
+The pattern repeats. The recon is now explicit about it: read the
+code, not the edge of the output. When a bug is suspected but not
+confirmed, the next step is a reproduction (a failing test) or a
+full read, never a fix.
+
+### Session totals (bug-hunting arc)
+
+- Two real bugs found and fixed:
+  - `33e00a3d`: quadratic tokenizer heredoc loop
+  - `e9191055`: cancel during streaming ignored
+- Six hypotheses eliminated (SSRF, remove_batch, in_flight,
+  spool-sweep, stop_daemon, `let _` audit)
+- `background_shell` Linux: fifth hypothesis eliminated
+- CI remains green (verify: `git log --oneline v0.1.20..HEAD`
+  and the Actions page)
+
+### What the bug-hunting session did not find
+
+- **No security bugs.** The SSRF filter and the transaction
+  integrity checks that would have been security-critical are
+  correct.
+- **No data-integrity bugs.** `remove_batch`'s single-transaction
+  shape is right.
+- **No concurrency bugs beyond the cancel latency.** The ACP
+  `in_flight` race was already fixed before this session's
+  bug-hunt; the streaming loop was the remaining gap.
+
+That's a good result for a bug hunt. Finding two real bugs is
+better than finding zero, and eliminating six high-severity
+hypotheses is the more useful half of the answer.
