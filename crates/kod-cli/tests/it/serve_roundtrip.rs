@@ -113,9 +113,44 @@ async fn serve_starts_and_stops() {
     // Send the shutdown frame. `stop_daemon` writes the request and
     // waits up to 2s for a reply; it returns Ok once the frame is
     // written.
-    stop_daemon(&sock_path)
-        .await
-        .expect("stop_daemon must succeed against a live daemon");
+    //
+    // Retry on connection failure. The poll above only proves that
+    // the socket FILE exists; on macOS there is a window between
+    // `UnixListener::bind` creating the file and the daemon's accept
+    // loop being polled, during which `UnixStream::connect` fails.
+    // Locally the window is microseconds; on a loaded macOS CI runner
+    // it is observable -- the test failed at `stop_daemon` after
+    // 0.34s with `connection refused` (see the CI log at 6c049b21).
+    //
+    // `stop_daemon` returns Err only on the connect (the code path
+    // is: connect -> write -> flush -> bounded read; the read path
+    // returns Ok even on timeout). So retrying is safe: a failed
+    // attempt wrote nothing, and a later attempt that succeeds sends
+    // the shutdown exactly once.
+    let mut last_err = None;
+    let mut stopped = false;
+    for _ in 0..100 {
+        match stop_daemon(&sock_path).await {
+            Ok(()) => {
+                stopped = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+    if !stopped {
+        handle.abort();
+        let msg = last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "(no error recorded)".to_string());
+        panic!(
+            "stop_daemon must succeed against a live daemon; \
+             gave up after 5s of retries. last error: {msg}",
+        );
+    }
 
     // The spawned task must now return. 15s covers a slow CI runner
     // whose CPU is busy with other jobs.
