@@ -642,3 +642,106 @@ surface when one of them starts finishing.
    other's verification for months. A future `ci.yml` change should
    include an "all steps execute" check in the PR, not just "all jobs
    pass": the two are not the same thing when fail-fast is on.
+
+## Addendum 16 (2026-10-23, bug-hunting recon)
+
+A bug-hunting pass over the code the session touched. **Result: one
+real performance bug, five high-severity hypotheses eliminated, two
+intentional `let _ =` sites.**
+
+### The one real bug: tokenizer was quadratic
+
+`kod-risk/src/classify.rs`, the heredoc-body branch of `tokenize`
+(the shell tokenizer that precedes `assess`, the catastrophic-command
+gate). For each line of a heredoc body it:
+
+1. scanned `command[..].char_indices().skip(i).find(newline)` --
+   a scan of the whole command from position 0
+2. collected `chars[i..]` into a fresh String -- allocation of
+   the entire remaining body
+3. `splitn(2, '\n')` on that string
+
+O(N^2) in the heredoc body length, and allocated the tail on every
+iteration. The `line_end` computed in step 1 was discarded (`let _
+= line_end;`) -- dead code.
+
+Fixed: find the newline in the chars vector relative to `i`,
+collect exactly the line, advance by it. O(N) total, same output.
+All existing `tokenize` tests pass unchanged (96/96 in the crate).
+
+**Severity: low-to-medium.** The classifier's *verdict* is not
+affected -- only its cost. A pathological heredoc (megabytes of body)
+would slow the gate, but the classifier runs before the tool
+executes and no timeout is enforced on it. Not a bypass; a
+denial-of-service only in the hands of someone who already controls
+the command being classified.
+
+### Eliminated by the recon
+
+Each was a hypothesis worth checking; each was correct:
+
+| Area | Hypothesis | Verdict |
+|---|---|---|
+| `kod-tools/src/web.rs` SSRF filter | IPv4-mapped IPv6 bypass (`::ffff:127.0.0.1`) | **Handled** at line 618 (`to_ipv4_mapped()` then re-check), tested at 1140-1147 |
+| Same | DNS rebinding between check and connect | **Handled**: per-hop re-resolve, `.resolve(&host, pinned)` pins the connection to the checked IP |
+| `kod-memory/src/long_term.rs` `remove_batch` | TOCTOU between index-read and entry-remove | **Handled**: entire read/remove/index-remove inside one `begin_write()` transaction |
+| `kod-core-serve/src/acp.rs` `in_flight` | Key normalization (trim/case) | **Not needed**: `session_id` is `format!("kod-{}", Uuid::new_v4())`, server-generated |
+| `kod-core/src/engine/at_refs.rs` `sweep_background_spools` | Delete a spool a live watcher is draining | **Handled**: the drain loop breaks on `append().is_err()`, but `child.wait()`, `runner_task.complete()`, `push_background_interrupt()` all run **after** the loop regardless. Interrupt delivery is unconditional |
+| `kod-core-serve/src/serve.rs` `stop_daemon` | Silent success if the write succeeds but the daemon never processes it | **Not silent**: `serve_roundtrip`'s 15s `run_serve` wait catches it. The retry added at `75763b9e` is bounded (100 x 50ms) and does not double-write |
+| `kod-core-serve/src/acp.rs` `handle_chunk` | Approval-batch parse failure silently drops the batch | **Handled**: `deny_all_pending_approvals()` after a logged error (the H-R1/M-20 fix from a prior session) |
+
+### The other `let _ =` sites
+
+- `kod-provider/src/retry.rs:510` (`let _ = status;`): the doc
+  comment on `extract_retry_hints` says `status` is accepted for
+  future use and currently unused. Documented intentional.
+- `kod-core-state/src/plan.rs:561` (`let _ = dir_mode;`): the test
+  computes the tempdir's mode but skips the assertion because the
+  tempfile crate creates the directory at 0755, so the mode check
+  would fail through no fault of `autosave_plan`. The test's own
+  comment says so; a *separate* test covers the fresh-directory
+  case. Not a bug.
+
+### The `background_shell` Linux bug
+
+This recon's `sweep_background_spools` elimination removes the fifth
+hypothesis (after runtime scheduling at `4fb5f92`, spool sweep race,
+interrupt delivery path, budget). The test is on Linux only; it
+passes 15/15 locally, and every watcher path in the source delivers
+the interrupt unconditionally.
+
+What remains, in order of likelihood:
+1. Something in `tokio::process::Command` on the runner (the child
+   spawns, the runtime schedules, the interrupt is pushed -- but
+   never observed by the test's poll loop). The test uses
+   `pending_steers_for`, which reads `self.steers` -- the same map
+   `push_background_interrupt` writes to. If it's a visibility
+   issue (RwLock read vs write on the runner), it would be timing.
+2. A CI-only Tokio feature flag, or a worker-pool difference on the
+   runner.
+3. Something in the child process itself -- `echo` exiting before
+   the watcher registers the read.
+
+None of these are diagnosable without `strace -f` on the child or a
+`tracing` subscriber in the test. Addendum 12 has the investigation
+starting point.
+
+### The value of a zero-finding recon
+
+The most important result of this pass is what it *eliminated*.
+Five high-severity hypotheses (SSRF bypass, transaction TOCTOU,
+session-key collision, spool-deletion race, silent daemon-shutdown
+success) are each confirmed correct. That's the shape of a mature
+codebase: the session's recently-written code is clean, and the one
+real bug is a performance issue in an older file the session
+touched for formatting.
+
+### The recon's own errors
+
+Two recon scripts in this session drew conclusions the code did not
+support -- the "Err arm missing in_flight.remove" claim (the fix was
+there; a truncated `sed` range cut it off) and the "barrier in the
+failed-prompt test" claim (it was in the normal-prompt test; the
+test name was inferred from line proximity rather than checked).
+Both corrected in addenda 15 and 16. The pattern is the session's
+recurring lesson: read the code, not the edge of the output.
