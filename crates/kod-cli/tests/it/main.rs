@@ -43,9 +43,11 @@ mod prompt_remote_paths;
 mod remote_clients;
 mod replay;
 mod residual_paths;
+#[cfg(unix)]
 mod run_agent_wrapper;
 #[cfg(unix)]
 mod run_chat_wrapper;
+#[cfg(unix)]
 mod run_swarm_wrapper;
 #[cfg(unix)]
 mod serve_roundtrip;
