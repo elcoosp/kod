@@ -1105,3 +1105,265 @@ subscriber. Addendum 12 has the starting point.
 - Full workspace gate green at every commit
 - CI verified green at `570cba34` (before this round's fix); the
   next CI run will verify `432b81cb`
+
+## Addendum 19 (2026-10-23, bug-hunting session final close)
+
+**CI is fully green at `9a117840`.** Six test matrices (ubuntu both
+toolchains, macos both, windows both), Cargo deny, Security audit,
+Live integrations, MSRV, contracts, both live-model jobs, fuzz,
+benchmarks, coverage. Size gate skipped by design.
+
+### Commits since `v0.1.20` (20 total)
+
+Bug-hunting arc:
+- `33e00a3d` -- quadratic tokenizer heredoc loop (bug 1)
+- `e9191055` -- cancel during streaming ignored (bug 2)
+- `432b81cb` -- unbounded tool-args accumulation (bug 3)
+
+Test/CI fixes:
+- `0d972a2f` -- sweep-test fixture mtime ordering (test-only)
+- `9a117840` -- MCP `INIT_TIMEOUT_SECS` 10s -> 60s (test-enabling)
+
+Docs:
+- `d86f88e8` / `570cba34` / `38e67ab6` -- addenda 15-18
+
+### The three bugs, one paragraph each
+
+**Quadratic tokenizer** (`kod-risk/src/classify.rs`). The
+heredoc-body branch of `tokenize` scanned the whole command, then
+collected the entire remaining tail into a fresh String, then split
+it, for every line of a heredoc body. O(N²) total. The `line_end`
+computed in the first scan was discarded. Fixed by finding the
+newline in the chars vector relative to `i`, collecting exactly that
+line, advancing by it. O(N). 96/96 pass unchanged.
+
+**Cancel during streaming** (`kod-core/src/engine/agent_loop.rs`).
+`is_cancelled_for` was checked only at round boundaries. A cancel
+during `stream.next().await` was unobserved until the stream ended
+naturally (up to `stream_idle_timeout`, 120s default / 480s at Max
+effort), and any tool-call chunks already emitted ran before the
+next check. Fixed by wrapping `stream.next()` in `tokio::select!`
+with a 100ms poll of `is_cancelled_for(holder)`, returning
+`Err(InvalidState)` directly on cancel (not through
+`partial_error`, which would run partial tool calls). Test:
+`stream_cancel.rs` uses a `BlockingStreamer` that yields one chunk
+then sleeps 60s.
+
+**Unbounded tool-args accumulation** (`kod-core/src/engine/agent_loop.rs`).
+`entry.args.push_str(&arguments)` in the `ToolCallDelta` arm had no
+size check. The only bound was `MAX_TOOL_ROUNDS`, which caps rounds,
+not per-call payload. A broken model or a prompt injection through a
+tool description could stream unbounded args; the engine buffered
+all of it. The test's 9 MB payload took 9.87s to process through the
+downstream paths before the round completed. Fixed with
+`MAX_TOOL_ARGS_BYTES = 8 * 1024 * 1024` inline at the append site,
+returning `Err(InvalidState)` on overflow. Test: `stream_tool_args_cap.rs`
+asserts the error in 0.042s.
+
+### The two test/CI fixes
+
+**Sweep-test mtime ordering** (`kod-core-state`).
+`sweep_drops_the_oldest_project_dirs` created 1003 dirs in a tight
+loop and asserted the three oldest were removed. All 1003
+`create_dir_all` calls tied on mtime, so `sort_by_key` fell back to
+`read_dir` order, which on ext4 with `dir_index` is hash order.
+The count assertion passed (`removed == 3`) but `p00000` was not
+the one removed. Fixed with `filetime::set_file_mtime` -- each
+fixture dir gets an explicit distinct mtime (1ms apart), so the
+sort has a total order on every filesystem.
+
+**MCP initialize timeout** (`kod-mcp/src/client.rs`).
+`INIT_TIMEOUT_SECS = 10` was tuned for warm module imports. But on
+a cold CI runner the npx download of
+`@modelcontextprotocol/server-filesystem` can take 10-30s, and both
+`real_filesystem` tests timed out while the package was still
+downloading. Bumped to 60s (matching `DEFAULT_CALL_TIMEOUT_SECS`).
+Warm MCP servers still respond in <100ms -- this is a "give up"
+budget, not a typical-response target.
+
+### Eleven hypotheses eliminated
+
+Each read from the code, not inferred from a failure line:
+
+1. `kod-tools/src/web.rs` SSRF mapped-IP bypass -- handled, tested
+2. `kod-tools/src/web.rs` DNS rebinding -- per-hop re-resolve, pinned
+3. `kod-memory/src/long_term.rs` `remove_batch` TOCTOU -- one transaction
+4. `kod-core-serve/src/acp.rs` `in_flight` collision -- UUID, server-generated
+5. `kod-core/src/engine/at_refs.rs` spool-sweep race -- interrupt delivery unconditional
+6. `kod-core-serve/src/serve.rs` `stop_daemon` silent success -- `serve_roundtrip` catches it
+7. `kod-provider/src/retry.rs` `let _ = status` -- documented intentional
+8. `kod-core-state/src/plan.rs` `let _ = dir_mode` -- documented intentional
+9. `kod-core/src/compaction_dispatcher.rs` compaction data loss -- `CompactionAdmission::admits()` guard
+10. `kod-core/src/engine/agent_loop.rs` FNV-1a quality -- constants correct
+11. `kod-core/src/engine/*.rs` lock-across-send -- oneshot, synchronous
+
+**Zero security bugs, zero data-integrity bugs.** The SSRF filter,
+transaction integrity, and compaction admission control are all
+correct. The three real bugs are performance/correctness in the
+pre-execution or in-flight path -- worth fixing, not exploitable.
+
+### The recon's own errors (cumulative)
+
+Six times across the session, the recon drew a conclusion the code
+did not support, each caught before a wrong fix landed:
+
+1. **Addendum 15**: "`Err` arm of `run_prompt` missing
+   `in_flight.remove`" -- truncated `sed` range cut it off
+2. **Addendum 16**: "100ms barrier is in the failed-prompt test" --
+   line proximity, not the enclosing `async fn`
+3. **Addendum 17**: "fix needs to handle partial calls on cancel" --
+   cancel returns `Err` directly
+4. **Addendum 17**: "`MAX_TOOL_ROUNDS` is the anchor for the cap
+   constant" -- not defined in `agent_loop.rs`
+5. **Addendum 18**: "20/20 local sweep tests fail" -- grep pattern
+   mismatch, not a real failure
+6. **Addendum 18**: "MCP step anchor `--run-ignored=only`" -- that
+   comment had already been rewritten
+
+The pattern is consistent: **the fix is right once the code is read;
+the recon is sometimes wrong when it reads the edge of an output.**
+That's on the record in addenda 16, 17, and here.
+
+### What remains
+
+- **`background_shell` on Linux** -- `#[cfg_attr(target_os = "linux", ignore = "...")]`.
+  Six hypotheses eliminated (runtime scheduling, spool sweep,
+  interrupt delivery path, budget, mtime ordering, watcher
+  reachability). Needs `strace -f` or a `tracing` subscriber.
+  Addendum 12 has the investigation starting point.
+- **`daedfab`'s containment intent** -- reverted at `6c049b21`;
+  needs a self-hosted runner with unprivileged user namespaces.
+- **The npm cache + `--test-threads=1` improvement** for the MCP
+  test -- never landed (the YAML anchor was stale), but CI is green
+  without it. Small future improvement for cold-cache runs.
+
+## Addendum 19 (2026-10-23, bug-hunting session final close)
+
+**CI is fully green at `9a117840`.** Six test matrices (ubuntu both
+toolchains, macos both, windows both), Cargo deny, Security audit,
+Live integrations, MSRV, contracts, both live-model jobs, fuzz,
+benchmarks, coverage. Size gate skipped by design.
+
+### Commits since `v0.1.20` (20 total)
+
+Bug-hunting arc:
+- `33e00a3d` -- quadratic tokenizer heredoc loop (bug 1)
+- `e9191055` -- cancel during streaming ignored (bug 2)
+- `432b81cb` -- unbounded tool-args accumulation (bug 3)
+
+Test/CI fixes:
+- `0d972a2f` -- sweep-test fixture mtime ordering (test-only)
+- `9a117840` -- MCP `INIT_TIMEOUT_SECS` 10s -> 60s (test-enabling)
+
+Docs:
+- `d86f88e8` / `570cba34` / `38e67ab6` -- addenda 15-18
+
+### The three bugs, one paragraph each
+
+**Quadratic tokenizer** (`kod-risk/src/classify.rs`). The
+heredoc-body branch of `tokenize` scanned the whole command, then
+collected the entire remaining tail into a fresh String, then split
+it, for every line of a heredoc body. O(N²) total. The `line_end`
+computed in the first scan was discarded. Fixed by finding the
+newline in the chars vector relative to `i`, collecting exactly that
+line, advancing by it. O(N). 96/96 pass unchanged.
+
+**Cancel during streaming** (`kod-core/src/engine/agent_loop.rs`).
+`is_cancelled_for` was checked only at round boundaries. A cancel
+during `stream.next().await` was unobserved until the stream ended
+naturally (up to `stream_idle_timeout`, 120s default / 480s at Max
+effort), and any tool-call chunks already emitted ran before the
+next check. Fixed by wrapping `stream.next()` in `tokio::select!`
+with a 100ms poll of `is_cancelled_for(holder)`, returning
+`Err(InvalidState)` directly on cancel (not through
+`partial_error`, which would run partial tool calls). Test:
+`stream_cancel.rs` uses a `BlockingStreamer` that yields one chunk
+then sleeps 60s.
+
+**Unbounded tool-args accumulation** (`kod-core/src/engine/agent_loop.rs`).
+`entry.args.push_str(&arguments)` in the `ToolCallDelta` arm had no
+size check. The only bound was `MAX_TOOL_ROUNDS`, which caps rounds,
+not per-call payload. A broken model or a prompt injection through a
+tool description could stream unbounded args; the engine buffered
+all of it. The test's 9 MB payload took 9.87s to process through the
+downstream paths before the round completed. Fixed with
+`MAX_TOOL_ARGS_BYTES = 8 * 1024 * 1024` inline at the append site,
+returning `Err(InvalidState)` on overflow. Test: `stream_tool_args_cap.rs`
+asserts the error in 0.042s.
+
+### The two test/CI fixes
+
+**Sweep-test mtime ordering** (`kod-core-state`).
+`sweep_drops_the_oldest_project_dirs` created 1003 dirs in a tight
+loop and asserted the three oldest were removed. All 1003
+`create_dir_all` calls tied on mtime, so `sort_by_key` fell back to
+`read_dir` order, which on ext4 with `dir_index` is hash order.
+The count assertion passed (`removed == 3`) but `p00000` was not
+the one removed. Fixed with `filetime::set_file_mtime` -- each
+fixture dir gets an explicit distinct mtime (1ms apart), so the
+sort has a total order on every filesystem.
+
+**MCP initialize timeout** (`kod-mcp/src/client.rs`).
+`INIT_TIMEOUT_SECS = 10` was tuned for warm module imports. But on
+a cold CI runner the npx download of
+`@modelcontextprotocol/server-filesystem` can take 10-30s, and both
+`real_filesystem` tests timed out while the package was still
+downloading. Bumped to 60s (matching `DEFAULT_CALL_TIMEOUT_SECS`).
+Warm MCP servers still respond in <100ms -- this is a "give up"
+budget, not a typical-response target.
+
+### Eleven hypotheses eliminated
+
+Each read from the code, not inferred from a failure line:
+
+1. `kod-tools/src/web.rs` SSRF mapped-IP bypass -- handled, tested
+2. `kod-tools/src/web.rs` DNS rebinding -- per-hop re-resolve, pinned
+3. `kod-memory/src/long_term.rs` `remove_batch` TOCTOU -- one transaction
+4. `kod-core-serve/src/acp.rs` `in_flight` collision -- UUID, server-generated
+5. `kod-core/src/engine/at_refs.rs` spool-sweep race -- interrupt delivery unconditional
+6. `kod-core-serve/src/serve.rs` `stop_daemon` silent success -- `serve_roundtrip` catches it
+7. `kod-provider/src/retry.rs` `let _ = status` -- documented intentional
+8. `kod-core-state/src/plan.rs` `let _ = dir_mode` -- documented intentional
+9. `kod-core/src/compaction_dispatcher.rs` compaction data loss -- `CompactionAdmission::admits()` guard
+10. `kod-core/src/engine/agent_loop.rs` FNV-1a quality -- constants correct
+11. `kod-core/src/engine/*.rs` lock-across-send -- oneshot, synchronous
+
+**Zero security bugs, zero data-integrity bugs.** The SSRF filter,
+transaction integrity, and compaction admission control are all
+correct. The three real bugs are performance/correctness in the
+pre-execution or in-flight path -- worth fixing, not exploitable.
+
+### The recon's own errors (cumulative)
+
+Six times across the session, the recon drew a conclusion the code
+did not support, each caught before a wrong fix landed:
+
+1. **Addendum 15**: "`Err` arm of `run_prompt` missing
+   `in_flight.remove`" -- truncated `sed` range cut it off
+2. **Addendum 16**: "100ms barrier is in the failed-prompt test" --
+   line proximity, not the enclosing `async fn`
+3. **Addendum 17**: "fix needs to handle partial calls on cancel" --
+   cancel returns `Err` directly
+4. **Addendum 17**: "`MAX_TOOL_ROUNDS` is the anchor for the cap
+   constant" -- not defined in `agent_loop.rs`
+5. **Addendum 18**: "20/20 local sweep tests fail" -- grep pattern
+   mismatch, not a real failure
+6. **Addendum 18**: "MCP step anchor `--run-ignored=only`" -- that
+   comment had already been rewritten
+
+The pattern is consistent: **the fix is right once the code is read;
+the recon is sometimes wrong when it reads the edge of an output.**
+That's on the record in addenda 16, 17, and here.
+
+### What remains
+
+- **`background_shell` on Linux** -- `#[cfg_attr(target_os = "linux", ignore = "...")]`.
+  Six hypotheses eliminated (runtime scheduling, spool sweep,
+  interrupt delivery path, budget, mtime ordering, watcher
+  reachability). Needs `strace -f` or a `tracing` subscriber.
+  Addendum 12 has the investigation starting point.
+- **`daedfab`'s containment intent** -- reverted at `6c049b21`;
+  needs a self-hosted runner with unprivileged user namespaces.
+- **The npm cache + `--test-threads=1` improvement** for the MCP
+  test -- never landed (the YAML anchor was stale), but CI is green
+  without it. Small future improvement for cold-cache runs.
