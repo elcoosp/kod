@@ -875,3 +875,118 @@ full read, never a fix.
 That's a good result for a bug hunt. Finding two real bugs is
 better than finding zero, and eliminating six high-severity
 hypotheses is the more useful half of the answer.
+
+## Addendum 18 (2026-10-23, bug-hunting round 3)
+
+A third round of bug hunting over the areas the previous rounds left.
+**One real bug found and fixed. Four hypotheses eliminated. The
+bug-hunt total for this session is now three bugs fixed and eleven
+hypotheses eliminated.**
+
+### Bug 3: unbounded tool-args accumulation (fixed at `432b81cb`)
+
+`kod-core/src/engine/agent_loop.rs`, the `StreamChunk::ToolCallDelta`
+arm. The engine appended every streamed tool-call argument delta to
+the per-call `Partial::args` with no size check:
+
+    entry.args.push_str(&arguments);
+
+The only bound in the file was `MAX_TOOL_ROUNDS`, which caps rounds,
+not per-call payload. A broken model, or a prompt injection through
+a tool description, could stream unbounded args. The engine buffered
+all of it until the round ended, and the downstream
+speculation/dispatch paths were measurably slow on multi-megabyte
+payloads: the test's 9 MB payload took **9.87s** to process before
+the round completed.
+
+**Fixed:** `MAX_TOOL_ARGS_BYTES = 8 * 1024 * 1024` (8 MB) and an
+explicit check after each append. On overflow, return
+`Err(InvalidState)` directly -- not through `stream_error` /
+`partial_error`, which is the path that runs partial tool calls.
+The test payload now returns in **0.042s** (the error path, not the
+slow downstream path).
+
+8 MB allows a ~4 MB source file after JSON escaping (the largest
+realistic `write_file` payload). A call that needs more is a
+separate feature (stream the payload to disk, not into `args`).
+
+**Severity: medium.** Not a security bypass; a denial-of-service in
+the hands of a broken model or a prompt injection through tool
+descriptions. The wall-clock cost is real: 10s per bad round, and
+the worst case scales with the payload size.
+
+### Eliminated by the recon
+
+| Area | Hypothesis | Verdict |
+|---|---|---|
+| `kod-core/src/compaction_dispatcher.rs` | Compaction data loss on summarization failure | **Handled**: `CompactionAdmission::admits()` returns `projected < current` -- a strict no-reduction guard. The dispatcher returns plans; the caller applies only if admitted. The "plans, not applications" design holds |
+| `kod-core/src/engine/agent_loop.rs` | FNV-1a hasher constant typo | **Correct**: `0xcbf29ce484222325` (offset), `0x100000001b3` (prime), XOR-multiply loop. Standard FNV-1a |
+| `kod-core/src/engine/*.rs` | Lock held across `chunk_tx.send().await` | **Handled**: every apparent case is a `oneshot::Sender::send` (synchronous, no yield point) inside a temporary guard. The T3-C7 fix from earlier in the session covers the one real case |
+| `kod-core/src/compaction.rs` | Emergency summary on failure path | **Correct**: `emergency_summary` is a pure function; the failure path uses it, no data mutation before the summary is computed |
+
+### The session's bug-hunt scorecard
+
+| Bug | Commit | Severity | Impact |
+|---|---|---|---|
+| Quadratic tokenizer heredoc loop | `33e00a3d` | low-medium | O(N²) → O(N) in the pre-execution classifier |
+| Cancel during streaming ignored | `e9191055` | medium | 120s+ cancel latency, partial-tool-call hazard |
+| Unbounded tool-args accumulation | `432b81cb` | medium | 10s+ stall on a bad model, unbounded memory |
+
+**Eleven hypotheses eliminated:**
+
+1. `kod-tools/src/web.rs` SSRF mapped-IP bypass
+2. `kod-tools/src/web.rs` DNS rebinding between check and connect
+3. `kod-memory/src/long_term.rs` `remove_batch` TOCTOU
+4. `kod-core-serve/src/acp.rs` `in_flight` collision
+5. `kod-core/src/engine/at_refs.rs` spool-sweep race
+6. `kod-core-serve/src/serve.rs` `stop_daemon` silent success
+7. `kod-provider/src/retry.rs` `let _ = status` dead check
+8. `kod-core-state/src/plan.rs` `let _ = dir_mode` lost guard
+9. `kod-core/src/compaction_dispatcher.rs` compaction data loss
+10. `kod-core/src/engine/agent_loop.rs` FNV-1a hash quality
+11. `kod-core/src/engine/*.rs` lock held across send
+
+**Zero security bugs and zero data-integrity bugs** across all three
+rounds. The SSRF filter, transaction integrity, and compaction
+admission control are all correct. The three real bugs are
+performance / correctness in the pre-execution or in-flight path --
+not exploitable, but worth fixing.
+
+### The recon's own errors (cumulative)
+
+Across three rounds, the recon drew conclusions before reading the
+full code four times:
+
+1. **Addendum 15**: "`Err` arm of `run_prompt` is missing
+   `in_flight.remove`." It wasn't; a truncated `sed` range cut it
+   off.
+2. **Addendum 16**: "the 100ms barrier is in the failed-prompt
+   test." It was in the normal-prompt test; the test name was
+   inferred from line proximity.
+3. **This round (fix attempt 1)**: "`MAX_TOOL_ROUNDS` is the anchor
+   for the cap constant." It isn't defined in `agent_loop.rs` at
+   all; the constant lives elsewhere and the fix script's anchor
+   assertion failed before applying anything.
+4. **Addendum 17**: "the fix needs to also handle partial calls on
+   cancel." It doesn't; cancel returns `Err` directly, bypassing
+   the partial-error path.
+
+Every one of these was caught before a wrong fix landed. The pattern
+is consistent: **the fix is right once the code is read; the recon
+is sometimes wrong when it reads the edge of an output.** That's the
+session's most reliable finding about itself.
+
+### The `background_shell` Linux bug
+
+Still open, six hypotheses eliminated (`sweep_background_spools` was
+this session's addition). Needs `strace -f` or a `tracing`
+subscriber. Addendum 12 has the starting point.
+
+### Session totals
+
+- 16 commits since `v0.1.20`
+- 3 real bugs found and fixed
+- 11 hypotheses eliminated
+- Full workspace gate green at every commit
+- CI verified green at `570cba34` (before this round's fix); the
+  next CI run will verify `432b81cb`
