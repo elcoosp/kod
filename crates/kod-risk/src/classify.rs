@@ -1360,6 +1360,7 @@ mod tests {
         assert!(!a.level.is_absolute_deny(), "got {:?}", a.level);
     }
 
+    #[cfg(unix)]
     #[test]
     fn ln_into_credential_store_is_catastrophic() {
         // `ln -sf TARGET LINK` replaces LINK with a symlink. On a
@@ -1539,6 +1540,7 @@ mod tests {
         assert!(a.level.is_absolute_deny(), "got {:?}", a.level);
     }
 
+    #[cfg(unix)]
     #[test]
     fn tee_to_a_system_file_is_catastrophic() {
         let a = assess("echo x | tee /etc/sudoers", &ctx());
