@@ -40,6 +40,7 @@ mod secret_placeholder_integration;
 mod serve_roundtrip;
 mod session_log_compat;
 mod steers_reach_the_provider;
+mod stream_cancel;
 mod structured_prompt_shape;
 mod structured_provider_path;
 mod swarm_failed_dep_gates;

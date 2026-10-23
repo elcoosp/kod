@@ -805,7 +805,42 @@ impl KodEngine {
         );
         let mut stream_error: Option<kod_error::KodError> = None;
         loop {
-            let next = match tokio::time::timeout(stream_idle_timeout, stream.next()).await {
+            // Bug-hunt: the inner stream loop had no cancel check
+            // between `is_cancelled_for` call sites (the two in the
+            // outer round loop are at round boundaries). A cancel
+            // during `stream.next().await` was therefore unobserved
+            // until the stream ended naturally -- up to
+            // `stream_idle_timeout` (120s default, 480s at Max
+            // effort). Worse, if the model emitted tool-call chunks
+            // before the stream ended, the caller ran those tools
+            // before the next round's cancel check fired: side
+            // effects after a user cancelled.
+            //
+            // `tokio::select!` breaks into the pending `stream.next()`
+            // await: every 100ms, if the cancel flag is set, return
+            // immediately. Without the flag, the branch never fires
+            // and the loop is identical to before. 100ms matches the
+            // ACP approval wait's poll interval -- the same "cancel
+            // is observed within a fraction of a second, not a
+            // timeout" contract.
+            //
+            // Returns `Err` directly (not `stream_error`): a cancel
+            // must not go through the partial-error path, which is
+            // what runs partial tool calls on a non-retryable error.
+            // See `policy_gate.rs` for the approval-wait analogue.
+            let next = tokio::select! {
+                biased;
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    if self.is_cancelled_for(holder) {
+                        return Err(kod_error::KodError::InvalidState(
+                            "cancelled by user".to_string(),
+                        ));
+                    }
+                    continue;
+                }
+                item = tokio::time::timeout(stream_idle_timeout, stream.next()) => item,
+            };
+            let next = match next {
                 Ok(Some(item)) => item,
                 Ok(None) => break,
                 Err(_) => {
