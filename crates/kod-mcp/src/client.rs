@@ -41,8 +41,19 @@ type PendingMap = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Valu
 
 /// `initialize` timeout. Generous: a Python MCP server may need to
 /// import its modules on the first call, and a long-running one may
-/// already be warm. 10 s covers both.
-const INIT_TIMEOUT_SECS: u64 = 10;
+/// already be warm.
+///
+/// 60 s, not 10: the "cold" case also includes a *cold npx download*
+/// of `@modelcontextprotocol/server-filesystem` on a CI runner whose
+/// `~/.npm` cache missed. The 10 s budget was tuned for warm-cache
+/// module imports; on CI's first run per lockfile the download can
+/// take 10-30 s, and the initialize call timed out while the
+/// package was still downloading. 60 s matches
+/// `DEFAULT_CALL_TIMEOUT_SECS` and bounds a genuinely broken server
+/// at the same ceiling as any other tool call. Warm MCP servers
+/// still respond in <100 ms -- this constant is a "give up" budget,
+/// not a typical-response target.
+const INIT_TIMEOUT_SECS: u64 = 60;
 
 /// `tools/list` and `tools/call` timeout. Configurable per call, but
 /// the default covers a normal tool that reads a file or shells out.
