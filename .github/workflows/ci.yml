@@ -478,6 +478,16 @@ jobs:
     # explicitly. A silent skip here would be the fail-open shape
     # L25 records.
     - name: LSP live test (rust-analyzer handshake)
+      env:
+        # The rustup shim for rust-analyzer resolves the toolchain via
+        # RUSTUP_TOOLCHAIN, then falls back to `rustup default`. On
+        # this runner the default may not be the stable toolchain that
+        # `components: rust-analyzer` installed into, producing
+        # "Unknown binary 'rust-analyzer' in official toolchain" at
+        # spawn time despite `rust-analyzer --version` working.
+        # Pinning RUSTUP_TOOLCHAIN to stable makes the shim resolve
+        # the toolchain that actually has the component.
+        RUSTUP_TOOLCHAIN: stable
       run: |
         set -euo pipefail
         LOG=$(mktemp)
