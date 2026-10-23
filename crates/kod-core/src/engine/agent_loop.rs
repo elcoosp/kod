@@ -991,6 +991,32 @@ impl KodEngine {
                 StreamChunk::ToolCallDelta { index, arguments } => {
                     let entry = partials.entry(index).or_default();
                     entry.args.push_str(&arguments);
+                    // Bug-hunt 2026-10-23: unbounded args accumulation.
+                    // The only bound in this file was MAX_TOOL_ROUNDS,
+                    // which caps rounds, not per-call payload. A broken
+                    // model (or a prompt injection through a tool
+                    // description) could stream unbounded args; the
+                    // engine would buffer all of it until the round
+                    // ended, and the downstream speculation/dispatch
+                    // paths were measurably slow on multi-megabyte
+                    // payloads. 8 MB allows a ~4 MB source file after
+                    // JSON escaping.
+                    //
+                    // Return Err directly (not `stream_error`): an
+                    // oversized partial is an unrecoverable round, and
+                    // going through `partial_error` would run the
+                    // partial tool calls.
+                    const MAX_TOOL_ARGS_BYTES: usize = 8 * 1024 * 1024;
+                    if entry.args.len() > MAX_TOOL_ARGS_BYTES {
+                        return Err(kod_error::KodError::InvalidState(format!(
+                            "tool call {} streamed {} bytes of arguments, \
+                             exceeding the {} byte cap (MAX_TOOL_ARGS_BYTES); \
+                             a well-behaved model emits orders of magnitude less",
+                            entry.name.as_deref().unwrap_or("<unnamed>"),
+                            entry.args.len(),
+                            MAX_TOOL_ARGS_BYTES,
+                        )));
+                    }
                     // Delta §14.3: TTSR rules also match a tool call's
                     // streamed arguments. This runs before the
                     // speculation block below, which may `continue` and
