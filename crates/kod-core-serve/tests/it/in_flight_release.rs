@@ -270,7 +270,6 @@ async fn session_is_not_wedged_busy_after_a_failed_prompt_completes() {
     // 100ms barrier: see the PR's commit message for the server-side
     // race this works around. The proper fix (move in_flight cleanup
     // before the response frame) is deferred to a dedicated session.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert_eq!(
         r1["result"]["stopReason"].as_str(),
         Some("refusal"),
