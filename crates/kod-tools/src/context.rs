@@ -945,6 +945,40 @@ impl std::fmt::Debug for ArtifactStoreHook {
     }
 }
 
+/// H-R16: the forbid/allow predicate, parameterized so callers that
+/// cannot hold `&ToolContext` (the `grep` / `list_files` walk closures)
+/// can apply the same policy the single-path `is_path_allowed` does.
+///
+/// Bug-hunt 2026-10-24: without a shared implementation, the walk
+/// closures checked only `read_protection` -- a *different* policy --
+/// and never consulted `forbidden_paths`. A user who configured
+/// `forbidden_paths = ["**/secrets/**"]` found `grep .` reading the
+/// contents, because `can_read` was applied only to the *root* the
+/// caller named, never to the files the walk descended into.
+///
+/// One implementation, three call sites (the method and the two walk
+/// closures) -- no drift between them.
+pub(crate) fn is_path_allowed_by(
+    forbidden_paths: &[String],
+    allowed_paths: &[String],
+    path: &Path,
+) -> bool {
+    for forbidden in forbidden_paths {
+        if ToolContext::matches_pattern_inner(path, forbidden, true) {
+            return false;
+        }
+    }
+    if allowed_paths.is_empty() {
+        return true;
+    }
+    for allowed in allowed_paths {
+        if ToolContext::matches_pattern(path, allowed) {
+            return true;
+        }
+    }
+    false
+}
+
 impl ToolContext {
     /// Create a new context with default permissions
     pub fn new(working_dir: impl Into<PathBuf>) -> Self {
@@ -1180,27 +1214,11 @@ impl ToolContext {
 
     /// Check if path is allowed by permissions
     pub fn is_path_allowed(&self, path: &Path) -> Result<bool> {
-        for forbidden in &self.permissions.forbidden_paths {
-            // H-R16: forbidden list fails closed — an invalid pattern
-            // in a forbidden list is a policy typo, and the safe
-            // reading of "this glob was supposed to forbid something"
-            // is "matches everything until fixed".
-            if Self::matches_pattern_inner(path, forbidden, true) {
-                return Ok(false);
-            }
-        }
-
-        if self.permissions.allowed_paths.is_empty() {
-            return Ok(true);
-        }
-
-        for allowed in &self.permissions.allowed_paths {
-            if Self::matches_pattern(path, allowed) {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        Ok(is_path_allowed_by(
+            &self.permissions.forbidden_paths,
+            &self.permissions.allowed_paths,
+            path,
+        ))
     }
 
     /// Check if path can be read

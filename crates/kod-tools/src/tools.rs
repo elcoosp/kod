@@ -1525,6 +1525,11 @@ impl Tool for ListFilesTool {
         // PERF-04: iterate the shared Arc; no `Vec<PathBuf>` clone.
         let mut files: Vec<String> = gitaware_walk_arc(&resolved, recursive)
             .iter()
+            // Bug-hunt 2026-10-24: same fix as `grep` above --
+            // `can_read` was applied only to the root, so a
+            // `forbidden_paths = ["**/secrets/**"]` policy was
+            // bypassed by listing the working dir recursively.
+            .filter(|p| context.is_path_allowed(p.as_path()).unwrap_or(true))
             .map(|p| truncate_entry(&p.to_string_lossy(), MAX_ENTRY_BYTES))
             .collect();
 
@@ -1975,6 +1980,13 @@ impl Tool for GrepTool {
         let regex_c = regex.clone();
         let rp_owned = context.read_protection.clone();
         let redactor_owned = context.redactor.clone();
+        // Bug-hunt 2026-10-24: `forbidden_paths` / `allowed_paths` must
+        // apply to every file the walk descends into, not only the
+        // root the caller named. Clone the two `Vec<String>` (cheap --
+        // policy globs, not content) so the walk closure can apply the
+        // same check the single-path `can_read` does.
+        let forbidden_owned = context.permissions.forbidden_paths.clone();
+        let allowed_owned = context.permissions.allowed_paths.clone();
         let (mut results, skipped_large_files, skipped_large_total, hit_cap_fired) =
             tokio::task::spawn_blocking(move || {
                 let mut results: Vec<serde_json::Value> = Vec::new();
@@ -1991,6 +2003,13 @@ impl Tool for GrepTool {
                     if results.len() >= MAX_GREP_MATCHES {
                         hit_cap_fired = true;
                         break;
+                    }
+                    if !crate::context::is_path_allowed_by(
+                        &forbidden_owned,
+                        &allowed_owned,
+                        file_path.as_path(),
+                    ) {
+                        continue;
                     }
                     let file_mode = protected(file_path);
                     if let Some(kod_config::ReadMode::Refuse) = file_mode {
@@ -2304,6 +2323,96 @@ mod tests {
             Err(_) | Ok(ToolResult::Error(_)) => {}
             other => panic!("reading a forbidden file block by id must be refused, got: {other:?}"),
         }
+    }
+
+    /// A `forbidden_paths` glob must apply to the *contents* of a
+    /// recursive grep, not only to the root the caller names.
+    ///
+    /// Bug-hunt 2026-10-24: `search_files` resolved the root and
+    /// called `can_read(&resolved)` -- which checked
+    /// `forbidden_paths` against the root only. The walk below that
+    /// call (`gitaware_walk_arc`) descended into the forbidden
+    /// subdirectory and read every file under it.
+    #[tokio::test]
+    async fn grep_skips_files_under_forbidden_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+        std::fs::write(temp.path().join("secrets/creds.txt"), "SECRET_MARKER\n").unwrap();
+        std::fs::write(temp.path().join("readme.txt"), "not a secret\n").unwrap();
+
+        let ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            forbidden_paths: vec!["**/secrets/**".to_string()],
+            ..Default::default()
+        });
+
+        let r = GrepTool::new()
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "SECRET_MARKER"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let v = match &r {
+            ToolResult::Success(v) => v,
+            other => panic!("grep failed: {other:?}"),
+        };
+        // Assert on the *result entries*, not the response envelope:
+        // the envelope's `pattern` field is the caller's own query and
+        // legitimately contains "SECRET_MARKER".
+        let results = v
+            .get("results")
+            .and_then(|x| x.as_array())
+            .expect("results array in grep response");
+        for hit in results {
+            let file = hit.get("file").and_then(|x| x.as_str()).unwrap_or("");
+            let text = hit.get("text").and_then(|x| x.as_str()).unwrap_or("");
+            assert!(
+                !file.contains("secrets"),
+                "grep must not read files under forbidden_paths; got hit in {file:?}",
+            );
+            assert!(
+                !text.contains("SECRET_MARKER"),
+                "the forbidden file's content must not leak; got {text:?}",
+            );
+        }
+        assert!(
+            results.is_empty(),
+            "no result should match in this fixture (only readme.txt exists, \
+             which does not contain the pattern); got {results:?}",
+        );
+    }
+
+    /// The same rule for `list_files`.
+    #[tokio::test]
+    async fn list_files_skips_entries_under_forbidden_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+        std::fs::write(temp.path().join("secrets/creds.txt"), "x").unwrap();
+        std::fs::write(temp.path().join("readme.txt"), "x").unwrap();
+
+        let ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            forbidden_paths: vec!["**/secrets/**".to_string()],
+            ..Default::default()
+        });
+
+        let r = ListFilesTool::new()
+            .execute(&serde_json::json!({"path": ".", "recursive": true}), &ctx)
+            .await
+            .unwrap();
+        let s = match &r {
+            ToolResult::Success(v) => v.to_string(),
+            other => panic!("list_files failed: {other:?}"),
+        };
+        assert!(
+            !s.contains("secrets/creds.txt"),
+            "list_files must not enumerate files under forbidden_paths; got: {s}",
+        );
+        assert!(
+            s.contains("readme.txt"),
+            "unaffected files must still be listed; got: {s}",
+        );
     }
 
     /// `write_file conflict://<id>` skipped `can_write` entirely. The
