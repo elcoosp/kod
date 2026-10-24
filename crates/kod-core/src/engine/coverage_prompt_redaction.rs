@@ -169,3 +169,36 @@ async fn e2e_argument_redaction_via_config() {
     // SAFETY: single-threaded test process under nextest.
     unsafe { std::env::remove_var("KOD_CONFIG_DIR") };
 }
+
+// The non-`Success` arms route through `redact_rendered_text`. It is a
+// free function taking `Option<&Redactor>`, so this drives the
+// behaviour without setting `KOD_CONFIG_DIR` -- pre-fix the test did,
+// and the process-global config cache then poisoned
+// `redactor_is_a_noop_by_default` and friends under plain
+// `cargo test`. Pre-fix only `Success` ran the redactor
+// (`cap_rendered_result`), so an error echoing user content reached
+// the model in the clear whenever no secret vault was installed --
+// and the vault is opt-in.
+#[test]
+fn error_text_is_redacted_when_a_redactor_is_supplied() {
+    let redactor = kod_types::redact::Redactor::default();
+    let out = redact_rendered_text(
+        "error: could not parse input api_key = sk-abcdef0123456789abcdef0123456789".to_string(),
+        Some(&redactor),
+    );
+    assert!(
+        !out.contains("sk-abcdef0123456789abcdef0123456789"),
+        "the key must be gone; got: {out}",
+    );
+    assert!(
+        out.contains("[REDACTED:openai-key]"),
+        "the marker must be present; got: {out}",
+    );
+}
+
+#[test]
+fn error_text_is_untouched_without_a_redactor() {
+    let text = "error: could not parse input api_key = sk-abcdef0123456789abcdef0123456789";
+    let out = redact_rendered_text(text.to_string(), None);
+    assert_eq!(out, text, "no redactor: the text must pass through unchanged");
+}

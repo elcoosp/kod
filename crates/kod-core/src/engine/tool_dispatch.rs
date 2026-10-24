@@ -862,6 +862,25 @@ impl KodEngine {
     /// the read is guaranteed to observe the write. All-read-only rounds
     /// still run concurrently — their results cannot depend on each other
     /// or on external state they did not observe themselves.
+
+    /// Run the `in_prompt` redactor over a rendered tool-result string
+    /// when `[security.redact] in_prompt = true`; return it unchanged
+    /// otherwise.
+    ///
+    /// `cap_rendered_result` covers `ToolResult::Success` (it trims
+    /// JSON string fields in place and takes the redactor as a
+    /// parameter). The `Error` and `RequiresConfirmation` variants
+    /// render to plain strings and had no redaction step: with
+    /// `in_prompt = true` and no secret vault installed -- the vault
+    /// is opt-in via `install_default_secret_vault` -- an error that
+    /// echoed back user content reached the model in the clear.
+    /// `RedactConfig`'s doc says the pass covers "every message and
+    /// tool result", so routing these through the same redactor is
+    /// the documented behaviour.
+    pub(crate) fn redact_text_for_prompt(&self, text: String) -> String {
+        redact_rendered_text(text, self.prompt_redactor_if_enabled())
+    }
+
     pub(crate) async fn run_tool_calls(
         &self,
         calls: &[ToolCall],
@@ -1529,10 +1548,24 @@ impl KodEngine {
                     RENDERED_RESULT_CAP,
                     self.prompt_redactor_if_enabled(),
                 ),
-                ToolResult::Error(e) => format!("error: {e}"),
-                ToolResult::RequiresConfirmation { description, .. } => {
-                    format!("requires confirmation (auto-skipped in TUI): {description}")
+                // `cap_rendered_result` handles only `Success` (it
+                // trims JSON string fields in place), so the other two
+                // variants must redact their rendered text directly.
+                // Pre-fix only `Success` ran the `in_prompt` redactor:
+                // with `[security.redact] in_prompt = true` and no
+                // secret vault installed (the vault is opt-in via
+                // `install_default_secret_vault`), an error message
+                // that echoed back user content reached the model in
+                // the clear. `RedactConfig`'s own doc says the pass
+                // covers "every message and tool result", so this is
+                // the documented behaviour, not a new policy.
+                ToolResult::Error(e) => {
+                    self.redact_text_for_prompt(format!("error: {e}"))
                 }
+                ToolResult::RequiresConfirmation { description, .. } => self
+                    .redact_text_for_prompt(format!(
+                        "requires confirmation (auto-skipped in TUI): {description}"
+                    )),
             };
             // Tier 1.1 — wrap the rendered result in a source-trust
             // marker so the model can tell tool output from its own

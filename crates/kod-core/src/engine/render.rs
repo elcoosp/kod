@@ -103,6 +103,34 @@ pub(crate) fn cap_rendered_result(
     )
 }
 
+/// Run the `in_prompt` redactor over a rendered tool-result string.
+/// `None` returns the text unchanged.
+///
+/// `cap_rendered_result` covers `ToolResult::Success` (it trims JSON
+/// string fields in place and takes the redactor as a parameter). The
+/// `Error` and `RequiresConfirmation` variants render to plain strings
+/// and had no redaction step: with `in_prompt = true` and no secret
+/// vault installed -- the vault is opt-in via
+/// `install_default_secret_vault` -- an error that echoed back user
+/// content reached the model in the clear. `RedactConfig`'s doc says
+/// the pass covers "every message and tool result", so routing these
+/// through the same redactor is the documented behaviour.
+///
+/// A free function taking `Option<&Redactor>` rather than a method on
+/// `KodEngine` so the behaviour is testable without setting
+/// `KOD_CONFIG_DIR` (which mutates a process-global config cache and
+/// collides with the other tests in the same binary under plain
+/// `cargo test`).
+pub(crate) fn redact_rendered_text(
+    text: String,
+    redactor: Option<&kod_types::redact::Redactor>,
+) -> String {
+    match redactor {
+        Some(r) => r.redact(&text).0,
+        None => text,
+    }
+}
+
 /// Does this reply declare the goal met?
 ///
 /// The goal prompt instructs the model to "end your reply with a line
