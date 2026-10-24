@@ -1367,3 +1367,267 @@ That's on the record in addenda 16, 17, and here.
 - **The npm cache + `--test-threads=1` improvement** for the MCP
   test -- never landed (the YAML anchor was stale), but CI is green
   without it. Small future improvement for cold-cache runs.
+
+## Addendum 20 (2026-10-24, forbidden_paths is inert in production)
+
+A bug-hunt round after the `34961905` grep/list_files fix uncovered a
+larger finding: **`ToolPermissions::forbidden_paths` is never
+populated from the user's policy in production.**
+
+### The evidence
+
+`grep -rn 'forbidden_paths' crates/` returns three kinds of hit:
+
+| Site | What |
+|---|---|
+| `kod-types/src/tool.rs:130` | The field declaration |
+| `kod-tools/src/context.rs:1218` | `can_read` / `can_write` / `is_path_allowed` reading it |
+| `kod-tools/src/context.rs` (my fix at `34961905`) | The walk closures reading it |
+| `kod-tools/src/tools.rs` (tests) | Unit tests constructing contexts with explicit non-empty lists |
+| `kod-core/src/jfind_tool.rs:161` | `forbidden_paths: Vec::new()` in the definition |
+| `kod-core/src/engine/settings.rs:117` | `forbidden_paths: Vec::new()` in the tool context |
+| `kod-cli/src/commands/admin.rs:1058` | Display, reads it for output |
+
+**Nothing populates the field from `PolicyEngine`.** The policy engine
+carries the data (`ToolPolicy::forbidden: Option<Vec<String>>` at
+`kod-config/src/policy.rs:100`), loads it at startup
+(`kod-cli/src/commands/mod.rs:74`, `admin.rs:452`, `admin.rs:691`),
+and `EngineBootstrapOptions` has **no field** to pass it through
+(`mod.rs:89–115`).
+
+`engine/settings.rs:108–117` constructs the engine's `ToolContext`
+with:
+
+    .with_permissions(ToolPermissions {
+        ...
+        allowed_paths: Vec::new(),
+        forbidden_paths: Vec::new(),
+    })
+
+`tool_dispatch.rs:902–946` derives every per-call context from that
+one and never sets `permissions.forbidden_paths` from the policy.
+
+### What that means
+
+Every tool's `can_read` and `can_write` check against
+`forbidden_paths` **short-circuits to allow** in every production
+entry point (CLI, TUI, serve, ACP). A user who configured
+
+    [policy.tools.read_file]
+    forbidden = ["**/.env", "**/id_rsa"]
+
+expected `read_file .env` to be denied. It has been reading it for
+as long as the field has existed.
+
+This is **not a regression** from any commit in this session. The
+field has been inert since it was introduced. The session's earlier
+"eliminated" hypothesis about the `grep`/`list_files` bypass was
+correct in shape but understated the scope: the bypass isn't
+tool-specific — the whole mechanism is disconnected.
+
+### What `34961905` actually is
+
+The commit adds a per-file check in `GrepTool`'s and
+`ListFilesTool`'s walk closures. It's **correct code** — the filter
+works, the two tests prove it. It's also **inert in production**
+until the field is populated.
+
+That's a prerequisite, not a fix. The commit stands: reverting it
+would mean the wiring fix has one more piece to redo. The tests
+verify the filter in isolation, which is what they should verify;
+the "does the policy reach the tool" question is the wiring fix's
+job.
+
+### The wiring fix (next session's opener)
+
+Two possible designs:
+
+**Union** — collect every tool's `forbidden` globs into one list, set
+on the engine's `tool_context.permissions.forbidden_paths` once at
+`engine_from_config` time.
+
+- ~15 lines, one place
+- Fails closed: any tool's forbid applies to every tool
+- **Changes semantics**: "forbid `.env` for `read_file` but allow
+  it for `grep`" becomes "forbid for both." Needs user approval.
+
+**Per-tool** — in `tool_dispatch.rs`, look up the current tool's
+`forbidden` globs from the `PolicyEngine` and set them on the
+per-call context.
+
+- ~40 lines: a `PolicyEngine::forbidden_for(tool)` accessor, plus
+  the per-call mutation
+- Preserves the per-tool semantics the config expresses
+- Requires `tool_dispatch` to see the `PolicyEngine` — it currently
+  doesn't (the engine holds it via `set_policy`, but the tool
+  dispatch path doesn't query it)
+
+Per-tool is the correct shape. Union is a stopgap that would need to
+be walked back.
+
+### Why this addendum, and not a fix in this session
+
+Populating `forbidden_paths` from a per-tool policy is a semantics
+decision (union vs per-tool), not a bug fix the session can make
+unilaterally. The recon that found it is one round of work; the fix
+is the next session's opening round, with a clear specification in
+this addendum.
+
+### Also confirmed by this recon
+
+- `FileInfoTool` calls `can_read` on the resolved path
+  (`tools.rs:~2210`) — clean
+- `search.rs:149` uses `gitaware_walk_arc` and checks only the root
+  — same shape as `grep` before `34961905`. **Same inert status**:
+  fixing it without the wiring fix would be equally decorative.
+  Add `search.rs` to the per-file-check backlog for the same round
+  as the wiring fix.
+- `execute_command`'s `sh -c` construction is gated by
+  `can_execute_command` and the risk classifier — not an injection
+  bug, the injection is the intended feature.
+- `jfind_tool.rs:161` constructs a `ToolContext` with empty
+  `forbidden_paths`, but that's a **definition**, not a constructed
+  context (section 10 shows `tool_dispatch` builds the actual
+  context). Not a separate bug — it inherits the same inertness as
+  every other tool.
+
+### Session state at this addendum
+
+- `34961905` on local `main`, ahead of `origin/main` by 1
+- Not pushed
+- The three real bugs from earlier in the session (`33e00a3d`,
+  `e9191055`, `432b81cb`) are on `origin/main`; the two test/CI
+  fixes (`0d972a2f`, `9a117840`) are on `origin/main`; `34961905`
+  is the only unpushed commit
+
+## Addendum 20 (2026-10-24, forbidden_paths is inert in production)
+
+A bug-hunt round after the `34961905` grep/list_files fix uncovered a
+larger finding: **`ToolPermissions::forbidden_paths` is never
+populated from the user's policy in production.**
+
+### The evidence
+
+`grep -rn 'forbidden_paths' crates/` returns three kinds of hit:
+
+| Site | What |
+|---|---|
+| `kod-types/src/tool.rs:130` | The field declaration |
+| `kod-tools/src/context.rs:1218` | `can_read` / `can_write` / `is_path_allowed` reading it |
+| `kod-tools/src/context.rs` (my fix at `34961905`) | The walk closures reading it |
+| `kod-tools/src/tools.rs` (tests) | Unit tests constructing contexts with explicit non-empty lists |
+| `kod-core/src/jfind_tool.rs:161` | `forbidden_paths: Vec::new()` in the definition |
+| `kod-core/src/engine/settings.rs:117` | `forbidden_paths: Vec::new()` in the tool context |
+| `kod-cli/src/commands/admin.rs:1058` | Display, reads it for output |
+
+**Nothing populates the field from `PolicyEngine`.** The policy engine
+carries the data (`ToolPolicy::forbidden: Option<Vec<String>>` at
+`kod-config/src/policy.rs:100`), loads it at startup
+(`kod-cli/src/commands/mod.rs:74`, `admin.rs:452`, `admin.rs:691`),
+and `EngineBootstrapOptions` has **no field** to pass it through
+(`mod.rs:89–115`).
+
+`engine/settings.rs:108–117` constructs the engine's `ToolContext`
+with:
+
+    .with_permissions(ToolPermissions {
+        ...
+        allowed_paths: Vec::new(),
+        forbidden_paths: Vec::new(),
+    })
+
+`tool_dispatch.rs:902–946` derives every per-call context from that
+one and never sets `permissions.forbidden_paths` from the policy.
+
+### What that means
+
+Every tool's `can_read` and `can_write` check against
+`forbidden_paths` **short-circuits to allow** in every production
+entry point (CLI, TUI, serve, ACP). A user who configured
+
+    [policy.tools.read_file]
+    forbidden = ["**/.env", "**/id_rsa"]
+
+expected `read_file .env` to be denied. It has been reading it for
+as long as the field has existed.
+
+This is **not a regression** from any commit in this session. The
+field has been inert since it was introduced. The session's earlier
+"eliminated" hypothesis about the `grep`/`list_files` bypass was
+correct in shape but understated the scope: the bypass isn't
+tool-specific — the whole mechanism is disconnected.
+
+### What `34961905` actually is
+
+The commit adds a per-file check in `GrepTool`'s and
+`ListFilesTool`'s walk closures. It's **correct code** — the filter
+works, the two tests prove it. It's also **inert in production**
+until the field is populated.
+
+That's a prerequisite, not a fix. The commit stands: reverting it
+would mean the wiring fix has one more piece to redo. The tests
+verify the filter in isolation, which is what they should verify;
+the "does the policy reach the tool" question is the wiring fix's
+job.
+
+### The wiring fix (next session's opener)
+
+Two possible designs:
+
+**Union** — collect every tool's `forbidden` globs into one list, set
+on the engine's `tool_context.permissions.forbidden_paths` once at
+`engine_from_config` time.
+
+- ~15 lines, one place
+- Fails closed: any tool's forbid applies to every tool
+- **Changes semantics**: "forbid `.env` for `read_file` but allow
+  it for `grep`" becomes "forbid for both." Needs user approval.
+
+**Per-tool** — in `tool_dispatch.rs`, look up the current tool's
+`forbidden` globs from the `PolicyEngine` and set them on the
+per-call context.
+
+- ~40 lines: a `PolicyEngine::forbidden_for(tool)` accessor, plus
+  the per-call mutation
+- Preserves the per-tool semantics the config expresses
+- Requires `tool_dispatch` to see the `PolicyEngine` — it currently
+  doesn't (the engine holds it via `set_policy`, but the tool
+  dispatch path doesn't query it)
+
+Per-tool is the correct shape. Union is a stopgap that would need to
+be walked back.
+
+### Why this addendum, and not a fix in this session
+
+Populating `forbidden_paths` from a per-tool policy is a semantics
+decision (union vs per-tool), not a bug fix the session can make
+unilaterally. The recon that found it is one round of work; the fix
+is the next session's opening round, with a clear specification in
+this addendum.
+
+### Also confirmed by this recon
+
+- `FileInfoTool` calls `can_read` on the resolved path
+  (`tools.rs:~2210`) — clean
+- `search.rs:149` uses `gitaware_walk_arc` and checks only the root
+  — same shape as `grep` before `34961905`. **Same inert status**:
+  fixing it without the wiring fix would be equally decorative.
+  Add `search.rs` to the per-file-check backlog for the same round
+  as the wiring fix.
+- `execute_command`'s `sh -c` construction is gated by
+  `can_execute_command` and the risk classifier — not an injection
+  bug, the injection is the intended feature.
+- `jfind_tool.rs:161` constructs a `ToolContext` with empty
+  `forbidden_paths`, but that's a **definition**, not a constructed
+  context (section 10 shows `tool_dispatch` builds the actual
+  context). Not a separate bug — it inherits the same inertness as
+  every other tool.
+
+### Session state at this addendum
+
+- `34961905` on local `main`, ahead of `origin/main` by 1
+- Not pushed
+- The three real bugs from earlier in the session (`33e00a3d`,
+  `e9191055`, `432b81cb`) are on `origin/main`; the two test/CI
+  fixes (`0d972a2f`, `9a117840`) are on `origin/main`; `34961905`
+  is the only unpushed commit
