@@ -405,3 +405,87 @@ async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
 
     engine.shutdown().await.unwrap();
 }
+
+
+/// Bug-hunt addendum 20: the wiring fix at `c4c5f0df` installs the
+/// per-round union of every call's `forbidden` globs onto
+/// `ToolContext::permissions.forbidden_paths`. This test proves the
+/// wiring reaches a walk tool: `grep` over `.` must skip files
+/// under a `[policy.tools.grep] forbidden = [...]` glob.
+///
+/// Without the wiring fix, the walker saw an empty
+/// `permissions.forbidden_paths` and read `secrets/creds.txt`. Without
+/// the per-file check at `34961905`, the walker would have read it even
+/// with the field populated. Both together: the walk skips the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grep_walks_skip_forbidden_paths_through_the_engine() {
+    let temp = TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+    std::fs::write(temp.path().join("secrets/creds.txt"), "SECRET_MARKER\n").unwrap();
+    std::fs::write(temp.path().join("readme.txt"), "not a secret\n").unwrap();
+
+    let engine = engine_in(temp.path());
+
+    let call = ToolCall {
+        id: None,
+        tool_name: "grep".to_string(),
+        arguments: serde_json::json!({
+            "path": ".",
+            "pattern": "SECRET_MARKER",
+            "recursive": true,
+        }),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![call]]));
+    install_test_provider(&engine, provider).await;
+
+    let effective = Policy {
+        tools: std::collections::BTreeMap::from([(
+            "grep".to_string(),
+            ToolPolicy {
+                forbidden: Some(vec!["**/secrets/**".to_string()]),
+                ..Default::default()
+            },
+        )]),
+        ..Policy::default()
+    };
+    let pe = PolicyEngine::from_effective_for_tests(effective);
+    engine.set_policy(Arc::new(pe)).await;
+
+    engine.start().await.unwrap();
+    let resp = engine.process("find the secret").await.unwrap();
+
+    assert_eq!(
+        resp.tool_results.len(),
+        1,
+        "the scripted provider must produce exactly one tool result; \
+         got {} results",
+        resp.tool_results.len(),
+    );
+    let json_str = match &resp.tool_results[0] {
+        ToolResult::Success(v) => v.to_string(),
+        other => panic!("expected grep success, got {other:?}"),
+    };
+    let v: serde_json::Value = serde_json::from_str(&json_str)
+        .expect("grep output is JSON");
+    let results = v
+        .get("results")
+        .and_then(|x| x.as_array())
+        .expect("grep output has `results` array");
+    for hit in results {
+        let file = hit.get("file").and_then(|x| x.as_str()).unwrap_or("");
+        let text = hit.get("text").and_then(|x| x.as_str()).unwrap_or("");
+        assert!(
+            !file.contains("secrets"),
+            "walk must not read files under `forbidden`; got hit in {file:?}",
+        );
+        assert!(
+            !text.contains("SECRET_MARKER"),
+            "forbidden content leaked through the walk; got {text:?}",
+        );
+    }
+    assert!(
+        results.is_empty(),
+        "no match expected: `readme.txt` does not contain the pattern \
+         and `secrets/creds.txt` must be skipped; got {results:?}",
+    );
+}
