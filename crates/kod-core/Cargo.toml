@@ -78,3 +78,7 @@ kod-types = { path = "../kod-types" }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "action_benchmarks"
+harness = false
