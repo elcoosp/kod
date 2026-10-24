@@ -161,6 +161,13 @@ impl Tool for SearchFilesTool {
         let regex_c = regex.clone();
         let rp_owned = context.read_protection.clone();
         let redactor_owned = context.redactor.clone();
+        // Bug-hunt 2026-10-24: same fix as `grep` / `list_files`
+        // (34961905) -- `can_read` was applied to the root the
+        // caller named, not to every file the walk descends into.
+        // Clone the two lists (cheap: policy globs, not content)
+        // so the walk closure can apply `is_path_allowed_by`.
+        let forbidden_owned = context.permissions.forbidden_paths.clone();
+        let allowed_owned = context.permissions.allowed_paths.clone();
         let context_lines_c = context_lines;
         let (hits, truncated) = tokio::task::spawn_blocking(move || {
             let mut hits: Vec<Value> = Vec::new();
@@ -170,6 +177,13 @@ impl Tool for SearchFilesTool {
                 if rp.matches(p) { Some(rp.mode) } else { None }
             };
             'outer: for file in files_c.iter() {
+                if !crate::context::is_path_allowed_by(
+                    &forbidden_owned,
+                    &allowed_owned,
+                    file.as_path(),
+                ) {
+                    continue;
+                }
                 if !file.is_file() {
                     continue;
                 }
@@ -455,5 +469,55 @@ mod coverage_search_files_tool {
             }
             other => panic!("got {other:?}"),
         }
+    }
+
+
+    /// Bug-hunt 2026-10-24: `search_files` uses the same walk shape as
+    /// `grep`/`list_files` (fixed at 34961905). The walk descends into
+    /// subdirectories but only checks `read_protection` per file --
+    /// not `forbidden_paths` / `allowed_paths`. With the union wiring
+    /// at c4c5f0df the field is populated, so `search_files` was
+    /// reading files under a forbidden path.
+    #[tokio::test]
+    async fn search_files_skips_files_under_forbidden_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+        std::fs::write(temp.path().join("secrets/creds.txt"), "SECRET_MARKER\n").unwrap();
+        std::fs::write(temp.path().join("readme.txt"), "not a secret\n").unwrap();
+
+        let ctx = ToolContext::new(temp.path());
+        let mut perms = ctx.permissions.clone();
+        perms.read_files = true;
+        perms.forbidden_paths = vec!["**/secrets/**".to_string()];
+        let mut ctx = ctx;
+        ctx.permissions = perms;
+
+        let r = SearchFilesTool::new()
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "SECRET_MARKER"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let v = match &r {
+            ToolResult::Success(v) => v,
+            other => panic!("search_files failed: {other:?}"),
+        };
+        let results = v
+            .get("results")
+            .and_then(|x| x.as_array())
+            .expect("search_files output has `results` array");
+        for hit in results {
+            let file = hit.get("file").and_then(|x| x.as_str()).unwrap_or("");
+            assert!(
+                !file.contains("secrets"),
+                "search_files must not read files under `forbidden`; got hit in {file:?}",
+            );
+        }
+        assert!(
+            results.is_empty(),
+            "no match expected: readme.txt does not contain the pattern \
+             and secrets/creds.txt must be skipped; got {results:?}",
+        );
     }
 }
