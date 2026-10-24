@@ -407,6 +407,105 @@ async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
 }
 
 
+/// The `list_files` counterpart of the grep / search_files / jfind
+/// end-to-end tests. `list_files` shares the `34961905` fix with
+/// `grep` (both in `kod-tools`), but only `grep`'s through-engine
+/// path was proven. This closes the symmetry: every walk tool in
+/// the workspace has an end-to-end test proving the engine-installed
+/// `forbidden_paths` reaches its per-file filter.
+///
+/// Fixture: `secrets/secret.txt` (forbidden) and `readme.txt`
+/// (allowed). The directory branch of `list_files` walks recursively;
+/// the `files` array must contain `readme.txt` and must NOT contain
+/// `secrets/secret.txt`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_files_skips_entries_under_forbidden_paths_through_the_engine() {
+    let temp = TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+    std::fs::write(temp.path().join("secrets/secret.txt"), "x\n").unwrap();
+    std::fs::write(temp.path().join("readme.txt"), "x\n").unwrap();
+
+    let engine = engine_in(temp.path());
+
+    let call = ToolCall {
+        id: None,
+        tool_name: "list_files".to_string(),
+        arguments: serde_json::json!({
+            "path": ".",
+            "recursive": true,
+        }),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![call]]));
+    install_test_provider(&engine, provider).await;
+
+    let effective = Policy {
+        tools: std::collections::BTreeMap::from([(
+            "list_files".to_string(),
+            ToolPolicy {
+                // `mode = Allow`: without it `gate_tool_calls` maps the
+                // unset mode to Standard's Ask, and an Ask with no
+                // interactive consumer is a hard deny at the tool
+                // boundary -- which masks the walk-level check this
+                // test is meant to exercise.
+                mode: Some(Decision::Allow),
+                forbidden: Some(vec!["**/secrets/**".to_string()]),
+                ..Default::default()
+            },
+        )]),
+        ..Policy::default()
+    };
+    let pe = PolicyEngine::from_effective_for_tests(effective);
+    engine.set_policy(Arc::new(pe)).await;
+
+    engine.start().await.unwrap();
+    let resp = engine.process("list the files").await.unwrap();
+
+    assert_eq!(
+        resp.tool_results.len(),
+        1,
+        "the scripted provider must produce exactly one tool result; \
+         got {} results",
+        resp.tool_results.len(),
+    );
+    let v = match &resp.tool_results[0] {
+        ToolResult::Success(v) => v,
+        other => panic!("expected list_files success, got {other:?}"),
+    };
+    let files = v
+        .get("files")
+        .and_then(|x| x.as_array())
+        .expect("list_files output has `files` array");
+    let file_strs: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+
+    assert!(
+        file_strs.iter().any(|s| s.contains("readme.txt")),
+        "positive control failed: `readme.txt` must be listed; got {file_strs:?}",
+    );
+    // `forbidden_paths` uses per-path glob matching. `**/secrets/**`
+    // matches paths *under* `secrets/` -- so `secrets/secret.txt` is
+    // filtered, but the directory entry `secrets` itself is not a
+    // match and may appear in the listing. A user who wants the
+    // directory hidden too writes both `**/secrets` and
+    // `**/secrets/**` in their `forbidden` glob list. This test pins
+    // the documented semantic: no file *under* a forbidden path is
+    // enumerated.
+    assert!(
+        !file_strs.iter().any(|s| s.contains("secrets/")),
+        "walk must not enumerate files under a forbidden path; got {file_strs:?}",
+    );
+
+    // `total` is the pre-truncation count of the same filtered set
+    // (5000-entry cap; this fixture is three entries, so no
+    // truncation). Equality is exact.
+    let total = v.get("total").and_then(|x| x.as_u64()).unwrap_or(0);
+    assert_eq!(
+        total,
+        file_strs.len() as u64,
+        "`total` must equal the filtered file count; got {total} for {file_strs:?}",
+    );
+}
+
+
 /// The `jfind` counterpart of the grep / search_files end-to-end
 /// tests. `JfindTool` lives in `kod-core` (not `kod-tools`), so this
 /// is the only walk tool whose per-file check is in a different
