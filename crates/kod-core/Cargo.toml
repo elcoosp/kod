@@ -47,6 +47,16 @@ parking_lot = { workspace = true }
 dashmap = { workspace = true }
 thiserror = { workspace = true }
 typesafe-ai-rs = { workspace = true }
+# Criterion benchmarks. `harness = false` is REQUIRED: without it
+# rustc's built-in test harness runs instead of `criterion_main!`,
+# finds zero `#[bench]`-annotated functions, and prints
+# "running 0 tests" — the benches in `benches/system_benchmarks.rs`
+# are never reached. This block was missing; `cargo bench` on this
+# crate had been a no-op.
+[[bench]]
+name = "system_benchmarks"
+harness = false
+
 [dev-dependencies]
 httpmock = "0.8"
 kod-provider-openai = { path = "../kod-provider-openai" }
