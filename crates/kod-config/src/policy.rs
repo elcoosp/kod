@@ -1911,10 +1911,13 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
     // * **Prefix wrappers** (`sudo`, `env`, `nice`, ...): always
     //   unwrap; the first non-flag token begins the inner command.
     //
-    // The table is deliberately a subset of `kod_risk::classify`'s
-    // table — kod-config does not depend on kod-risk, so the two are
-    // kept in sync by hand. The tests below pin the shapes that have
-    // historically diverged.
+    // The wrapper tables are deliberately a subset of
+    // `kod_risk::classify`'s: kod-config depends on kod-risk for the
+    // shared tokenizer (SEC-A-12, `69a89036`), but the tables
+    // themselves are still kept in sync by hand -- they encode
+    // different questions (which binaries a command runs vs which
+    // shapes are risky) and diverging them is intentional. The tests
+    // below pin the shapes that have historically drifted.
     // Hoisted to module scope (below) so a cross-crate test can
     // compare them against kod-risk's tables. The inner fn aliases
     // them so the body is unchanged.
