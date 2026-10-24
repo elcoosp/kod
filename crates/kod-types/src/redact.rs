@@ -75,9 +75,29 @@ impl Default for Redactor {
 
 impl Redactor {
     /// Build with the built-in rules and the default entropy floor.
+    ///
+    /// The compiled rule set is shared process-wide. `builtin_rules()`
+    /// compiles 13 regexes (one per rule), and the
+    /// `redactor_construction/builtin_rules_unshared` bench measures
+    /// that at **2.54 ms** -- not the ~100 us a per-regex estimate
+    /// suggests, because the lazy multi-line PEM pattern and the
+    /// case-insensitive alternations are expensive to compile. The
+    /// `default` fixture, which hits this `OnceLock`, measures
+    /// **11 ns**. The rules are
+    /// immutable after construction -- `rules` is an `Arc<Vec<_>>`
+    /// and every method reads it -- so a single compiled set can be
+    /// shared. `Redactor::default()` is constructed per HTTP error in
+    /// `kod-error::KodError::provider_status_with_hint` (to strip
+    /// secrets from the response body before it reaches `Display`),
+    /// which made the per-call cost additive on a retry loop. The
+    /// `Arc` clone keeps `with_rules` and `with_entropy` independent:
+    /// a caller that supplies custom rules gets its own set, and the
+    /// entropy knobs are per-instance `f64`/`bool`.
     pub fn with_builtin_rules() -> Self {
+        static RULES: std::sync::OnceLock<std::sync::Arc<Vec<RedactRule>>> =
+            std::sync::OnceLock::new();
         Self {
-            rules: std::sync::Arc::new(builtin_rules()),
+            rules: std::sync::Arc::clone(RULES.get_or_init(|| std::sync::Arc::new(builtin_rules()))),
             entropy_floor: 4.0,
             entropy_scan: true,
         }

@@ -127,6 +127,44 @@ fn benchmark_redact(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_redactor_construction(c: &mut Criterion) {
+    // `Redactor::default()` compiles the 13 built-in regexes. Before
+    // the `OnceLock` hoist in `with_builtin_rules`, every
+    // `KodError::provider_status_with_hint` call paid that cost to
+    // strip secrets from an HTTP error body before it reached
+    // `Display`; on a retry loop the cost was additive. The bench is
+    // the durable record of what a fresh construction costs -- it is
+    // NOT on the per-token or per-tool-call path (`redact` and
+    // `redact_json` reuse an existing `Redactor`), so this number is
+    // a floor, not a per-turn cost.
+    let mut group = c.benchmark_group("redactor_construction");
+    group.bench_function("default", |b| {
+        b.iter(|| {
+            let r = kod_types::redact::Redactor::default();
+            black_box(r.rule_count());
+        });
+    });
+    group.bench_function("default_clone", |b| {
+        let r = kod_types::redact::Redactor::default();
+        b.iter(|| {
+            let c2 = black_box(&r).clone();
+            black_box(c2.rule_count());
+        });
+    });
+    // The "before" number: `builtin_rules()` is what a fresh
+    // `with_builtin_rules` used to call. It compiles 13 regexes, one
+    // per rule. Kept as a separate fixture so a reader sees both
+    // sides -- `default` is now the `OnceLock` hit, this is what it
+    // would cost if the hoist were reverted.
+    group.bench_function("builtin_rules_unshared", |b| {
+        b.iter(|| {
+            let rules = kod_types::redact::builtin_rules();
+            black_box(rules.len());
+        });
+    });
+    group.finish();
+}
+
 fn benchmark_binary_candidates(c: &mut Criterion) {
     let mut group = c.benchmark_group("binary_candidates");
     for (name, cmd) in [
@@ -151,6 +189,7 @@ criterion_group!(
     benchmark_risk_assess,
     benchmark_path_policy,
     benchmark_redact,
+    benchmark_redactor_construction,
     benchmark_binary_candidates,
 );
 criterion_main!(action_benches);
