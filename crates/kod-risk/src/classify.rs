@@ -566,10 +566,15 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
     // closing terminator (the rest of the command would otherwise be
     // silently swallowed as heredoc data). Escalate so the gate does
     // not return Safe for `cat foo <<EOF; rm -rf /`.
-    if tokenize(command)
-        .iter()
-        .any(|t| t == "__kod_heredoc_unterminated__")
-    {
+    // Tokenize once. The pre-fix code tokenized at the heredoc
+    // sentinel check and again at the token-list bind -- two full
+    // scans (and two `Vec<char>` allocations of the whole command)
+    // per `assess` call, the first result discarded. The sentinel
+    // check only needs to know whether the sentinel token is
+    // present, so it reads the same vector the rest of the function
+    // uses.
+    let tokens = tokenize(command);
+    if tokens.iter().any(|t| t == "__kod_heredoc_unterminated__") {
         return RiskAssessment {
             level: RiskLevel::Confirm,
             findings: vec![RiskFinding {
@@ -634,7 +639,6 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             });
         }
     }
-    let tokens = tokenize(command);
 
     if tokens.is_empty() {
         return RiskAssessment {
