@@ -203,8 +203,20 @@ impl Tool for JfindTool {
             grep_keywords: keywords,
         };
         // The file list + read closure come from the working dir.
+        //
+        // Bug-hunt 2026-10-24: same shape as `grep`/`list_files`/
+        // `search_files` before their fixes -- the walk handed the
+        // full list to the searcher without consulting the user's
+        // `forbidden_paths`. `jfind::search` iterates the `list`
+        // argument directly (never re-walks), so filtering the list
+        // here is the whole fix: a forbidden file never reaches the
+        // `read` closure and cannot contribute a `Hit`.
         let root = context.working_dir.clone();
-        let files = kod_tools::tools::gitaware_walk(&root, true);
+        let files: Vec<std::path::PathBuf> =
+            kod_tools::tools::gitaware_walk(&root, true)
+                .into_iter()
+                .filter(|p| context.is_path_allowed(p).unwrap_or(true))
+                .collect();
         let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
         let hits = jfind::search(&root, &query, Arc::clone(&self.judge), &read, &files).await;
         let semantic = self.is_semantic();
@@ -291,5 +303,82 @@ mod tests {
         };
         assert_eq!(v["judge"], "lexical");
         assert!(v["count"].as_u64().unwrap() >= 1, "got: {v}");
+    }
+
+
+    /// Bug-hunt 2026-10-24: `JfindTool::execute` walks the working
+    /// dir with `gitaware_walk` and hands the full list to
+    /// `jfind::search`. No per-file `forbidden_paths` check -- same
+    /// shape as `grep`/`list_files`/`search_files` before their
+    /// fixes.
+    ///
+    /// The fixture is built so the *only* thing the fix changes is
+    /// whether `secrets/` contributes a hit:
+    ///
+    ///   - `secret-notes.txt` (content "secret data") -- positive
+    ///     control, must appear in results with or without the fix.
+    ///   - `secrets/secret.txt` (content "secret data") -- forbidden,
+    ///     must appear WITHOUT the fix (proving the bug) and must
+    ///     NOT appear WITH it.
+    ///
+    /// Both files satisfy every stage of jfind's cascade:
+    ///   Wave 1 (lexical_rank): path contains "secret" -> candidate
+    ///   Wave 2 (judge_filenames): filename contains "secret" ->
+    ///     LexicalJudge score 1.0 > 0 -> kept
+    ///   Wave 3 (content): "secret data" contains "secret" -> score
+    ///     1.0 > CUTOFF(0.45) and > FILE_THRESHOLD(0.2) -> Hit
+    #[tokio::test]
+    async fn jfind_skips_files_under_forbidden_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+        std::fs::write(temp.path().join("secrets/secret.txt"), "secret data\n").unwrap();
+        std::fs::write(temp.path().join("secret-notes.txt"), "secret data\n").unwrap();
+
+        let mut ctx = kod_tools::context::ToolContext::new(temp.path());
+        ctx.permissions.forbidden_paths = vec!["**/secrets/**".to_string()];
+
+        let tool = JfindTool::new(None);
+        let r = tool
+            .execute(
+                &serde_json::json!({
+                    "query": "secret",
+                    "keywords": ["secret"],
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let v = match &r {
+            ToolResult::Success(v) => v,
+            other => panic!("jfind failed: {other:?}"),
+        };
+        let results = v
+            .get("results")
+            .and_then(|x| x.as_array())
+            .expect("jfind output has `results` array");
+
+        // Positive control: the non-forbidden file must produce a hit.
+        let has_notes = results.iter().any(|h| {
+            h.get("file")
+                .and_then(|x| x.as_str())
+                .map(|s| s.contains("secret-notes.txt"))
+                .unwrap_or(false)
+        });
+        assert!(
+            has_notes,
+            "positive control failed: `secret-notes.txt` must be reported; got {results:?}",
+        );
+
+        // The bug: a hit under a forbidden path must not be reported.
+        let has_forbidden = results.iter().any(|h| {
+            h.get("file")
+                .and_then(|x| x.as_str())
+                .map(|s| s.contains("secrets/"))
+                .unwrap_or(false)
+        });
+        assert!(
+            !has_forbidden,
+            "jfind must not report files under a forbidden path; got {results:?}",
+        );
     }
 }
