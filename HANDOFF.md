@@ -1730,3 +1730,127 @@ The TUI-perf profile attempt failed four ways; the honest note is
 that a script cannot profile the TUI's streaming path, and the next
 session should use `tui_e2e/mock_llm.rs` + `harness::TestEnv`
 directly.
+
+---
+
+## Addendum 22 (2026-10-24, path_policy measured and fixed -- 1034x)
+
+**15 commits ahead of `origin/main`** (`ee2b4dc8`), all local, none
+pushed. Workspace gate after the fix: **5,490 tests pass, 5 skipped**
+(identical to addendum 21's baseline). Tag still `v0.1.20`.
+
+### What the session found
+
+The previous handoff closed with an uncommitted bench file and a
+recovery note: fix the duplicate `[[bench]]` block, commit the bench,
+run it, read `path_policy/ten_forbidden_non_matching` first. That
+recovery ran (`2243017d`), and the bench answered the question it was
+written to ask -- loudly.
+
+| Fixture | Pre-fix median |
+|---|---|
+| `empty_non_matching` | 5 ns |
+| `one_forbidden_non_matching` | **243 µs** |
+| `one_forbidden_matching` | **228 µs** |
+| `ten_forbidden_non_matching` | **1,717 µs** |
+
+Five orders of magnitude between "no forbidden patterns" and "one
+non-matching forbidden pattern", and exactly linear in the pattern
+count. That is not a glob *compile* per call (a `Glob::new` is
+single-digit µs). It is `GlobSetBuilder::build()` per call, per
+pattern: build compiles a regex DFA.
+
+`ToolContext::matches_pattern_inner` constructed a fresh
+`GlobSetBuilder`, compiled the pattern, added the `{}/**` fallback
+when the pattern had no wildcard, and called `build()` on **every**
+invocation. `is_path_allowed` loops over `forbidden_paths` calling
+that function once per pattern. `grep` / `list_files` /
+`search_files` / `jfind` call `is_path_allowed` once per file walked
+(that per-file call is exactly what addendum 20's `forbidden_paths`
+arc added). So a 1000-file walk against 10 forbids paid
+**10,000 regex-DFA compiles** -- ~1.7 s of pure glob compilation,
+measured, not estimated.
+
+### The fix (`ea7c42f7`)
+
+A module-level `OnceLock<Mutex<HashMap<String, Arc<GlobSet>>>>` in
+`kod-tools/src/context.rs`, keyed on the pattern string. The
+compiled set depends only on the pattern (the `{}/**` fallback is a
+function of the pattern too), so it is cacheable across calls and
+across contexts. Same shape `kod-config/src/policy.rs::compiled_glob`
+already used for its own per-pattern cache (T5-C32) -- this is the
+same bug in a sibling crate.
+
+Details that matter:
+
+- **Errors are not cached.** An invalid pattern keeps its per-call
+  `warn!` and `fail_closed` return, so an operator who fixes the
+  config sees the next call succeed rather than a cached rejection.
+- **Double-checked insert** under the write lock: two callers that
+  both miss compile, and without the re-check the second insert
+  overwrites the first -- they hold different `Arc`s for the same
+  pattern. The check returns the winner's.
+- **Bounded eviction at 512** rather than a full clear, so a
+  concurrent caller's freshly-inserted entry survives.
+
+Post-fix, same bench, same machine:
+
+| Fixture | Pre | Post | Speedup |
+|---|---|---|---|
+| `one_forbidden_non_matching` | 243 µs | **172 ns** | ~1412x |
+| `one_forbidden_matching` | 228 µs | **164 ns** | ~1390x |
+| `ten_forbidden_non_matching` | 1,717 µs | **1.66 µs** | **~1034x** |
+
+`empty_non_matching` moved 5 ns -> 5.7 ns (+14%). That is noise: the
+empty path never enters `matches_pattern_inner` (the `for` loop body
+never runs), so it is code-layout jitter on a 5 ns measurement, not
+a cache cost. Do not chase it.
+
+The remaining ~172 ns/pattern is the mutex lock plus the hash.
+Collapsing the whole forbidden list to one `GlobSet` (cache keyed on
+the slice) would cut further, but at 1.66 µs for a ten-forbid check
+the walk is no longer glob-bound. Not done; noted as the next lever
+if it ever matters.
+
+### Why this is the shape the handoff predicted, and where it didn't
+
+Addendum 21 said: "If that group is microsecond-scale rather than
+nanosecond-scale, a compiled-globset cache in `ToolContext` is a
+real optimization." The number was millisecond-scale -- 1000x past
+the prediction's threshold.
+
+But the *location* was wrong. `is_path_allowed` ->
+`is_path_allowed_by` (static) -> `matches_pattern_inner` (static)
+threads no `&self`, so a `ToolContext` struct field would have
+required changing the call chain, `Default`, and the builder. A
+module-level cache needs none of that and matches the existing
+`policy.rs` precedent. The handoff's "where" was a guess; reading
+the call chain corrected it.
+
+### Commits this session
+
+| Commit | What |
+|---|---|
+| `2243017d` | bench(kod-core): per-action functions (the recovery; from the prior session's dirty tree) |
+| `ea7c42f7` | perf(kod-tools): cache compiled forbidden-path globsets |
+| `d561df7a` | docs(bench): path_policy header reflects the post-cache measurement |
+
+### Doc state
+
+- `action_benchmarks.rs` header now states the measured baseline and
+  that the bench's number is the *post-fix* one; a regression to
+  millisecond scale means the cache was removed.
+- `HANDOFF.md` has **duplicate** addendum headings -- 18, 19, and 20
+  each appear twice (at lines 879/994, 1109/1240, 1371/1503). This
+  predates this session and was not touched. Whoever owns the file
+  should decide whether the first or second copy is canonical; do not
+  guess.
+
+### Tag decision
+
+`v0.1.21` is now justified. The arc is coherent and closed: the
+`forbidden_paths` wiring (addendum 20, 10 commits) plus a measured
+1034x performance fix on the per-file check that wiring introduced.
+The bench that found it is committed as a durable baseline. Nothing
+is pushed, per the standing instruction; tagging is local and does
+not push.
