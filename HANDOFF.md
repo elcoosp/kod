@@ -1993,3 +1993,57 @@ measurement -- the `RegexSet` prefilter -- regressed the exact case it
 targeted. Addendum 21 recorded the same lesson about the SSE refactor.
 It holds: read first, measure before committing, and treat a
 regression caught before commit as the measurement working.
+
+### Addendum 23.1 (2026-10-24, same session -- error-path redaction gap)
+
+Found while resolving addendum 23's open item 2. The method
+`redact_tool_result_for_prompt` is indeed dead, but the grep that
+found it led to the live dispatch and a real gap.
+
+**The gap.** `run_tool_calls` redacted one of three `ToolResult`
+variants. `Success` went through `cap_rendered_result`, which takes
+the `in_prompt` redactor as a parameter. `Error(e) =>
+format!("error: {e}")` and `RequiresConfirmation { description } =>
+format!(...)` had no redaction step. With `[security.redact]
+in_prompt = true` and no secret vault installed -- the vault is opt-in
+via `install_default_secret_vault` -- an error that echoed back user
+content reached the model in the clear. `RedactConfig`'s doc says the
+pass covers "every message and tool result", so this was the
+documented behaviour going unimplemented, not a policy question.
+
+The vault path (`register_secrets_in_text` at the dispatch, then
+`RedactingJevDecider` at the wire) covers the case where a vault *is*
+installed. The gap was only the no-vault case, which is the default.
+
+**The fix** (`f8cdbff5`). Extracted
+`render::redact_rendered_text(text, Option<&Redactor>)` -- the same
+shape `cap_rendered_result` already uses -- and routed both
+non-`Success` arms through it via a thin
+`KodEngine::redact_text_for_prompt`.
+
+**A test that had to be rewritten, and why.** The first version drove
+the engine method with a temp `KOD_CONFIG_DIR` holding `in_prompt =
+true`. `KodConfig::load_cached` is a process-global `OnceLock`, so
+under plain `cargo test` (one process per binary) that write poisoned
+`redactor_is_a_noop_by_default` and
+`tool_result_redaction_is_a_noop_by_default`. Verified by stashing
+the change and running the module on clean HEAD: 7/7 passed; with the
+test present, 3 failed. The existing
+`e2e_argument_redaction_via_config` survives the same pattern only
+because `redact_argument_paths` is a list no other test asserts on.
+
+The fix was to make the behaviour testable without config at all --
+a free function taking `Option<&Redactor>`, tested directly. Two new
+tests (`error_text_is_redacted_when_a_redactor_is_supplied`,
+`error_text_is_untouched_without_a_redactor`) pass under plain
+`cargo test` and nextest. This is the same principle as the perf
+work: the testability constraint pointed at the better design.
+
+**Still open:** `redact_tool_result_for_prompt` itself is dead (one
+test calls it, no production path). Left in place rather than deleted
+-- it is `pub` on `KodEngine`, and whether it should become the
+routing point or be removed is a call for whoever owns the engine's
+public surface. Its doc comment still claims a caller that does not
+exist and should be corrected either way.
+
+Workspace after the fix: 5492 pass, 5 skipped.
