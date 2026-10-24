@@ -1631,3 +1631,102 @@ this addendum.
   `e9191055`, `432b81cb`) are on `origin/main`; the two test/CI
   fixes (`0d972a2f`, `9a117840`) are on `origin/main`; `34961905`
   is the only unpushed commit
+TOTAL                                                                                             164277             25750    84.33%       12111              1583    86.93%      103293             17064    83.48%           0                 0         -
+
+=== 2: write addendum 21 (session close, both arcs) ===
+
+## Addendum 21 (2026-10-24, session close -- forbidden_paths + perf)
+
+**Workspace coverage:** 83.48% (86229 / 103293 lines).
+**11 commits ahead of `origin/main`** (`ee2b4dc8`), all local, none pushed.
+
+### The `forbidden_paths` arc (10 commits)
+
+`ToolPermissions::forbidden_paths` was declared, checked by
+`can_read`/`can_write`, tested in `context.rs` unit tests, and
+documented in `ToolPolicy` -- and **empty in every production path**.
+Nothing populated it from `PolicyEngine`. Single-path tools were
+covered by `gate_tool_calls`'s `PolicyEngine::decide` against the
+root path; walk tools were not, because the walk never went back
+through the gate.
+
+| Commit | What |
+|---|---|
+| `34961905` | fix(kod-tools): per-file check in `grep`/`list_files` walks |
+| `7a12411c` | docs: addendum 20 (field was inert) |
+| `c4c5f0df` | fix(kod-core): wire policy into `tool_dispatch` |
+| `25971c4e` | test(kod-core): `grep` end-to-end verification |
+| `87f424e2` | fix(kod-tools): per-file check in `search_files` walk |
+| `68e92bf6` | test(kod-core): `search_files` end-to-end verification |
+| `28e6d3bd` | fix(kod-core): per-file check in `jfind` walk |
+| `1ca0dc4a` | test(kod-core): `jfind` end-to-end verification |
+| `111a1102` | test(kod-core): `list_files` end-to-end verification |
+
+Four walk tools. Every fix has a failing-then-passing unit test and
+a through-`engine.process` integration test. The wiring commit
+`c4c5f0df` installs the union of every call's per-tool `forbidden`
+globs on the round's shared context -- conservative (fails closed),
+documented as such in the injection comment.
+
+### The perf arc (2 commits)
+
+A read-only recon eliminated every candidate except one, and the
+one was then *measured* rather than optimized on faith.
+
+| Candidate | Verdict |
+|---|---|
+| LSP lock across IPC | Load-bearing (`&mut self`); not a bug |
+| TUI render loop | `ps` showed **0.1% CPU at idle**; efficient |
+| TUI `/grep` regex | Once per command; not hot |
+| Repomap `Regex::new` | Already cached (`OnceLock<Mutex<HashMap>>`) |
+| SSE `serde_json::Value` per frame | **The only candidate; now measured** |
+
+**The measurement** (`d5739bbe` + `4a1f0a2a`):
+
+| Fixture | Median | Frames/reply | µs per reply | % of 3s turn |
+|---|---|---|---|---|
+| `text_delta` | **1.32 µs** | 100 | 132 | **0.0044%** |
+| `message_start` | **1.90 µs** | 1 | 1.9 | 0.0001% |
+| `tool_use_start` | **1.94 µs** | 1 | 1.9 | 0.0001% |
+
+**Verdict: no typed refactor.** 1.32 µs per hot frame × 100 frames
+= ~130 µs per reply. Against a 3s+ turn (network + model), that's
+0.004%. A typed `#[serde(tag = "type")]` enum might cut it to ~0.5
+µs, saving 60 µs per reply -- **0.002%** -- at the cost of a
+parallel deserializer and the risk of behavior drift across 85
+existing tests. Not worth it.
+
+The bench is committed as the durable baseline. Any future
+"10x faster SSE" PR now has a number to beat, and a regression is
+detectable.
+
+**A note on criterion's output:** the bench's first run reported
+`change: [+3% +46% +100%]` and "Performance has regressed" on
+`tool_use_start`. Both are artifacts of criterion comparing two
+partial runs from the same session (the aborted `--noplot` run
+produced 0 samples, so the "baseline" was the second run's own
+noisy first sample). The median is the right number; the mean
+includes 18% "high severe" outliers from the first few iterations.
+The bench itself is correct.
+
+### What the two arcs share
+
+Every real finding came from **reading the code, then measuring it**.
+Every false alarm came from reading the *edge* of an output -- the
+truncated `sed` range that looked like a missing `in_flight.remove`,
+the `pgrep` that matched a wrapper, the `H-P2` mid-codepoint note
+that was already fixed. The session's lesson, restated: **the fix
+is right once the code is read; the recon is sometimes wrong when
+it reads the edge of an output.**
+
+### Follow-ups (unchanged from addendum 19)
+
+- `background_shell` on Linux (`strace` needed)
+- `daedfab`'s containment tests (self-hosted runner needed)
+- `kod-tui/src/main_loop.rs` streaming render (PTY + mock SSE,
+  session opener)
+
+The TUI-perf profile attempt failed four ways; the honest note is
+that a script cannot profile the TUI's streaming path, and the next
+session should use `tui_e2e/mock_llm.rs` + `harness::TestEnv`
+directly.
