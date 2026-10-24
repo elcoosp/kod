@@ -1854,3 +1854,142 @@ the call chain corrected it.
 The bench that found it is committed as a durable baseline. Nothing
 is pushed, per the standing instruction; tagging is local and does
 not push.
+
+---
+
+## Addendum 23 (2026-10-24, perf sweep -- three fixes, one rejection)
+
+**19 commits ahead of `origin/main`** (`ee2b4dc8`), all local, none
+pushed. Tag `v0.1.21` points at `71526d85` (addendum 22's close); the
+four commits since are **untagged**. Workspace gate: **5,490 tests
+pass, 5 skipped** -- unchanged from addendum 22.
+
+### What was measured, and what it cost
+
+Addendum 22's `action_benchmarks` file had four groups. This session
+read each one's code before touching anything, and only one of the
+four had a defect.
+
+| Group | Verdict |
+|---|---|
+| `path_policy` | Fixed in `ea7c42f7` (addendum 22); 1034x |
+| `risk_assess` | **`tokenize` called twice per `assess`** -- fixed |
+| `redact` | Rules already cached; **construction** was not -- fixed |
+| `binary_candidates` | No defect found; not touched |
+
+### Fix 1 (`23ce5c57`) -- `assess` tokenized twice
+
+`assess` called `tokenize(command)` at the heredoc-sentinel check and
+again at the token-list bind, discarding the first result. `tokenize`
+collects the whole command into a `Vec<char>` and scans it, so every
+`assess` paid two full scans and two whole-command allocations.
+
+Hoisted the bind. The first result was used only for the
+`.any(|t| t == "__kod_heredoc_unterminated__")` check, so the change
+is provably equivalent: `tokenize` is deterministic
+(`prop_tokenize_is_deterministic`) and the same vector feeds both the
+check and the rest of the function. 96 kod-risk tests pass unchanged.
+
+**This one is unmeasured.** The host was at load average 15-35 for
+the whole session (Xprotect pinning a core at 93%); two back-to-back
+runs of the same binary on identical code swung +/-40% on
+`risk_assess/heredoc_unterminated` -- a path this change provably
+does not touch. Three subsequent attempts (load 2.5, 4.6, 24) all
+produced intervals that overlapped or `p > 0.05`. The change is
+justified by "strictly less work, provably same result"; it should
+be re-measured on a quiet host before any speedup is quoted.
+
+### Fix 2 (`96eef93d`) -- `Redactor::default()` compiled 13 regexes per call
+
+`with_builtin_rules` called `builtin_rules()`, which compiles 13
+regexes. `Default` delegates to it, and
+`KodError::provider_status_with_hint` calls `Redactor::default()` to
+strip secrets from an HTTP error body before it reaches `Display` --
+so every HTTP error recompiled the whole rule set.
+
+Hoisted the compiled `Vec<RedactRule>` into a function-local
+`OnceLock<Arc<Vec<RedactRule>>>`. `with_rules` and `with_entropy`
+stay per-instance.
+
+Measured by the new `redactor_construction` group:
+
+| Fixture | Median |
+|---|---|
+| `builtin_rules_unshared` (the old per-call cost) | **2.54 ms** |
+| `default` (the `OnceLock` hit) | **11 ns** |
+| `default_clone` | 10 ns |
+
+2.54 ms, not the ~100 us a per-regex estimate suggests -- the lazy
+multi-line PEM pattern and the case-insensitive alternations are
+expensive to compile. The estimate in the first draft of the comment
+was wrong by ~25x and was corrected against the measurement.
+
+`Redactor::default()` is not on the per-token or per-tool-call path
+(`redact`/`redact_json` reuse an instance), so this is **not** a
+per-turn win. It is a 2.5 ms removal from every HTTP error.
+
+### Fix 3 -- attempted, measured, rejected (`412074f7`)
+
+The `redact` fixtures were all ~50 bytes, which measures overhead, not
+scanning. Added two 10 KB fixtures (tool-result sized):
+
+| Fixture | Median |
+|---|---|
+| `clean` (50 B) | 3.84 us |
+| `code_10k_clean` | **35.7 us** |
+| `code_10k_secret` | 37.5 us |
+
+35.7 us on 10 KB is 13 full scans, one per rule. A `RegexSet`
+prefilter (check once, skip all 13 scans when nothing matches) was
+implemented and measured. It helped small input (`clean` 3841 -> 468
+ns) and **hurt exactly the case it was built for**:
+
+| Fixture | Before | With prefilter | |
+|---|---|---|---|
+| `code_10k_clean` | 35.7 us | 58.2 us | +63% |
+| `code_10k_secret` | 37.5 us | 60.4 us | +61% |
+
+Unioning 13 patterns -- including the PEM rule's `[\s\S]*?` -- into one
+set produces a DFA far more expensive per byte than 13
+separately-prefixed scans. Reverted; the fixtures stay so the next
+attempt has a number to beat.
+
+### Two findings left open (session openers, not tail-end scripts)
+
+**1. `redact_messages_for_prompt` re-scans the whole transcript every
+tool round.** `agent_loop.rs:35` and `:374` call it inside a loop
+bounded by `MAX_TOOL_ROUNDS = 40`. Each call redacts **every**
+message's content. Redaction is idempotent (`prop_idempotent_default`
+proves a second pass fires zero events), but the scan still happens:
+a 50-message, 500 KB transcript is ~1.8 ms per round, ~70 ms per turn
+at the 40-round ceiling. `in_prompt` defaults to **false**, so this is
+zero for a default config -- it only matters when prompt redaction is
+opted into.
+
+The shape of the fix is a `redacted: bool` on `MessageMetadata`
+(which is `#[serde(default)]` throughout, so old sessions parse), set
+when a message's content is redacted and checked to skip it. Not done:
+it touches compaction and the message-lifecycle boundary, and it
+needs its own tests that a mutated message does not keep a stale flag.
+That is a session, not a script.
+
+**2. `redact_tool_result_for_prompt` has no production caller.** Only
+`coverage_prompt_redaction.rs:37` calls it. The live path is
+`render.rs::cap_rendered_result`, which takes `Option<&Redactor>`
+directly. Either the method is dead (delete it) or a caller was meant
+to route through it and did not -- which would mean tool results are
+not redacted on the prompt path even when `in_prompt` is on. Worth
+resolving before either is assumed.
+
+### The session's lesson, restated
+
+Every fix this session came from reading the code: the double
+`tokenize` was two `grep` hits in one function; the `Redactor`
+construction was one `grep` for `Redactor::default()` outside tests;
+the dead method was a `grep` that returned one test and no callers.
+
+The one thing that was *implemented* on plausibility rather than
+measurement -- the `RegexSet` prefilter -- regressed the exact case it
+targeted. Addendum 21 recorded the same lesson about the SSE refactor.
+It holds: read first, measure before committing, and treat a
+regression caught before commit as the measurement working.
