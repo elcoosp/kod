@@ -438,6 +438,83 @@ fn benchmark_startup_cold(c: &mut Criterion) {
     group.finish();
 }
 
+// ==================================================================
+// sse_parse
+// ==================================================================
+//
+// The one remaining hot path with no benchmark. `parse_sse_line` is
+// called once per SSE frame; a 100-token reply emits ~100-200 frames,
+// every one of which goes through this function. The current shape
+// deserializes into a `serde_json::Value` and then reads fields off it
+// with `.get(...).and_then(...)` chains.
+//
+// This bench measures that shape. It exists so any future refactor --
+// a typed `#[serde(tag = "type")]` enum, a hand-written minimal
+// parser, a schema-driven decoder -- has a *number* to beat rather
+// than a claim. Without this bench, a "10x faster" PR is not
+// verifiable, and a regression is not detectable.
+//
+// Two fixtures:
+//   - `text_delta`: the common hot frame (one per text chunk).
+//   - `message_start`: the setup frame (once per reply; included as
+//     a reference for how expensive a *large* frame is).
+//
+// Both `AnthropicStreamState`s are reset per iteration (the state is
+// `Default` and cheap); the bench measures the *parse*, not
+// accumulation across frames.
+fn benchmark_sse_parse(c: &mut Criterion) {
+    use kod_provider_anthropic::wire::{AnthropicStreamState, parse_sse_line};
+
+    let mut group = c.benchmark_group("sse_parse");
+
+    // The most common frame: one text delta from a streaming reply.
+    // Payload is ~100 bytes, matching a typical model chunk.
+    let text_delta = concat!(
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","#,
+        r#""text":"This is a typical chunk of streamed model output."}}"#,
+    );
+    group.bench_function("text_delta", |b| {
+        b.iter(|| {
+            let mut state = AnthropicStreamState::default();
+            let out = parse_sse_line(&mut state, black_box(text_delta));
+            black_box(out.len());
+        });
+    });
+
+    // The setup frame: message_start carries the nested usage object
+    // and is the largest single frame in a normal reply. Included so
+    // a refactor that improves the small hot frame but regresses the
+    // large setup frame is caught by the same group.
+    let message_start = concat!(
+        r#"data: {"type":"message_start","message":{"id":"msg_01X","role":"assistant","#,
+        r#""content":[],"usage":{"input_tokens":17,"cache_read_input_tokens":0,"#,
+        r#""cache_creation_input_tokens":0,"output_tokens":0}}}"#,
+    );
+    group.bench_function("message_start", |b| {
+        b.iter(|| {
+            let mut state = AnthropicStreamState::default();
+            let out = parse_sse_line(&mut state, black_box(message_start));
+            black_box(out.len());
+        });
+    });
+
+    // A `content_block_start` for a tool call: the shape that carries
+    // the tool name and id, walked by `BlockInfo` accumulation.
+    let tool_start = concat!(
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","#,
+        r#""id":"toolu_01X","name":"read_file","input":{}}}"#,
+    );
+    group.bench_function("tool_use_start", |b| {
+        b.iter(|| {
+            let mut state = AnthropicStreamState::default();
+            let out = parse_sse_line(&mut state, black_box(tool_start));
+            black_box(out.len());
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_skill_loading,
@@ -450,6 +527,7 @@ criterion_group!(
     benchmark_memory_retrieval,
     benchmark_startup,
     benchmark_startup_cold,
+    benchmark_sse_parse,
 );
 
 criterion_main!(benches);
