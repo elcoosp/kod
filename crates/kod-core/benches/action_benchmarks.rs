@@ -18,13 +18,16 @@
 //!     call per `execute_command`, input to the forbidden-binaries
 //!     policy check)
 //!
-//! Read `path_policy` most carefully: `is_path_allowed` compiles a
-//! fresh `globset::Glob` per pattern on every call (see
-//! `kod-tools/src/context.rs`), so a walk over 1000 files against 10
-//! forbids pays 10,000 glob compiles. If that group is
-//! microsecond-scale rather than nanosecond-scale, a compiled-globset
-//! cache is a real optimization. If it's already fast, the number
-//! documents "do not touch."
+//! Read `path_policy` most carefully. Before `ea7c42f7`,
+//! `is_path_allowed` compiled a fresh `globset::GlobSet` per
+//! forbidden pattern on every call, and this group measured the
+//! result: 243 us at one forbid, 1.72 ms at ten -- a walk over 1000
+//! files against 10 forbids paid ~1.7 s in glob compilation alone.
+//! `ea7c42f7` added a `OnceLock`-guarded per-pattern cache in
+//! `kod-tools/src/context.rs`, and the same group now reads 172 ns
+//! and 1.66 us. The bench's baseline is the *post-fix* number: a
+//! regression to millisecond scale means the cache was removed or
+//! short-circuited.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
@@ -54,8 +57,8 @@ fn benchmark_risk_assess(c: &mut Criterion) {
 }
 
 fn benchmark_path_policy(c: &mut Criterion) {
-use kod_tools::context::ToolContext;
-use kod_types::ToolPermissions;
+    use kod_tools::context::ToolContext;
+    use kod_types::ToolPermissions;
 
     let empty = ToolContext::new("/tmp/work").with_permissions(ToolPermissions {
         read_files: true,
