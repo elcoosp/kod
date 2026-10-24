@@ -407,6 +407,93 @@ async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
 }
 
 
+/// The `jfind` counterpart of the grep / search_files end-to-end
+/// tests. `JfindTool` lives in `kod-core` (not `kod-tools`), so this
+/// is the only walk tool whose per-file check is in a different
+/// crate -- proving the union wiring at c4c5f0df reaches it too.
+///
+/// Same fixture shape as `jfind_skips_files_under_forbidden_paths`:
+/// a positive-control file (`secret-notes.txt`) and a forbidden file
+/// (`secrets/secret.txt`), both matching the query. The control must
+/// appear; the forbidden file must not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
+    let temp = TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("secrets")).unwrap();
+    std::fs::write(temp.path().join("secrets/secret.txt"), "secret data\n").unwrap();
+    std::fs::write(temp.path().join("secret-notes.txt"), "secret data\n").unwrap();
+
+    let engine = engine_in(temp.path());
+
+    let call = ToolCall {
+        id: None,
+        tool_name: "jfind".to_string(),
+        arguments: serde_json::json!({
+            "query": "secret",
+            "keywords": ["secret"],
+        }),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![call]]));
+    install_test_provider(&engine, provider).await;
+
+    let effective = Policy {
+        tools: std::collections::BTreeMap::from([(
+            "jfind".to_string(),
+            ToolPolicy {
+                mode: Some(kod_config::Decision::Allow),
+                forbidden: Some(vec!["**/secrets/**".to_string()]),
+                ..Default::default()
+            },
+        )]),
+        ..Policy::default()
+    };
+    let pe = PolicyEngine::from_effective_for_tests(effective);
+    engine.set_policy(Arc::new(pe)).await;
+
+    engine.start().await.unwrap();
+    let resp = engine.process("find the secret").await.unwrap();
+
+    assert_eq!(
+        resp.tool_results.len(),
+        1,
+        "the scripted provider must produce exactly one tool result; \
+         got {} results",
+        resp.tool_results.len(),
+    );
+    let json_str = match &resp.tool_results[0] {
+        ToolResult::Success(v) => v.to_string(),
+        other => panic!("expected jfind success, got {other:?}"),
+    };
+    let v: serde_json::Value = serde_json::from_str(&json_str)
+        .expect("jfind output is JSON");
+    let results = v
+        .get("results")
+        .and_then(|x| x.as_array())
+        .expect("jfind output has `results` array");
+
+    let has_notes = results.iter().any(|h| {
+        h.get("file")
+            .and_then(|x| x.as_str())
+            .map(|s| s.contains("secret-notes.txt"))
+            .unwrap_or(false)
+    });
+    assert!(
+        has_notes,
+        "positive control failed: `secret-notes.txt` must be reported; got {results:?}",
+    );
+    let has_forbidden = results.iter().any(|h| {
+        h.get("file")
+            .and_then(|x| x.as_str())
+            .map(|s| s.contains("secrets/"))
+            .unwrap_or(false)
+    });
+    assert!(
+        !has_forbidden,
+        "walk must not report files under a forbidden path; got {results:?}",
+    );
+}
+
+
 /// The `search_files` counterpart of
 /// `grep_walks_skip_forbidden_paths_through_the_engine`. Same shape,
 /// different tool. Proves the walk-shaped tools (grep, list_files,
