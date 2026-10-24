@@ -106,8 +106,24 @@ fn benchmark_redact(c: &mut Criterion) {
     use kod_types::redact::Redactor;
     let r = Redactor::default();
     let mut group = c.benchmark_group("redact");
+    // The first three fixtures are ~50 bytes; a `read_file` tool
+    // result is 10 KB and up. `redact` runs once per tool result
+    // before the result enters the prompt, so the large-input shape
+    // is the one that decides whether the per-rule scan is a
+    // per-turn cost or a rounding error. `code_10k` is a realistic
+    // Rust-ish source line repeated to 10 KB with no secret in it;
+    // `code_10k_secret_at_end` is the same with one OpenAI key on
+    // the last line.
+    let small_clean = "This is ordinary prose with no secrets at all.";
+    let code_line = "    let value = compute(input).unwrap_or_else(|e| handle(e)); // note\n";
+    let mut code_10k = String::with_capacity(10_240);
+    while code_10k.len() < 10_240 {
+        code_10k.push_str(code_line);
+    }
+    let mut code_10k_secret = code_10k.clone();
+    code_10k_secret.push_str("// key = sk-abcdef0123456789abcdef0123456789\n");
     for (name, text) in [
-        ("clean", "This is ordinary prose with no secrets at all."),
+        ("clean", small_clean),
         (
             "one_secret",
             "api_key = sk-abcdef0123456789abcdef0123456789",
@@ -116,6 +132,8 @@ fn benchmark_redact(c: &mut Criterion) {
             "many_secrets",
             "sk-abcdef0123456789abcdef0123456789\nghp_abcdefghijklmnopqrstuvwxyz0123456789\nAKIAIOSFODNN7EXAMPLE",
         ),
+        ("code_10k_clean", code_10k.as_str()),
+        ("code_10k_secret", code_10k_secret.as_str()),
     ] {
         group.bench_function(name, |b| {
             b.iter(|| {
