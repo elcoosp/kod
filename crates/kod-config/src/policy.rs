@@ -465,6 +465,22 @@ impl PolicyEngine {
         &self.effective
     }
 
+    /// Bug-hunt addendum 20: the per-tool `forbidden` glob list.
+    ///
+    /// `PolicyEngine::decide` gates the *root* path a single-path
+    /// tool call names, but a walk inside `grep`/`list_files` never
+    /// sees the policy -- the walker checks
+    /// `ToolContext::permissions.forbidden_paths`, which nothing
+    /// populated. This accessor lets the engine install it.
+    pub fn forbidden_for(&self, tool: &str) -> Vec<String> {
+        self.effective()
+            .tools
+            .get(tool)
+            .and_then(|tp| tp.forbidden.as_ref())
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The domain allow-list for `web_fetch` from the effective
     /// per-tool policy. Empty means "no policy-imposed restriction"
     /// (the SSRF filter still applies). Reads `ToolPolicy.domains`,

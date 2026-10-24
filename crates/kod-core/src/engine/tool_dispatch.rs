@@ -922,6 +922,29 @@ impl KodEngine {
             tool_context.allowed_write_globs = Some(globs);
         }
         tool_context.permissions.network_access = self.network_access_setting();
+        // Bug-hunt addendum 20: `forbidden_paths` was never populated.
+        // `PolicyEngine::decide` gates the *root* path a single-path
+        // tool call names, but a walk inside `grep`/`list_files` never
+        // sees the policy -- the walker checks
+        // `ToolContext::permissions.forbidden_paths`, which the engine
+        // left empty. Install the *union* of every per-tool
+        // `forbidden` glob here, once, on the round's shared context.
+        // Union is the conservative choice: any tool's forbid applies
+        // to every tool in the round, so a policy the user intended
+        // to block cannot be bypassed by a different tool. A future
+        // refinement can move this per-call if per-tool semantics
+        // matter; union is what fails closed.
+        if let Some(policy) = self.policy.read().await.as_ref() {
+            let mut forbidden: Vec<String> = Vec::new();
+            for call in calls {
+                forbidden.extend(policy.forbidden_for(&call.tool_name));
+            }
+            forbidden.sort();
+            forbidden.dedup();
+            if !forbidden.is_empty() {
+                tool_context.permissions.forbidden_paths = forbidden;
+            }
+        }
         // D3-C5: thread the effective `[tools.web_fetch] domains`
         // allow-list. `web_fetch` enforces `allowed_domains`, but
         // nothing populated it — the field's own doc comment claimed
