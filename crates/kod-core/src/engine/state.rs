@@ -140,9 +140,26 @@ impl KodEngine {
         total
     }
 
-    /// Redact secrets from a single tool result's rendered payload.
-    /// Called by `cap_rendered_result`'s caller path when in-prompt
-    /// redaction is on.
+    /// Redact secrets from a rendered tool result when
+    /// `[security.redact] in_prompt = true`; return it unchanged
+    /// otherwise.
+    ///
+    /// **No production caller.** The live path is
+    /// `render::cap_rendered_result`, which takes `Option<&Redactor>`
+    /// and is reached from `tool_dispatch` via
+    /// `prompt_redactor_if_enabled()`; the `Error` and
+    /// `RequiresConfirmation` arms go through
+    /// `render::redact_rendered_text`. The pre-fix doc claimed this
+    /// method was called by "`cap_rendered_result`'s caller path",
+    /// which was never true.
+    ///
+    /// Kept rather than deleted: `KodEngine` is re-exported from
+    /// `kod-core`'s root, so this is public API and removing it is a
+    /// breaking change. It is a thin, correct wrapper -- a caller that
+    /// wants the config check and the redaction in one call can use
+    /// it. If it should instead be the routing point for the tool
+    /// result path, that is a decision about the engine's public
+    /// surface, not a drive-by change.
     pub fn redact_tool_result_for_prompt(&self, rendered: String) -> String {
         let cfg = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
