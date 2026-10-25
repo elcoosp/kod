@@ -629,13 +629,12 @@ fn block_private_ip(ip: std::net::IpAddr) -> Option<String> {
 /// not a real HTML parser — the goal is "readable prose", and pulling
 /// in an HTML5 parser for a tool this size is not worth the cost.
 fn html_to_text(html: &str) -> String {
-    let lower = html.to_lowercase();
     let mut out = String::with_capacity(html.len() / 2);
     let bytes = html.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         // Skip whole elements by name when we see their open tag.
-        if let Some(skip) = skip_element_at(&lower, i) {
+        if let Some(skip) = skip_element_at(html, i) {
             i = skip;
             continue;
         }
@@ -712,38 +711,57 @@ pub fn html_to_text_for_fuzz(html: &str) -> String {
 /// the lowercased HTML, return the offset just past its matching close
 /// tag (or the end of the document when unmatched). The set of skipped
 /// elements is fixed and small.
-fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
+/// If an element named in `SKIP` opens at byte offset `i` of `html`,
+/// return the byte offset just past its closing tag (or the end of the
+/// input when it never closes).
+///
+/// Searches `html` itself, comparing the tag name ASCII
+/// case-insensitively. The pre-fix version searched a `to_lowercase()`
+/// copy: lowercasing can change a string's byte length (the fuzz
+/// corpus had a 99-byte input that lowercased to 98), so an offset
+/// that is a char boundary in the copy can land mid-codepoint in the
+/// original and `html[i..]` panics. HTML tag names are ASCII, so the
+/// case-insensitive comparison needs no second string.
+fn skip_element_at(html: &str, i: usize) -> Option<usize> {
     const SKIP: &[&str] = &["script", "style", "head", "noscript", "svg", "template"];
-    // Fuzz finding: `html_to_text` walks `html.as_bytes()` but indexes
-    // `lower` (a `String` produced by `to_lowercase`, which can change
-    // byte lengths). A byte offset that is a valid position in `html`
-    // is therefore not guaranteed to be a char boundary in `lower`;
-    // the pre-fix `&lower[i..]` panicked on inputs like `-ĉ`. Use
-    // `get` so a non-boundary is a non-match (the byte at that offset
-    // cannot be the start of a `<tag`, which is always ASCII).
-    let rest = lower.get(i..)?;
+    let hay = html.as_bytes();
+    // The open tag starts with an ASCII `<`, which is always a char
+    // boundary.
+    if hay.get(i) != Some(&b'<') {
+        return None;
+    }
+    let name_start = i + 1;
     for name in SKIP {
-        let open = format!("<{name}");
-        if rest.starts_with(&open) {
-            // Confirm the tag name is complete (a boundary follows,
-            // not more alphanumerics).
-            let after = rest.as_bytes().get(open.len()).copied().unwrap_or(b'>');
-            if !after.is_ascii_alphanumeric() {
-                let close = format!("</{name}");
-                return Some(match rest.find(&close) {
-                    Some(pos) => {
-                        let abs = i + pos;
-                        // `pos` came from `find`, so `abs` *is* a
-                        // boundary; the `get` is belt and braces.
-                        match lower.get(abs..).and_then(|tail| tail.find('>')) {
-                            Some(gt) => abs + gt + 1,
-                            None => lower.len(),
-                        }
-                    }
-                    None => lower.len(),
-                });
-            }
+        let name_bytes = name.as_bytes();
+        let name_end = name_start + name_bytes.len();
+        // Both sides are ASCII here, or the comparison fails.
+        let Some(candidate) = hay.get(name_start..name_end) else {
+            continue;
+        };
+        if !candidate.eq_ignore_ascii_case(name_bytes) {
+            continue;
         }
+        // A tag name must end here -- not continue into more
+        // alphanumerics (`<svgfoo` is not `<svg`).
+        let after = hay.get(name_end).copied().unwrap_or(b'>');
+        if after.is_ascii_alphanumeric() {
+            continue;
+        }
+        // Find the matching close tag, byte by byte in `html` space.
+        let close = format!("</{name}");
+        let close_bytes = close.as_bytes();
+        let mut k = name_end;
+        while k + close_bytes.len() <= hay.len() {
+            if hay[k..k + close_bytes.len()].eq_ignore_ascii_case(close_bytes) {
+                let mut m = k + close_bytes.len();
+                while m < hay.len() && hay[m] != b'>' {
+                    m += 1;
+                }
+                return Some(if m < hay.len() { m + 1 } else { hay.len() });
+            }
+            k += 1;
+        }
+        return Some(hay.len());
     }
     None
 }
@@ -1007,6 +1025,34 @@ mod tests {
         for case in ["-\u{0109}", "a\u{0109}b", "\u{1F600}", "\u{0109}"] {
             let _ = html_to_text(case);
         }
+    }
+
+    #[test]
+    fn html_to_text_survives_a_lowercase_length_change() {
+        // Fuzz artifact (CI run 40219270394, html target): a 99-byte
+        // input that `to_lowercase` shortens to 98. The pre-fix code
+        // searched the lowercased copy and then indexed the original
+        // with the offsets it returned, so an offset that is a char
+        // boundary in the copy can land mid-codepoint in the original:
+        // the crash was `start byte index 98 is not a char boundary;
+        // it is inside '〙' (bytes 96..99)`. The same class as the
+        // `-ĉ` case above, but it only reproduces when the lowercased
+        // string is a *different length* -- `ĉ` is 2 bytes either way.
+        // `skip_element_at` now searches `html` itself and never
+        // builds the copy.
+        let bytes: &[u8] = &[
+            10, 10, 10, 10, 10, 10, 32, 200, 153, 226, 177, 164, 0, 0, 0, 10, 10, 10, 10, 10, 10,
+            10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 96, 10, 10, 96, 10, 10, 227, 128, 153, 10,
+            10, 10, 10, 0, 75, 10, 10, 10, 10, 10, 10, 10, 96, 10, 10, 10, 10, 10, 227, 128, 153,
+            10, 10, 10, 10, 0, 32, 75, 10, 10, 10, 10, 10, 10, 10, 96, 10, 47, 115, 10, 10, 10, 10,
+            10, 105, 109, 60, 115, 116, 121, 108, 101, 59, 10, 227, 128, 153,
+        ];
+        let html = std::str::from_utf8(bytes).expect("artifact is valid UTF-8");
+        assert!(
+            html.len() != html.to_lowercase().len(),
+            "the artifact must exercise the length change",
+        );
+        let _ = html_to_text(html);
     }
 
     #[test]
