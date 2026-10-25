@@ -2047,3 +2047,78 @@ public surface. Its doc comment still claims a caller that does not
 exist and should be corrected either way.
 
 Workspace after the fix: 5492 pass, 5 skipped.
+
+### Addendum 23.2 (2026-10-25, release + a real TSX parse hang)
+
+**Released:** `v0.1.21` and `v0.1.22`, both with six platform archives
+plus checksums. `v0.1.21` had been tagged locally but never pushed, so
+origin's newest tag was `v0.1.20`; pushing it first kept git-cliff's
+`--latest` range honest for `v0.1.22` (otherwise the second release's
+notes would have claimed 30 commits instead of 7).
+
+**CI then failed twice, for two unrelated reasons.**
+
+First, `cargo fmt --all -- --check`. Every commit this session ran
+`cargo check` and `cargo test` first; none ran `cargo fmt --check`.
+Seven files were unformatted -- four from the `forbidden_paths` arc,
+three from this session. Fixed in `517725c7`, formatting only.
+
+Second, and much more interesting:
+`kod-ast extract::proptest_symbols::prop_symbols_never_panics` hit
+nextest's 300s per-test timeout on ubuntu, macos *and* windows in the
+same run. Locally it took 0.86s. The test had passed two days earlier,
+and no `kod-ast` code had changed.
+
+The trigger is a specific byte sequence, not input size: the property
+passes at 20k proptest cases and hangs at 40k. Reproduced, captured
+the input, and confirmed it hangs deterministically (3/3 attempts at a
+5s timeout). Then isolated it:
+
+| Call | Result |
+|---|---|
+| `ParseCache::parse(Lang::Tsx, input)` | **hangs** |
+| `ParseCache::parse(Lang::TypeScript, input)` | returns a tree |
+| `ParseCache::parse(Lang::JavaScript, input)` | returns a tree |
+| `extract::symbols(Lang::Tsx, input)` | hangs |
+
+So the hang is in **tree-sitter's TSX grammar**, on a garbage-JSX
+input. It is a production bug, not a test artifact: `repo_map` parses
+`.tsx` files, and a file with this content would stall a turn.
+
+**Neither tree-sitter timeout works**, which is why there is no
+in-process fix:
+
+- `parse_with_options`'s progress callback *aborts valid parses*.
+  Measured: a 75-byte Rust snippet returns `None` with a callback and
+  `Some` without one; the callback fires once at the last byte. It
+  breaks multi-line input specifically -- 14 bytes parse fine, 75
+  bytes do not -- with either the crate's own read-callback shape or a
+  naive one.
+- The deprecated `set_timeout_micros` is checked only between input
+  chunks. One-shot parsing hands the parser a single chunk, so even a
+  zero timeout parses to completion (measured: 161 us, success).
+
+**The fix** (`f6fd235d`) is a test-side deadline guard, explicitly not
+a production fix. `symbols_bounded` runs the parse on a worker thread
+with a 2s budget and returns `None` on timeout, printing the language
+and input. Returning `None` rather than panicking matters: a panic
+makes proptest *shrink*, and every shrink attempt re-runs the same
+hanging input -- the first attempt at a guard wedged for 15 minutes
+that way.
+
+Cost: the `kod-ast` suite goes from 1.4s to ~13s. Accepted: a
+deterministic 13s beats a CI job that fails at random on three
+platforms. CI is green on `40203371394`, all 16 jobs.
+
+**Left open, deliberately:** the production hang. Options are an
+upstream `tree-sitter-typescript` fix, dropping TSX from the repo map,
+or moving the parse to a killable subprocess. Each is a decision, not
+a script.
+
+**One more lesson for the record.** The first guard attempt *looked*
+right and failed twice: once because the progress callback silently
+breaks multi-line parsing (only found by testing a 75-byte input), and
+once because a panic on timeout makes proptest amplify the hang
+instead of containing it. Both were caught by measuring, not by
+reasoning. Same pattern as addendum 21's SSE refactor and this
+session's `RegexSet` rejection.
