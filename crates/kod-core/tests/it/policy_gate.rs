@@ -406,7 +406,6 @@ async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
     engine.shutdown().await.unwrap();
 }
 
-
 /// The `list_files` counterpart of the grep / search_files / jfind
 /// end-to-end tests. `list_files` shares the `34961905` fix with
 /// `grep` (both in `kod-tools`), but only `grep`'s through-engine
@@ -505,7 +504,6 @@ async fn list_files_skips_entries_under_forbidden_paths_through_the_engine() {
     );
 }
 
-
 /// The `jfind` counterpart of the grep / search_files end-to-end
 /// tests. `JfindTool` lives in `kod-core` (not `kod-tools`), so this
 /// is the only walk tool whose per-file check is in a different
@@ -563,8 +561,7 @@ async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
         ToolResult::Success(v) => v.to_string(),
         other => panic!("expected jfind success, got {other:?}"),
     };
-    let v: serde_json::Value = serde_json::from_str(&json_str)
-        .expect("jfind output is JSON");
+    let v: serde_json::Value = serde_json::from_str(&json_str).expect("jfind output is JSON");
     let results = v
         .get("results")
         .and_then(|x| x.as_array())
@@ -591,7 +588,6 @@ async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
         "walk must not report files under a forbidden path; got {results:?}",
     );
 }
-
 
 /// The `search_files` counterpart of
 /// `grep_walks_skip_forbidden_paths_through_the_engine`. Same shape,
@@ -644,8 +640,8 @@ async fn search_files_walks_skip_forbidden_paths_through_the_engine() {
         ToolResult::Success(v) => v.to_string(),
         other => panic!("expected search_files success, got {other:?}"),
     };
-    let v: serde_json::Value = serde_json::from_str(&json_str)
-        .expect("search_files output is JSON");
+    let v: serde_json::Value =
+        serde_json::from_str(&json_str).expect("search_files output is JSON");
     let results = v
         .get("results")
         .and_then(|x| x.as_array())
@@ -657,12 +653,8 @@ async fn search_files_walks_skip_forbidden_paths_through_the_engine() {
             "walk must not read files under `forbidden`; got hit in {file:?}",
         );
     }
-    assert!(
-        results.is_empty(),
-        "no match expected; got {results:?}",
-    );
+    assert!(results.is_empty(), "no match expected; got {results:?}",);
 }
-
 
 /// Bug-hunt addendum 20: the wiring fix at `c4c5f0df` installs the
 /// per-round union of every call's `forbidden` globs onto
@@ -722,8 +714,7 @@ async fn grep_walks_skip_forbidden_paths_through_the_engine() {
         ToolResult::Success(v) => v.to_string(),
         other => panic!("expected grep success, got {other:?}"),
     };
-    let v: serde_json::Value = serde_json::from_str(&json_str)
-        .expect("grep output is JSON");
+    let v: serde_json::Value = serde_json::from_str(&json_str).expect("grep output is JSON");
     let results = v
         .get("results")
         .and_then(|x| x.as_array())

@@ -212,11 +212,10 @@ impl Tool for JfindTool {
         // here is the whole fix: a forbidden file never reaches the
         // `read` closure and cannot contribute a `Hit`.
         let root = context.working_dir.clone();
-        let files: Vec<std::path::PathBuf> =
-            kod_tools::tools::gitaware_walk(&root, true)
-                .into_iter()
-                .filter(|p| context.is_path_allowed(p).unwrap_or(true))
-                .collect();
+        let files: Vec<std::path::PathBuf> = kod_tools::tools::gitaware_walk(&root, true)
+            .into_iter()
+            .filter(|p| context.is_path_allowed(p).unwrap_or(true))
+            .collect();
         let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
         let hits = jfind::search(&root, &query, Arc::clone(&self.judge), &read, &files).await;
         let semantic = self.is_semantic();
@@ -304,7 +303,6 @@ mod tests {
         assert_eq!(v["judge"], "lexical");
         assert!(v["count"].as_u64().unwrap() >= 1, "got: {v}");
     }
-
 
     /// Bug-hunt 2026-10-24: `JfindTool::execute` walks the working
     /// dir with `gitaware_walk` and hands the full list to

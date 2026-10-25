@@ -200,5 +200,8 @@ fn error_text_is_redacted_when_a_redactor_is_supplied() {
 fn error_text_is_untouched_without_a_redactor() {
     let text = "error: could not parse input api_key = sk-abcdef0123456789abcdef0123456789";
     let out = redact_rendered_text(text.to_string(), None);
-    assert_eq!(out, text, "no redactor: the text must pass through unchanged");
+    assert_eq!(
+        out, text,
+        "no redactor: the text must pass through unchanged"
+    );
 }

@@ -190,7 +190,10 @@ fn benchmark_binary_candidates(c: &mut Criterion) {
         ("compound", "cd /tmp && cargo build && ls"),
         ("wrapped", "bash -c 'rm x'"),
         ("env_prefixed", "FOO=bar rm x"),
-        ("long_chain", "cd a && cargo build && cargo test && cargo clippy && git diff"),
+        (
+            "long_chain",
+            "cd a && cargo build && cargo test && cargo clippy && git diff",
+        ),
     ] {
         group.bench_function(name, |b| {
             b.iter(|| {

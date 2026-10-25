@@ -471,7 +471,6 @@ mod coverage_search_files_tool {
         }
     }
 
-
     /// Bug-hunt 2026-10-24: `search_files` uses the same walk shape as
     /// `grep`/`list_files` (fixed at 34961905). The walk descends into
     /// subdirectories but only checks `read_protection` per file --

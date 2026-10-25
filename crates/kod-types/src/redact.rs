@@ -97,7 +97,9 @@ impl Redactor {
         static RULES: std::sync::OnceLock<std::sync::Arc<Vec<RedactRule>>> =
             std::sync::OnceLock::new();
         Self {
-            rules: std::sync::Arc::clone(RULES.get_or_init(|| std::sync::Arc::new(builtin_rules()))),
+            rules: std::sync::Arc::clone(
+                RULES.get_or_init(|| std::sync::Arc::new(builtin_rules())),
+            ),
             entropy_floor: 4.0,
             entropy_scan: true,
         }

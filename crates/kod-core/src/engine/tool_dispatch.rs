@@ -1559,9 +1559,7 @@ impl KodEngine {
                 // the clear. `RedactConfig`'s own doc says the pass
                 // covers "every message and tool result", so this is
                 // the documented behaviour, not a new policy.
-                ToolResult::Error(e) => {
-                    self.redact_text_for_prompt(format!("error: {e}"))
-                }
+                ToolResult::Error(e) => self.redact_text_for_prompt(format!("error: {e}")),
                 ToolResult::RequiresConfirmation { description, .. } => self
                     .redact_text_for_prompt(format!(
                         "requires confirmation (auto-skipped in TUI): {description}"
