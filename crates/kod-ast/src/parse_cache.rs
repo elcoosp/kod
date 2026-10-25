@@ -174,12 +174,58 @@ impl ParseCache {
         let tree = PARSER.with(|cell| {
             let mut p = cell.borrow_mut();
             p.set_language(&lang.language()).ok()?;
-            p.parse(source, None)
+            // tree-sitter-typescript 0.23.2's TSX grammar can backtrack
+            // pathologically. The whole trigger is 7 bytes -- `[a=[.b:`
+            // -- and it is reachable from a mid-edit file a model just
+            // wrote (`const a = [x=[.y:` hangs too). Without a bound
+            // that is a turn-level stall in `repo_map`.
+            //
+            // `set_timeout_micros` is deprecated in 0.25 in favour of
+            // the progress callback, but the callback is unusable here:
+            // it aborts *valid* parses. Measured, 75-byte Rust snippet:
+            // `None` with a callback, `Some` without, the callback
+            // firing once at the last byte; 14 bytes parse fine, 75 do
+            // not. The timeout has no such defect.
+            //
+            // `0` means *unlimited*, not "fail immediately" -- a zero
+            // timeout hangs, which is what made the first attempt at
+            // this look broken. The C parser polls the clock between
+            // parse operations (parser.c: every `operation_count == 0`
+            // pass), so a real budget interrupts within microseconds.
+            #[allow(deprecated)]
+            p.set_timeout_micros(PARSE_TIMEOUT_MICROS);
+            let tree = p.parse(source, None);
+            // A parser that stopped on the timeout *resumes* the same
+            // parse on the next call -- the tree-sitter docs are
+            // explicit: "if the parser previously failed because of a
+            // timeout, cancellation, or callback, then by default, it
+            // will resume where it left off". The `PARSER` here is
+            // thread-local and reused for every document on this
+            // thread, so without this reset one cancelled parse
+            // poisons every later parse on that thread: they inherit
+            // the hung stack, hit the timeout again, and cascade.
+            // Measured: omitting this turned a 47s workspace suite
+            // into 207s with six unrelated 10s-timeout PTY tests
+            // failing behind the starved threads.
+            if tree.is_none() {
+                p.reset();
+            }
+            tree
         })?;
         self.insert(hash, lang, bytes, tree.clone());
         Some(tree)
     }
 }
+
+/// Per-parse wall-clock ceiling, in microseconds.
+///
+/// A real `.tsx` file parses far inside this: 200 KB of realistic
+/// component code takes ~124 ms. The ceiling exists only to stop the
+/// TSX grammar's pathological backtracking, which does not terminate
+/// on its own -- the 7-byte trigger `[a=[.b:` runs until interrupted.
+/// 5s is ~40x the largest legitimate file measured and thousands of
+/// times the smallest, so it cannot fire on real input.
+const PARSE_TIMEOUT_MICROS: u64 = 5_000_000;
 
 impl Default for ParseCache {
     fn default() -> Self {
