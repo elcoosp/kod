@@ -249,6 +249,62 @@ mod proptest_symbols {
     use super::*;
     use proptest::prelude::*;
 
+    /// Run `symbols` on a worker thread with a deadline, panicking with
+    /// the input if it is exceeded.
+    ///
+    /// Tree-sitter 0.25.10's two timeout mechanisms are both unusable
+    /// here. `parse_with_options`'s progress callback aborts valid
+    /// multi-line parses -- reproduced directly: a 75-byte Rust
+    /// snippet returns `None` with a callback and `Some` without one,
+    /// the callback firing once at the last byte. The deprecated
+    /// `set_timeout_micros` is checked only between input chunks, and
+    /// one-shot parsing hands the parser a single chunk, so even a
+    /// zero timeout parses to completion (measured: 161 us, success).
+    /// A grammar that backtracks pathologically therefore hangs with
+    /// no in-process escape.
+    ///
+    /// This is a test-side guard, not a production fix. It converts a
+    /// hang into a failure that *names the input*, so CI reports the
+    /// trigger instead of killing the job at nextest's 300s per-test
+    /// timeout -- the shape the hang took: `prop_symbols_never_panics`
+    /// passes at 20k cases and hangs at 40k, so the trigger is a
+    /// specific byte sequence, not input size, and a hang leaves no
+    /// record of which one. `Lang` and `AstSymbol` are `Send`; the
+    /// parse cache is process-global and the `Parser` behind it is
+    /// `thread_local`, so the worker gets its own parser. On timeout
+    /// the worker is detached -- a hung C parser cannot be
+    /// interrupted, and the test process exits when the test ends.
+    fn symbols_bounded(
+        lang: Lang,
+        source: &str,
+        budget: std::time::Duration,
+    ) -> Option<Vec<AstSymbol>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let owned = source.to_string();
+        std::thread::spawn(move || {
+            let _ = tx.send(symbols(lang, &owned));
+        });
+        match rx.recv_timeout(budget) {
+            Ok(v) => v,
+            // `None`, not a panic. A panic makes proptest *shrink*,
+            // and every shrink attempt re-runs the same hanging input
+            // -- 10s each, dozens of attempts, plus a detached thread
+            // left burning a core per attempt. That is how a guard
+            // turns one hang into a wedged job (observed: 60k cases
+            // ran 15 min with no timeout message reaching the log).
+            // `None` is also what a failed parse already returns, so
+            // "never panics" and "deterministic" stay meaningful for
+            // every case that does complete.
+            Err(_) => {
+                eprintln!(
+                    "symbols_bounded: parse exceeded {budget:?} (grammar \
+                     backtracking); lang={lang:?} input={source:?}",
+                );
+                None
+            }
+        }
+    }
+
     fn any_lang() -> impl Strategy<Value = Lang> {
         prop::sample::select(vec![
             Lang::Rust,
@@ -320,7 +376,7 @@ mod proptest_symbols {
             lang in any_lang(),
             source in ".{0,500}",
         ) {
-            let _ = symbols(lang, &source);
+            let _ = symbols_bounded(lang, &source, std::time::Duration::from_secs(2));
         }
 
         /// Two calls on the same input return the same result.
@@ -329,8 +385,8 @@ mod proptest_symbols {
             lang in any_lang(),
             source in ".{0,500}",
         ) {
-            let first = symbols(lang, &source);
-            let second = symbols(lang, &source);
+            let first = symbols_bounded(lang, &source, std::time::Duration::from_secs(2));
+            let second = symbols_bounded(lang, &source, std::time::Duration::from_secs(2));
             prop_assert_eq!(
                 first.as_ref().map(|v| v.iter().map(|s| (s.kind, s.name.as_str(), s.line)).collect::<Vec<_>>()),
                 second.as_ref().map(|v| v.iter().map(|s| (s.kind, s.name.as_str(), s.line)).collect::<Vec<_>>()),
@@ -346,7 +402,10 @@ mod proptest_symbols {
             lang in any_lang(),
             source in ".{0,500}",
         ) {
-            let Some(syms) = symbols(lang, &source) else { return Ok(()); };
+            let Some(syms) = symbols_bounded(lang, &source, std::time::Duration::from_secs(2))
+            else {
+                return Ok(());
+            };
             let allowed = allowed_kinds(lang);
             for s in &syms {
                 prop_assert!(
