@@ -2122,3 +2122,93 @@ once because a panic on timeout makes proptest amplify the hang
 instead of containing it. Both were caught by measuring, not by
 reasoning. Same pattern as addendum 21's SSE refactor and this
 session's `RegexSet` rejection.
+
+### Addendum 23.3 (2026-10-25, the TSX hang, root-caused and fixed)
+
+Addendum 23.2 called the TSX hang a production bug left open, with three
+options. It is fixed, and the fix was found by continuing to measure
+instead of accepting the first "it cannot be done".
+
+**Recap of the bug.** tree-sitter-typescript 0.23.2's TSX grammar
+backtracks without terminating on garbage input. Minimised with ddmin to
+seven bytes:
+
+    [ident=[.ident:      e.g.  [a=[.b:
+
+Every character is load-bearing. `[1=[.2:` does not hang, `[a=[.b:`
+does. The same bytes parse fine as TypeScript or JavaScript; only the
+TSX grammar hangs. It is reachable from mid-edit code a model just
+wrote -- `const a = [x=[.y:` hangs -- which is how `repo_map` would meet
+it on a real `.tsx` file.
+
+**What addendum 23.2 got wrong.** It concluded that neither
+tree-sitter timeout works, based on two measurements that were both
+misread:
+
+- The progress callback genuinely is broken -- it aborts *valid* parses
+  (75-byte Rust snippet: `None` with a callback, `Some` without; 14
+  bytes pass, 75 fail). That part held.
+- `set_timeout_micros` was tested with `0` and reported as "still hangs,
+  so the timeout does not fire". But `0` means *unlimited*, not "fail
+  immediately". With a real budget it interrupts in microseconds. The C
+  parser polls the clock and the cancellation flag at the same site
+  (`parser.c`, every `operation_count == 0` pass), so the mechanism was
+  always there; the test was the thing that was wrong.
+
+**The second trap, found only by running the full suite.** Adding the
+timeout made every test pass but took the workspace suite from 47s to
+207s and failed six unrelated 10s-timeout PTY tests. Cause, from the
+tree-sitter docs: a parser that stopped on a timeout *resumes* the same
+parse on the next call. The `PARSER` is thread-local and reused for
+every document on that thread, so one cancelled parse poisoned every
+later parse on that thread -- they inherited the hung stack, hit the
+timeout again, and cascaded. `p.reset()` after a failed parse fixes it:
+83s, all green.
+
+**The fix** (`b5aa4af0`): `set_timeout_micros(PARSE_TIMEOUT_MICROS)` with
+5s, plus the reset. Sizing is measured, not guessed: the repo map caps
+files at 2 MiB and a 2 MiB TSX file parses in 1.9s in a debug build, so
+the budget is 2.6x the largest input that can reach it. A cancelled
+parse returns `None`, which `ast_or_regex` already treats as "fall back
+to the regex extractor" -- so a pathological file degrades for that one
+file instead of stalling the turn.
+
+The test-side deadline guard from `f6fd235d` was removed: production
+bounds the parse now, so the proptest calls plain `symbols()` again and
+two regression tests pin the real behaviour.
+
+**A second bug, found by CI fuzzing.** The `Fuzz smoke` job failed on a
+different target entirely: `html`, not `kod-ast`.
+`html_to_text` walked `html.as_bytes()` by offset but called
+`skip_element_at(&lower, i)` -- an offset into `html` -- while that
+function sliced `lower`, a `to_lowercase()` copy. Lowercasing can change
+a string's byte length: the artifact is 99 bytes and lowercases to 98,
+so offset 98 is a boundary in the copy and lands inside `〙` (bytes
+96..99) in the original.
+
+A latent version of this had already been fixed with `get(i..)` so a
+non-boundary is a non-match -- but that only covers a *same-length* copy
+with a different boundary layout (`-ĉ`). It cannot cover a length
+change. `skip_element_at` now searches `html` directly with
+`eq_ignore_ascii_case` (HTML tag names are ASCII, so the copy was never
+needed), and `to_lowercase` is gone from `html_to_text` (`6ac9e539`).
+Pinned by `html_to_text_survives_a_lowercase_length_change`, which
+asserts the artifact really does change length under lowercasing.
+
+**Two process failures worth recording.**
+
+1. `rm -rf crates/kod-tools/tests` to remove one scratch file deleted
+   seven *tracked* files under `tests/it/`. Caught immediately by
+   `git status` and restored with `git checkout --`. Removing a scratch
+   file must be `rm -f <file>`, never a directory.
+2. The CI fuzz failure was initially assumed to be related to the TSX
+   work because it appeared in the same run. It was not -- different
+   crate, different target, different bug. "Fails in the same run" is
+   not "caused by".
+
+**The lesson, third time this arc.** Addendum 21 rejected an SSE refactor
+on measurement; addendum 23 rejected a `RegexSet` prefilter on
+measurement; this one *reversed* a rejection on measurement. A negative
+result is only as good as the test that produced it -- `set_timeout_micros(0)`
+looked like a conclusive negative and was a misread constant. Re-check a
+negative result when the thing it rules out is the cheap fix.
