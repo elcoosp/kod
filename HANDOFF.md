@@ -2212,3 +2212,59 @@ measurement; this one *reversed* a rejection on measurement. A negative
 result is only as good as the test that produced it -- `set_timeout_micros(0)`
 looked like a conclusive negative and was a misread constant. Re-check a
 negative result when the thing it rules out is the cheap fix.
+
+### Addendum 23.4 (2026-10-25, CI green; one measurement left open)
+
+**CI is green on `05efda99`** -- all 16 jobs, `Fuzz smoke` included.
+The two bugs from addendum 23.3 are fixed and verified on the platform
+matrix.
+
+Closing the two items addendum 23 left open:
+
+- `redact_tool_result_for_prompt` -- doc corrected (`05efda99`). It has
+  no production caller and its doc claimed one. Kept rather than
+  deleted: `KodEngine` is `pub use`d from `kod-core`'s root, so it is
+  public API.
+- `redact_messages_for_prompt` re-scanning the transcript -- **measured,
+  not fixed.** See below.
+
+**The measurement.** 50 messages x 2 KB, `Redactor::default()`, the
+real redact path:
+
+| | |
+|---|---|
+| round 1 (nothing redacted yet) | 9.6 ms |
+| each later round | **7.1 ms** |
+| rounds 2-40 (39 passes) | **276 ms per turn** |
+
+That is the cost of scanning content that is already redacted. It only
+applies when `[security.redact] in_prompt = true`, which defaults to
+false -- so it is zero for a default config and 276 ms per turn for a
+user who opted in.
+
+For scale: the SSE refactor in addendum 21 was rejected at 0.004% of a
+turn. This is ~10% of a 3 s turn. It is worth fixing, and it is 2000x
+past the threshold that rejected that one.
+
+**Why it was not fixed here.** The clean shape is a cache, and a cache
+here can leak a secret if it is wrong in the direction of a false hit.
+The safety analysis is favourable -- `build_grounded_request` and
+`obfuscated_transcript` both *clone* before obfuscating, so redaction is
+the only in-place write to `content`, and it is idempotent -- but the
+implementation wants a field on `KodEngine` and tests that pin
+invalidation, which is a focused change, not a tail-end edit. The
+number is recorded so the next session starts with it.
+
+The safest shape, for whoever picks it up: cache on **content
+equality**, not a hash. Store the last input and the redacted output per
+message; on the next pass compare the stored input to the current
+content and reuse the output when they are equal. A hash collision
+would be a security bug; a string comparison cannot collide. It costs
+one comparison per message per round, which is negligible against 13
+regex passes.
+
+**Session state.** Nothing uncommitted, nothing unpushed. Tags
+`v0.1.21` and `v0.1.22` are released; the five commits since (two
+fixes, one doc correction, two doc commits) are on `main` and green,
+untagged -- a `v0.1.23` is reasonable but not urgent, and the next
+session should decide after the redaction-cache measurement.
