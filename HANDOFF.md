@@ -2268,3 +2268,57 @@ regex passes.
 fixes, one doc correction, two doc commits) are on `main` and green,
 untagged -- a `v0.1.23` is reasonable but not urgent, and the next
 session should decide after the redaction-cache measurement.
+
+### Addendum 23.5 (2026-10-26, all four open items closed)
+
+Addendum 23.4 left one measurement open and addendum 23.2 left one
+production bug open. Both are done.
+
+**The redaction memo** (`275ed116`). Addendum 23.4 measured
+`redact_messages_for_prompt` at 276 ms per turn and said not to fix it
+in a tail-end script, with two constraints: cache on content equality
+rather than a digest, and pin the invalidation. Both held.
+
+The memo is `MessageId -> (input, output)`. A message is served from
+the cache when its content equals either the text that was scanned or
+the text that scan produced -- the second form is the one that fires,
+because the caller assigns the redacted text back into `content`, so
+from round two the stored input no longer matches but the stored
+output does.
+
+Content equality and not a hash, for the reason stated: a memo hit
+skips the scan, so a false hit leaves a secret in place, and a hash
+collision is exactly that failure. String equality cannot collide.
+
+The loop moved into `redact_contents_memoised`, a pure function
+taking the memo as a parameter -- the same reason
+`redact_tool_call_arguments` is pure. Five tests, including
+`mutated_content_is_rescanned_not_served_from_the_memo`, which
+replaces a message's content between rounds and asserts the new
+secret is redacted. Verified non-vacuous: disabling the content guard
+makes that test, and only that test, fail.
+
+Measured on the same shape as before (50 messages x 2 KB, 40 rounds):
+
+| | |
+|---|---|
+| unmemoised | 267.0 ms |
+| memoised | **7.6 ms** |
+| ratio | **35.2x** |
+
+The 276 ms/turn cost is now 7.6 ms, only for `in_prompt = true`.
+The timing test is `#[ignore]`d so CI never pays for it.
+
+**All four items from addendum 23 and 23.2 are now closed:**
+
+| Item | Commit |
+|---|---|
+| TSX grammar hang (production) | `b5aa4af0` |
+| HTML char-boundary panic (fuzz-found) | `6ac9e539` |
+| Dead method's stale doc | `05efda99` |
+| Transcript re-scan (276 ms/turn) | `275ed116` |
+
+**Tag.** Nine commits since `v0.1.22`: two real bug fixes, one
+performance fix at 35x, two doc corrections, and the addenda. The
+measurement addendum 23.4 said to wait for is in and positive, so
+`v0.1.23` is justified once CI is green on the tip.
