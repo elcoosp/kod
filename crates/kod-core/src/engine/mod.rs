@@ -210,6 +210,28 @@ pub struct KodEngine {
     /// what is new since the last pass; a rewind or in-place edit
     /// resets it so the whole transcript is re-sent.
     retention_cursors: RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
+    /// PERF: memo for `redact_messages_for_prompt`.
+    ///
+    /// Keyed on `MessageId`; the value is `(input, output)` -- the
+    /// content that was scanned and the content it produced. A hit
+    /// requires byte equality with one of the two, so a mutated
+    /// message re-redacts and an already-redacted message is skipped.
+    /// Storing the strings rather than a digest is deliberate: a hash
+    /// collision would serve stale output for different content, and
+    /// the stale output could be the *unredacted* form of a message
+    /// that now contains a secret. String equality cannot collide.
+    ///
+    /// `redact_messages_for_prompt` runs once per tool round (up to
+    /// `MAX_TOOL_ROUNDS`), so an un-memoised pass re-scans the whole
+    /// transcript each time: measured at 7.1 ms per pass for 50
+    /// messages x 2 KB, 276 ms over a 40-round turn, on content that
+    /// is already redacted. Redaction is idempotent for the built-in
+    /// rules, so every pass after the first is pure scanning.
+    ///
+    /// Only consulted when `[security.redact] in_prompt = true`; the
+    /// field costs one allocation at construction and nothing
+    /// otherwise.
+    redaction_memo: parking_lot::Mutex<HashMap<kod_types::MessageId, (String, String)>>,
     /// Delta §7.2: late LSP diagnostics a background pass queued
     /// since the last turn. Drained at the start of `prepare_turn`
     /// and appended to the system prompt under

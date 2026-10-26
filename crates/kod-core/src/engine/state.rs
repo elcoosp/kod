@@ -40,6 +40,66 @@ pub(crate) fn redact_tool_call_arguments(
     n
 }
 
+/// Redact every message's `content` through `redactor`, memoised.
+///
+/// Returns the number of redactions that fired. A message whose
+/// content equals either the input it was last scanned from or the
+/// output that scan produced is served from `memo` instead of being
+/// re-scanned. The second form is the one that matters in practice:
+/// the caller assigns the redacted text back into `content`, so from
+/// the second round onward the stored input no longer matches but the
+/// stored output does.
+///
+/// **Why content equality and not a digest.** A memo hit skips the
+/// scan, so a false hit would leave a message's secret in place. A
+/// hash collision would be exactly that; string equality cannot
+/// collide. The stored strings cost one message's worth of bytes per
+/// entry, which is bounded by the transcript.
+///
+/// **Why the memo is keyed on id as well as content.** Two messages
+/// can hold identical text -- a repeated `read_file` result, say --
+/// and each must be redacted on its own first sighting, so the entry
+/// has to be per message, not per unique string.
+///
+/// `events`-less scans (content with no secret) still populate the
+/// entry: the next round finds the same clean text and skips the
+/// scan, which is the common case on a large transcript.
+pub(crate) fn redact_contents_memoised(
+    redactor: &kod_types::redact::Redactor,
+    messages: &mut [kod_types::ChatMessage],
+    memo: &mut std::collections::HashMap<kod_types::MessageId, (String, String)>,
+) -> usize {
+    let mut total = 0_usize;
+    for m in messages.iter_mut() {
+        if let Some((input, output)) = memo.get(&m.id)
+            && (m.content == *input || m.content == *output)
+        {
+            m.content = output.clone();
+            continue;
+        }
+        let input = m.content.clone();
+        let (redacted, events) = redactor.redact(&input);
+        let output = if events.is_empty() {
+            input.clone()
+        } else {
+            redacted
+        };
+        if !events.is_empty() {
+            total += events.iter().map(|e| e.count).sum::<usize>();
+        }
+        memo.insert(m.id.clone(), (input, output.clone()));
+        m.content = output;
+    }
+    // Drop entries for messages a compaction removed. The guard keeps
+    // the common case (nothing dropped) free of the retain pass.
+    if memo.len() > messages.len() {
+        let live: std::collections::HashSet<&kod_types::MessageId> =
+            messages.iter().map(|m| &m.id).collect();
+        memo.retain(|id, _| live.contains(id));
+    }
+    total
+}
+
 impl KodEngine {
     /// Install an on-disk state store (Tier 3.4). Loads any
     /// previously-saved plans and decision logs into memory. Call
@@ -128,13 +188,8 @@ impl KodEngine {
         // (b) Content redaction, gated on `in_prompt`.
         if cfg.security.redact.in_prompt {
             let redactor = self.redactor.clone();
-            for m in messages.iter_mut() {
-                let (redacted, events) = redactor.redact(&m.content);
-                if !events.is_empty() {
-                    m.content = redacted;
-                    total += events.iter().map(|e| e.count).sum::<usize>();
-                }
-            }
+            let mut memo = self.redaction_memo.lock();
+            total += redact_contents_memoised(&redactor, messages, &mut memo);
         }
 
         total
@@ -902,5 +957,179 @@ impl KodEngine {
         let mut guard = self.history.write().await;
         guard.entry(key.to_string()).or_default().extend(messages);
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod redaction_memo_tests {
+    //! The memo must never serve a hit for content it did not scan.
+    //!
+    //! A false hit skips the redaction pass and leaves a secret in the
+    //! message that reaches the model, so every case here is a
+    //! correctness test, not a performance one. The pure function takes
+    //! the memo as a parameter precisely so this can be driven without
+    //! a `KodEngine` or a config file.
+
+    use super::*;
+    use kod_types::{ChatMessage, MessageId, MessageRole};
+
+    fn msg(id: &MessageId, content: &str) -> ChatMessage {
+        ChatMessage::text(
+            id.clone(),
+            MessageRole::User,
+            content.to_string(),
+            time::OffsetDateTime::now_utc(),
+        )
+    }
+
+    fn memo() -> std::collections::HashMap<MessageId, (String, String)> {
+        std::collections::HashMap::new()
+    }
+
+    const SECRET: &str = "api_key = sk-abcdef0123456789abcdef0123456789";
+
+    #[test]
+    fn first_pass_redacts_and_records() {
+        let r = kod_types::redact::Redactor::default();
+        let id = MessageId::new();
+        let mut msgs = vec![msg(&id, SECRET)];
+        let mut m = memo();
+
+        let n = redact_contents_memoised(&r, &mut msgs, &mut m);
+
+        assert_eq!(n, 1, "one redaction fires");
+        assert!(!msgs[0].content.contains("sk-abcdef"), "secret removed");
+        assert!(msgs[0].content.contains("[REDACTED:openai-key]"));
+        assert_eq!(m.len(), 1, "the scan is recorded");
+    }
+
+    #[test]
+    fn second_pass_on_the_redacted_text_is_a_free_hit() {
+        let r = kod_types::redact::Redactor::default();
+        let id = MessageId::new();
+        let mut msgs = vec![msg(&id, SECRET)];
+        let mut m = memo();
+
+        let first = redact_contents_memoised(&r, &mut msgs, &mut m);
+        let after_first = msgs[0].content.clone();
+        let second = redact_contents_memoised(&r, &mut msgs, &mut m);
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 0, "no redaction fires on already-redacted text");
+        assert_eq!(msgs[0].content, after_first, "content is unchanged");
+    }
+
+    /// The security-critical case. A message whose content is replaced
+    /// between rounds must be re-scanned: the memo holds the *old*
+    /// content, so serving its output would ship whatever the new
+    /// content carries.
+    #[test]
+    fn mutated_content_is_rescanned_not_served_from_the_memo() {
+        let r = kod_types::redact::Redactor::default();
+        let id = MessageId::new();
+        let mut msgs = vec![msg(&id, "clean text with no secret")];
+        let mut m = memo();
+
+        assert_eq!(redact_contents_memoised(&r, &mut msgs, &mut m), 0);
+
+        // The same message now carries a secret.
+        msgs[0].content = SECRET.to_string();
+        let n = redact_contents_memoised(&r, &mut msgs, &mut m);
+
+        assert_eq!(n, 1, "the new content must be scanned");
+        assert!(
+            !msgs[0].content.contains("sk-abcdef"),
+            "the secret must be redacted, got {:?}",
+            msgs[0].content,
+        );
+    }
+
+    /// A message id reused for different content -- the caller reset
+    /// the transcript, or a compaction renumbered -- must not alias.
+    #[test]
+    fn two_messages_with_the_same_text_each_scan_once() {
+        let r = kod_types::redact::Redactor::default();
+        let a = MessageId::new();
+        let b = MessageId::new();
+        let mut msgs = vec![msg(&a, SECRET), msg(&b, SECRET)];
+        let mut m = memo();
+
+        let n = redact_contents_memoised(&r, &mut msgs, &mut m);
+
+        assert_eq!(n, 2, "both messages fire independently");
+        assert!(!msgs[0].content.contains("sk-abcdef"));
+        assert!(!msgs[1].content.contains("sk-abcdef"));
+        assert_eq!(m.len(), 2, "one entry per message id");
+    }
+
+    #[test]
+    fn entries_for_dropped_messages_are_evicted() {
+        let r = kod_types::redact::Redactor::default();
+        let kept = MessageId::new();
+        let dropped = MessageId::new();
+        let mut msgs = vec![msg(&kept, SECRET), msg(&dropped, SECRET)];
+        let mut m = memo();
+
+        redact_contents_memoised(&r, &mut msgs, &mut m);
+        assert_eq!(m.len(), 2);
+
+        // A compaction drops the second message.
+        msgs.truncate(1);
+        redact_contents_memoised(&r, &mut msgs, &mut m);
+
+        assert_eq!(m.len(), 1, "the dropped id's entry is gone");
+        assert!(m.contains_key(&kept));
+    }
+    /// Not a correctness test: a before/after of the memo on the shape
+    /// addendum 23.4 measured (50 messages x 2 KB, 40 rounds).
+    /// `#[ignore]` so CI never pays for it; run with
+    /// `cargo test -p kod-core memo_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn memo_timing() {
+        use std::time::Instant;
+        let r = kod_types::redact::Redactor::default();
+        let body = "    let value = compute(input).unwrap_or_else(|e| handle(e));\n";
+        let mut text = String::new();
+        while text.len() < 2048 {
+            text.push_str(body);
+        }
+        let make = || -> Vec<ChatMessage> {
+            (0..50)
+                .map(|_| {
+                    ChatMessage::text(
+                        MessageId::new(),
+                        MessageRole::User,
+                        text.clone(),
+                        time::OffsetDateTime::now_utc(),
+                    )
+                })
+                .collect()
+        };
+
+        let mut msgs = make();
+        let start = Instant::now();
+        for _ in 0..40 {
+            for m in msgs.iter_mut() {
+                let (out, _) = r.redact(&m.content);
+                m.content = out;
+            }
+        }
+        let baseline = start.elapsed();
+
+        let mut msgs = make();
+        let mut m = memo();
+        let start = Instant::now();
+        for _ in 0..40 {
+            let _ = redact_contents_memoised(&r, &mut msgs, &mut m);
+        }
+        let memoised = start.elapsed();
+
+        println!("unmemoised 40 rounds: {baseline:?}");
+        println!("memoised   40 rounds: {memoised:?}");
+        println!(
+            "ratio: {:.1}x",
+            baseline.as_secs_f64() / memoised.as_secs_f64()
+        );
     }
 }

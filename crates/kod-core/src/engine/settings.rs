@@ -158,6 +158,7 @@ impl KodEngine {
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             ttsr_has_rules: std::sync::atomic::AtomicBool::new(false),
             retention_cursors: RwLock::new(HashMap::new()),
+            redaction_memo: parking_lot::Mutex::new(HashMap::new()),
             deferred_diagnostics: std::sync::Arc::new(
                 kod_core_state::deferred_diagnostics::DeferredDiagnostics::new(),
             ),
