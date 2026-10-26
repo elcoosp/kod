@@ -1,0 +1,60 @@
+---
+title: Language Server Integration
+description: Which servers KOD looks for, how diagnostics reach the model, and what happens when none is installed.
+sidebar:
+  order: 13
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD uses language servers for two things: the `lsp_*` tools the model calls explicitly, and a diagnostics pass that runs after a successful write so the model sees errors on its next turn without asking.
+
+Nothing here is required. With no server on `PATH` the tools report a missing capability and the write path simply skips the pass.
+
+## Which server, for which file
+
+Detection is by extension, then a check that the binary is on `PATH`:
+
+| Extension | Server, in order tried |
+| --- | --- |
+| `.rs` | `rust-analyzer` |
+| `.py` | `pyright-langserver`, then `pylsp` |
+| `.ts` `.tsx` `.js` `.jsx` | `typescript-language-server` |
+| `.go` | `gopls` |
+
+Anything else has no server. That is not an error — the tool reports which capability is missing rather than returning an empty result, so the model learns to fall back to the compiler-based `check` instead of concluding the file is clean.
+
+## The four tools
+
+| Tool | Answers |
+| --- | --- |
+| `lsp_diagnostics` | current diagnostics for a file |
+| `lsp_definition` | where a symbol is defined |
+| `lsp_references` | where a symbol is referenced |
+| `lsp_hover` | the type and documentation at a position |
+
+## Diagnostics after a write
+
+With `[lsp] auto_diagnostics` on (the default), a successful write triggers a diagnostics pass on the touched file. It waits `settle_ms` (500 ms) for the server to publish, then appends a `## LSP diagnostics` block to the next turn's prompt.
+
+A slow server on a large workspace can take seconds. Making the write wait all of that is the wrong trade, so a second background pass keeps watching with a longer budget — `deferred_settle_ms` (12 s). What it finds is queued and drained into the *next* turn's prompt under `## LSP diagnostics (late)`, which is where the errors matter anyway.
+
+Two details keep the late queue honest:
+
+- **Dedup.** A server republishes its whole list on every change, so an entry equal to one already queued for that transcript is dropped. Without it a busy rust-analyzer would queue the same thirty errors on every keystroke.
+- **Version guard.** The background task records the file's mtime when spawned and only pushes a result if the file still has that mtime. A write during the wait makes the answer stale, and it is discarded rather than reported against content that no longer exists.
+
+<Aside type="note">
+  KOD has no LSP document version on the engine side, so mtime stands in for one. It is coarser — two writes inside the same filesystem timestamp tick would look identical — but it needs no coordination with the server.
+</Aside>
+
+## Tuning
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `auto_diagnostics` | `true` | Run the post-write pass at all |
+| `settle_ms` | `500` | How long the inline pass waits |
+| `deferred_enabled` | `true` | Run the late background pass |
+| `deferred_settle_ms` | `12000` | How long that pass waits |
+
+Two switches gate the pass, and **both** must be on: `[tools] auto_lsp` (true by default, the coarse on/off used by `kod doctor` and the TUI toggle) and `[lsp] auto_diagnostics` (true by default, the persistent config choice). Turning either off disables it. `kod doctor` names which one turned it off rather than reporting a generic "diagnostics disabled".
