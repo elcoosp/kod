@@ -1,0 +1,45 @@
+---
+title: The Repository Map
+description: How the symbol map is built, what it skips, and why a thin map is usually a size cap rather than a bug.
+sidebar:
+  order: 9
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The repo map is a compact list of top-level symbols per source file, built once and used to ground prompts. `kod map` prints it; the engine reads it when deciding what a change might touch.
+
+## Building it
+
+The walk honours `.gitignore` and skips the usual build trees, then extracts top-level symbols from each recognised file. Extraction goes through tree-sitter first and falls back to a regex scan when the grammar cannot produce a tree — the two paths emit the same `(kind, name, line)` tuples, so downstream code cannot tell them apart.
+
+Nine languages are recognised: Rust, Python, TypeScript/TSX, JavaScript/JSX, Go, Ruby, Java, C and C++ headers. A file with any other extension is not scanned.
+
+## Three things that make it stop
+
+A map that quietly omits half your code is worse than no map, so each bound is deliberate and logged:
+
+| Bound | Value | Why |
+| --- | --- | --- |
+| Files per build | 100,000 | The walk is bounded by the workspace, and a workspace is bounded by nothing in particular. A monorepo with a checked-in `vendor/`, an ML repo with a dataset directory, or running from `$HOME` would otherwise scan until the disk fills. |
+| Bytes per file | 2 MiB | A larger file is generated or vendored, not hand-written source. Skipping it costs nothing the model would use. |
+| Symbols per file | 200 | A file with more than 200 top-level items is not a module a prompt can reason about. |
+
+Hitting the file cap is **not an error**. The map is built from what fits and the truncation is logged, so a user surprised by a thin map can see why rather than guessing.
+
+## Why a thin map usually is not a bug
+
+In order of likelihood:
+
+1. **The workspace is not detected as a code root.** Before scanning, the walk requires one of these in the directory: a VCS marker (`.git`, `.hg`, `.svn`, `.jj`) or a project manifest (`Cargo.toml`, `package.json`, `pyproject.toml`, `setup.py`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `Gemfile`, `composer.json`, `CMakeLists.txt`, `Makefile`). A directory of loose scripts has none, and gets an empty map rather than a surprise walk of `$HOME`.
+2. **The files are outside the recognised extensions.** A `.vue` or `.svelte` file is not scanned — those frameworks' component files are not in the extractor set.
+3. **The files exceed 2 MiB.** Vendored bundles and generated sources land here.
+4. **The 100k cap was hit.** The log says so explicitly.
+
+<Aside type="tip">
+  `kod map` prints what the engine actually sees. If it looks thin, check that first — it is the same data the prompt gets, not a summary of it.
+</Aside>
+
+## Rust is filtered
+
+The Rust extractor drops functions marked `#[test]` or `#[tokio::test]`, matching the regex fallback's behaviour. A test module with fifty cases contributes one module symbol, not fifty — the production surface is what the map is for.
