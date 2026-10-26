@@ -95,6 +95,7 @@ export default defineConfig({
             { label: 'Minimized Output', slug: 'concepts/output-minimization' },
             { label: 'Goals & Decisions', slug: 'concepts/session-state' },
             { label: 'The Repository Map', slug: 'concepts/repo-map' },
+            { label: 'Compaction', slug: 'concepts/compaction' },
             { label: 'Task Router', slug: 'concepts/router' },
             { label: 'LLM Providers', slug: 'concepts/providers' },
           ],

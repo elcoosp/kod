@@ -1,0 +1,56 @@
+---
+title: Compaction
+description: When a session runs out of context window, and what actually gets removed.
+sidebar:
+  order: 10
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Compaction shrinks a transcript so the next turn fits in the model's context window. `/compact` triggers it; the engine also runs it after a turn when the window is nearly full.
+
+## When it fires
+
+`used_tokens + reserve > window_tokens`, where `reserve = max(15% of window, 16_384)`.
+
+A 200k window reserves 30k, so compaction starts around 170k used. A zero window never compacts — refusing is the safe reading when the window is unknown, and the caller learns the real number on the next provider call.
+
+`/context` shows the live breakdown; the status line's context meter is the same number.
+
+## What actually runs
+
+Compaction is a preference list with fail-over, not a hardcoded ladder. The dispatcher holds an ordered set of methods and asks each whether it can reduce the context; the first that produces a non-empty plan wins.
+
+In the default ladder, only one method is implemented:
+
+| Method | State |
+| --- | --- |
+| `shake` | implemented — replaces large byte ranges in tool results with placeholders |
+| `remote` | stub — would use provider-native compaction |
+| `snapcompact` | stub — would image the transcript as bitmap frames |
+| `handoff` | stub — would write a one-shot handoff document |
+| `soft` | stub — would summarise with a local LLM |
+
+The stubs return "unavailable" so the ladder shape is correct and a future implementation slots in without a dispatcher change. In practice **`/compact` currently does shake and nothing else.**
+
+There is also a `prune` method — it removes whole messages that a later message supersedes — but it is implemented and *not* in the default ladder. It has to be installed explicitly.
+
+<Aside type="note">
+  If `/compact` reports it could not reduce the context, that is the ladder exhausting: shake found nothing large enough to shrink, and the other four are stubs. The transcript is unchanged.
+</Aside>
+
+## Shake in practice
+
+Shake replaces large byte ranges inside tool results with a placeholder, keeping the message and its metadata. A 40 KB `read_file` result becomes a short line saying how many bytes were elided.
+
+Two guards stop it destroying things it should not touch:
+
+- **`protect_tokens`** (16,000 by default) — recent context is left alone even when large, because the model is probably still working with it. Shake's default is lower than prune's, since shake's mutations are smaller and more scattered.
+- **`cache_warm_suffix_tokens`** (8,000 by default) — a suffix inside the provider's warm cache is not touched. Invalidating it would cost more than the tokens saved.
+- **A whole-plan savings gate** — a pass that frees fewer than a threshold number of tokens is skipped outright, because the cache churn is not worth it.
+
+Per-turn protected paths (files the turn is actively touching) are merged into the method's own config, so a file being edited is not shaken mid-turn.
+
+## Plans, not mutations
+
+Every method returns a *plan* — a description of the mutations — not a mutated transcript. The caller applies it. That keeps the methods pure and testable without an engine, and it means a plan can be rejected before anything changes: a plan that does not actually shrink the transcript is refused.
