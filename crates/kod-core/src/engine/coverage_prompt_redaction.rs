@@ -205,3 +205,47 @@ fn error_text_is_untouched_without_a_redactor() {
         "no redactor: the text must pass through unchanged"
     );
 }
+
+// The memo is covered by pure-function tests in `state.rs`; this pins
+// that `redact_messages_for_prompt` actually reaches it under the real
+// config, and that a second round on the same transcript reports zero
+// redactions -- the property the 35x came from.
+#[tokio::test]
+async fn e2e_in_prompt_redacts_once_then_reuses() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[security.redact]\nin_prompt = true\n",
+    )
+    .unwrap();
+
+    // SAFETY: single-threaded test process under nextest.
+    unsafe { std::env::set_var("KOD_CONFIG_DIR", dir.path()) };
+
+    let e = engine().await;
+    let mut msgs = vec![kod_types::ChatMessage::text(
+        kod_types::MessageId::new(),
+        kod_types::MessageRole::User,
+        "key is sk-abcdef1234567890ABCDEFGH".to_string(),
+        time::OffsetDateTime::now_utc(),
+    )];
+
+    let first = e.redact_messages_for_prompt(&mut msgs);
+    assert_eq!(first, 1, "round 1 redacts");
+    assert!(!msgs[0].content.contains("sk-abcdef"));
+    let after_first = msgs[0].content.clone();
+
+    // Round 2: same content, already redacted. The memo serves it.
+    let second = e.redact_messages_for_prompt(&mut msgs);
+    assert_eq!(second, 0, "round 2 reports no redactions");
+    assert_eq!(msgs[0].content, after_first, "content is unchanged");
+
+    // Mutating the message must re-redact, not serve the memo.
+    msgs[0].content = "now with sk-zzzzzzzzzzzzzzzzzzzzzzzz".to_string();
+    let third = e.redact_messages_for_prompt(&mut msgs);
+    assert_eq!(third, 1, "mutated content is rescanned");
+    assert!(!msgs[0].content.contains("sk-zzzz"));
+
+    // SAFETY: single-threaded test process under nextest.
+    unsafe { std::env::remove_var("KOD_CONFIG_DIR") };
+}
