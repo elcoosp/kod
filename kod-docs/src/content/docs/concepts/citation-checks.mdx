@@ -1,0 +1,44 @@
+---
+title: Citation Checks
+description: When a reply cites a file and line, the engine verifies the location exists and annotates the ones that do not.
+sidebar:
+  order: 7
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A research answer that says "the bug is in `parser.rs:42`" is only useful if line 42 exists. Models hallucinate line numbers, and the cheapest correction is a deterministic pass that reads the cited location and reports what it found.
+
+## What is checked
+
+Two things, both local — no model call, no network:
+
+1. the cited path resolves and is a file
+2. the cited line number is within that file's line count
+
+A citation passes only when both hold. One that fails either is annotated with `⚠` and the reason.
+
+## What is deliberately not checked
+
+A "does the cited line contain a word from the surrounding prose" heuristic sounds attractive and is not implemented. A false `⚠` on a correct citation is worse than no annotation at all: a user who sees the marker on a good citation learns to ignore it. The pass reports only what it can prove — the location exists, or it does not.
+
+## Where it runs
+
+Citation checking applies to **Research** task-type replies only. A coding turn never pays for it.
+
+There are two passes, and the second is optional:
+
+1. **Syntactic** — always runs. The two checks above, purely local.
+2. **Semantic** — runs only when a Jev endpoint is configured. It asks whether the cited line actually supports the prose, which is the stronger claim. It is fail-open: a Jev error returns the reply unchanged and logs at heuristic level. A reply with more than ten citations has only the first ten checked — a hundred-citation reply is pathological, and the cap keeps the turn bounded.
+
+## When you see the block
+
+A reply with no citations, or with every citation verified, comes back clean. The annotation block appears only when at least one citation could not be verified, so a healthy session never sees it.
+
+<Aside type="note">
+  The pass never edits the reply. It appends a verification block listing what it found, so the original claim stays readable next to its verdict. On the streaming path the block is emitted as a chunk, which is why it appears as part of the reply rather than as a separate message.
+</Aside>
+
+## Why line numbers, not content
+
+Line numbers are cheap to check and impossible to check by accident: either the file has 42 lines or it does not. Content matching would need to know what the model *meant* to cite, which is the hallucination being checked for.

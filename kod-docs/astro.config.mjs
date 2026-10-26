@@ -68,6 +68,7 @@ export default defineConfig({
             { label: 'Agent Swarms', slug: 'guides/swarm' },
             { label: 'Sessions, Replay & Checkpoints', slug: 'guides/sessions' },
             { label: 'Hooks', slug: 'guides/hooks' },
+            { label: 'MCP Servers', slug: 'guides/mcp' },
             { label: 'Telemetry', slug: 'guides/telemetry' },
             { label: 'Troubleshooting', slug: 'guides/troubleshooting' },
             { label: 'FAQ', slug: 'guides/faq' },

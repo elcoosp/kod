@@ -1,0 +1,62 @@
+---
+title: MCP Servers
+description: Connect Model Context Protocol servers, how their tools are named and gated, and why startup is fast on the second run.
+sidebar:
+  order: 12
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+MCP servers extend the agent with tools it does not ship itself. Each server is a subprocess that speaks the Model Context Protocol; KOD spawns it at startup, asks what tools it has, and registers one adapter per tool.
+
+## Configuring a server
+
+One `[mcp.servers.<name>]` block per server. The name is the routing key.
+
+```toml
+[mcp.servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+enabled = true
+call_timeout_secs = 60
+
+[mcp.servers.filesystem.env]
+LOG_LEVEL = "info"
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `command` | — | The program to spawn, resolved against `$PATH`. |
+| `args` | `[]` | Arguments to it. |
+| `env` | `{}` | Added to the child's environment. The child inherits yours, so a `PATH` you set in the shell reaches the server. |
+| `enabled` | `true` | When false the block is configured but no process is spawned — useful for keeping a server's settings as a record. |
+| `call_timeout_secs` | `60` | Per-`tools/call` timeout. `initialize` and `tools/list` use fixed client timeouts. |
+
+A missing `[mcp]` section means no MCP tools, which is the default.
+
+## How tools are named
+
+A server named `filesystem` advertising `read_file` becomes **`mcp:filesystem.read_file`** in the model's tool inventory.
+
+The dot is the separator, and the split is on the *first* dot after the `mcp:` prefix — so a server that names a tool `foo.bar` maps back correctly from `mcp:filesystem.foo.bar`. Tool names are verbatim from the server; only the prefix and the server name are KOD's.
+
+## Gating
+
+Every MCP adapter declares an all-false permission bitmask. That is deliberate: **the policy engine is the security boundary, not the bitmask.** Under the default `standard` preset MCP tools ask before running. To allow one:
+
+```toml
+[tools."mcp:filesystem.read_file"]
+mode = "allow"
+```
+
+Policy entries address the full name, including the `mcp:` prefix.
+
+## Startup is cached
+
+The first start of a server costs a process spawn plus a `tools/list` round trip. The result is cached under the platform cache directory (`kod/mcp/`), keyed on the command, arguments, and environment, with a **30-day** TTL. A second start reads the cache and registers the tools without spawning — which matters when several servers are configured.
+
+A cache entry is deleted on read when stale, so a changed `args` or `env` produces a different key and a fresh list rather than a stale one.
+
+<Aside type="caution">
+  The cache means a server that *changes its tools without changing its command line* keeps the old list until the TTL expires. Bump an unused argument to invalidate it, or clear the cache directory.
+</Aside>
