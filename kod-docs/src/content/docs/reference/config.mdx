@@ -106,7 +106,9 @@ Controls the prompt-path redactor. Log-write redaction is always on and not conf
 | `in_prompt` | bool | `false` | Run the redactor over every message and tool result before it reaches the model. Default off: a normal code-editing session needs un-redacted file contents. |
 | `redact_argument_paths` | array of globs | `[]` | Blank the `arguments` of any tool call whose path matches, independent of `in_prompt`. Stronger than result redaction — the model never sees the arguments at all. |
 
-Both settings replace a secret with `[REDACTED:<rule>]`, which the model cannot round-trip. A [secret vault](/guides/configuration/) installed via `kod` replaces it with a reversible placeholder instead.
+Both settings replace a secret with `[REDACTED:<rule>]`, which the model cannot round-trip.
+
+`kod` also installs a secret-placeholder vault at startup, by default: it loads (or creates) `~/.kod/secret-placeholder.key` and registers every secret-shaped environment variable, then the wire layer swaps a registered secret for a reversible placeholder the model can reason about. That is a separate mechanism from the redactor above and runs whether or not `in_prompt` is set. A failure to create the key file is logged and leaves placeholders disabled for the session — the pre-vault behaviour — rather than aborting startup.
 
 ## `[limits]`
 
