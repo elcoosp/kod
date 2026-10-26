@@ -1,0 +1,49 @@
+---
+title: Telemetry
+description: Export turn- and tool-level records to an OpenTelemetry collector. Off unless you set an endpoint.
+sidebar:
+  order: 16
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD can export structured records to an OpenTelemetry collector. It is **off by default and costs nothing when off** — the handle is constructed from the environment, and an unset endpoint yields a disabled no-op that every record call short-circuits on.
+
+## Turning it on
+
+Set the standard OTLP environment variable before starting `kod`:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+kod tui
+```
+
+Startup prints one line confirming the export, including the service name:
+
+```
+kod: OTLP telemetry enabled (service.name="kod")
+```
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` is the only switch. There is no config-file key — telemetry is operator infrastructure, not agent behaviour, so it lives entirely in the environment where a deployment can set it without touching a project's `.kod/`.
+
+## What is exported
+
+| Record | When |
+| --- | --- |
+| turn | once per completed turn: model, token usage, duration, outcome |
+| tool | once per tool call: tool name, duration, success or failure |
+
+Prompt and completion **content** is not exported. The records describe the shape of a session — which tools ran, how long a turn took, how many tokens it cost — not what was said.
+
+<Aside type="caution">
+  Tool arguments are not included either, but tool *names* are. A custom tool whose name encodes a secret would leak it through the record; do not name tools after their inputs.
+</Aside>
+
+## When it is off
+
+`Telemetry::from_env()` returns a disabled handle. Every `record_*` method is a no-op, no exporter is constructed, and no background task is spawned. A session that never set the endpoint pays nothing for the feature existing.
+
+## Related
+
+- [Cost and limits](/reference/config/#limits) — the session's own budget accounting, which is separate from what telemetry exports.
+- [Tracing](/guides/troubleshooting/) — the local turn-trace file (`kod trace`), useful when you want records without a collector.

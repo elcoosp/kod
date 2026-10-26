@@ -68,6 +68,7 @@ export default defineConfig({
             { label: 'Agent Swarms', slug: 'guides/swarm' },
             { label: 'Sessions, Replay & Checkpoints', slug: 'guides/sessions' },
             { label: 'Hooks', slug: 'guides/hooks' },
+            { label: 'Telemetry', slug: 'guides/telemetry' },
             { label: 'Troubleshooting', slug: 'guides/troubleshooting' },
             { label: 'FAQ', slug: 'guides/faq' },
           ],
@@ -88,6 +89,8 @@ export default defineConfig({
           items: [
             { label: 'Architecture', slug: 'concepts/architecture' },
             { label: 'The Agent Loop', slug: 'concepts/agent-loop' },
+            { label: 'Internal URLs', slug: 'concepts/internal-urls' },
+            { label: 'Minimized Output', slug: 'concepts/output-minimization' },
             { label: 'Task Router', slug: 'concepts/router' },
             { label: 'LLM Providers', slug: 'concepts/providers' },
           ],

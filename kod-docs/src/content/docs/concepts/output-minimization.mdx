@@ -1,0 +1,46 @@
+---
+title: Minimized Tool Output
+description: How large command output is rewritten into something the model can use, and how the raw form stays reachable.
+sidebar:
+  order: 6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A large tool result gets **minimised**, not truncated.
+
+The difference matters. A cap chops at a byte boundary, and the part the model needed is very often the part that got cut: a verbose `pytest` run, a `cargo check` with fifty warnings, a `git status` on a big tree. A minimiser rewrites the output into a shorter form that keeps the informative content — a `git status` becomes branch plus file list, a `git log` becomes short hash plus subjects, a failing `cargo check` becomes the error slice.
+
+## What it applies to
+
+Each definition names a program and the subcommands it handles:
+
+| Program | Forms |
+| --- | --- |
+| `git` | `status`, `log` |
+| `cargo` | `check` (text and JSON), `test` |
+| `pytest` | run output |
+
+Anything else — a program with no definition, an unparsed shape — returns the raw capture unchanged. The minimiser never guesses.
+
+## Pipes are opaque
+
+`git status | grep modified` produces output that depends on the *next* stage of the pipeline. Rewriting it would misrepresent what the shell actually produced, so a command containing a top-level `|` is left alone entirely.
+
+The same applies to `&&` and `;` chains: they are classified as a chain and returned raw, not minimised segment by segment.
+
+## The raw output is kept
+
+A minimised result carries an [`artifact://<id>`](/concepts/internal-urls/) URL for the original capture. Nothing is lost — the model can read the raw form deliberately when the summary is not enough, and a human can fetch it from the session log.
+
+<Aside type="tip">
+  If a minimised result is confusing, read the artifact. The summary is chosen by a fixed pipeline, not by the model, so it occasionally keeps the wrong half.
+</Aside>
+
+## When a definition does not apply
+
+A definition can be restricted to a particular exit code — a `cargo check` definition that only fires on failure, for example — so a successful run keeps its full output. If a pipeline stage fails while minimising, the raw capture is returned and the failure is logged; a broken definition degrades to "no minimisation" rather than to a mangled result.
+
+## ANSI stripping
+
+ANSI escape sequences are stripped from command output before it reaches the model, whether or not a definition matched — a `cargo test` run with colour codes is cleaned even when its shape is unrecognised. This is on by default and not exposed as a config key; the built-in definitions also declare their own strip stage so a pipeline sees clean text throughout.

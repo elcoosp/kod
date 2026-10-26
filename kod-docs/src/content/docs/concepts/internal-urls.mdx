@@ -1,0 +1,51 @@
+---
+title: Internal URLs
+description: The four schemes read_file and write_file dispatch on — artifact, memory, xd, conflict — and what each one gives the model.
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`read_file` and `write_file` do not only touch the filesystem. A path whose leading component is a registered scheme is handed to a protocol handler instead, which answers with a resource, a schema, or a side effect. This is how the engine lets the model reach things that are not files without spending a tool schema on each one.
+
+| Scheme | What it reaches | Written by |
+| --- | --- | --- |
+| `artifact://<id>` | raw tool output the minimizer replaced | the engine, after a minimize |
+| `memory://<path>` | long-term memory entries | the memory tools |
+| `xd://` | lazily-mounted tool schemas | `tool_search` / `batch` |
+| `conflict://<id>` | one block of a merge conflict | the engine, when a file has markers |
+
+## `artifact://`
+
+When the [minimizer](#minimized-tool-output) rewrites a large tool result into something shorter, the original is stored and referenced by an `artifact://<id>` URL in the result JSON. Reading that URL returns the untouched capture — the model can ask for it deliberately, and a human can fetch it from the session log.
+
+This is the difference between *truncating* and *minimising*: a 16 KiB cap throws away the tail, while an artifact keeps it reachable at the cost of one read.
+
+## `memory://`
+
+`memory://` delegates to the long-term store. Reading it returns entries that match the path; when memory is disabled the handler answers with a clear "memory is disabled" error rather than an unknown-scheme one, which is more useful to the model than silence.
+
+## `xd://`
+
+Lazy tool mounting. A tool marked `Discoverable` is removed from the provider's tools array, so its schema costs no prompt budget on every request. It stays reachable through this scheme:
+
+- `read xd://` — list every discoverable tool by name
+- `read xd://<tool>` — that tool's full schema and description
+- `write xd://<tool>` — run it, with the JSON body as arguments
+
+A schema-mismatch error returns the schema again, so a malformed call self-corrects in one turn without a second round trip. `tool_search` and `batch` are registered this way.
+
+<Aside type="note">
+  The scheme exists instead of a bespoke search tool because `read` and `write` are already in the tools array. A dedicated tool would cost a schema of its own and teach the model a second vocabulary for the same operation.
+</Aside>
+
+## `conflict://`
+
+Resolving a merge conflict by reading the file and rewriting the whole thing is wasteful and easy to get wrong. When a file carries conflict markers, the engine scans them and gives each block a **stable id**.
+
+- `read conflict://<path>` — scan that file and list its blocks
+- `read conflict://<id>` — one block, with both sides and the labels
+- `write conflict://<id>` — splice the final text into that block; the markers are removed
+
+The model edits the block it cares about and nothing else.
