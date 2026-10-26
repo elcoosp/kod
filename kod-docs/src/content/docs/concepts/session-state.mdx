@@ -1,0 +1,38 @@
+---
+title: Goals and Decisions
+description: The two things a session remembers about itself — a budgeted objective, and the choices made along the way.
+sidebar:
+  order: 8
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A session keeps two kinds of durable state beyond the transcript: a **goal** with its own budget, and a **decision log**.
+
+## Goals
+
+One active objective per session, with a token budget and a wall-clock budget. The point is that a goal started ten turns in has its own accounting — "how much has *this* cost" is a different question from "how much has the session cost".
+
+Cost is `(prompt_tokens − cache_read_tokens) + completion_tokens`, accumulated over the goal's lifetime. `cache_read` is subtracted because a token served from cache was already paid for by the write that put it there; counting it again would double-bill a long-running prefix. Tokens written *to* the cache are part of `prompt_tokens` and so are counted — a cache rotation can write a hundred thousand tokens that bill at the write rate, and a budget that ignored them would undercount exactly the long sessions it exists to bound.
+
+When the accumulated cost crosses either budget, the status becomes `BudgetLimited` and one steer message is emitted — once, deduplicated — rather than continuing to spend quietly.
+
+A goal still `Active` when the agent stops gets a hidden continuation message; one the user paused stays paused; a completed goal reports its final budget.
+
+## Decisions
+
+A running log of choices, so a later turn does not silently reverse an earlier one:
+
+| Kind | Example |
+| --- | --- |
+| `user_preference` | "use tabs, not spaces" |
+| `approach` | "use `similar` for the diff" |
+| `file_change` | "add Tier 3.4 to the plan" |
+| `constraint` | "do not add new deps" |
+| `other` | anything flagged that fits none of the above |
+
+Entries are per-transcript. A recent slice is rendered into the prompt, which is how the model sees a constraint stated twenty turns ago without the whole log being re-sent.
+
+<Aside type="note">
+  Neither is a substitute for the transcript. A goal bounds spend; a decision log keeps a stated preference visible. If something must survive both, it belongs in a skill or in long-term memory.
+</Aside>

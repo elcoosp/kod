@@ -93,6 +93,7 @@ export default defineConfig({
             { label: 'The Agent Loop', slug: 'concepts/agent-loop' },
             { label: 'Internal URLs', slug: 'concepts/internal-urls' },
             { label: 'Minimized Output', slug: 'concepts/output-minimization' },
+            { label: 'Goals & Decisions', slug: 'concepts/session-state' },
             { label: 'Task Router', slug: 'concepts/router' },
             { label: 'LLM Providers', slug: 'concepts/providers' },
           ],
