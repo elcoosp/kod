@@ -52,7 +52,7 @@ An array of named model servers; the first is the default. Everything that affec
 | `embedding_endpoint` | `"none"` \| `"ollama"` \| `"openai"` | `"none"` | `ollama` derives the URL from `llm.base_url`; `openai` speaks `/v1/embeddings`. |
 | `embedding_url` | string (optional) | — | Explicit embedder URL, overriding the derived one. |
 | `embedding_api_key_env` | string (optional) | — | Env var holding the embedder API key (openai endpoint). |
-| `embedding_model` | string | `"all-MiniLM-L6-v2"` | Model name sent to the embedder. |
+| `embedding_model` | string | `"nomic-embed-text"` | Model name sent to the embedder. |
 | `context_window` | integer | `4096` | Memory manager fallback budget. |
 | `compaction_interval_secs` | integer | `3600` | Long-term store compaction cadence. |
 | `extract_on_shutdown` | bool | `false` | One LLM call at session end pulls durable facts from the transcript. |
@@ -65,8 +65,7 @@ An array of named model servers; the first is the default. Everything that affec
 | `enable_hot_reload` | bool | `true` | Edits to skill files apply on the next prompt. |
 | `max_skills_per_query` | integer | `3` | Skills matched per prompt, capped. |
 | `skills_dir` | string (optional) | — | Replaces the four standard search directories with one custom path. |
-| `match_threshold` | float | `0.7` | Minimum match score for a skill to ride along. |
-| `max_cache_size_mb` | integer | `50` | Parsed-skill cache limit. |
+| `match_threshold` | float | `0.3` | Minimum match score for a skill to ride along. Calibrated to the matcher's scale (tag 0.4, capability 0.3, trigger 0.8, name 0.9) — a higher threshold makes tag-only and capability-only matches unreachable. |
 
 ## `[swarm]`
 
@@ -91,9 +90,9 @@ Write approval behaviour comes from the [policy presets](/guides/policy/), not f
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `auto_diagnostics` | bool | `true` | Run language-server diagnostics after a write and append them to the next prompt. Cheap; a no-op when no server is on `PATH`. |
-| `settle_ms` | u64 | `300` | How long to wait for the server to settle before reading diagnostics. |
+| `settle_ms` | u64 | `500` | How long to wait for the server to settle before reading diagnostics. |
 | `deferred_enabled` | bool | `true` | Queue diagnostics that arrive late and attach them to the next turn instead of dropping them. |
-| `deferred_settle_ms` | u64 | `1500` | How long a deferred pass waits before giving up on a slow server. |
+| `deferred_settle_ms` | u64 | `12000` | How long a deferred pass waits before giving up on a slow server. |
 
 `[tools] auto_lsp` is the coarse switch; `[lsp]` tunes the behaviour once it is on.
 
@@ -120,8 +119,8 @@ Session and per-turn caps. `0` disables any individual limit.
 | `max_cost_usd_per_turn` | f64 | `0` | Per-turn spend ceiling. |
 | `max_input_tokens_per_turn` | integer | `0` | Cap on the prompt side of one turn. |
 | `max_output_tokens_per_turn` | integer | `0` | Cap on the completion side of one turn. |
-| `on_exhausted` | `warn` \| `stop` | `warn` | What to do when a cap is hit. |
-| `soft_warn_at` | f64 | `0.8` | Warn when spend crosses this fraction of a cap. |
+| `on_exhausted` | `ask` \| `stop` \| `continue` | `ask` | What to do when a cap is hit. `ask` pauses for a prompt (TUI only; a non-interactive caller treats it as `stop`), `stop` ends the turn keeping the partial reply, `continue` logs a warning and keeps going. |
+| `soft_warn_at` | f64 | `0.5` | Warn when spend crosses this fraction of a cap. |
 | `tools` | table | `{}` | Per-tool quotas, keyed by tool name; `"default"` applies to any tool not otherwise listed. |
 
 A per-tool quota has `per_turn`, `per_session`, and — for `execute_command` — `per_command`, which limits how many times the same command string may run in one turn.

@@ -97,6 +97,84 @@ while read -r s; do
   grep -qx "$s" "$tmp/slash_docs" || problem "slash command \`/$s\` is not in reference/tui-keys.mdx"
 done < <(comm -23 "$tmp/slash_code" "$tmp/slash_docs")
 
+# --- config defaults -------------------------------------------------------
+# The list checks above catch a missing entry. They do not catch a wrong
+# *value*: `embedding_model` said `all-MiniLM-L6-v2` against the code's
+# `nomic-embed-text`, `soft_warn_at` said 0.8 against 0.5,
+# `on_exhausted` listed two of three variants, and `max_cache_size_mb`
+# documented a key that does not exist at all.
+#
+# Defaults are keyed on (struct, field), not field name: `enabled`
+# defaults to true for an MCP server and false for Jev, so a bare-name
+# lookup would compare each against the wrong struct. The doc section
+# heading picks the struct.
+python3 - "$DOCS/reference/config.mdx" <<'PY'
+import pathlib, re, sys
+
+# doc section -> the struct whose Default impl governs it
+SECTIONS = {
+    "[llm]": "LlmConfig",
+    "[[llm.endpoints]]": "EndpointConfig",
+    "[memory]": "MemoryConfig",
+    "[skills]": "SkillsConfig",
+    "[swarm]": "SwarmConfig",
+    "[tools]": "ToolsConfig",
+    "[lsp]": "LspConfig",
+    "[security.redact]": "RedactConfig",
+    "[limits]": "LimitsConfig",
+    "[jev]": "JevConfig",
+    "[mcp.servers.<name>]": "McpServerConfig",
+}
+
+code = ""
+for f in pathlib.Path("crates/kod-config/src").glob("*.rs"):
+    code += f.read_text()
+
+def norm(v):
+    v = v.strip().strip('"').replace("_", "")
+    try:
+        return f"{float(v):g}"        # 0 == 0.0 == 0.00
+    except ValueError:
+        return v.lower()
+
+defaults = {}
+for m in re.finditer(r"impl Default for (\w+) \{\s*fn default\(\) -> Self \{(.*?)\n    \}", code, re.S):
+    struct, body = m.group(1), m.group(2)
+    for fm in re.finditer(r"^\s*(\w+):\s*([^,\n]+),", body, re.M):
+        name, val = fm.group(1), fm.group(2).strip()
+        # Composite defaults (`Vec::new()`, `BTreeMap::new()`) are not
+        # comparable to a doc's `[]` / `{}` shorthand; skip them.
+        if "::" in val and "::" not in "":
+            continue
+        val = re.sub(r"^ProviderKind::", "", val)
+        val = re.sub(r"\.to_string\(\)$", "", val)
+        defaults[(struct, name)] = norm(val)
+
+problems = 0
+section = None
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    h = re.match(r"^## `?([^`]+)`?\s*$", line)
+    if h:
+        section = h.group(1).strip()
+        continue
+    m = re.match(r"\| `(\w+)` \| [^|]+ \| `([^`]+)` \|", line)
+    if not m or section not in SECTIONS:
+        continue
+    key, claimed = m.group(1), m.group(2)
+    actual = defaults.get((SECTIONS[section], key))
+    if actual is None:
+        continue
+    if norm(claimed) != actual:
+        print(f"  {section} {key}: docs say `{claimed}`, code default is `{actual}`")
+        problems += 1
+
+sys.exit(1 if problems else 0)
+PY
+if [ $? -ne 0 ]; then
+  printf '  config defaults above do not match the code\n'
+  fail=1
+fi
+
 # --- the site builds -------------------------------------------------------
 note "building the docs site..."
 if (cd kod-docs && pnpm build >/dev/null 2>&1); then
