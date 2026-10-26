@@ -109,6 +109,24 @@ Type `/` in insert mode; the completion popup lists the available commands (Tab 
 | `/init` | onboarding info: config path, model profiles, next steps |
 | `/swarm <goal>` | launch a multi-agent swarm run |
 | `/quit` | exit the TUI |
+| `/budget` | session cost and limits: `/budget`, `/budget raise <usd>`, `/budget reset` |
+| `/limits` | per-tool quotas: `/limits`, `/limits reset` |
+| `/policy` | tool policy: `/policy`, `/policy forget <n>` |
+| `/plan` | show plan: `/plan next`, `/plan skip`, `/plan note <text>`, `/plan clear` |
+| `/plan-mode` | toggle plan mode: `/plan-mode on` / `off` |
+| `/decisions` | durable decisions this session: `/decisions drop <id>`, `/decisions clear` |
+| `/learned` | list or clear session-scoped learned approvals: `/learned clear` |
+| `/trust` | show or clear the round's taint: `/trust show` / `clear` |
+| `/review` | spawn a cross-model review of the last assistant turn |
+| `/refine <instruction>` | refine the last assistant reply |
+| `/prewalk <endpoint/model>` | arm a one-way model handoff |
+| `/remember <text>` | store a durable fact in long-term memory |
+| `/blackboard` | swarm blackboard: `/blackboard show` / `clear` |
+| `/jobs` | list background jobs |
+| `/trace` | structured turn traces: `/trace last` / `list` |
+| `/jev` | TypeSafe AI integration: `/jev status`, `stats`, `cache clear`, `test` |
+| `/wt` | move this session into a worktree carrying uncommitted changes: `/wt [--clean]` |
+| `/export-html [path]` | export the session as a self-contained HTML file |
 
 <Aside type="tip">
   The fastest redirect for a run heading the wrong direction is typing a plain prompt while it generates — identical to <code>/steer</code>, and it preserves all work already done.

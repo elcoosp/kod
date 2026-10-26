@@ -1,13 +1,13 @@
 ---
 title: Tools Reference
-description: The 24 built-in tools — arguments, results, and the safety machinery around each one.
+description: The 31 built-in tools — arguments, results, and the safety machinery around each one.
 sidebar:
   order: 3
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-KOD ships 24 built-in tools. Every call goes through the [policy engine](/guides/policy/) before it runs, is executed under a timeout, passes through a per-path advisory lock table, and is recorded (arguments, result, and the policy decision) in the session log. `kod tools list` prints the registry as the model sees it; `kod tools show <name>` prints one tool's full schema.
+KOD ships 31 built-in tools. Every call goes through the [policy engine](/guides/policy/) before it runs, is executed under a timeout, passes through a per-path advisory lock table, and is recorded (arguments, result, and the policy decision) in the session log. `kod tools list` prints the registry as the model sees it; `kod tools show <name>` prints one tool's full schema.
 
 ## File system tools
 
@@ -39,6 +39,18 @@ Creates or overwrites a file. The result attaches a **unified diff** of what cha
 
 Applies an edit patch to an existing file — the surgical alternative to full rewrites. Shares `write_file`'s safety machinery: unified diff on the result, checkpoint before the call, `ask` under `standard`, denied under `read-only`.
 
+### `edit`
+
+Applies line-addressed edits to a file that was read earlier in the session. The input is a hashline block: a `[path#tag]` header whose tag comes from the `read_file` output, followed by `PUT N.=M:` / `CUT N.=M` / `PUT >$:` operations with `+`-prefixed payload rows. A tag that no longer matches the file refuses the edit rather than applying it to stale content, so an edit cannot silently land on a file that changed underneath it. Shares `write_file`'s safety machinery: unified diff, checkpoint before the call, `ask` under `standard`, denied under `read-only`.
+
+### `jfind`
+
+Semantic code search: describe what you are looking for in plain language and get back files and line ranges rather than exact-string matches. The right tool when `grep` cannot express the query ("where is retry backoff computed"). Without a judge endpoint it degrades to lexical ranking.
+
+### `tool_search`
+
+Finds the tools that can do a task. Given a natural-language description, returns the full schemas of the most relevant tools. Most useful when MCP servers are connected and their tools are not in the visible set.
+
 ## Git tools
 
 ### `git_status` / `git_diff`
@@ -63,6 +75,12 @@ Runs a shell command. The most powerful and most gated tool:
   Command allowlists are ergonomics, not containment — <code>binaries = ["bash"]</code> allows everything bash can do. Real containment comes from the sandbox primitive.
 </Aside>
 
+## Batch tool
+
+### `batch`
+
+Runs several tool calls in one step. Each invocation names a tool and its parameters; results come back in the same order. Use it to read several files, or run several independent searches, without paying a round trip per call.
+
 ## Project check tool
 
 ### `check`
@@ -74,6 +92,10 @@ Runs the compiler or linter that matches the project — Cargo, `tsc`, `ruff`, o
 ### `todo`
 
 Maintains a visible task list for multi-step work, so progress survives context pressure and you can see the plan alongside the transcript.
+
+### `plan_update`
+
+Updates the session's plan: mark the current step done, add a note, insert a step, or remove one. Keeping the plan in sync with what is actually happening is what makes progress visible to the user.
 
 ### `ask_user`
 
@@ -87,9 +109,11 @@ Direct access to the long-term store: persist a durable fact, search existing en
 
 ## Swarm tools
 
-### `swarm_note` / `swarm_read`
+### `swarm_note` / `swarm_read` / `hub` / `advise`
 
 A shared blackboard for concurrent agents: one agent publishes findings (`note`), others read them (`read`). Always registered; outside a swarm they are simply an empty blackboard.
+
+`hub` is the coordinator's interface — `list`, `send`, `inbox`, `jobs` — for directing a running swarm rather than exchanging notes. `advise` raises an observation for the primary agent; noise (`stop`, `lgtm`) and duplicates are dropped, so an advisor can be chatty without flooding the transcript.
 
 ## LSP tools
 

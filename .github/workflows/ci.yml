@@ -196,6 +196,39 @@ jobs:
     - name: Run cargo-deny
       run: cargo deny check
 
+  docs:
+    name: Docs (drift + build)
+    runs-on: ubuntu-latest
+
+    # The reference pages are the ones a reader trusts to be exhaustive,
+    # and they rot silently: `reference/tools.mdx` documented 24 of 31
+    # tools and `reference/tui-keys.mdx` listed 49 of 67 slash commands
+    # before `scripts/check-docs.sh` existed. That script compares each
+    # page against the source that defines it, then builds the site (the
+    # only check that the MDX itself is valid). It greps `crates/` with
+    # shell tools only, so no Rust toolchain is installed here.
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - name: Install Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22.12"
+        cache: pnpm
+        cache-dependency-path: kod-docs/pnpm-lock.yaml
+
+    - name: Install docs dependencies
+      working-directory: kod-docs
+      run: pnpm install --frozen-lockfile
+
+    - name: Check docs against the code
+      run: ./scripts/check-docs.sh
+
   coverage:
     name: Test coverage
     runs-on: ubuntu-latest

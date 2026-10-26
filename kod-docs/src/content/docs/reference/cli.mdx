@@ -47,6 +47,18 @@ Policy flag: where shown, `--preset` accepts `read-only` (alias `readonly`), `st
 | `test` | Run the built-in self-tests |
 | `completions` | Print a shell completion script |
 | `update` | Check GitHub for a newer release (read-only) |
+| `validate-skills-strict` | Like `validate-skills`, but a skill missing a `version` also fails |
+| `acp` | Run the Agent Client Protocol bridge on stdin/stdout (spawned by an editor) |
+| `commit-check` | Validate a proposed conventional-commit message against the staged changes |
+| `if-bench` | Run the working-memory + instruction-following eval against the default endpoint |
+| `fixture` | Capture or replay a deterministic streaming fixture |
+| `jev` | Jev (TypeSafe AI) status, statistics, and threshold tuning |
+| `budget` | Session cost and limits |
+| `limits` | Per-tool quotas and counters |
+| `plan` | Print the plan artifact for the current session |
+| `decisions` | Print the durable decisions recorded for the current session |
+| `trace` | Inspect the structured turn traces in `turns.jsonl` |
+| `__sandbox-exec` | Hidden: apply a Landlock sandbox to the current process and exec a command |
 
 ## `kod chat`
 

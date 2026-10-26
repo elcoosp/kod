@@ -86,6 +86,54 @@ An array of named model servers; the first is the default. Everything that affec
 
 Write approval behaviour comes from the [policy presets](/guides/policy/), not from a config flag.
 
+## `[lsp]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `auto_diagnostics` | bool | `true` | Run language-server diagnostics after a write and append them to the next prompt. Cheap; a no-op when no server is on `PATH`. |
+| `settle_ms` | u64 | `300` | How long to wait for the server to settle before reading diagnostics. |
+| `deferred_enabled` | bool | `true` | Queue diagnostics that arrive late and attach them to the next turn instead of dropping them. |
+| `deferred_settle_ms` | u64 | `1500` | How long a deferred pass waits before giving up on a slow server. |
+
+`[tools] auto_lsp` is the coarse switch; `[lsp]` tunes the behaviour once it is on.
+
+## `[security.redact]`
+
+Controls the prompt-path redactor. Log-write redaction is always on and not configurable.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `in_prompt` | bool | `false` | Run the redactor over every message and tool result before it reaches the model. Default off: a normal code-editing session needs un-redacted file contents. |
+| `redact_argument_paths` | array of globs | `[]` | Blank the `arguments` of any tool call whose path matches, independent of `in_prompt`. Stronger than result redaction — the model never sees the arguments at all. |
+
+Both settings replace a secret with `[REDACTED:<rule>]`, which the model cannot round-trip. A [secret vault](/guides/configuration/) installed via `kod` replaces it with a reversible placeholder instead.
+
+## `[limits]`
+
+Session and per-turn caps. `0` disables any individual limit.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `max_cost_usd_per_session` | f64 | `0` | Total spend ceiling for the session, in USD. |
+| `max_cost_usd_per_turn` | f64 | `0` | Per-turn spend ceiling. |
+| `max_input_tokens_per_turn` | integer | `0` | Cap on the prompt side of one turn. |
+| `max_output_tokens_per_turn` | integer | `0` | Cap on the completion side of one turn. |
+| `on_exhausted` | `warn` \| `stop` | `warn` | What to do when a cap is hit. |
+| `soft_warn_at` | f64 | `0.8` | Warn when spend crosses this fraction of a cap. |
+| `tools` | table | `{}` | Per-tool quotas, keyed by tool name; `"default"` applies to any tool not otherwise listed. |
+
+A per-tool quota has `per_turn`, `per_session`, and — for `execute_command` — `per_command`, which limits how many times the same command string may run in one turn.
+
+## `[jev]`
+
+The [TypeSafe AI](https://typesafe.ai) integration. Opt-in; off by default.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Master switch. When false every call site falls back to the pre-Jev heuristic without a network call. |
+| `api_key` | string | unset | Explicit key. Falls back to `TYPESAFE_API_KEY`. Never written in the clear — `kod config show-merged` and `kod config export` emit `[redacted]`. |
+| `base_url` | string | unset | API root. Falls back to `TYPESAFE_BASE_URL`, then the public endpoint. Set this for a self-hosted gateway. |
+
 ## `[hooks]`
 
 | Key | Type | Default | Notes |
