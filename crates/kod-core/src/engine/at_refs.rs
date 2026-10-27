@@ -26,6 +26,23 @@
 /// caps at [`MAX_AT_REFS`] so a user who pastes a wall of @-tokens
 /// cannot blow the context window on one turn.
 pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> String {
+    expand_at_references_with_policy(input, working_dir, None)
+}
+
+/// Same as [`expand_at_references`], but honours
+/// `[policy.read_protection]`.
+///
+/// `read_file` and `grep` refuse a `Refuse`-mode match and redact a
+/// `Redact`-mode one; this expander read every referenced file and
+/// pasted it into the prompt with only a containment check. The prompt
+/// is model-visible, so a `@.env` token shipped the file verbatim —
+/// and the `@`-tokens are not only user-typed: `process.rs` expands the
+/// Jev-clarified input too.
+pub fn expand_at_references_with_policy(
+    input: &str,
+    working_dir: &std::path::Path,
+    protection: Option<&kod_config::ReadProtection>,
+) -> String {
     const MAX_AT_REF_BYTES: usize = 64 * 1024;
     const MAX_AT_REFS: usize = 10;
 
@@ -50,7 +67,7 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
             let looks_like_path = !token.is_empty()
                 && (token.contains('/') || token.contains('.') || token.starts_with('~'));
             if looks_like_path && inserted < MAX_AT_REFS {
-                let expanded = expand_one_at_ref(token, working_dir, MAX_AT_REF_BYTES);
+                let expanded = expand_one_at_ref(token, working_dir, MAX_AT_REF_BYTES, protection);
                 if let Some(text) = expanded {
                     out.push_str(&text);
                     inserted += 1;
@@ -113,6 +130,7 @@ fn expand_one_at_ref(
     token: &str,
     working_dir: &std::path::Path,
     max_bytes: usize,
+    protection: Option<&kod_config::ReadProtection>,
 ) -> Option<String> {
     let expanded_tilde = if let Some(rest) = token.strip_prefix("~/") {
         let home = dirs::home_dir()?;
@@ -136,7 +154,27 @@ fn expand_one_at_ref(
     if !canonical.is_file() {
         return None;
     }
+    // `[policy.read_protection]`: refuse a `Refuse`-mode match, and
+    // redact a `Redact`-mode one before it enters the prompt. The
+    // prompt is model-visible, so shipping the raw file would undo the
+    // policy the user set.
+    if let Some(rp) = protection
+        && rp.matches(&canonical)
+        && rp.mode == kod_config::ReadMode::Refuse
+    {
+        return None;
+    }
     let text = std::fs::read_to_string(&canonical).ok()?;
+    let text = match protection {
+        Some(rp) if rp.matches(&canonical) && rp.enabled => {
+            // No redactor handle exists on this path (the expander is a
+            // free function), so a `Redact`-mode file is stripped by a
+            // fresh `Redactor::default()`. The default rule set is what
+            // `read_file` uses when the engine has none installed.
+            kod_types::redact::Redactor::default().redact(&text).0
+        }
+        _ => text,
+    };
     let (body, truncated) = if text.len() > max_bytes {
         let mut end = max_bytes;
         while end > 0 && !text.is_char_boundary(end) {
@@ -157,4 +195,77 @@ fn expand_one_at_ref(
         body,
         notice,
     ))
+}
+
+#[cfg(test)]
+mod read_protection_tests {
+    //! The expander pastes file content into the prompt, which the
+    //! model reads. `read_file` and `grep` both honour
+    //! `[policy.read_protection]`; this path did not, so a `@.env`
+    //! token shipped the file verbatim.
+
+    use super::*;
+
+    fn rp(mode: kod_config::ReadMode, deny: &[&str]) -> kod_config::ReadProtection {
+        kod_config::ReadProtection {
+            enabled: true,
+            mode,
+            deny: deny.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn refuse_mode_does_not_expand_the_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("id_rsa.pem"), "-----BEGIN KEY-----\n").unwrap();
+        let policy = rp(kod_config::ReadMode::Refuse, &["**/*.pem"]);
+
+        let out =
+            expand_at_references_with_policy("see @id_rsa.pem here", tmp.path(), Some(&policy));
+        assert!(
+            !out.contains("BEGIN KEY"),
+            "a Refuse-mode file must not be inlined; got {out:?}",
+        );
+    }
+
+    #[test]
+    fn redact_mode_inlines_only_the_redacted_form() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("creds.env"),
+            "OPENAI_API_KEY=sk-abcdef0123456789abcdef0123456789\n",
+        )
+        .unwrap();
+        let policy = rp(kod_config::ReadMode::Redact, &["**/*.env"]);
+
+        let out =
+            expand_at_references_with_policy("see @creds.env here", tmp.path(), Some(&policy));
+        assert!(
+            !out.contains("sk-abcdef0123456789"),
+            "the secret must be redacted before it enters the prompt; got {out:?}",
+        );
+        assert!(
+            out.contains("[REDACTED:openai-key]"),
+            "the marker should be present; got {out:?}",
+        );
+    }
+
+    #[test]
+    fn an_unprotected_file_still_expands() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "ordinary\n").unwrap();
+        let policy = rp(kod_config::ReadMode::Redact, &["**/*.env"]);
+
+        let out =
+            expand_at_references_with_policy("see @notes.txt here", tmp.path(), Some(&policy));
+        assert!(out.contains("ordinary"), "got {out:?}");
+    }
+
+    #[test]
+    fn no_policy_keeps_the_old_behaviour() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "ordinary\n").unwrap();
+        let out = expand_at_references("see @notes.txt here", tmp.path());
+        assert!(out.contains("ordinary"), "got {out:?}");
+    }
 }

@@ -279,7 +279,11 @@ impl KodEngine {
         // remembered, and what reaches the model; the original typed
         // text is only used for the display row the caller already
         // pushed.
-        let expanded_input = expand_at_references(input, &self.working_dir);
+        // Clone the policy out of the lock: a guard held across the
+        // awaits below makes this future non-Send.
+        let rp = self.read_protection.read().ok().and_then(|g| g.clone());
+        let expanded_input =
+            expand_at_references_with_policy(input, &self.working_dir, rp.as_ref());
         let input = expanded_input.as_str();
 
         // Clone the provider Arc out of the read lock before any long
@@ -860,7 +864,9 @@ impl KodEngine {
             // the clarified version.
             self.set_current_request(key, &clarified).await;
         }
-        let expanded_input = expand_at_references(&clarified, &self.working_dir);
+        let rp = self.read_protection.read().ok().and_then(|g| g.clone());
+        let expanded_input =
+            expand_at_references_with_policy(&clarified, &self.working_dir, rp.as_ref());
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
@@ -1389,7 +1395,9 @@ impl KodEngine {
             // the clarified version.
             self.set_current_request(key, &clarified).await;
         }
-        let expanded_input = expand_at_references(&clarified, &self.working_dir);
+        let rp = self.read_protection.read().ok().and_then(|g| g.clone());
+        let expanded_input =
+            expand_at_references_with_policy(&clarified, &self.working_dir, rp.as_ref());
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
