@@ -21,23 +21,31 @@ A 200k window reserves 30k, so compaction starts around 170k used. A zero window
 
 Compaction is a preference list with fail-over, not a hardcoded ladder. The dispatcher holds an ordered set of methods and asks each whether it can reduce the context; the first that produces a non-empty plan wins.
 
-In the default ladder, only one method is implemented:
+The engine installs **three** methods, in this order:
 
-| Method | State |
-| --- | --- |
-| `shake` | implemented — replaces large byte ranges in tool results with placeholders |
-| `remote` | stub — would use provider-native compaction |
-| `snapcompact` | stub — would image the transcript as bitmap frames |
-| `handoff` | stub — would write a one-shot handoff document |
-| `soft` | stub — would summarise with a local LLM |
+| Order | Method | What it does |
+| --- | --- | --- |
+| 1 | `shake` (aggressive) | replaces large byte ranges inside tool results with a placeholder |
+| 2 | `prune` | drops whole messages a later message supersedes |
+| 3 | `handoff` | an LLM-written handoff document, when neither mechanical rung reduces enough |
 
-The stubs return "unavailable" so the ladder shape is correct and a future implementation slots in without a dispatcher change. In practice **`/compact` currently does shake and nothing else.**
+The ordering is deliberate. The engine's dispatcher fires only *after* the threshold decision — the transcript is already too big, so the choice is "reduce now, or pay for a summary call". Under that pressure a cheap mechanical elision that clears the threshold beats an expensive LLM call. So the mechanical rungs go first and `handoff` catches what they cannot.
 
-There is also a `prune` method — it removes whole messages that a later message supersedes — but it is implemented and *not* in the default ladder. It has to be installed explicitly.
+`shake` runs in its **aggressive** configuration here (protect 4,000 tokens, savings gate 0) rather than the default one. The default config assumes an opportunistic call on an otherwise-clean session, where "no reduction" is a fine outcome; under the engine's threshold regime, no reduction means a round-trip to the summariser.
+
+The dispatcher's `default_ladder()` — `remote`, `snapcompact`, `handoff`, `shake`, `soft` — is the design's ordering for a deliberate compaction, not what the engine installs. Three of its five methods are stubs returning "unavailable": `remote` (provider-native compaction), `snapcompact` (bitmap-frame imaging), and `soft` (local-LLM summary). `shake` and `handoff` are real.
+
+## What `/compact` does
+
+`/compact` is a **separate path** from the automatic threshold compaction above. It does not run the dispatcher ladder at all.
+
+It keeps the last 20 turns and replaces everything before them with a summary message, pinned so the render path cannot drop it for budget reasons. The summary is the same factual `emergency_summary` the hard-threshold path falls back to — message count, tools used, file paths — with no attempt to explain intent.
 
 <Aside type="note">
-  If `/compact` reports it could not reduce the context, that is the ladder exhausting: shake found nothing large enough to shrink, and the other four are stubs. The transcript is unchanged.
+  Before this was fixed, `/compact` silently truncated: the dropped turns left nothing behind, so file paths, decisions and facts from them vanished from the model's view entirely. The automatic path had always summarised, so the two paths doing the same job had different consequences.
 </Aside>
+
+A summary is deliberately factual rather than an LLM-written recap: it runs synchronously, and a model call there would make an interactive command wait on the network. If you want the transcript summarised by the model, let the automatic path run — its `handoff` rung does exactly that.
 
 ## Shake in practice
 

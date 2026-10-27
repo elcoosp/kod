@@ -534,6 +534,21 @@ impl KodEngine {
 
     /// Compact the transcript for `key` to the last `max_turns` turns.
     ///
+    /// The dropped prefix is **summarised**, not discarded. An explicit
+    /// `/compact` used to `drain` the front of the transcript and leave
+    /// nothing behind, so every fact, file path and decision from those
+    /// turns vanished from the model's view — while the automatic
+    /// threshold path summarised the same kind of prefix. Two paths
+    /// doing the same job with different consequences is the bug; this
+    /// makes the manual path match the automatic one.
+    ///
+    /// The summary is the same factual `emergency_summary` the
+    /// hard-threshold path falls back to: counts, tool names, and file
+    /// paths, with no attempt to explain intent. It is inserted as a
+    /// pinned message so the render path cannot drop it for budget
+    /// reasons — losing it would lose the only record of what was
+    /// compacted away.
+    ///
     /// A compaction removes messages from the front of the transcript,
     /// which is exactly the prefix the context gauge anchored on. The
     /// gauge is cleared here so the next settled call re-anchors on
@@ -541,18 +556,45 @@ impl KodEngine {
     /// would keep adding a tail onto a prefix the provider is no
     /// longer charging for.
     pub async fn compact_history_for(&self, key: &str, max_turns: usize) {
+        // The window sizes the summary's header text. `0` when no
+        // registry is installed; `emergency_summary` renders that as
+        // "context exceeded 0 tokens", which would be misleading, so
+        // the budget is clamped to something non-zero.
+        let window = self
+            .budget_hint
+            .read()
+            .map(|g| g.0 as u64)
+            .unwrap_or(0)
+            .max(1);
+
         // Take and release the history lock before touching the gauge,
         // so a lock-ordering bug between the two maps is impossible.
         let shrank = {
             let mut history = self.history.write().await;
-            if let Some(turns) = history.get_mut(key)
-                && turns.len() > max_turns
-            {
-                let drop = turns.len() - max_turns;
-                turns.drain(..drop);
-                true
-            } else {
-                false
+            match history.get_mut(key) {
+                Some(turns) if turns.len() > max_turns => {
+                    let drop = turns.len() - max_turns;
+                    let dropped: Vec<kod_types::ChatMessage> = turns[..drop].to_vec();
+                    // Rotate rather than drain: the retained suffix
+                    // keeps its allocation, and the dropped prefix is
+                    // still owned long enough to summarise.
+                    turns.rotate_left(drop);
+                    turns.truncate(turns.len() - drop);
+
+                    let summary = crate::compaction::emergency_summary(&dropped, window);
+                    let mut summary_msg = kod_types::ChatMessage::text(
+                        kod_types::MessageId::new(),
+                        kod_types::MessageRole::User,
+                        format!("## Previous Conversation Summary\n{summary}"),
+                        time::OffsetDateTime::now_utc(),
+                    );
+                    // Pinned so the render path never drops it for
+                    // budget reasons.
+                    summary_msg.metadata.pinned = true;
+                    turns.insert(0, summary_msg);
+                    true
+                }
+                _ => false,
             }
         };
         if shrank {

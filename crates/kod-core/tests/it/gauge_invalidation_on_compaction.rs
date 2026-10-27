@@ -82,3 +82,39 @@ async fn a_compaction_clears_the_context_gauge() {
         "compaction must clear the anchor; got {after:?}",
     );
 }
+
+/// A manual compaction must summarise what it drops, not discard it.
+///
+/// `/compact` used to `drain` the front of the transcript and leave
+/// nothing behind, so every fact, path and decision from those turns
+/// vanished from the model's view -- while the automatic threshold path
+/// summarised the same kind of prefix. This pins the manual path to the
+/// same shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_manual_compaction_leaves_a_summary_behind() {
+    let (engine, _tmp) = seeded_engine(20).await;
+
+    let dropped = engine.compact_history_for_tests("", 4).await;
+    assert_eq!(dropped, 16, "16 of 20 turns are dropped");
+
+    let turns = engine.history_for("").await;
+    // 4 retained + 1 summary.
+    assert_eq!(turns.len(), 5, "retained suffix plus the summary message");
+
+    let summary = &turns[0];
+    assert_eq!(
+        summary.role,
+        kod_types::MessageRole::User,
+        "the summary is a user-role block the model reads as context",
+    );
+    assert!(
+        summary
+            .content
+            .starts_with("## Previous Conversation Summary"),
+        "the summary must be identifiable",
+    );
+    assert!(
+        summary.metadata.pinned,
+        "the summary is pinned so the render path cannot drop it",
+    );
+}

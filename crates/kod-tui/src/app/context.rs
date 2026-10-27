@@ -186,12 +186,25 @@ impl KodApp {
         self.messages.drain(..drop);
         self.compacted_messages += drop;
         self.context_tokens = self.context_limit * 3 / 5;
-        self.push_system_message(&format!(
-            "Compacted {} older messages ({} total) · {}",
-            drop,
-            self.compacted_messages,
-            self.context_label()
-        ));
+
+        // The engine leaves a `## Previous Conversation Summary` message
+        // at the head of its transcript (see `compact_history_for`), so
+        // a user who scrolls back can see what was elided. Mirror that
+        // here: the display copy previously showed nothing at all, which
+        // made a compaction look like data loss.
+        self.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::System,
+            content: format!(
+                "Compacted {} older messages ({} total) · {} — the model sees a summary of them",
+                drop,
+                self.compacted_messages,
+                self.context_label(),
+            ),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0, // assigned by add_message
+        });
     }
 
     /// Context meter with teeth: warns past 70%, alarms past 90%.

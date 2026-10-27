@@ -21,3 +21,7 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# pnpm 10 writes this on build with an unfilled allowBuilds
+# placeholder; CI installs with --frozen-lockfile and does not need it.
+pnpm-workspace.yaml

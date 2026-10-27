@@ -894,6 +894,9 @@ impl KodEngine {
             .map(Vec::len)
             .unwrap_or(0);
         self.compact_history_for(key, max_turns).await;
+        // Count the messages that were dropped, not the net change:
+        // compaction now inserts a summary message, so `before - after`
+        // undercounts by one per call.
         let after = self
             .history
             .read()
@@ -901,7 +904,16 @@ impl KodEngine {
             .get(key)
             .map(Vec::len)
             .unwrap_or(0);
-        before.saturating_sub(after)
+        if after == 0 {
+            return before;
+        }
+        // `before > max_turns` means `before - max_turns` were dropped
+        // and one summary was added back.
+        if before > max_turns {
+            before.saturating_sub(max_turns)
+        } else {
+            0
+        }
     }
 
     /// Test-only: overwrite `key`'s transcript with `turns`.
