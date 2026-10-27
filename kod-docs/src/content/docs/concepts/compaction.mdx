@@ -33,7 +33,7 @@ The ordering is deliberate. The engine's dispatcher fires only *after* the thres
 
 `shake` runs in its **aggressive** configuration here (protect 4,000 tokens, savings gate 0) rather than the default one. The default config assumes an opportunistic call on an otherwise-clean session, where "no reduction" is a fine outcome; under the engine's threshold regime, no reduction means a round-trip to the summariser.
 
-The dispatcher's `default_ladder()` — `remote`, `snapcompact`, `handoff`, `shake`, `soft` — is the design's ordering for a deliberate compaction, not what the engine installs. Three of its five methods are stubs returning "unavailable": `remote` (provider-native compaction), `snapcompact` (bitmap-frame imaging), and `soft` (local-LLM summary). `shake` and `handoff` are real.
+The dispatcher's `default_ladder()` — `remote`, `snapcompact`, `handoff`, `shake`, `soft` — is the design's ordering for a deliberate compaction, not what the engine installs. Two of its five methods are stubs returning "unavailable": `remote` (provider-native compaction) and `soft` (local-LLM summary). `shake`, `snapcompact` and `handoff` are all implemented — `snapcompact` rasterizes the older half of the transcript into PNG frames for a vision provider.
 
 ## What `/compact` does
 
