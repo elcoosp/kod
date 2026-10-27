@@ -100,6 +100,30 @@ impl Judge for JevJudge {
     }
 }
 
+/// Read a file for the judge, honouring `[policy.read_protection]`.
+///
+/// `read_file` and `grep` both consult this policy; `jfind` shipped the
+/// raw content of every file in its candidate list to the judge, and
+/// with a Jev client installed that judge is a network call. A
+/// `Refuse`-mode match never reaches this function (the caller filters
+/// it out), so the only case here is `Redact`: the file is read, and
+/// the judge sees the redacted form.
+///
+/// With no redactor installed, the content cannot be made safe, so it
+/// is not returned at all. Failing closed is the only correct choice —
+/// returning the raw text would silently undo the policy.
+fn read_for_judge(
+    path: &std::path::Path,
+    protection: Option<&kod_config::ReadProtection>,
+    redactor: Option<&kod_types::redact::Redactor>,
+) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match protection {
+        Some(rp) if rp.matches(path) => redactor.map(|r| r.redact(&text).0),
+        _ => Some(text),
+    }
+}
+
 /// The `jfind` tool.
 pub struct JfindTool {
     pub definition: ToolDefinition,
@@ -212,11 +236,33 @@ impl Tool for JfindTool {
         // here is the whole fix: a forbidden file never reaches the
         // `read` closure and cannot contribute a `Hit`.
         let root = context.working_dir.clone();
+        // `[policy.read_protection]` is installed by default and
+        // protects `.env`, `*.pem`, `id_rsa*`, and friends. `read_file`
+        // and `grep` honour it; this tool called only `is_path_allowed`
+        // (the forbidden-glob check) and then read every remaining file
+        // and shipped up to SKETCH_BYTES of it to the judge. With a Jev
+        // client installed that judge is a network call, so a protected
+        // file's content left the process.
+        //
+        // Two responses, matching `read_file`'s: a `Refuse`-mode match
+        // is skipped entirely (never read, never a candidate), and a
+        // `Redact`-mode match is read and redacted before the judge
+        // sees it. The redactor is the same one `read_file` uses.
+        let protection = context.read_protection.clone();
+        let redactor = context.redactor.clone();
         let files: Vec<std::path::PathBuf> = kod_tools::tools::gitaware_walk(&root, true)
             .into_iter()
             .filter(|p| context.is_path_allowed(p).unwrap_or(true))
+            .filter(|p| {
+                !matches!(
+                    protection.as_ref().map(|rp| (rp, rp.matches(p))),
+                    Some((rp, true)) if rp.mode == kod_config::ReadMode::Refuse
+                )
+            })
             .collect();
-        let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
+        let read = |p: &std::path::Path| -> Option<String> {
+            read_for_judge(p, protection.as_ref(), redactor.as_deref())
+        };
         let hits = jfind::search(&root, &query, Arc::clone(&self.judge), &read, &files).await;
         let semantic = self.is_semantic();
         let results: Vec<Value> = hits
@@ -378,5 +424,130 @@ mod tests {
             !has_forbidden,
             "jfind must not report files under a forbidden path; got {results:?}",
         );
+    }
+    /// A `Refuse`-mode read-protection pattern must keep the file out
+    /// of `jfind` entirely.
+    ///
+    /// `read_file` and `grep` both honour `[policy.read_protection]`;
+    /// this tool did not. It checked `is_path_allowed` (forbidden
+    /// globs) and then read every remaining file and shipped up to
+    /// SKETCH_BYTES of it to the judge. With a Jev client installed
+    /// that judge is a network call, so `.env` / `*.pem` / `id_rsa*`
+    /// content left the process. The default policy protects exactly
+    /// those paths, so this was live for every user who had not
+    /// disabled read protection.
+    #[tokio::test]
+    async fn jfind_skips_refuse_mode_protected_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("secret-credentials.env"), "secret data\n").unwrap();
+        std::fs::write(temp.path().join("secret-notes.txt"), "secret data\n").unwrap();
+
+        let mut ctx = kod_tools::context::ToolContext::new(temp.path());
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Refuse,
+            deny: vec!["**/*.env".to_string()],
+        });
+
+        let tool = JfindTool::new(None);
+        let r = tool
+            .execute(
+                &serde_json::json!({
+                    "query": "secret",
+                    "keywords": ["secret"],
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let v = match &r {
+            ToolResult::Success(v) => v,
+            other => panic!("jfind failed: {other:?}"),
+        };
+        let results = v
+            .get("results")
+            .and_then(|x| x.as_array())
+            .expect("jfind output has `results` array");
+
+        // Positive control: the unprotected file still produces a hit.
+        assert!(
+            results.iter().any(|h| h
+                .get("file")
+                .and_then(|x| x.as_str())
+                .map(|s| s.contains("secret-notes.txt"))
+                .unwrap_or(false)),
+            "the unprotected file must still be found; got {results:?}",
+        );
+        // The protected file must not appear at all.
+        assert!(
+            !results.iter().any(|h| h
+                .get("file")
+                .and_then(|x| x.as_str())
+                .map(|s| s.contains("secret-credentials.env"))
+                .unwrap_or(false)),
+            "jfind must not report a Refuse-protected file; got {results:?}",
+        );
+    }
+
+    /// `read_for_judge` must redact a `Redact`-mode protected file
+    /// before returning it.
+    ///
+    /// This is the half of the fix that keeps `Redact` useful: `Refuse`
+    /// skips the file entirely, `Redact` reads it and strips the secret
+    /// before the judge sees it. Returning the raw text would leak the
+    /// same content under a policy the user thought was safe.
+    #[test]
+    fn read_for_judge_redacts_a_protected_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret-config.env");
+        std::fs::write(&path, "api_key = sk-abcdef0123456789abcdef0123456789\n").unwrap();
+
+        let rp = kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        };
+        let redactor = kod_types::redact::Redactor::default();
+        let out = read_for_judge(&path, Some(&rp), Some(&redactor))
+            .expect("a Redact-mode file is still readable");
+        assert!(
+            !out.contains("sk-abcdef0123456789"),
+            "the secret must be redacted; got {out:?}",
+        );
+    }
+
+    /// No redactor installed plus a protected file: fail closed.
+    #[test]
+    fn read_for_judge_fails_closed_without_a_redactor() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret-config.env");
+        std::fs::write(&path, "api_key = sk-abcdef0123456789abcdef0123456789\n").unwrap();
+
+        let rp = kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        };
+        assert!(
+            read_for_judge(&path, Some(&rp), None).is_none(),
+            "without a redactor the content must not be returned at all",
+        );
+    }
+
+    /// An unprotected file passes through unchanged.
+    #[test]
+    fn read_for_judge_passes_an_unprotected_file_through() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("notes.txt");
+        std::fs::write(&path, "ordinary content\n").unwrap();
+
+        let rp = kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        };
+        let redactor = kod_types::redact::Redactor::default();
+        let out = read_for_judge(&path, Some(&rp), Some(&redactor)).unwrap();
+        assert_eq!(out, "ordinary content\n");
     }
 }
