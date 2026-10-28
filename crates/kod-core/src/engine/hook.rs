@@ -275,10 +275,14 @@ impl KodEngine {
             // off. Without this the first chunk of output would be
             // lost.
             if !detached.prior_stdout.is_empty() {
-                let _ = spool.append(&detached.prior_stdout);
+                if let Err(e) = spool.append(&detached.prior_stdout) {
+                    tracing::warn!(error = %e, "spool append failed; output chunk lost");
+                }
             }
             if !detached.prior_stderr.is_empty() {
-                let _ = spool.append(&detached.prior_stderr);
+                if let Err(e) = spool.append(&detached.prior_stderr) {
+                    tracing::warn!(error = %e, "spool append failed; output chunk lost");
+                }
             }
 
             runner.register(
@@ -320,7 +324,9 @@ impl KodEngine {
                             match r {
                                 Ok(0) | Err(_) => stdout_done = true,
                                 Ok(n) => {
-                                    let _ = spool.append(&stdout_buf[..n]);
+                                    if let Err(e) = spool.append(&stdout_buf[..n]) {
+                                        tracing::warn!(error = %e, "spool append failed; output chunk lost");
+                                    }
                                 }
                             }
                         }
@@ -328,7 +334,9 @@ impl KodEngine {
                             match r {
                                 Ok(0) | Err(_) => stderr_done = true,
                                 Ok(n) => {
-                                    let _ = spool.append(&stderr_buf[..n]);
+                                    if let Err(e) = spool.append(&stderr_buf[..n]) {
+                                        tracing::warn!(error = %e, "spool append failed; output chunk lost");
+                                    }
                                 }
                             }
                         }

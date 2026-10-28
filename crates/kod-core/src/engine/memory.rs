@@ -418,7 +418,7 @@ impl KodEngine {
                             channel: "extraction".to_string(),
                             tags: metadata.tags.clone(),
                         };
-                        let _ = rec.record(&entry);
+                        rec.record(&entry)?;
                     }
                     stored += 1;
                 }

@@ -1234,7 +1234,9 @@ impl KodEngine {
                 cached,
                 source: source.as_str().to_string(),
             };
-            let _ = rec.record(&entry);
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+            }
         }
     }
 }

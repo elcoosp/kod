@@ -438,7 +438,9 @@ impl KodEngine {
                 rule: d.rule.clone(),
                 source: format!("{:?}", d.source).to_lowercase(),
             };
-            let _ = rec.record(&entry);
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+            }
         }
     }
 
@@ -582,7 +584,9 @@ impl KodEngine {
                             decision: "auto-approve".to_string(),
                             edit: None,
                         };
-                        let _ = rec.record(&entry);
+                        if let Err(e) = rec.record(&entry) {
+                            tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+                        }
                     }
                 }
                 for i in &auto {
@@ -726,7 +730,9 @@ impl KodEngine {
                     decision: log_decision.to_string(),
                     edit: edit_snapshot,
                 };
-                let _ = rec.record(&entry);
+                if let Err(e) = rec.record(&entry) {
+                    tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+                }
             }
             if !allow {
                 if log_decision == "deny-always"
@@ -2023,7 +2029,9 @@ impl KodEngine {
                                 error_count: errs,
                                 warning_count: warns,
                             };
-                            let _ = rec.record(&entry);
+                            if let Err(e) = rec.record(&entry) {
+                                tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+                            }
                         }
                     }
 
@@ -2070,7 +2078,9 @@ impl KodEngine {
                     channel: "tool".to_string(),
                     tags,
                 };
-                let _ = rec.record(&entry);
+                if let Err(e) = rec.record(&entry) {
+                    tracing::warn!(error = %e, "session_log::record failed; entry dropped");
+                }
             }
         }
 
