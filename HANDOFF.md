@@ -2322,3 +2322,97 @@ The timing test is `#[ignore]`d so CI never pays for it.
 performance fix at 35x, two doc corrections, and the addenda. The
 measurement addendum 23.4 said to wait for is in and positive, so
 `v0.1.23` is justified once CI is green on the tip.
+
+---
+
+## Addendum 24 (2026-10-28, bug hunt -- four real defects)
+
+**HEAD `8528ed1c`, 16 commits past `v0.1.23`.** Workspace gate 5,514
+pass, 6 skipped.
+
+The hunt's method: pick a class of defect, find every site that should
+apply a guard, and check whether it does. That found one leak in the
+first class tried, then three more in three more classes. It also
+produced two doc corrections where my own earlier writing was wrong.
+
+### The pattern that worked
+
+The `forbidden_paths` arc's finding was a *policy field that was empty
+in production*. This session asked the same question of every other
+policy field: `read_protection`, the JSON redactor, `metadata.pinned`.
+Each was applied on some paths and missing on others.
+
+| Field | Applied where | Missing where |
+|---|---|---|
+| `read_protection` | `read_file`, `grep`, `search_files` | **`jfind`**, **`@file` expansion** |
+| JSON redaction | object values | **object keys** |
+| `metadata.pinned` | `render_history_for` | **`compact_history_for`** |
+
+### The four bugs
+
+**1. `jfind` shipped protected file content to the judge** (`d724980f`).
+It checked `is_path_allowed` (the forbidden-glob list) and then read
+every remaining file, sending up to 384 bytes per window to the judge.
+With a Jev client installed that judge is a *network call*. The default
+`[policy.read_protection]` protects `.env`, `*.pem`, `id_rsa*` -- so a
+`jfind` query could ship an API key to a remote endpoint. Reproduced
+with a spy judge that caught `OPENAI_API_KEY=sk-supersecret` arriving as
+a sketch card.
+
+**2. `@file` expansion inlined protected files into the prompt**
+(`969c5e09`). The expander checked containment (must resolve inside the
+working directory) but not `read_protection`, so `@.env` pasted the
+file verbatim into a model-visible prompt. Not user-typed only:
+`process.rs` expands the *Jev-clarified* input too, so a token the model
+or clarifier produced reaches the same path.
+
+**3. A secret in a JSON object key survived redaction** (`8528ed1c`).
+`redact_json` recursed through arrays and object values but never looked
+at keys. The session log writes every tool call's arguments and every
+result through this function, so `{"sk-...": "..."}` persisted the key
+to disk in the clear.
+
+**4. `/compact` dropped pinned messages** (`0d377b12`). `/pin <n>` is
+documented as protecting a message from compaction, and
+`render_history_for` honours it -- but `compact_history_for` computed a
+bare suffix cut. A 20-turn transcript with turn 0 pinned kept only the
+summary and turns 16-19.
+
+### What made these findable
+
+Not lint, not clippy (clean), not a test failure. Each came from asking
+"this field is supposed to gate something -- where is it *not*
+checked?" and then grepping for every read site. The `jfind` one came
+from the source lint on `read_protection`: the lint only fires when a
+file calls `can_read`, and `jfind` called neither, so it was exempt by
+construction.
+
+### Mistakes made and corrected
+
+- **My compaction page described the wrong ladder.** It documented
+  `default_ladder()` (which has 4 stubs of 5) but the engine installs
+  its own: `shake(aggressive)`, `prune`, `handoff`. Then a second pass
+  found `snapcompact` and `handoff` are *not* stubs either -- only
+  `remote` and `soft` are. Two commits to get the page right.
+- **`/compact`'s behaviour was misdiagnosed as "truncates, should
+  summarise".** That was right, and fixing it exposed a second bug: the
+  first attempt inserted a "0 messages dropped" summary when every
+  message was pinned, growing an 8-message transcript to 9.
+- **Three test fixtures were vacuous** and were caught by deliberately
+  disabling the fix: `@id_rsa` has no `/`, `.` or `~` so the expander
+  never treated it as a path; `credentials.env` failed `lexical_rank`
+  before reaching the guard; and `notes.txt` failed the same rank, so
+  the positive control in the `jfind` test never fired.
+
+### Still open, not defects
+
+`redact_messages_for_prompt` re-scans the transcript every round (276 ms
+per turn with `in_prompt` on) -- measured, fix designed, not done.
+
+### What the next hunt should try next
+
+The classes not yet covered: **time** (clock skew, mtime ordering),
+**integer overflow** in release builds (`overflow-checks = false`), and
+**error paths that swallow a failure**. Every bug here was an
+*inconsistent* guard; the next class is likely a guard that exists but
+is wrong.
