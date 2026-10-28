@@ -722,6 +722,28 @@ impl BackgroundAdoptHook {
 }
 
 #[derive(Clone)]
+pub struct QuotaHook {
+    inner: std::sync::Arc<dyn Fn(&str, Option<&str>) -> Result<()> + Send + Sync>,
+}
+
+impl std::fmt::Debug for QuotaHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("QuotaHook")
+    }
+}
+
+impl QuotaHook {
+    pub fn new(f: impl Fn(&str, Option<&str>) -> Result<()> + Send + Sync + 'static) -> Self {
+        Self {
+            inner: std::sync::Arc::new(f),
+        }
+    }
+    pub fn check_and_record(&self, tool: &str, command: Option<&str>) -> Result<()> {
+        (self.inner)(tool, command)
+    }
+}
+
+#[derive(Clone)]
 pub struct FileTouchHook {
     inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync>,
 }
@@ -821,6 +843,15 @@ pub struct ToolContext {
     /// P1-c: fired after a successful file read/write/edit. `None`
     /// outside a swarm run — no observation happens, no overhead paid.
     pub on_file_touch: Option<FileTouchHook>,
+
+    /// Per-tool quota check for tools that dispatch other tools.
+    ///
+    /// The engine checks quota on the *outer* call name, so a `batch`
+    /// sub-call never reached the check: a `per_turn = 1` quota on
+    /// `write_file` allowed ten writes in one batch. `batch` calls
+    /// this before each sub-call. `None` on a bare context, where no
+    /// quota is configured and the check is a no-op.
+    pub on_quota_check: Option<QuotaHook>,
 
     /// P2-d: starts a shell command in the background. `None` outside
     /// an engine that owns a job runner.
@@ -998,6 +1029,7 @@ impl ToolContext {
             allowed_write_globs: None,
 
             on_file_touch: None,
+            on_quota_check: None,
             on_background_command: None,
             on_background_adopt: None,
             on_artifact_store: None,

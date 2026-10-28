@@ -2354,3 +2354,61 @@ async fn xd_batch_cannot_write_under_read_only() {
         "read-only must still block an xd-dispatched write",
     );
 }
+
+/// Quota is checked on `call.tool_name`, which for a batch sub-call is
+/// `batch` -- never the inner tool's name. A user who sets a
+/// `per_turn` quota on `write_file` to 1 can issue 10 writes in one
+/// batch and the counter never sees them.
+#[tokio::test]
+async fn a_batch_does_not_launder_past_a_per_tool_quota() {
+    use kod_config::LimitsConfig;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+    };
+    let engine = KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+
+    // write_file: at most 1 per turn.
+    let mut limits = LimitsConfig::default();
+    limits.tools.insert(
+        "write_file".to_string(),
+        kod_config::limits::ToolQuota {
+            per_turn: 1,
+            per_session: 0,
+            per_command: 0,
+        },
+    );
+    engine.install_limits(&limits);
+
+    let mut invocations = Vec::new();
+    for i in 0..5 {
+        invocations.push(serde_json::json!({
+            "tool": "write_file",
+            "parameters": {"path": format!("f{i}.txt"), "content": "x"}
+        }));
+    }
+    let calls = vec![ToolCall {
+        id: None,
+        tool_name: "batch".to_string(),
+        arguments: serde_json::json!({"invocations": invocations}),
+    }];
+    let _ = engine.run_tool_calls(&calls, "test", None).await;
+
+    let written = (0..5)
+        .filter(|i| temp.path().join(format!("f{i}.txt")).exists())
+        .count();
+    assert!(
+        written <= 1,
+        "a per_turn=1 quota on write_file must cap a batch at 1 write, \
+         but {written} files were written",
+    );
+}

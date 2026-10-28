@@ -988,6 +988,38 @@ impl KodEngine {
             tool_context.on_file_touch = Some(Self::build_swarm_file_hook(sfb.bus, sfb.service));
         }
 
+        // A `batch` sub-call would otherwise escape the per-tool
+        // quota: the engine checks quota on the outer call name
+        // (`batch`), and `batch` itself runs in `kod-tools`, which has
+        // no quota state. This closure is the engine's own check and
+        // counter, so the books stay in one place.
+        {
+            let counts = std::sync::Arc::clone(&self.tool_counts);
+            let quotas = self.tool_quotas.read().ok().and_then(|g| g.clone());
+            tool_context.on_quota_check = Some(kod_tools::context::QuotaHook::new(
+                move |tool: &str, command: Option<&str>| {
+                    let quota = quotas.as_ref().and_then(|m| {
+                        m.get(tool)
+                            .or_else(|| m.get("default"))
+                            .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
+                            .cloned()
+                    });
+                    match crate::tool_quota::check(&counts, tool, quota.as_ref(), command) {
+                        crate::tool_quota::QuotaVerdict::Hard { reason } => {
+                            Err(kod_error::KodError::PermissionDenied {
+                                action: "quota".to_string(),
+                                reason,
+                            })
+                        }
+                        _ => {
+                            counts.record(tool, command);
+                            Ok(())
+                        }
+                    }
+                },
+            ));
+        }
+
         // Any mutating tool in the round forces the serial path so
         // `[write_file(a), read_file(a)]` cannot race.
         let mut any_mutating = false;

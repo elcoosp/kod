@@ -160,6 +160,27 @@ impl Tool for BatchTool {
             }
             let args = inv.get("parameters").cloned().unwrap_or(Value::Null);
 
+            // Quota is checked by the engine on the *outer* call name,
+            // which here is `batch` -- so a sub-call never reached it.
+            // A `per_turn = 1` quota on `write_file` allowed ten writes
+            // in one batch. The hook is the engine's own check, so the
+            // counter still lives in one place.
+            if let Some(hook) = &context.on_quota_check {
+                let command = if name == "execute_command" {
+                    args.get("command").and_then(|v| v.as_str())
+                } else {
+                    None
+                };
+                if let Err(e) = hook.check_and_record(name, command) {
+                    results.push(serde_json::json!({
+                        "index": i,
+                        "tool": name,
+                        "error": format!("quota exceeded: {e}"),
+                    }));
+                    continue;
+                }
+            }
+
             // Sub-calls run through the same execution path a top-level
             // call takes, so the policy gate, permission checks, path
             // locks, and file-touch hook all apply without the batch
