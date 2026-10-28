@@ -2557,3 +2557,37 @@ every write path; `Retry-After` is bounded; `begin_turn` resets
 per-turn quotas; the SSE parser drops malformed frames; `snapcompact`'s
 PNG passes an independent decoder (CRC and scanline bytes checked);
 retry `attempt` tracking is per-attempt.
+
+---
+
+## Perf note (2026-10-28, `SecretVault::obfuscate` measured and rejected)
+
+`build_grounded_request` runs `obfuscate` over every message's content
+and every tool call's arguments, every round, when a vault is installed
+(which is the default: `install_secret_vault: true`). The transcript
+keeps the *placeholder* form, so after round one every subsequent scan
+walks text that contains no raw secret.
+
+Measured, 20 registered secrets, 2 KB messages:
+
+| Shape | Cost | % of a 3 s turn |
+| --- | --- | --- |
+| typical: 10 messages x 2 rounds | 0.61 ms | **0.020%** |
+| worst: 50 messages x 40 rounds | 56.9 ms | **1.90%** |
+
+**Rejected.** The typical case is 4.5x the SSE refactor rejected in
+addendum 21 (0.0044%) and still negligible; the worst case needs all 40
+tool rounds, a turn already paying for 40 model calls. The same
+content-equality memo used for `redact_contents_memoised` would fix it,
+but the fix is not justified by the number.
+
+If a future profile ever puts `obfuscate` on a hot path, the shape is
+the same as `redact_contents_memoised`: key on `MessageId`, compare
+content, skip the scan on a hit.
+
+### Also verified already fixed
+
+`redact_messages_for_prompt` (the 276 ms/turn item addenda 24 and 25
+both recorded as open) was implemented in `275ed116`, before this
+continuation. Re-measured here: **271.7 ms -> 7.7 ms, 35.5x**. Both
+addenda were stale on that point.
