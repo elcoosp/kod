@@ -2628,3 +2628,55 @@ Three candidates measured, three rejected, and the rejections are
 consistent: 0.0044% (SSE, a21), 0.020%/1.90% (obfuscate), 0.02%/0.42%
 (fingerprint), 0.05% (clone). The one fix that *was* justified — the
 redaction memo at 9.2% — was an order of magnitude above all of them.
+
+---
+
+## Open finding (2026-10-28, `refined_skills` never reaches the prompt)
+
+Found while looking for a performance target in skill matching. This is
+a *correctness* issue of the `forbidden_paths` class: a value is
+computed, documented as load-bearing, and then not consumed where it
+matters.
+
+**What happens.** `refine_classification` computes `refined_skills` =
+the router's lexical matches ∪ the skills Jev's semantic scorer found
+relevant. Its own comment states the intent: "the union keeps every
+lexical match and adds semantic ones the substring matcher would have
+missed."
+
+`build_budgeted_prompt` then calls `build_prompt_with_budget`, which
+**re-runs the lexical matcher on its own** (router.rs:1260) and renders
+`## Relevant Skills` from that list. It never receives
+`refined_skills`. The Jev-augmented list is consumed only as
+`TaskResponse.skills_used` -- telemetry and steering, not prompt
+content.
+
+**The consequence.** A skill that Jev found relevant but whose name,
+triggers, tags and capabilities share no substring with the request
+never gets its instructions into the prompt. The model can still see it
+in `## Available skills` (name + description) and can read its file
+(the prompt prints `Skill location:` per injected skill, and the
+inventory names the skill), so this is degraded rather than fully
+broken -- but the whole point of the Jev ranking was to close exactly
+that gap.
+
+**Why it was not fixed here.** The fix threads a skill list into
+`build_prompt_with_budget` / `build_prompt_plan`, which changes the
+prompt's bytes. The `characterization_prompts` (8) and `golden_prefix`
+(5) suites assert byte-stability across turns, and several tests call
+`build_prompt_with_budget` directly with no skill argument. That is a
+design change -- does the router keep its own matcher as a fallback for
+callers with no engine, or does the skill list become a required
+parameter? -- not a drive-by patch. It also needs a test proving a
+Jev-only skill lands in `## Relevant Skills`, which needs a stub Jev
+decider.
+
+**Also measured and rejected** (same code, perf side):
+
+| Candidate | Cost | Verdict |
+| --- | --- | --- |
+| double `find_relevant_skills` per turn | 1.34 ms @ 50 skills (0.045%) | reject |
+
+The double match is real (`prepare_turn` reaches both call sites) but
+cheap. If the correctness fix lands, it removes the second match for
+free -- one reason to do it as one change rather than two.
