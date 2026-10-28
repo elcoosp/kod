@@ -2497,3 +2497,63 @@ per turn with `in_prompt` on). Measured, fix designed, not done.
 release's `overflow-checks = false`, and **error paths that swallow
 failures** — that last one already yielded the replay fix on the first
 probe, and `let _ =` on a `Result` is worth a systematic pass.
+
+---
+
+## Addendum 26 (2026-10-28, fifth redaction gap: prompt scaffolding)
+
+**HEAD `968c7d7b`.** Fifth leak of the `read_protection`/redaction family.
+
+`ground_prompt` appends the plan, the decision log, and the swarm
+blackboard to the system prompt. `redact_messages_for_prompt` covers
+message content and `cap_rendered_result` covers tool results, but both
+run **before** `ground_prompt`, so none of that scaffolding was
+redacted. A peer agent writing a secret to the shared blackboard put it
+in every other agent's prompt in the clear.
+
+Fixed by routing each free-text block through the same
+`prompt_redactor_if_enabled` check the message path uses. Extracted as
+`redact_scaffold(text, Option<&Redactor>)` -- a free function, so the
+behaviour is testable without writing `KOD_CONFIG_DIR` and poisoning
+sibling tests (the trap hit twice already this session).
+
+**Checked and found covered, not fixed:** the mental-model block
+(`agent_loop.rs:1489`) is unredacted at append time, but it derives
+from long-term memory, and the memory write path redacts
+unconditionally (`manager.rs:501`, `:844`) with a redactor installed by
+default (`:318`). Different mechanism, same guarantee.
+
+### The tally for the whole hunt
+
+Nine defects across two continuations, every one the same shape: a
+guard that exists and is applied on some paths but not others.
+
+| # | Defect | Commit |
+|---|---|---|
+| 1 | `jfind` shipped protected file content to a network judge | `d724980f` |
+| 2 | `@file` expansion inlined protected files into the prompt | `969c5e09` |
+| 3 | Secrets in JSON object keys survived redaction | `8528ed1c` |
+| 4 | `/compact` dropped pinned messages | `0d377b12` |
+| 5 | `/compact` silently truncated instead of summarising | `0a30fb15` |
+| 6 | `kod trace replay` discarded the engine error | `c6393150` |
+| 7 | `xd://` dispatch lost the caller's permissions | `dd351d7e` |
+| 8 | `batch` sub-calls escaped per-tool quotas | `10f12143` |
+| 9 | Prompt scaffolding (plan/decisions/blackboard) unredacted | `968c7d7b` |
+
+Four of the nine (#1, #2, #3, #9) are the *same* class: content that
+reaches the model or the disk without the policy the user configured.
+That class was not visible from lint, from tests, or from reading any
+one file -- it needed a grep for every site that should apply a gate.
+
+### What the next hunt should not redo
+
+Verified sound: `batch` sub-calls hit the policy gate; `edit` and
+`patch_file` gate before writing; `revalidate_write_parent` rejects a
+swapped symlink; `resolve_path` containment is component-wise;
+`edit_hashline` requires a prior read; session-log redaction walks
+arrays and keys; memory redaction is unconditional; both providers
+reset the retry tracker per attempt; the walk cache invalidates on
+every write path; `Retry-After` is bounded; `begin_turn` resets
+per-turn quotas; the SSE parser drops malformed frames; `snapcompact`'s
+PNG passes an independent decoder (CRC and scanline bytes checked);
+retry `attempt` tracking is per-attempt.
