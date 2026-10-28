@@ -22,6 +22,12 @@ url = "2"
 [dev-dependencies]
 proptest = { workspace = true }
 tempfile = "3.8"
+# The two `real_filesystem` tests each spawn their own
+# `npx @modelcontextprotocol/server-filesystem`. libtest runs them
+# concurrently, and two simultaneous npx invocations share one npm
+# cache -- the loser's server died at `initialize` with "server
+# terminated" on CI. Serialise them.
+serial_test = { workspace = true }
 
 [lints]
 workspace = true

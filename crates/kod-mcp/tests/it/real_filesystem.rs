@@ -66,6 +66,7 @@ async fn spawn_filesystem_server(dir: &std::path::Path) -> McpClient {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "operational: needs npx + Node on PATH; run with --run-ignored"]
+#[serial_test::serial(npx_filesystem)]
 async fn real_filesystem_server_initialize_and_list_tools() {
     if !npx_available() {
         eprintln!("skipping: npx not on PATH");
@@ -120,6 +121,7 @@ async fn real_filesystem_server_initialize_and_list_tools() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "operational: needs npx + Node on PATH; run with --run-ignored"]
+#[serial_test::serial(npx_filesystem)]
 async fn real_filesystem_server_reads_a_written_file() {
     if !npx_available() {
         eprintln!("skipping: npx not on PATH");
