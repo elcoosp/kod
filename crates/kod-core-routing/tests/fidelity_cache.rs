@@ -46,7 +46,7 @@ fn aged_message_is_not_served_a_stale_fidelity() {
 
     // Age it 400 turns: age counts back from the end, so the fillers
     // must come *after* it.
-    let mut older: Vec<ChatMessage> = turns.drain(..).collect();
+    let mut older: Vec<ChatMessage> = std::mem::take(&mut turns);
     older.extend((0..400).map(|i| msg(&format!("filler {i}"))));
     let _ = render_scored(&older, q.clone(), &scorer, &mut cache, 100_000, false);
 
