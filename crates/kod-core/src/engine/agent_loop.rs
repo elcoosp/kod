@@ -1,5 +1,28 @@
 use super::*;
 
+/// Redact one prompt-scaffolding block, or return it unchanged when
+/// `in_prompt` redaction is off.
+///
+/// `redact_messages_for_prompt` covers message content and
+/// `cap_rendered_result` covers tool results, but `ground_prompt`
+/// appends the plan, the decision log, and the swarm blackboard
+/// *after* both passes run. A secret in a peer agent's blackboard note
+/// therefore reached the model in the clear.
+///
+/// A free function taking `Option<&Redactor>` rather than a method: the
+/// engine's `prompt_redactor_if_enabled` reads the process-global
+/// config cache, which a test cannot set without poisoning its
+/// siblings (the `KOD_CONFIG_DIR` trap this session hit twice).
+pub(crate) fn redact_scaffold(
+    text: String,
+    redactor: Option<&kod_types::redact::Redactor>,
+) -> String {
+    match redactor {
+        Some(r) => r.redact(&text).0,
+        None => text,
+    }
+}
+
 impl KodEngine {
     /// Collected (non-streaming) agentic loop used by [`process`].
     pub(crate) async fn run_collected_loop(
@@ -1623,11 +1646,19 @@ impl KodEngine {
         // `ground_prompt` is synchronous, so we peek at the map with
         // a `try_read`; a rare miss is fine (the plan appears on the
         // next round).
+        // The `in_prompt` redactor covers message content and tool
+        // results; the scaffolding appended below is assembled after
+        // that pass, so a secret in a plan note, a decision, or a
+        // peer agent's blackboard entry reached the model in the
+        // clear. Every block that carries free text goes through the
+        // same redactor.
+        let redact_block =
+            |text: String| -> String { redact_scaffold(text, self.prompt_redactor_if_enabled()) };
         if let Ok(g) = self.plans.try_read()
             && let Some(plan) = g.get(key)
         {
             prompt.push_str("\n\n");
-            prompt.push_str(&plan.render_prompt_block());
+            prompt.push_str(&redact_block(plan.render_prompt_block()));
         }
         // Tier 3.4 — recent durable decisions. Bounded to 20 so the
         // block stays small even in a long session.
@@ -1636,7 +1667,7 @@ impl KodEngine {
             && !log.entries.is_empty()
         {
             prompt.push_str("\n\n");
-            prompt.push_str(&log.render_prompt_block(20));
+            prompt.push_str(&redact_block(log.render_prompt_block(20)));
         }
 
         // Tier 3.5 — shared blackboard, when this transcript is
@@ -1649,7 +1680,7 @@ impl KodEngine {
             let block = self.blackboard.render_prompt_block("team", 30, 3000);
             if !block.is_empty() {
                 prompt.push_str("\n\n");
-                prompt.push_str(&block);
+                prompt.push_str(&redact_block(block));
             }
         }
 

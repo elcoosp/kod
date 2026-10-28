@@ -2412,3 +2412,27 @@ async fn a_batch_does_not_launder_past_a_per_tool_quota() {
          but {written} files were written",
     );
 }
+/// The `in_prompt` redactor covered message content and tool results,
+/// but `ground_prompt` appends the plan, decision log, and swarm
+/// blackboard *after* both passes. A secret in a peer agent's
+/// blackboard note therefore reached the model in the clear.
+#[test]
+fn a_scaffold_block_is_redacted_when_a_redactor_is_supplied() {
+    let r = kod_types::redact::Redactor::default();
+    let block = "## Team knowledge\n\n- leak: the key is \
+                 sk-abcdef0123456789abcdef0123456789\n"
+        .to_string();
+    let out = crate::engine::agent_loop::redact_scaffold(block, Some(&r));
+    assert!(
+        !out.contains("sk-abcdef0123456789"),
+        "the scaffolding block must be redacted; got {out}",
+    );
+    assert!(out.contains("[REDACTED:openai-key]"), "got {out}");
+}
+
+#[test]
+fn a_scaffold_block_is_untouched_without_a_redactor() {
+    let block = "## Team knowledge\n\n- note: nothing secret here\n".to_string();
+    let out = crate::engine::agent_loop::redact_scaffold(block.clone(), None);
+    assert_eq!(out, block);
+}
