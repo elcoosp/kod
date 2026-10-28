@@ -234,6 +234,23 @@ impl SkillMatcher {
         self.skills.read().await.values().cloned().collect()
     }
 
+    /// Every skill's name and description, sorted by name.
+    ///
+    /// `build_prompt_with_budget` renders only these two fields into the
+    /// inventory block, but used to call `get_all_skills()` and clone
+    /// every skill's full body (instructions + examples + constraints +
+    /// content, ~4 KB each) just to read two strings. At 200 skills that
+    /// was ~800 KB allocated and discarded per turn.
+    pub async fn names_and_descriptions(&self) -> Vec<(String, String)> {
+        let skills = self.skills.read().await;
+        let mut out: Vec<(String, String)> = skills
+            .values()
+            .map(|s| (s.metadata.name.clone(), s.metadata.description.clone()))
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Get number of skills
     pub async fn count(&self) -> usize {
         self.skills.read().await.len()

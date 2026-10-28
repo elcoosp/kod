@@ -1231,13 +1231,11 @@ impl TaskRouter {
         // always present (so "which skills do you have?" is answerable), and
         // the top relevant skills add their full instructions.
         if let Some(matcher) = &self.skill_matcher {
-            let all = matcher.get_all_skills().await;
-            if !all.is_empty() {
-                let mut names: Vec<(&str, &str)> = all
-                    .iter()
-                    .map(|s| (s.metadata.name.as_str(), s.metadata.description.as_str()))
-                    .collect();
-                names.sort();
+            // Only name + description are rendered below; cloning every
+            // skill's full body to read two strings allocated ~4 KB per
+            // skill per turn. See `names_and_descriptions`.
+            let names = matcher.names_and_descriptions().await;
+            if !names.is_empty() {
                 const MAX_INVENTORY: usize = 60;
                 let listed: Vec<String> = names
                     .iter()
