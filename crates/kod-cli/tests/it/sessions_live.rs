@@ -5,6 +5,14 @@
 //! `KOD_TUI_STATE_DIR` (or `~/.kod`), one level above the
 //! `~/.kod/sessions` directory `sessions count` walks, so this test
 //! pins that the command reads the right one.
+
+// The entire file is gated on unix. Every assertion below depends on
+// `presence::process_alive` distinguishing a dead pid from a live one,
+// which is a real probe only on unix. The `#[cfg(not(unix))]` stub
+// returns `pid != 0` (documented policy: never offer to recover a
+// session that may be running, since we cannot tell without libc), so
+// on Windows every marker would appear live and the test would fail.
+#![cfg(unix)]
 use kod_cli::commands::SessionsAction;
 use kod_cli::commands::memory::run_sessions;
 use serial_test::serial;
