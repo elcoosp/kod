@@ -228,6 +228,27 @@ impl Redactor {
                     for (_, item) in o.iter_mut() {
                         walk(r, item, out);
                     }
+                    // Keys carry content too. A tool argument or a
+                    // provider payload can name a secret in a key
+                    // (`{"sk-...": "..."}`), and the session log
+                    // writes these objects to disk through this
+                    // function. Redact every key and rebuild the map
+                    // when at least one changed.
+                    let mut changed = false;
+                    for k in o.keys() {
+                        if !r.redact(k).1.is_empty() {
+                            changed = true;
+                            break;
+                        }
+                    }
+                    if changed {
+                        let old = std::mem::take(o);
+                        for (k, mut v) in old {
+                            let (rk, ev) = r.redact(&k);
+                            out.extend(ev);
+                            o.insert(rk, std::mem::replace(&mut v, serde_json::Value::Null));
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -794,5 +815,41 @@ mod redact_proptests {
         let r = Redactor::with_rules(vec![rule]);
         let (out, _) = r.redact("xxABCDEFGHIJyy");
         assert_eq!(out, "xxABCD…[REDACTED:ht]GHIJyy");
+    }
+    /// A secret used as an object *key* must be redacted too.
+    ///
+    /// `redact_json` walked object values and recursed through arrays,
+    /// but never looked at keys. The session log writes tool arguments
+    /// and tool results to disk through this function, so a payload
+    /// shaped `{"sk-...": "..."}` persisted the key in the clear while
+    /// the value beside it was redacted.
+    #[test]
+    fn a_secret_in_an_object_key_is_redacted() {
+        let r = Redactor::default();
+        let mut v = serde_json::json!({
+            "sk-abcdef0123456789abcdef0123456789": "ordinary value",
+        });
+        let events = r.redact_json(&mut v);
+        assert!(!events.is_empty(), "the key must produce a redaction");
+        let s = v.to_string();
+        assert!(
+            !s.contains("sk-abcdef0123456789"),
+            "the key must be redacted; got {s}",
+        );
+        assert!(
+            s.contains("ordinary value"),
+            "the value must survive; got {s}",
+        );
+    }
+
+    /// The key fix must not disturb an object with no secret in it.
+    #[test]
+    fn ordinary_keys_are_unchanged() {
+        let r = Redactor::default();
+        let mut v = serde_json::json!({"path": "/tmp/x", "line": 3});
+        let before = v.clone();
+        let events = r.redact_json(&mut v);
+        assert!(events.is_empty());
+        assert_eq!(v, before);
     }
 }
