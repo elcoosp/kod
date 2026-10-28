@@ -2717,3 +2717,25 @@ the test fail with the expected message.
 
 Prompt bytes unchanged for the existing paths: the 8
 `characterization_prompts` and 5 `golden_prefix` tests all pass.
+
+### Skill matching: measured and rejected (2026-10-28)
+
+`find_relevant_skills` lowercases each trigger, tag, capability, name
+and description per skill per query. With a realistic skill shape
+(6 tags, 4 capabilities, 4 triggers, a two-line description):
+
+| Skills | Per turn | % of a 3 s turn |
+| --- | --- | --- |
+| 50 | 1.07 ms | **0.036%** |
+| 200 | 4.79 ms | **0.16%** |
+
+**Rejected.** Linear in skill count and below the fingerprint candidate
+rejected earlier (0.42%). The structural fix -- precompute the lowercase
+forms at `add_skill`/`replace_all` time, so the scan compares
+lowercase-to-lowercase with no allocation -- is real but not justified
+by the number. A 200-skill install is already unusual; at 50 the cost is
+36 microseconds per millisecond of turn.
+
+If it ever matters: the lowercase forms are invariant per skill, so they
+belong beside the `Skill` in the matcher's map, rebuilt on the same two
+mutators that already exist (`add_skill`, `replace_all`, `remove_skill`).
