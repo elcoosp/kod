@@ -2264,3 +2264,93 @@ async fn a_batch_subcall_can_write_under_a_permissive_policy() {
          read-only test is vacuous",
     );
 }
+
+/// `xd://batch` is the documented entry point for a `Discoverable`
+/// tool, and `batch`'s sub-calls reuse the caller's context. Before
+/// the `with_tool_permissions` wiring the sub-context was
+/// `ToolContext::new`'s all-false default, so no mutating sub-call
+/// could ever succeed through `xd://`.
+#[tokio::test]
+async fn xd_batch_can_write_under_yolo() {
+    use kod_config::{Policy, PolicyEngine, Preset};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+    };
+    let engine = KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+    engine
+        .set_policy(Arc::new(PolicyEngine::from_effective_for_tests(Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        })))
+        .await;
+
+    let calls = vec![ToolCall {
+        id: None,
+        tool_name: "write_file".to_string(),
+        arguments: serde_json::json!({
+            "path": "xd://batch",
+            "content": "{\"invocations\":[{\"tool\":\"write_file\",\"parameters\":{\"path\":\"xd-out.txt\",\"content\":\"x\"}}]}"
+        }),
+    }];
+    let round = engine.run_tool_calls(&calls, "test", None).await;
+
+    assert!(
+        temp.path().join("xd-out.txt").exists(),
+        "xd://batch must reach write_file with the caller's permissions; \
+         block was: {}",
+        &round.prompt_block[..round.prompt_block.len().min(600)],
+    );
+}
+
+/// Control: under read-only the same dispatch must not write.
+#[tokio::test]
+async fn xd_batch_cannot_write_under_read_only() {
+    use kod_config::{Policy, PolicyEngine, Preset};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+    };
+    let engine = KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+    engine
+        .set_policy(Arc::new(PolicyEngine::from_effective_for_tests(Policy {
+            preset: Preset::ReadOnly,
+            ..Policy::default()
+        })))
+        .await;
+
+    let calls = vec![ToolCall {
+        id: None,
+        tool_name: "write_file".to_string(),
+        arguments: serde_json::json!({
+            "path": "xd://batch",
+            "content": "{\"invocations\":[{\"tool\":\"write_file\",\"parameters\":{\"path\":\"nope.txt\",\"content\":\"x\"}}]}"
+        }),
+    }];
+    let _ = engine.run_tool_calls(&calls, "test", None).await;
+
+    assert!(
+        !temp.path().join("nope.txt").exists(),
+        "read-only must still block an xd-dispatched write",
+    );
+}

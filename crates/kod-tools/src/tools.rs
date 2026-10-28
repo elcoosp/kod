@@ -357,10 +357,24 @@ impl Tool for ReadFileTool {
                 }
                 context.can_read(&resolved)?;
             }
+            // Carry the caller's permissions so an `xd://` dispatch
+            // reaches the tool with the same capability the ordinary
+            // path would give it. Without this the sub-context was
+            // `ToolContext::new`'s all-false default, so `xd://batch`
+            // could not write or read even under `yolo` -- the
+            // documented entry point for a `Discoverable` tool was
+            // broken for every mutating sub-call.
+            //
+            // This does not reopen SEC-A-20: `xd_handler` still
+            // refuses exec-shaped tool names outright, and `batch`
+            // still refuses nesting. A sub-call now runs with exactly
+            // the caller's bitmask, which is what the handler's own
+            // comment already claimed.
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
-            );
+            )
+            .with_tool_permissions(context.permissions.clone());
             // Gate the path a resolve would read. `url_path_target`
             // covers a URL that literally carries a path; the
             // handler's `read_target_path` covers a URL that names a
@@ -757,10 +771,24 @@ impl Tool for WriteFileTool {
                     reason: "File writing not permitted".to_string(),
                 });
             }
+            // Carry the caller's permissions so an `xd://` dispatch
+            // reaches the tool with the same capability the ordinary
+            // path would give it. Without this the sub-context was
+            // `ToolContext::new`'s all-false default, so `xd://batch`
+            // could not write or read even under `yolo` -- the
+            // documented entry point for a `Discoverable` tool was
+            // broken for every mutating sub-call.
+            //
+            // This does not reopen SEC-A-20: `xd_handler` still
+            // refuses exec-shaped tool names outright, and `batch`
+            // still refuses nesting. A sub-call now runs with exactly
+            // the caller's bitmask, which is what the handler's own
+            // comment already claimed.
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
-            );
+            )
+            .with_tool_permissions(context.permissions.clone());
             // Gate the path a write would touch. `url_path_target`
             // covers a URL that literally carries a path
             // (`conflict://rel/path`); the handler's
