@@ -2591,3 +2591,40 @@ content, skip the scan on a hit.
 both recorded as open) was implemented in `275ed116`, before this
 continuation. Re-measured here: **271.7 ms -> 7.7 ms, 35.5x**. Both
 addenda were stale on that point.
+
+### Two more candidates measured and rejected (2026-10-28)
+
+**`note_tool_surface_fingerprint`** serializes every tool's
+`parameters_schema` to a `String` and hashes it, every round. Measured
+with 17 registered tools (the engine registers 31, so scale ~1.8x):
+
+| Shape | Cost |
+| --- | --- |
+| per round, 17 tools | 317 us |
+| 40 rounds | 12.7 ms (0.42% of a 3 s turn) |
+| typical, 2 rounds | 0.63 ms (0.02%) |
+
+**Rejected** — the worst case is 0.42%, cheaper than the `obfuscate`
+scan rejected above. The structural fix is real but small: the tool
+surface changes only on `register`/`remove` (MCP hot-reload), so a
+generation counter on `ToolRegistry` would skip the hash entirely in
+the steady state. Not done; the number does not justify it.
+
+**The per-round `messages.clone()`** in `build_grounded_request`:
+
+| Shape | Clone | x40 rounds |
+| --- | --- | --- |
+| 10 msgs x 2 KB | 2.1 us | 85 us |
+| 50 msgs x 2 KB | 9.8 us | 393 us |
+| 50 msgs x 8 KB | 40 us | 1.6 ms |
+
+**Rejected** — 1.6 ms worst case (0.05%). `build_grounded_request` takes
+`Vec<ChatMessage>` by value because it obfuscates the outgoing copy; a
+borrowed variant would save microseconds.
+
+### The rule this session applied
+
+Three candidates measured, three rejected, and the rejections are
+consistent: 0.0044% (SSE, a21), 0.020%/1.90% (obfuscate), 0.02%/0.42%
+(fingerprint), 0.05% (clone). The one fix that *was* justified — the
+redaction memo at 9.2% — was an order of magnitude above all of them.
