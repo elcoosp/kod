@@ -2416,3 +2416,84 @@ The classes not yet covered: **time** (clock skew, mtime ordering),
 **error paths that swallow a failure**. Every bug here was an
 *inconsistent* guard; the next class is likely a guard that exists but
 is wrong.
+
+---
+
+## Addendum 25 (2026-10-28, bug hunt continued -- four more)
+
+Continues addendum 24. Same method, different fields, and the same
+pattern held: every bug was a guard that existed and was applied on
+some paths but not others.
+
+| Field | Applied where | Missing where |
+|---|---|---|
+| policy gate | top-level calls in `run_tool_calls` | **`batch` quota**, **`xd://` dispatch** |
+| `ToolContext` permissions | ordinary dispatch | **`xd://` sub-context** |
+| error propagation | most CLI paths | **`kod trace replay`** |
+
+### The bugs
+
+**1. `xd://` dispatch lost the caller's permissions** (`dd351d7e`).
+`ResolveContext::with_tool_permissions` had **zero callers**, so every
+`xd://` dispatch built a fresh `ToolContext::new` with the all-false
+default bitmask. A `xd://batch` write failed with "File writing not
+permitted" even under `yolo` — the documented entry point for a
+`Discoverable` tool was broken for every mutating sub-call. The
+handler's own comment claimed the opposite.
+
+Found by a control test, not by the fix. The first probe asserted that
+read-only blocked an `xd://` write and it passed — but so would a
+completely broken dispatch. The permissive-policy control failed and
+showed the real defect.
+
+**2. `batch` sub-calls escaped per-tool quotas** (`10f12143`). Quota is
+checked in `run_tool_calls` on `call.tool_name`; for a batch the outer
+name is `batch`, so no sub-call ever reached the check. A
+`per_turn = 1` quota on `write_file` allowed ten writes
+(`MAX_INVOCATIONS`) through one batch, and the counter never saw them.
+Fixed with a `QuotaHook` on `ToolContext` — the same shape
+`on_file_touch` uses — so the engine owns the check and the counter
+while `kod-tools` gains no quota state.
+
+**3. `kod trace replay` discarded the engine error** (`c6393150`). The
+result of `process_for` was dropped with `let _ =`. The caller already
+distinguished "no turns captured" from "the replay failed" and failed
+under `--strict`, but the error never reached it: a provider failure
+surfaced as "no request captured" and exited 0.
+
+**4. `/compact` dropped pinned messages** (`0d377b12`, from the
+previous continuation). Recorded here because it is the same class.
+
+### What was checked and found correct
+
+Worth recording so the next hunt does not redo it: `batch` sub-calls
+*do* hit the policy gate (pinned by two paired tests, `c32ffbe1`);
+`edit` gates before writing; `patch_file` returns sizes not content;
+session-log redaction walks arrays and now keys; both providers reset
+the retry tracker per attempt; the walk cache invalidates on every
+write path; `resolve_path` containment rejects symlink escapes and
+`/repo-evil`; the retry `Retry-After` is bounded.
+
+### Mistakes made and corrected
+
+- **Three probes were vacuous**, each caught only by disabling the fix
+  or adding a control. The `@id_rsa` fixture had no path character so
+  the expander never saw it; `credentials.env` failed `lexical_rank`
+  before reaching the guard; and the `xd://` read-only probe passed on
+  a completely broken dispatch.
+- **A test splice landed inside another function twice**, orphaning
+  tests so they compiled as "never used" rather than failing. Both
+  repaired; the lesson is to append at the true end (`s.rstrip()` then
+  concatenate), not to `rfind('\n}')`.
+
+### Still open
+
+`redact_messages_for_prompt` re-scans the transcript every round (276 ms
+per turn with `in_prompt` on). Measured, fix designed, not done.
+
+### Next classes to try
+
+**Time** (clock skew, mtime ordering), **integer overflow** under
+release's `overflow-checks = false`, and **error paths that swallow
+failures** — that last one already yielded the replay fix on the first
+probe, and `let _ =` on a `Result` is worth a systematic pass.
