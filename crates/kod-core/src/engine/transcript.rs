@@ -573,26 +573,48 @@ impl KodEngine {
             let mut history = self.history.write().await;
             match history.get_mut(key) {
                 Some(turns) if turns.len() > max_turns => {
+                    // A pinned message is never dropped: `render_history_for`
+                    // honours `metadata.pinned` and the docs promise
+                    // `/pin <n>` protects a message from compaction, but
+                    // this path computed a bare suffix cut. Walk the cut
+                    // back to the earliest pinned message so everything
+                    // from it onward is retained.
+                    let mut max_turns = max_turns;
+                    if let Some(earliest_pinned) = turns[..turns.len() - max_turns]
+                        .iter()
+                        .position(|m| m.metadata.pinned)
+                    {
+                        max_turns = turns.len() - earliest_pinned;
+                    }
                     let drop = turns.len() - max_turns;
-                    let dropped: Vec<kod_types::ChatMessage> = turns[..drop].to_vec();
-                    // Rotate rather than drain: the retained suffix
-                    // keeps its allocation, and the dropped prefix is
-                    // still owned long enough to summarise.
-                    turns.rotate_left(drop);
-                    turns.truncate(turns.len() - drop);
+                    // The outer guard used the *requested* keep-count;
+                    // honouring pinned messages can raise it to the
+                    // whole transcript, leaving nothing to drop. Report
+                    // "did not shrink" rather than inserting a summary
+                    // for zero dropped messages.
+                    if drop == 0 {
+                        false
+                    } else {
+                        let dropped: Vec<kod_types::ChatMessage> = turns[..drop].to_vec();
+                        // Rotate rather than drain: the retained suffix
+                        // keeps its allocation, and the dropped prefix is
+                        // still owned long enough to summarise.
+                        turns.rotate_left(drop);
+                        turns.truncate(turns.len() - drop);
 
-                    let summary = crate::compaction::emergency_summary(&dropped, window);
-                    let mut summary_msg = kod_types::ChatMessage::text(
-                        kod_types::MessageId::new(),
-                        kod_types::MessageRole::User,
-                        format!("## Previous Conversation Summary\n{summary}"),
-                        time::OffsetDateTime::now_utc(),
-                    );
-                    // Pinned so the render path never drops it for
-                    // budget reasons.
-                    summary_msg.metadata.pinned = true;
-                    turns.insert(0, summary_msg);
-                    true
+                        let summary = crate::compaction::emergency_summary(&dropped, window);
+                        let mut summary_msg = kod_types::ChatMessage::text(
+                            kod_types::MessageId::new(),
+                            kod_types::MessageRole::User,
+                            format!("## Previous Conversation Summary\n{summary}"),
+                            time::OffsetDateTime::now_utc(),
+                        );
+                        // Pinned so the render path never drops it for
+                        // budget reasons.
+                        summary_msg.metadata.pinned = true;
+                        turns.insert(0, summary_msg);
+                        true
+                    }
                 }
                 _ => false,
             }

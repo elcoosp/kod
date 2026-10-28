@@ -118,3 +118,52 @@ async fn a_manual_compaction_leaves_a_summary_behind() {
         "the summary is pinned so the render path cannot drop it",
     );
 }
+
+/// A pinned message must survive an explicit compaction.
+///
+/// `render_history_for` honours `metadata.pinned` (the budget trim
+/// walks its cut back to the earliest pinned message), and the docs
+/// promise `/pin <n>` "protects a message from being compacted away".
+/// `compact_history_for` computed a bare suffix cut and dropped the
+/// pinned message anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pinned_message_survives_a_manual_compaction() {
+    let (engine, _tmp) = seeded_engine(20).await;
+
+    // Pin the first turn.
+    let mut turns = engine.history_for("").await;
+    turns[0].metadata.pinned = true;
+    engine.set_history_for_tests("", turns).await;
+
+    engine.compact_history_for_tests("", 4).await;
+
+    let after = engine.history_for("").await;
+    assert!(
+        after.iter().any(|m| m.content.contains("turn 0")),
+        "a pinned message must survive; got {:?}",
+        after.iter().map(|m| m.content.clone()).collect::<Vec<_>>(),
+    );
+}
+
+/// When every message is pinned, compaction is a no-op rather than a
+/// silent unpin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_all_pinned_transcript_is_not_compacted() {
+    let (engine, _tmp) = seeded_engine(8).await;
+
+    let mut turns = engine.history_for("").await;
+    for t in turns.iter_mut() {
+        t.metadata.pinned = true;
+    }
+    engine.set_history_for_tests("", turns).await;
+
+    engine.compact_history_for_tests("", 2).await;
+    // The helper reports drops from the *requested* keep-count, which
+    // is not the count actually applied once pinned messages are
+    // honoured. The transcript is the invariant that matters.
+    assert_eq!(
+        engine.history_for("").await.len(),
+        8,
+        "nothing may be dropped when every message is pinned",
+    );
+}
