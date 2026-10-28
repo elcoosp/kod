@@ -470,6 +470,29 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             }
             Ok(())
         }
+        SessionsAction::Live => {
+            // `presence` was written for exactly this and never called.
+            // The marker root is `~/.kod` (KodApp::state_dir), one level
+            // above `~/.kod/sessions` -- markers live in
+            // `active_pids/`, not under the session-log directory.
+            let root = std::env::var_os("KOD_TUI_STATE_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| dirs::home_dir().map(|h| h.join(".kod")))
+                .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
+            let live = kod_core_state::presence::list(
+                &root,
+                kod_core_state::presence::MarkerKind::Interactive,
+            );
+            if live.is_empty() {
+                println!("No live sessions.");
+                return Ok(());
+            }
+            println!("{} live session(s):", live.len());
+            for s in &live {
+                println!("  {} (pid {})", s.name, s.pid);
+            }
+            Ok(())
+        }
         SessionsAction::Export { path: dest, format } => {
             let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
             let messages: Vec<Message> = serde_json::from_str(&raw)

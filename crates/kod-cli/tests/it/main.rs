@@ -52,6 +52,7 @@ mod run_swarm_wrapper;
 #[cfg(unix)]
 mod serve_roundtrip;
 mod sessions_dir_override;
+mod sessions_live;
 mod sessions_paths;
 mod skills_config_cli;
 mod skills_missing_paths;

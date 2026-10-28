@@ -26,6 +26,11 @@ pub struct TuiLoop {
     app: KodApp,
     event_handler: EventHandler,
     terminal: Option<Terminal<CrosstermBackend<Stdout>>>,
+    /// The presence marker this session wrote, so the clean-exit path
+    /// can remove exactly its own file. `None` when the marker could not
+    /// be written (no home directory, a read-only `~/.kod`), which is
+    /// best-effort by design.
+    presence_marker: Option<std::path::PathBuf>,
     engine: Option<Arc<KodEngine>>,
     llm_config: Option<LlmConfig>,
     /// Background generation task. Kept so Esc / Ctrl+C / `/cancel` can
@@ -81,6 +86,7 @@ impl TuiLoop {
             app: KodApp::new(),
             event_handler: EventHandler::new(Duration::from_millis(100)),
             terminal: None,
+            presence_marker: None,
             engine: None,
             llm_config: None,
             gen_task: None,
@@ -722,6 +728,13 @@ impl TuiLoop {
 
         self.terminal = None;
 
+        // Drop the presence marker on the clean-exit path. A SIGKILL
+        // skips this, which is exactly the case `presence::list`'s
+        // liveness check exists to catch.
+        if let Some(path) = self.presence_marker.take() {
+            let _ = std::fs::remove_file(path);
+        }
+
         Ok(())
     }
 
@@ -757,6 +770,21 @@ impl TuiLoop {
         });
 
         self.init_engine(model).await?;
+
+        // Presence marker: `~/.kod/presence/interactive/<pid>` says this
+        // session is alive, so `kod sessions list` can answer "which of
+        // these is still running" without attaching or scanning
+        // transcripts. `presence` was written for exactly this and never
+        // called. Removed in `restore_terminal`; a SIGKILL leaves it
+        // behind, and `presence::list` reports such a pid as gone.
+        let presence_root = crate::app::KodApp::state_dir();
+        if let Some(root) = presence_root.as_deref() {
+            self.presence_marker = kod_core_state::presence::mark(
+                root,
+                kod_core_state::presence::MarkerKind::Interactive,
+                &std::process::id().to_string(),
+            );
+        }
 
         // Load persisted prompt history and arm the save path.
         // KodApp::load_persistent_history reads
@@ -1986,6 +2014,30 @@ impl TuiLoop {
         // below is moved into the closure, and `from_config` needs the
         // three budget knobs (§D4.3).
         let swarm_config = config.swarm.clone();
+
+        // Pre-run resource check, overnight runs only. `preflight` was
+        // written for exactly this and never called: an overnight run
+        // that starts on a swapping machine, or on battery, wastes the
+        // night. It warns rather than refuses -- the module's own
+        // contract is "it does not enforce anything itself".
+        //
+        // `sample()` shells out on macOS (`sysctl`, `pmset`), so it runs
+        // off the async thread; the read is a few milliseconds.
+        if overnight.is_some()
+            && let Ok(sample) =
+                tokio::task::spawn_blocking(kod_core_quality::preflight::sample).await
+        {
+            let cores = std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(1);
+            let reasons = sample.pressure_reasons(cores);
+            if !reasons.is_empty() {
+                self.app.push_system_message(&format!(
+                    "Preflight: the machine is under pressure -- {}",
+                    reasons.join("; "),
+                ));
+            }
+        }
 
         self.app.begin_swarm();
         self.app.begin_generation();

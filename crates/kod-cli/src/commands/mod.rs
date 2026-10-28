@@ -1755,6 +1755,14 @@ pub enum SessionsAction {
         #[arg(long)]
         force: bool,
     },
+    /// List sessions that are alive right now.
+    ///
+    /// Reads the presence markers a `kod tui` writes at startup and
+    /// removes at a clean exit. A marker whose process is gone is
+    /// reported as `stale`, not hidden — that is the crashed-session
+    /// signal a user wants to see, because the transcript is still on
+    /// disk and can be revived.
+    Live,
 }
 
 /// `kod chat --remote` — attach an interactive REPL to a running

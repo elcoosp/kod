@@ -7,7 +7,11 @@
 use super::*;
 
 impl KodApp {
-    pub(super) fn state_dir() -> Option<std::path::PathBuf> {
+    /// The TUI's state directory (`$KOD_TUI_STATE_DIR` or `~/.kod`).
+    ///
+    /// `pub(crate)` so the main loop can place the presence marker
+    /// under the same root the session and history files use.
+    pub(crate) fn state_dir() -> Option<std::path::PathBuf> {
         if let Ok(dir) = std::env::var("KOD_TUI_STATE_DIR") {
             return Some(std::path::PathBuf::from(dir));
         }
