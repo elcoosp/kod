@@ -1145,6 +1145,38 @@ impl TaskRouter {
         memory_context: Option<MemoryContext>,
         budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<String> {
+        self.build_prompt_with_budget_and_skills(
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            None,
+        )
+        .await
+    }
+
+    /// Skills-aware form of [`Self::build_prompt_with_budget`].
+    ///
+    /// `skill_names` is the engine's `refined_skills`: the router's
+    /// lexical match unioned with Jev's semantic one. When `Some`, the
+    /// `## Relevant Skills` block renders exactly those skills. When
+    /// `None`, this re-runs the lexical matcher -- correct for a caller
+    /// with no engine (tests, the CLI path).
+    ///
+    /// Pre-fix the engine's Jev-augmented list reached only
+    /// `TaskResponse.skills_used`; a skill Jev found relevant but whose
+    /// name, triggers, tags and capabilities shared no substring with
+    /// the request never had its instructions inserted into the prompt.
+    pub async fn build_prompt_with_budget_and_skills(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
+        budget: Option<&kod_core_state::budget::Allocation>,
+        skill_names: Option<&[String]>,
+    ) -> Result<String> {
         // Truncate the request when it is over its share. The engine
         // refuses an over-budget request before reaching this point;
         // truncating here is a belt-and-braces guard so a
@@ -1257,13 +1289,24 @@ impl TaskRouter {
                     more
                 ));
             }
-            let matches = matcher.find_relevant_skills(input).await;
-            if !matches.is_empty() {
+            // Prefer the caller's list (the engine's `refined_skills`,
+            // which unions the lexical match with Jev's semantic one).
+            // Falling back to a fresh lexical match is right only for a
+            // caller with no engine.
+            let resolved: Vec<kod_types::Skill> = match skill_names {
+                Some(names) => matcher.skills_by_names(names).await,
+                None => matcher
+                    .find_relevant_skills(input)
+                    .await
+                    .into_iter()
+                    .map(|m| m.skill)
+                    .collect(),
+            };
+            if !resolved.is_empty() {
                 prompt.push_str("## Relevant Skills\n\n");
                 let skill_budget = budget.map(|a| a.skills).unwrap_or(usize::MAX);
                 let mut skill_used = 0usize;
-                for skill_match in matches.iter().take(self.config.max_skills_per_query) {
-                    let skill = &skill_match.skill;
+                for skill in resolved.iter().take(self.config.max_skills_per_query) {
                     // Each skill's instructions count against the
                     // skills share. When the share is exhausted, stop
                     // adding skills rather than truncate one mid-way.
@@ -1412,8 +1455,34 @@ impl TaskRouter {
         memory_context: Option<MemoryContext>,
         budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<PromptPlan> {
+        self.build_prompt_plan_with_skills(input, task_type, history, memory_context, budget, None)
+            .await
+    }
+
+    /// Skills-aware form of [`Self::build_prompt_plan`].
+    ///
+    /// The plan is built from the same rendered text
+    /// [`Self::build_prompt_with_budget_and_skills`] produces, so a
+    /// caller that has the engine's `refined_skills` (lexical ∪ Jev)
+    /// gets them in `## Relevant Skills`.
+    pub async fn build_prompt_plan_with_skills(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
+        budget: Option<&kod_core_state::budget::Allocation>,
+        skill_names: Option<&[String]>,
+    ) -> Result<PromptPlan> {
         let rendered = self
-            .build_prompt_with_budget(input, task_type, history, memory_context, budget)
+            .build_prompt_with_budget_and_skills(
+                input,
+                task_type,
+                history,
+                memory_context,
+                budget,
+                skill_names,
+            )
             .await?;
         Ok(PromptPlan::from_rendered(&rendered))
     }
@@ -2347,4 +2416,95 @@ mod coverage_classifier_edges {
             TaskRouter::project_key_for(b.path()),
         );
     }
+}
+
+/// A skill present only in the caller-supplied `refined_skills` must
+/// render its instructions.
+///
+/// The engine's `refined_skills` unions the router's lexical match
+/// with Jev's semantic one. Pre-fix the prompt re-ran the lexical
+/// matcher alone, so a skill Jev found relevant but whose name,
+/// triggers, tags and capabilities shared no substring with the
+/// request never had its instructions inserted -- the gap the Jev
+/// ranking exists to close.
+#[tokio::test]
+async fn a_semantic_only_skill_reaches_the_prompt() {
+    use kod_types::{Skill, SkillId, SkillMetadata};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let router =
+        TaskRouter::new(RouterConfig::default(), temp_dir.path().join("test.redb")).unwrap();
+
+    // A skill whose text has no substring in common with the query.
+    let matcher = router.skill_matcher.as_ref().expect("matcher present");
+    matcher
+        .add_skill(Skill {
+            id: SkillId::new(),
+            metadata: SkillMetadata {
+                name: "accessibility-audit".to_string(),
+                description: "Audit a UI for accessibility defects".to_string(),
+                version: "1.0.0".to_string(),
+                author: None,
+                category: "test".to_string(),
+                tags: Vec::new(),
+                capabilities: Vec::new(),
+                requirements: Vec::new(),
+                triggers: Vec::new(),
+            },
+            instructions: "Check colour contrast and focus order.".to_string(),
+            examples: vec![],
+            constraints: None,
+            content: String::new(),
+            path: temp_dir.path().to_path_buf(),
+        })
+        .await;
+
+    let query = "make the signup screen usable for everyone";
+
+    // Baseline: the lexical matcher alone finds nothing.
+    let lexical = matcher.find_relevant_skills(query).await;
+    assert!(
+        lexical.is_empty(),
+        "fixture must not match lexically, or it proves nothing: {lexical:?}",
+    );
+
+    let task_type = router.classify_task(query).await.unwrap();
+
+    // With the skill named only in `refined_skills`, its instructions
+    // must still reach the prompt.
+    let names = vec!["accessibility-audit".to_string()];
+    let prompt = router
+        .build_prompt_with_budget_and_skills(
+            query,
+            &task_type,
+            "(start of conversation)",
+            None,
+            None,
+            Some(&names),
+        )
+        .await
+        .unwrap();
+    assert!(
+        prompt.contains("Check colour contrast and focus order."),
+        "a semantic-only skill's instructions must be inserted; got:\n{prompt}",
+    );
+
+    // And without the list, the same prompt has no such block --
+    // pinning that the difference is the argument, not luck.
+    let blind = router
+        .build_prompt_with_budget_and_skills(
+            query,
+            &task_type,
+            "(start of conversation)",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !blind.contains("Check colour contrast and focus order."),
+        "the lexical-only path must not inject it",
+    );
 }

@@ -33,6 +33,7 @@ impl KodEngine {
         task_type: crate::router::TaskType,
         history: &str,
         memory_context: Option<kod_types::MemoryContext>,
+        skill_names: &[String],
     ) -> Result<(
         std::result::Result<
             kod_core_state::budget::Allocation,
@@ -52,7 +53,14 @@ impl KodEngine {
         let prompt = match &alloc {
             Ok(a) => {
                 self.router
-                    .build_prompt_with_budget(input, &task_type, history, memory_context, Some(a))
+                    .build_prompt_with_budget_and_skills(
+                        input,
+                        &task_type,
+                        history,
+                        memory_context,
+                        Some(a),
+                        Some(skill_names),
+                    )
                     .await?
             }
             Err(e) => {

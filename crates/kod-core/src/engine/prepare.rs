@@ -61,17 +61,19 @@ impl KodEngine {
                 task_type,
                 &history,
                 response.memory_context.clone(),
+                &refined_skills,
             )
             .await?;
         let system_text = {
             let plan = self
                 .router
-                .build_prompt_plan(
+                .build_prompt_plan_with_skills(
                     input,
                     &task_type,
                     &history,
                     response.memory_context.clone(),
                     alloc.as_ref().ok(),
+                    Some(&refined_skills),
                 )
                 .await?;
             plan.render_text()

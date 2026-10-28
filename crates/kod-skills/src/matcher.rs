@@ -251,6 +251,22 @@ impl SkillMatcher {
         out
     }
 
+    /// Resolve skill names to their full definitions, in the order
+    /// given. Unknown names are skipped.
+    ///
+    /// `build_prompt_with_budget` renders each skill's instructions,
+    /// examples and constraints; the caller already has the names (the
+    /// engine's `refined_skills`, which unions the lexical match with
+    /// Jev's semantic one), so the prompt does not have to re-run the
+    /// lexical matcher and lose the semantic half.
+    pub async fn skills_by_names(&self, names: &[String]) -> Vec<Skill> {
+        let skills = self.skills.read().await;
+        names
+            .iter()
+            .filter_map(|n| skills.get(n).cloned())
+            .collect()
+    }
+
     /// Get number of skills
     pub async fn count(&self) -> usize {
         self.skills.read().await.len()
