@@ -352,6 +352,15 @@ pub struct TaskRouter {
     repo_map_cache: crate::router::RepoMapCache,
 }
 
+pub struct PromptRequest<'a> {
+    pub input: &'a str,
+    pub task_type: &'a TaskType,
+    pub history: &'a str,
+    pub memory_context: Option<MemoryContext>,
+    pub budget: Option<&'a kod_core_state::budget::Allocation>,
+    pub skill_names: Option<&'a [String]>,
+}
+
 impl TaskRouter {
     /// Create a new task router
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
@@ -1113,8 +1122,15 @@ impl TaskRouter {
         task_type: &TaskType,
         history: &str,
     ) -> Result<String> {
-        self.build_prompt_with_context(input, task_type, history, None)
-            .await
+        self.build_prompt_via(PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context: None,
+            budget: None,
+            skill_names: None,
+        })
+        .await
     }
 
     /// Build the full prompt for LLM generation with a caller-supplied
@@ -1128,8 +1144,15 @@ impl TaskRouter {
         history: &str,
         memory_context: Option<MemoryContext>,
     ) -> Result<String> {
-        self.build_prompt_with_budget(input, task_type, history, memory_context, None)
-            .await
+        self.build_prompt_via(PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget: None,
+            skill_names: None,
+        })
+        .await
     }
 
     /// Full form: caller passes an explicit [`kod_core_state::budget::Allocation`]
@@ -1145,14 +1168,14 @@ impl TaskRouter {
         memory_context: Option<MemoryContext>,
         budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<String> {
-        self.build_prompt_with_budget_and_skills(
+        self.build_prompt_via(PromptRequest {
             input,
             task_type,
             history,
             memory_context,
             budget,
-            None,
-        )
+            skill_names: None,
+        })
         .await
     }
 
@@ -1168,15 +1191,15 @@ impl TaskRouter {
     /// `TaskResponse.skills_used`; a skill Jev found relevant but whose
     /// name, triggers, tags and capabilities shared no substring with
     /// the request never had its instructions inserted into the prompt.
-    pub async fn build_prompt_with_budget_and_skills(
-        &self,
-        input: &str,
-        task_type: &TaskType,
-        history: &str,
-        memory_context: Option<MemoryContext>,
-        budget: Option<&kod_core_state::budget::Allocation>,
-        skill_names: Option<&[String]>,
-    ) -> Result<String> {
+    pub async fn build_prompt_via(&self, req: PromptRequest<'_>) -> Result<String> {
+        let PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            skill_names,
+        } = req;
         // Truncate the request when it is over its share. The engine
         // refuses an over-budget request before reaching this point;
         // truncating here is a belt-and-braces guard so a
@@ -1414,6 +1437,26 @@ impl TaskRouter {
         Ok(prompt)
     }
 
+    pub async fn build_prompt_with_budget_and_skills(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
+        budget: Option<&kod_core_state::budget::Allocation>,
+        skill_names: Option<&[String]>,
+    ) -> Result<String> {
+        self.build_prompt_via(PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            skill_names,
+        })
+        .await
+    }
+
     /// Extract `@path` references from an input string, mirroring the
     /// engine's own extraction. Used to evaluate the `path=` guards in
     /// AGENTS.md sections.
@@ -1455,8 +1498,15 @@ impl TaskRouter {
         memory_context: Option<MemoryContext>,
         budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<PromptPlan> {
-        self.build_prompt_plan_with_skills(input, task_type, history, memory_context, budget, None)
-            .await
+        self.build_prompt_plan_via(PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            skill_names: None,
+        })
+        .await
     }
 
     /// Skills-aware form of [`Self::build_prompt_plan`].
@@ -1465,6 +1515,28 @@ impl TaskRouter {
     /// [`Self::build_prompt_with_budget_and_skills`] produces, so a
     /// caller that has the engine's `refined_skills` (lexical ∪ Jev)
     /// gets them in `## Relevant Skills`.
+    pub async fn build_prompt_plan_via(&self, req: PromptRequest<'_>) -> Result<PromptPlan> {
+        let PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            skill_names,
+        } = req;
+        let rendered = self
+            .build_prompt_via(PromptRequest {
+                input,
+                task_type,
+                history,
+                memory_context,
+                budget,
+                skill_names,
+            })
+            .await?;
+        Ok(PromptPlan::from_rendered(&rendered))
+    }
+
     pub async fn build_prompt_plan_with_skills(
         &self,
         input: &str,
@@ -1474,18 +1546,17 @@ impl TaskRouter {
         budget: Option<&kod_core_state::budget::Allocation>,
         skill_names: Option<&[String]>,
     ) -> Result<PromptPlan> {
-        let rendered = self
-            .build_prompt_with_budget_and_skills(
-                input,
-                task_type,
-                history,
-                memory_context,
-                budget,
-                skill_names,
-            )
-            .await?;
-        Ok(PromptPlan::from_rendered(&rendered))
+        self.build_prompt_plan_via(PromptRequest {
+            input,
+            task_type,
+            history,
+            memory_context,
+            budget,
+            skill_names,
+        })
+        .await
     }
+
     async fn find_relevant_skills(&self, input: &str) -> Result<Vec<String>> {
         if let Some(matcher) = &self.skill_matcher {
             let matches = matcher.find_relevant_skills(input).await;
