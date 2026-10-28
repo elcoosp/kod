@@ -582,7 +582,13 @@ pub(super) async fn drive_prompt_through_fresh_engine(
     if let Err(e) = engine.start().await {
         return (Vec::new(), Some(format!("start: {e}")));
     }
-    let _ = engine.process_for("session", prompt).await;
+    // Keep the error: the caller distinguishes "the replay produced
+    // no turns" from "the replay failed", and a discarded error made
+    // a provider failure look like an empty fixture.
+    let process_error = match engine.process_for("session", prompt).await {
+        Ok(_) => None,
+        Err(e) => Some(format!("process: {e}")),
+    };
     // Bug-hunt: the pre-fix shape dropped a shutdown
     // failure. A failed shutdown leaves MCP children and
     // background tasks to be killed by process exit rather
@@ -594,7 +600,7 @@ pub(super) async fn drive_prompt_through_fresh_engine(
     // The concrete handle is what `captured()` lives on; the
     // provider we gave the registry shares the same inner state.
     let captured = replay_concrete.captured();
-    (captured, None)
+    (captured, process_error)
 }
 
 /// `kod trace json` — every turn as a JSON array.
