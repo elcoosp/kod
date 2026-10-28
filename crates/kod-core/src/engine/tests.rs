@@ -2166,3 +2166,101 @@ fn mental_model_block_budget_is_bytes_not_chars() {
          overhead) must fit under an 80-byte budget; got {block:?}",
     );
 }
+
+/// A `batch` sub-call must hit the same policy gate a top-level call
+/// does.
+///
+/// `batch` calls `registry.execute_tool` directly, and the policy
+/// decision happens in `run_tool_calls` -- not in the registry. The
+/// tool's own comment claims "the policy gate ... applies without the
+/// batch tool re-implementing any of them", which is only true if the
+/// engine gates sub-calls somewhere.
+#[tokio::test]
+async fn a_batch_subcall_is_gated_by_policy() {
+    use kod_config::{Policy, PolicyEngine, Preset};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+    };
+    let engine = KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+    engine
+        .set_policy(Arc::new(PolicyEngine::from_effective_for_tests(Policy {
+            preset: Preset::ReadOnly,
+            ..Policy::default()
+        })))
+        .await;
+
+    let calls = vec![ToolCall {
+        id: None,
+        tool_name: "batch".to_string(),
+        arguments: serde_json::json!({
+            "invocations": [{
+                "tool": "write_file",
+                "parameters": {"path": "pwned.txt", "content": "x"}
+            }]
+        }),
+    }];
+    let _ = engine.run_tool_calls(&calls, "test", None).await;
+
+    assert!(
+        !temp.path().join("pwned.txt").exists(),
+        "a read-only policy must block a write issued through batch",
+    );
+}
+
+/// Control: under a permissive policy the same batch write must land.
+/// Without this, the test above could pass because `batch` refuses
+/// writes for an unrelated reason and prove nothing about policy.
+#[tokio::test]
+async fn a_batch_subcall_can_write_under_a_permissive_policy() {
+    use kod_config::{Policy, PolicyEngine, Preset};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let cfg = RouterConfig {
+        embedder: None,
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+    };
+    let engine = KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+    engine
+        .set_policy(Arc::new(PolicyEngine::from_effective_for_tests(Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        })))
+        .await;
+
+    let calls = vec![ToolCall {
+        id: None,
+        tool_name: "batch".to_string(),
+        arguments: serde_json::json!({
+            "invocations": [{
+                "tool": "write_file",
+                "parameters": {"path": "ok.txt", "content": "x"}
+            }]
+        }),
+    }];
+    let _ = engine.run_tool_calls(&calls, "test", None).await;
+
+    assert!(
+        temp.path().join("ok.txt").exists(),
+        "under yolo a batch write should land; if this fails the \
+         read-only test is vacuous",
+    );
+}
