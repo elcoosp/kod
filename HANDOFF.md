@@ -2680,3 +2680,40 @@ decider.
 The double match is real (`prepare_turn` reaches both call sites) but
 cheap. If the correctness fix lands, it removes the second match for
 free -- one reason to do it as one change rather than two.
+
+### Follow-up on the `refined_skills` finding (fixed in `1e62253b`)
+
+The finding recorded above was fixed rather than left open. The design
+question it raised -- "does the router keep its own matcher, or does
+the skill list become required?" -- answered itself: an **optional**
+argument. `build_prompt_with_budget_and_skills` and
+`build_prompt_plan_with_skills` take `Option<&[String]>`; `None`
+re-runs the lexical matcher, which is what a caller with no engine
+(tests, the CLI path) still needs. The old method names delegate with
+`None`, so no existing caller changed.
+
+`prepare_turn` passes the engine's `refined_skills` to both the plan
+(which produces `system_text`) and `build_budgeted_prompt`.
+
+**A free perf win.** The rejected double-match is gone on the engine
+path: `router.rs:916` still runs one lexical scan (it feeds
+`skills_used` and the Jev ranking), but the prompt builder no longer
+runs a second one -- it resolves names through
+`SkillMatcher::skills_by_names`, a HashMap lookup. Worth ~1.3 ms per
+turn at 50 skills, which is the number that was too small to chase on
+its own.
+
+**Two mistakes, both caught by tests:**
+1. The first patch threaded the list into `build_budgeted_prompt` only,
+   whose output is `pending` -- not `system_text`, the actual prompt.
+   The plan builder was the real path. Caught because the new test
+   still failed after the "fix".
+2. The first test splice dropped the module's closing brace, leaving
+   287/288. Caught by a brace count before compiling.
+
+**Non-vacuity:** with the list, a semantic-only skill's instructions
+appear; without it, nothing is injected. Reverting the source fix makes
+the test fail with the expected message.
+
+Prompt bytes unchanged for the existing paths: the 8
+`characterization_prompts` and 5 `golden_prefix` tests all pass.
