@@ -226,8 +226,16 @@ fn truncate_chars(s: &str, max: usize) -> String {
 pub struct FidelityCache {
     /// The query that last scored this cache's turns.
     pub last_query: Query,
-    /// MessageId -> (content hash, cached fidelity).
-    pub entries: std::collections::HashMap<kod_types::MessageId, (u64, Fidelity)>,
+    /// MessageId -> (content hash, age at scoring, cached fidelity).
+    ///
+    /// `age_turns` is part of the entry because `ChunkScorer::score`
+    /// reads it: the `LexicalScorer` weights recency by age, and a
+    /// message past the tail scores `Digest`/`Stub`/`Omit` where it
+    /// scored `Full` when it was fresh. Keying on `(id, content_hash,
+    /// query)` alone served the *stale* fidelity, so a message that
+    /// aged 400 turns stayed `Full` and never left the prompt -- the
+    /// budget walk saw it as full-price forever.
+    pub entries: std::collections::HashMap<kod_types::MessageId, (u64, u32, Fidelity)>,
 }
 
 impl FidelityCache {
@@ -241,6 +249,7 @@ impl FidelityCache {
         &self,
         id: &kod_types::MessageId,
         content_hash: u64,
+        age_turns: u32,
         query: &Query,
     ) -> Option<Fidelity> {
         if self.last_query.jaccard(query) < 0.3 {
@@ -248,13 +257,19 @@ impl FidelityCache {
         }
         self.entries
             .get(id)
-            .filter(|(h, _)| *h == content_hash)
-            .map(|(_, f)| *f)
+            .filter(|(h, a, _)| *h == content_hash && *a == age_turns)
+            .map(|(_, _, f)| *f)
     }
 
     /// Store a fidelity decision. Called after a miss.
-    pub fn insert(&mut self, id: kod_types::MessageId, content_hash: u64, fidelity: Fidelity) {
-        self.entries.insert(id, (content_hash, fidelity));
+    pub fn insert(
+        &mut self,
+        id: kod_types::MessageId,
+        content_hash: u64,
+        age_turns: u32,
+        fidelity: Fidelity,
+    ) {
+        self.entries.insert(id, (content_hash, age_turns, fidelity));
     }
 
     /// Record that this cache's turns were just scored against
@@ -320,10 +335,10 @@ pub fn render_scored(
         message.content.hash(&mut hasher);
         let content_hash = hasher.finish();
         let fidelity = cache
-            .lookup(&message.id, content_hash, &query)
+            .lookup(&message.id, content_hash, age_turns, &query)
             .unwrap_or_else(|| {
                 let f = scorer.score(&chunk, &query);
-                cache.insert(message.id.clone(), content_hash, f);
+                cache.insert(message.id.clone(), content_hash, age_turns, f);
                 f
             });
         scored.push((i, fidelity));
