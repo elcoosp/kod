@@ -7572,6 +7572,105 @@ mod tests {
         let _ = engine.shutdown().await;
     }
 
+    /// `/review` success path: with an engine whose provider resolves
+    /// and a prior assistant message, the command must spawn a background
+    /// review job and report its id. The job itself may fail to complete
+    /// (the inline scripted provider returns an empty reply for unknown
+    /// prompts), but the *spawn* is what `/review` promises — a `JobId`
+    /// surfaced to the user, listed under `/jobs`.
+    ///
+    /// Mirrors `swarm_e2e.rs`: a minimal inline `LlmProvider`, an engine
+    /// with `set_registry`, then the command.
+    #[tokio::test]
+    async fn test_review_spawns_a_job_with_an_assistant_turn() {
+        use async_trait::async_trait;
+        use kod_core::{KodEngine, RouterConfig};
+        use kod_provider::{
+            GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+            ProviderRegistry, StreamChunk,
+        };
+        use kod_types::ToolDefinition;
+        use std::pin::Pin;
+        use std::sync::Arc;
+
+        struct ScriptedProvider;
+        #[async_trait]
+        impl LlmProvider for ScriptedProvider {
+            fn name(&self) -> &str {
+                "scripted"
+            }
+            async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+                Ok(vec!["scripted".into()])
+            }
+            async fn generate(
+                &self,
+                _p: &str,
+                _o: &GenerationOptions,
+            ) -> kod_error::Result<String> {
+                Ok("placeholder review".to_string())
+            }
+            async fn generate_with_tools(
+                &self,
+                p: &str,
+                _t: &[ToolDefinition],
+                o: &GenerationOptions,
+            ) -> kod_error::Result<GenerationResponse> {
+                Ok(GenerationResponse::Text {
+                    content: self.generate(p, o).await?,
+                    usage: None,
+                })
+            }
+            fn stream(
+                &self,
+                _p: &str,
+                _o: &GenerationOptions,
+            ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+            {
+                Box::pin(futures::stream::empty())
+            }
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("review.ok.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = Arc::new(KodEngine::new(cfg, db).unwrap());
+
+        let mut reg = ProviderRegistry::new();
+        reg.insert(
+            "scripted",
+            Arc::new(ScriptedProvider),
+            ProviderCapabilities::conservative(),
+            "scripted",
+        );
+        engine
+            .set_registry(Arc::new(reg), ModelRef::new("scripted", "scripted"), None)
+            .await;
+        engine.start().await.unwrap();
+
+        let mut tui = TuiLoop::new();
+        tui.set_engine(engine.clone());
+        // Pre-seed an assistant turn so the handler reaches the spawn.
+        tui.app.push_assistant_message("a prior assistant reply");
+
+        tui.handle_command("/review").await.expect("handle_command");
+        let last = tui.app.messages().last().expect("a system message");
+        assert!(
+            last.content.contains("Review spawned"),
+            "expected 'Review spawned', got: {}",
+            last.content,
+        );
+
+        let _ = engine.shutdown().await;
+    }
+
     /// `/review` with an engine but no assistant turn yet must report
     /// the second guard, not attempt to spawn a job against nothing.
     /// This is what a user hits if they `/review` on the very first
