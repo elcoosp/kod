@@ -246,11 +246,22 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
     // `kod serve --stop` polls for separately.
     let mut reader = BufReader::new(read_half);
     let mut buf = String::new();
-    let _ = tokio::time::timeout(
+    match tokio::time::timeout(
         std::time::Duration::from_secs(2),
         reader.read_line(&mut buf),
     )
-    .await;
+    .await
+    {
+        Ok(Ok(_)) => {} // got the response, or a clean EOF
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "stop_daemon: read_line failed");
+        }
+        Err(_) => {
+            tracing::warn!(
+                "stop_daemon: read timed out after 2s; the daemon may not have closed the socket"
+            );
+        }
+    }
     Ok(())
 }
 
