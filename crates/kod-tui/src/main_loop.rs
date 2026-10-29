@@ -7541,6 +7541,39 @@ mod tests {
 
     /// `/review` with an engine but no assistant turn yet must report
     /// the second guard, not attempt to spawn a job against nothing.
+    /// Mirrors `test_handoff_with_engine_reports_empty_session`: an
+    /// engine with an empty message list, then the command.
+    #[tokio::test]
+    async fn test_review_with_no_assistant_turn_reports() {
+        use kod_core::{KodEngine, RouterConfig};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("review.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = std::sync::Arc::new(KodEngine::new(cfg, db).unwrap());
+        engine.start().await.unwrap();
+
+        let mut tui = TuiLoop::new();
+        tui.set_engine(engine.clone());
+        tui.handle_command("/review").await.expect("handle_command");
+        let last = tui.app().messages().last().expect("a system message");
+        assert!(
+            last.content.contains("No assistant turn to review yet"),
+            "expected 'No assistant turn to review yet', got: {}",
+            last.content,
+        );
+        let _ = engine.shutdown().await;
+    }
+
+    /// `/review` with an engine but no assistant turn yet must report
+    /// the second guard, not attempt to spawn a job against nothing.
     /// This is what a user hits if they `/review` on the very first
 
     /// Dispatching a plain prompt must record it as `last_prompt`, so
