@@ -210,7 +210,7 @@ async-stream = "0.3.6"
 # Data structures
 compact_str = { version = "0.10.0", features = ["serde"] }
 bitflags = { version = "2.13.2", features = ["serde"] }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 dashmap = "6.2.1"
 
 # Storage
@@ -218,7 +218,7 @@ redb = "4.3.0"
 
 # Time & dirs
 time = { version = "0.3.55", features = ["serde", "formatting", "parsing"] }
-dirs = "6.0.0"
+dirs = "7.0.0"
 
 # CLI & config
 clap = { version = "4.6.7", features = ["derive", "env"] }
@@ -228,12 +228,12 @@ toml = "1.1.2"
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # Diffing
-similar = "2.7"
+similar = "3.2.0"
 
 # Secret placeholders (delta §14.1)
 hmac = "0.13.0"
 sha2 = "0.11.1"
-base64 = "0.22"
+base64 = "0.23.1"
 
 # System
 libc = "0.2"
@@ -276,9 +276,9 @@ syntect = { version = "5.2", default-features = false, features = ["default-synt
 
 # Testing
 proptest = "1.11.0"
-rstest = "0.26.1"
-serial_test = "3"
-criterion = "0.5"
+rstest = "0.28.0"
+serial_test = "4.0.1"
+criterion = "0.8.2"
 
 # TypeSafe AI / Jev client (git dependency, gilljon/typesafe-ai-rs v0.1.0).
 typesafe-ai-rs = { git = "https://github.com/elcoosp/typesafe-ai-rs", rev = "35e6f7f6e4e4e77f28b5d276ee0eabd23a220b71", default-features = false, features = ["rustls-tls"] }
