@@ -1668,7 +1668,12 @@ mod panic_guard_tests {
         );
 
         shutdown.notify_one();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serve_handle).await;
+        if tokio::time::timeout(std::time::Duration::from_secs(5), serve_handle)
+            .await
+            .is_err()
+        {
+            tracing::warn!("serve task did not join within 5s after shutdown signal; may be hung");
+        }
     }
 
     // ---------------------------------------------------------------------

@@ -704,7 +704,12 @@ impl LspClient {
     pub async fn shutdown(mut self) {
         let _ = self.request("shutdown", serde_json::json!(null)).await;
         let _ = self.notify("exit", serde_json::json!(null)).await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await;
+        if tokio::time::timeout(Duration::from_secs(2), self.child.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!("lsp server did not exit within 2s after shutdown; may be hung");
+        }
     }
 
     // ---------------------------------------------------------------------

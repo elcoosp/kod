@@ -360,7 +360,12 @@ impl McpClient {
                 }
             }
         }
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), guard.wait()).await;
+        if tokio::time::timeout(std::time::Duration::from_secs(2), guard.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!("mcp child did not exit within 2s after kill; may be hung");
+        }
         // Escalate to SIGKILL for the whole group, then the direct
         // child as a belt-and-braces fallback. If the child exited
         // cleanly within the 2 s window, `guard.id()` is None and the
@@ -374,7 +379,12 @@ impl McpClient {
             }
         }
         let _ = guard.start_kill();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), guard.wait()).await;
+        if tokio::time::timeout(std::time::Duration::from_secs(1), guard.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!("mcp child did not exit within 1s after kill; may be hung");
+        }
     }
 
     // ------------------------------------------------------------------
