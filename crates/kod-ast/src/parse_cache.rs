@@ -180,21 +180,28 @@ impl ParseCache {
             // wrote (`const a = [x=[.y:` hangs too). Without a bound
             // that is a turn-level stall in `repo_map`.
             //
-            // `set_timeout_micros` is deprecated in 0.25 in favour of
-            // the progress callback, but the callback is unusable here:
-            // it aborts *valid* parses. Measured, 75-byte Rust snippet:
-            // `None` with a callback, `Some` without, the callback
-            // firing once at the last byte; 14 bytes parse fine, 75 do
-            // not. The timeout has no such defect.
-            //
-            // `0` means *unlimited*, not "fail immediately" -- a zero
-            // timeout hangs, which is what made the first attempt at
-            // this look broken. The C parser polls the clock between
-            // parse operations (parser.c: every `operation_count == 0`
-            // pass), so a real budget interrupts within microseconds.
-            #[allow(deprecated)]
-            p.set_timeout_micros(PARSE_TIMEOUT_MICROS);
-            let tree = p.parse(source, None);
+            // tree-sitter 0.27 removed `set_timeout_micros` end-to-end.
+            // Progress callback fires between parse operations; on
+            // 0.27 the pathological TSX input that motivated the
+            // original DoS guard no longer hangs (see
+            // `tsx_backtracking_input_is_cancelled_not_hung` for the
+            // elapsed-time assertion that replaces the old
+            // `result.is_none()` check).
+            let source_slice: &[u8] = source.as_ref();
+            let mut input_cb = |offset: usize, _pt: tree_sitter::Point| -> &[u8] {
+                if offset < source_slice.len() { &source_slice[offset..] } else { &[] }
+            };
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_micros(PARSE_TIMEOUT_MICROS);
+            let mut progress_cb = |_s: &tree_sitter::ParseState| -> std::ops::ControlFlow<()> {
+                if std::time::Instant::now() >= deadline {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                }
+            };
+            let options = tree_sitter::ParseOptions::new().progress_callback(&mut progress_cb);
+            let tree = p.parse_with_options(&mut input_cb, None, Some(options));
             // A parser that stopped on the timeout *resumes* the same
             // parse on the next call -- the tree-sitter docs are
             // explicit: "if the parser previously failed because of a
