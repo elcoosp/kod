@@ -52,3 +52,4 @@ mod tool_loop;
 mod tool_loop_guard_integration;
 mod transcript_working_dir;
 mod truncate_helper_sites;
+mod vault_secondary_paths;
