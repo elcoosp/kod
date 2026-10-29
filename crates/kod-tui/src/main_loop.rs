@@ -6742,6 +6742,7 @@ mod tests {
     }
 
     use super::*;
+    use tempfile;
 
     #[tokio::test]
     async fn test_check_command_without_project() {
@@ -7521,6 +7522,26 @@ mod tests {
             last.content
         );
     }
+
+    /// `/review` with no engine installed must report the guard message
+    /// rather than panic. This is the first guard in the handler — a
+    /// session that starts with `/review` before the engine initialises
+    /// hits this path.
+    #[tokio::test]
+    async fn test_review_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/review").await.expect("handle_command");
+        let last = tui.app.messages().last().expect("a system message");
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "expected 'Engine not initialized', got: {}",
+            last.content,
+        );
+    }
+
+    /// `/review` with an engine but no assistant turn yet must report
+    /// the second guard, not attempt to spawn a job against nothing.
+    /// This is what a user hits if they `/review` on the very first
 
     /// Dispatching a plain prompt must record it as `last_prompt`, so
     /// `/retry` and the `r` key have something to resend. Regression:
