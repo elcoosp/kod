@@ -7,7 +7,7 @@ authors.workspace = true
 
 [dependencies]
 regex = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 async-stream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,7 +20,7 @@ time = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-httpmock = "0.8"
+httpmock = { workspace = true }
 time = { workspace = true }
 
 [features]

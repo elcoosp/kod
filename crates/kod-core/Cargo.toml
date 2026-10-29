@@ -14,9 +14,9 @@ tokio = { workspace = true }
 async-stream = { workspace = true }
 tracing = { workspace = true }
 dirs = { workspace = true }
-uuid = { version = "1.11", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-async-trait = "0.1"
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+async-trait = { workspace = true }
 futures = { workspace = true }
 kod-core-state = { path = "../kod-core-state" }
 kod-core-routing = { path = "../kod-core-routing" }
@@ -58,7 +58,7 @@ name = "system_benchmarks"
 harness = false
 
 [dev-dependencies]
-httpmock = "0.8"
+httpmock = { workspace = true }
 kod-provider-openai = { path = "../kod-provider-openai" }
 kod-core-serve = { path = "../kod-core-serve" }
 serial_test = { workspace = true }
@@ -67,11 +67,11 @@ futures = { workspace = true }
 kod-swarm = { path = "../kod-swarm" }
 proptest = { workspace = true }
 rstest = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 time = { workspace = true }
 criterion = { workspace = true }
 tokio = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 serde_json = { workspace = true }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }

@@ -10,7 +10,7 @@ kod-core-tools = { path = "../kod-core-tools" }
 kod-core-quality = { path = "../kod-core-quality" }
 kod-core-routing = { path = "../kod-core-routing" }
 kod-core-state = { path = "../kod-core-state" }
-unicode-width = "0.2"
+unicode-width = { workspace = true }
 kod-provider = { path = "../kod-provider" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -19,8 +19,8 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-uuid = { version = "1.11", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
@@ -38,11 +38,11 @@ toml = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 serial_test = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 async-stream = { workspace = true }
 futures = { workspace = true }
 rstest = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -282,6 +282,18 @@ criterion = "0.5"
 
 # TypeSafe AI / Jev client (git dependency, gilljon/typesafe-ai-rs v0.1.0).
 typesafe-ai-rs = { git = "https://github.com/elcoosp/typesafe-ai-rs", rev = "35e6f7f6e4e4e77f28b5d276ee0eabd23a220b71", default-features = false, features = ["rustls-tls"] }
+adk-core = "2.2"
+adk-model = { version = "2.2", default-features = false }
+async-trait = "0.1"
+axum = "0.8"
+filetime = "0.2"
+httpmock = "0.8"
+portable-pty = "0.8"
+serde_yaml = "0.9"
+tempfile = "3.8"
+unicode-width = "0.2"
+url = "2"
+uuid = { version = "1.11", features = ["v4", "serde"] }
 
 [profile.release]
 # Size-tuned. The binary ships bundled tree-sitter grammars (8 C

@@ -13,10 +13,10 @@ time = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 futures = { workspace = true }
 sha2 = { workspace = true }
 libc = { workspace = true }
@@ -29,9 +29,9 @@ kod-config = { path = "../kod-config" }
 kod-provider = { path = "../kod-provider" }
 kod-tools = { path = "../kod-tools" }
 [dev-dependencies]
-filetime = "0.2"
+filetime = { workspace = true }
 serial_test = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 rstest = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true }

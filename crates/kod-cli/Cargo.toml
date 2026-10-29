@@ -43,18 +43,18 @@ toml = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 serial_test = { workspace = true }
-portable-pty = "0.8"
+portable-pty = { workspace = true }
 # E2E TUI testing through a PTY (terminal-testlib is the renamed
 # successor of ratatui-testlib; the rename landed on `main` but has
 # not yet been published to crates.io, so a git dep is required).
 terminal-testlib = { git = "https://github.com/raibid-labs/ratatui-testlib", rev = "9e85657724f6b5edaa7a87af057f7a59c4655bb5" }
 # Mock LLM server for the E2E tests — serves an OpenAI-compatible
 # /v1/chat/completions SSE stream from a loopback port.
-axum = "0.8"
-tempfile = "3.8"
+axum = { workspace = true }
+tempfile = { workspace = true }
 kod-config = { path = "../kod-config" }
 toml = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 futures = { workspace = true }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }

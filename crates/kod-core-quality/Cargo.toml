@@ -13,9 +13,9 @@ time = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 parking_lot = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 futures = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
@@ -30,7 +30,7 @@ kod-core-routing = { path = "../kod-core-routing" }
 
 [dev-dependencies]
 proptest = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 tokio = { workspace = true }
 rstest = { workspace = true }
 

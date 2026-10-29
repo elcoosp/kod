@@ -17,11 +17,11 @@ sha2 = { workspace = true }
 # Cross-platform cache dir (`~/.cache/kod/mcp` on Linux,
 # `~/Library/Caches/kod/mcp` on macOS).
 dirs = { workspace = true }
-url = "2"
+url = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 # The two `real_filesystem` tests each spawn their own
 # `npx @modelcontextprotocol/server-filesystem`. libtest runs them
 # concurrently, and two simultaneous npx invocations share one npm

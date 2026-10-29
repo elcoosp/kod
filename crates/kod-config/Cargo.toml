@@ -23,7 +23,7 @@ kod-error = { path = "../kod-error" }
 [dev-dependencies]
 proptest = { workspace = true }
 rstest = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

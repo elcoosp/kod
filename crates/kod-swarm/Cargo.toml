@@ -11,7 +11,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true }
 futures = { workspace = true }
 kod-types = { path = "../kod-types" }
@@ -24,7 +24,7 @@ kod-provider = { path = "../kod-provider" }
 [dev-dependencies]
 proptest = { workspace = true }
 rstest = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 futures = { workspace = true }
 
 [lints]

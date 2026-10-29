@@ -11,7 +11,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 kod-error = { path = "../kod-error" }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }
@@ -20,13 +20,13 @@ kod-core-state = { path = "../kod-core-state" }
 
 [dev-dependencies]
 proptest = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 kod-config = { path = "../kod-config" }
 kod-error = { path = "../kod-error" }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }
 futures = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
