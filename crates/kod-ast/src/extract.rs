@@ -271,8 +271,6 @@ mod proptest_symbols {
     /// as "fall back to regex", so a cancelled parse degrades rather
     /// than failing.
 
-
-
     #[test]
     fn tsx_backtracking_input_is_cancelled_not_hung() {
         use std::time::{Duration, Instant};

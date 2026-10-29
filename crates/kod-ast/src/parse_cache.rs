@@ -189,10 +189,14 @@ impl ParseCache {
             // `result.is_none()` check).
             let source_slice: &[u8] = source.as_ref();
             let mut input_cb = |offset: usize, _pt: tree_sitter::Point| -> &[u8] {
-                if offset < source_slice.len() { &source_slice[offset..] } else { &[] }
+                if offset < source_slice.len() {
+                    &source_slice[offset..]
+                } else {
+                    &[]
+                }
             };
-            let deadline = std::time::Instant::now()
-                + std::time::Duration::from_micros(PARSE_TIMEOUT_MICROS);
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_micros(PARSE_TIMEOUT_MICROS);
             let mut progress_cb = |_s: &tree_sitter::ParseState| -> std::ops::ControlFlow<()> {
                 if std::time::Instant::now() >= deadline {
                     std::ops::ControlFlow::Break(())
