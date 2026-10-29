@@ -32,6 +32,18 @@ impl KodEngine {
         if input.len() < 30 {
             return;
         }
+        // Delta §14.1: obfuscate before the plan provider sees the
+        // prompt. The primary turn's prompt is built by
+        // `build_grounded_request`, which reads the vault; this
+        // secondary call site did not, so a user-pasted secret
+        // reached the plan provider raw. Same shape as 968c7d7b.
+        let obfuscated_input = {
+            let vault = self.secret_vault.read().await.clone();
+            match vault {
+                Some(v) if !v.is_empty() => v.obfuscate(input),
+                _ => input.to_string(),
+            }
+        };
         let prompt = format!(
             "Produce a concise, ordered plan for the request below.\n\
              Output ONLY a JSON array of strings, one per step.\n\
@@ -39,7 +51,7 @@ impl KodEngine {
              - 3 to 8 steps.\n\
              - Each step is one imperative sentence.\n\
              - No explanations, no headers, no wrapping prose.\n\n\
-             Request: {input}"
+             Request: {obfuscated_input}"
         );
         let raw = match provider.generate(&prompt, options).await {
             Ok(t) => t,

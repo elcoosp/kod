@@ -685,6 +685,20 @@ impl KodEngine {
                 summary_prompt.push_str(
                     "\nSummarize what you did and the result for the user in plain text.",
                 );
+                // Delta §14.1: obfuscate before the summary provider
+                // sees the prompt. The tool results in `summary_prompt`
+                // are raw — `tool_dispatch` deobfuscates arguments for
+                // execution and does not re-obfuscate the result. The
+                // primary turn is safe because `build_grounded_request`
+                // obfuscates on the way out; this secondary call site
+                // bypassed it. Same shape as 968c7d7b.
+                let summary_prompt = {
+                    let vault = self.secret_vault.read().await.clone();
+                    match vault {
+                        Some(v) if !v.is_empty() => v.obfuscate(&summary_prompt),
+                        _ => summary_prompt,
+                    }
+                };
                 let summary_provider = winning_provider.ok_or_else(Self::no_provider_error)?;
                 summary_provider.generate(&summary_prompt, &options).await?
             } else {
