@@ -263,16 +263,17 @@ mod proptest_symbols {
 
     /// The production bound must turn that trigger into `None`.
     ///
-    /// `ParseCache::parse` sets `PARSE_TIMEOUT_MICROS`, so the call
-    /// returns rather than spinning forever. Before that fix the hang
-    /// was unbounded: `prop_symbols_never_panics` passed at 20k
-    /// proptest cases and hung at 40k, and the same bytes would stall
-    /// `repo_map` on a real `.tsx` file. `ast_or_regex` treats `None`
-    /// as "fall back to regex", so a cancelled parse degrades rather
-    /// than failing.
+    /// `ParseCache::parse` sets a wall-clock budget, so the call
+    /// returns rather than spinning forever. On 0.25 the pathological
+    /// TSX input hung unboundedly until `set_timeout_micros` was set;
+    /// on 0.27 the grammar fixed the underlying exponential
+    /// backtracking and the parse completes in ~2 ms. The budget
+    /// remains as defense-in-depth for any future grammar regression.
+    /// The invariant checked here is that the parse *returns* within
+    /// a bounded wall-clock window, not that it returns `None`.
 
     #[test]
-    fn tsx_backtracking_input_is_cancelled_not_hung() {
+    fn tsx_backtracking_input_completes_promptly() {
         use std::time::{Duration, Instant};
         let start = Instant::now();
         let result = symbols(Lang::Tsx, TSX_BACKTRACK_TRIGGER);
