@@ -51,7 +51,7 @@
 //!   the raw environment before obfuscation gets a chance. The
 //!   `read_protection` policy is the complementary control.
 
-use hmac::{{Hmac, Mac}, KeyInit};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
