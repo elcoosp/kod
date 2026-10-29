@@ -29,12 +29,13 @@ use kod_core::KodEngine;
 use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
+use kod_provider::testkit::{MockProvider, Script};
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
     ProviderRegistry, StreamChunk,
 };
-use kod_types::ToolDefinition;
 use kod_types::secret_placeholder::SecretVault;
+use kod_types::{ToolCall, ToolDefinition};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -235,4 +236,97 @@ async fn plan_provider_does_not_see_raw_secrets() {
             );
         }
     }
+}
+
+/// The summary branch (`process.rs:657`) fires when the model made tool
+/// calls and then produced empty text. The summary prompt is built from
+/// `convo` (the pre-loop prompt, which contains the raw user input) plus
+/// serialized tool results. `110bbc84` obfuscates the prompt before the
+/// summary provider sees it; this test pins that.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summary_provider_does_not_see_raw_secrets() {
+    let tmp = TempDir::new().unwrap();
+
+    // The secret is in the FILE CONTENT, not in the user input. `read_file`
+    // returns it as tool output; that output is what the summary branch
+    // serializes into the prompt. If the summary obfuscation were absent,
+    // the raw secret would flow from the file through the tool result to
+    // the summary provider.
+    let secret_for_file = "AKIAIOSFODNN7EXAMPLE";
+    std::fs::write(tmp.path().join("creds.txt"), secret_for_file).unwrap();
+
+    // Round 1: read_file. Round 2: empty text -> triggers the summary
+    // branch (final_text.trim().is_empty() && !tool_calls.is_empty()).
+    let tool_call = ToolCall {
+        id: Some("call-summary".into()),
+        tool_name: "read_file".into(),
+        arguments: serde_json::json!({ "path": "creds.txt" }),
+    };
+    let provider_concrete: Arc<MockProvider> = Arc::new(MockProvider::scripted(
+        "mock",
+        vec![Script::Calls(vec![tool_call]), Script::Text(String::new())],
+    ));
+    let provider_dyn: Arc<dyn LlmProvider> = provider_concrete.clone();
+
+    let cfg = fixture_config(tmp.path());
+    let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("s2.kod")).unwrap());
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        "mock",
+        provider_dyn,
+        ProviderCapabilities::conservative(),
+        "mock-model",
+    );
+    engine
+        .set_registry(Arc::new(reg), ModelRef::new("mock", "mock-model"), None)
+        .await;
+    engine.start().await.unwrap();
+
+    let vault = Arc::new(SecretVault::with_random_key());
+    let placeholder = vault.register(secret_for_file);
+    assert_ne!(
+        placeholder, secret_for_file,
+        "sanity: register returns placeholder"
+    );
+    engine.set_secret_vault(Arc::clone(&vault)).await;
+
+    let input = "read the file creds.txt and tell me what it says";
+    engine
+        .process_for("session", input)
+        .await
+        .expect("process_for");
+
+    let captured = provider_concrete.captured_prompts.lock().unwrap().clone();
+    println!("captured generate prompts: {}", captured.len());
+    for (i, p) in captured.iter().enumerate() {
+        println!("--- prompt {i} ({}) ---", p.len());
+        println!("{p}");
+    }
+
+    let summary_prompt = captured
+        .iter()
+        .find(|p| p.contains("Summarize what you did"))
+        .unwrap_or_else(|| {
+            panic!(
+                "summary path was NOT triggered — {} generate() prompts captured, \
+                 none contained 'Summarize what you did'. Possible causes: \
+                 (1) read_file denied by default ToolPermissions; \
+                 (2) Script::Calls did not produce a tool call; \
+                 (3) round-2 empty text became non-empty. Captured prompts:\n{:#?}",
+                captured.len(),
+                captured
+            );
+        });
+
+    for (i, p) in captured.iter().enumerate() {
+        assert!(
+            !p.contains(secret_for_file),
+            "prompt {i} leaked the raw secret from the tool result:\n{p}"
+        );
+    }
+
+    assert!(
+        summary_prompt.contains(&placeholder),
+        "summary prompt must contain the placeholder for the tool-result secret, got:\n{summary_prompt}",
+    );
 }
