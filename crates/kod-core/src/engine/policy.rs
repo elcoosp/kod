@@ -274,6 +274,12 @@ impl KodEngine {
         let runner = self.background.clone();
         let subject_clone = subject_text.clone();
         let endpoint_display = endpoint.display();
+        // #1: the reviewer's prompt is a *secondary* provider call.
+        // Capture the vault Arc so the spawned task can obfuscate.
+        // In the normal TUI path `subject_clone` is a placeholder-
+        // bearing message, but this closes the class structurally so
+        // a future caller passing raw text cannot leak.
+        let vault_for_review = std::sync::Arc::clone(&self.secret_vault);
 
         let runner_for_watch = std::sync::Arc::clone(&runner);
         runner_for_watch.spawn_guarded(id, async move {
@@ -294,6 +300,15 @@ impl KodEngine {
                  ## Turn under review (on endpoint {endpoint_display})\n\n\
                  {subject_clone}",
             );
+            // #1: obfuscate through the vault before the review
+            // provider sees the prompt.
+            let prompt = {
+                let v = vault_for_review.read().await.clone();
+                match v {
+                    Some(vault) if !vault.is_empty() => vault.obfuscate(&prompt),
+                    _ => prompt,
+                }
+            };
             let summary = match provider.generate(&prompt, &options).await {
                 Ok(text) => {
                     let trimmed = text.trim();

@@ -322,6 +322,38 @@ impl KodEngine {
         *self.secret_vault.write().await = Some(vault);
     }
 
+    /// Obfuscate `text` through the installed secret vault, if any.
+    ///
+    /// Every *secondary* provider call (a prompt built from a raw
+    /// string, sent via `provider.generate` rather than the primary
+    /// turn's `build_grounded_request`) MUST route through this
+    /// helper. Pre-110bbc84, three such call sites each independently
+    /// read the vault or forgot to; two leaked registered secrets to
+    /// a second provider. This method is the single point of truth
+    /// for the "obfuscate before secondary provider" step.
+    ///
+    /// No-op when no vault is installed (the default) or when the
+    /// text contains no registered secret.
+    pub(crate) async fn obfuscate_for_prompt(&self, text: &str) -> String {
+        let vault = self.secret_vault.read().await.clone();
+        match vault {
+            Some(v) if !v.is_empty() => v.obfuscate(text),
+            _ => text.to_string(),
+        }
+    }
+
+    /// Call a provider with a secondary prompt after obfuscating
+    /// through the vault. Returns whatever the provider returns.
+    pub(crate) async fn generate_secondary(
+        &self,
+        provider: &std::sync::Arc<dyn kod_provider::LlmProvider>,
+        prompt: &str,
+        options: &kod_provider::GenerationOptions,
+    ) -> kod_error::Result<String> {
+        let obfuscated = self.obfuscate_for_prompt(prompt).await;
+        provider.generate(&obfuscated, options).await
+    }
+
     /// Delta §14.1: the current vault, if one is installed.
     pub async fn secret_vault(
         &self,

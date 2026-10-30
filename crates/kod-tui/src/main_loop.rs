@@ -7671,6 +7671,120 @@ mod tests {
         let _ = engine.shutdown().await;
     }
 
+    /// `/review` obfuscates the reviewed text through the installed
+    /// secret vault before the reviewer provider sees it.
+    ///
+    /// Non-vacuous: revert `policy.rs`'s `vault_for_review` capture
+    /// and the `let prompt = { ... }` obfuscation block → this test
+    /// fails with the raw secret visible in the captured prompt.
+    #[tokio::test]
+    async fn test_review_obfuscates_through_the_vault() {
+        use async_trait::async_trait;
+        use kod_core::{KodEngine, RouterConfig};
+        use kod_provider::{
+            GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+            ProviderRegistry, StreamChunk,
+        };
+        use kod_types::ToolDefinition;
+        use kod_types::secret_placeholder::SecretVault;
+        use std::pin::Pin;
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingProvider {
+            prompts: Arc<Mutex<Vec<String>>>,
+        }
+        #[async_trait]
+        impl LlmProvider for CapturingProvider {
+            fn name(&self) -> &str {
+                "capturing"
+            }
+            async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+                Ok(vec!["capturing".into()])
+            }
+            async fn generate(&self, p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
+                self.prompts.lock().unwrap().push(p.to_string());
+                Ok("placeholder review".to_string())
+            }
+            async fn generate_with_tools(
+                &self,
+                p: &str,
+                _t: &[ToolDefinition],
+                o: &GenerationOptions,
+            ) -> kod_error::Result<GenerationResponse> {
+                Ok(GenerationResponse::Text {
+                    content: self.generate(p, o).await?,
+                    usage: None,
+                })
+            }
+            fn stream(
+                &self,
+                _p: &str,
+                _o: &GenerationOptions,
+            ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+            {
+                Box::pin(futures::stream::empty())
+            }
+        }
+
+        let raw_secret = "AKIAIOSFODNN7EXAMPLE";
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("review.vault.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = Arc::new(KodEngine::new(cfg, db).unwrap());
+
+        let mut reg = ProviderRegistry::new();
+        reg.insert(
+            "capturing",
+            Arc::new(CapturingProvider {
+                prompts: Arc::clone(&prompts),
+            }),
+            ProviderCapabilities::conservative(),
+            "capturing",
+        );
+        engine
+            .set_registry(Arc::new(reg), ModelRef::new("capturing", "capturing"), None)
+            .await;
+        engine.start().await.unwrap();
+
+        let vault = Arc::new(SecretVault::with_random_key());
+        let placeholder = vault.register(raw_secret);
+        assert_ne!(placeholder, raw_secret);
+        engine.set_secret_vault(Arc::clone(&vault)).await;
+
+        let mut tui = TuiLoop::new();
+        tui.set_engine(engine.clone());
+        tui.app
+            .push_assistant_message(&format!("here is the key {raw_secret}"));
+
+        tui.handle_command("/review").await.expect("handle_command");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let captured = prompts.lock().unwrap().clone();
+        assert!(!captured.is_empty(), "review provider was never called");
+        for (i, p) in captured.iter().enumerate() {
+            assert!(
+                !p.contains(raw_secret),
+                "review prompt {i} leaked raw secret:\n{p}"
+            );
+        }
+        assert!(
+            captured.iter().any(|p| p.contains(&placeholder)),
+            "review prompt must contain the placeholder",
+        );
+
+        let _ = engine.shutdown().await;
+    }
+
     /// `/review` with an engine but no assistant turn yet must report
     /// the second guard, not attempt to spawn a job against nothing.
     /// This is what a user hits if they `/review` on the very first

@@ -33,17 +33,9 @@ impl KodEngine {
             return;
         }
         // Delta §14.1: obfuscate before the plan provider sees the
-        // prompt. The primary turn's prompt is built by
-        // `build_grounded_request`, which reads the vault; this
-        // secondary call site did not, so a user-pasted secret
-        // reached the plan provider raw. Same shape as 968c7d7b.
-        let obfuscated_input = {
-            let vault = self.secret_vault.read().await.clone();
-            match vault {
-                Some(v) if !v.is_empty() => v.obfuscate(input),
-                _ => input.to_string(),
-            }
-        };
+        // prompt. Routed through `obfuscate_for_prompt` so this path
+        // cannot forget the vault.
+        let obfuscated_input = self.obfuscate_for_prompt(input).await;
         let prompt = format!(
             "Produce a concise, ordered plan for the request below.\n\
              Output ONLY a JSON array of strings, one per step.\n\
@@ -53,7 +45,7 @@ impl KodEngine {
              - No explanations, no headers, no wrapping prose.\n\n\
              Request: {obfuscated_input}"
         );
-        let raw = match provider.generate(&prompt, options).await {
+        let raw = match self.generate_secondary(provider, &prompt, options).await {
             Ok(t) => t,
             Err(e) => {
                 tracing::debug!(error = %e, "plan generation skipped");
