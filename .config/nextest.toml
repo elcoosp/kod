@@ -52,3 +52,12 @@ test-group = 'clipboard'
 [[profile.default.overrides]]
 filter = 'all()'
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Added for #3: subprocess-spawning tests serialized to avoid
+# process-table contention under full-workspace parallelism.
+[test-groups]
+serial-subprocess = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(/(acp_handshake|background_shell|config_migrate|dispatch_arms|git_tools|harness|malformed_rpc|mcp_roundtrip|memory_residual|metrics|mod|policy_explain|replay|run_chat_wrapper)/)'
+test-group = 'serial-subprocess'
