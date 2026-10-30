@@ -62,9 +62,18 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 # so `#[tokio::test(flavor = "...")]` counts). Helper files named
 # `mod`/`common`/`harness`/`fixture`/`support`/`util` are excluded
 # so the pattern does not pick up unrelated tests by substring.
+#
+# `auto_check` is included manually: `auto_check_tests` spawns `cargo
+# check` transitively via `kod_tools::check::run_check`, so the walker
+# (which greps for direct `Command::new` in test files) does not see
+# it. The same holds for any test that reaches `execute_command`
+# through `run_tool_calls` without a direct `Command::new`. Add those
+# by hand as they appear — the walker is not exhaustive for indirect
+# spawners.
+
 [test-groups]
 serial-subprocess = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'test(/(acp_handshake|background_shell|config_migrate|dispatch_arms|git_tools|malformed_rpc|mcp_roundtrip|memory_residual|metrics|minimizer_integration|policy_explain|replay|run_chat_wrapper|sandbox_containment)/)'
+filter = 'test(/(acp_handshake|background_shell|config_migrate|dispatch_arms|git_tools|malformed_rpc|mcp_roundtrip|memory_residual|metrics|minimizer_integration|policy_explain|replay|run_chat_wrapper|sandbox_containment|auto_check)/)'
 test-group = 'serial-subprocess'
