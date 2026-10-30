@@ -109,7 +109,7 @@ fn acp_subcommand_answers_initialize() {
 
     // Read the response frame. Any well-formed JSON-RPC response is
     // enough; the assertion is the shape, not a specific field.
-    let response = match read_frame(&mut reader, Duration::from_secs(45)) {
+    let response = match read_frame(&mut reader, Duration::from_secs(15)) {
         Ok(v) => v,
         Err(e) => {
             // A failed handshake closes nothing; kill the child so
