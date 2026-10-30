@@ -440,6 +440,18 @@ impl KodEngine {
     /// transcript boundary — the block is part of the cacheable prefix.
     pub async fn fill_mental_model(&self, id: &str, text: String) {
         if let Some(m) = self.mental_models.write().await.get_mut(id) {
+            // Defense in depth: the mental-model block is injected into
+            // every turn's prompt and cached. If `text` traces back to
+            // any source that predates the vault install, obfuscating
+            // here is the second line of defense against the same class
+            // of leak 9304fbd5 fixed on the plan/summary paths.
+            let text = {
+                let vault = self.secret_vault.read().await.clone();
+                match vault {
+                    Some(v) if !v.is_empty() => v.obfuscate(&text),
+                    _ => text,
+                }
+            };
             m.fill(text);
         }
     }

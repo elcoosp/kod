@@ -899,6 +899,24 @@ impl MemoryManager {
     }
 
     /// Search across all memory types
+    /// Search across every memory regardless of `project_key`.
+    ///
+    /// `project_key` is currently metadata only (set by
+    /// `extract::metadata_for` on auto-extracted facts, consumed by
+    /// `fusion::consolidate` to avoid cross-project merges). It is
+    /// *not* a retrieval filter — `search` and `retrieve_context`
+    /// return entries from any project.
+    ///
+    /// Design rationale: memories are intended to be user-scoped, so
+    /// a preference learned in one project ("prefers tabs") is
+    /// useful in another. A future "scope to current project" mode
+    /// would take a `project_key: Option<&str>` parameter; adding it
+    /// now changes every caller and every test fixture without a
+    /// confirmed need.
+    ///
+    /// If a caller depends on per-project scoping, filter the
+    /// returned entries by `entry.metadata.project_key` — that is
+    /// what the current design expects.
     pub async fn search(&self, query: &str) -> Result<Vec<MemoryEntry>> {
         let mut results = Vec::new();
 
