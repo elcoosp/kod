@@ -154,7 +154,6 @@ impl RouterConfig {
     }
 }
 
-
 impl std::fmt::Debug for RouterConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `dyn EmbeddingClient` is not `Debug`; the manual impl shows
