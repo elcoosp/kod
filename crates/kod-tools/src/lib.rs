@@ -43,6 +43,7 @@ pub mod context;
 pub mod edit_hashline;
 pub mod edit_tool;
 pub mod env_policy;
+pub mod file_info;
 pub mod git;
 pub mod internal_url;
 pub mod relevance;
