@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "kod-ast"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "tempfile",
@@ -2151,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "kod-cli"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "axum",
@@ -2197,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "kod-config"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "dirs 7.0.0",
  "globset",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2269,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core-quality"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2299,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core-routing"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core-serve"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "futures",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core-state"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "kod-core-tools"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "kod-error"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "kod-types",
  "proptest",
@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "kod-lsp"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "serde",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "kod-mcp"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "dirs 7.0.0",
  "libc",
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "kod-memory"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "futures",
@@ -2487,7 +2487,7 @@ dependencies = [
 
 [[package]]
 name = "kod-minimize"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "regex",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "kod-provider"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "kod-provider-anthropic"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "adk-core",
  "adk-model",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "kod-provider-openai"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "adk-core",
  "adk-model",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "kod-risk"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "rstest",
@@ -2575,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "kod-schema-dialect"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "rstest",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "kod-skills"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "kod-config",
  "kod-error",
@@ -2603,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "kod-stats"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "serde",
@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "kod-swarm"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "chrono",
  "futures",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "kod-telemetry"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "proptest",
  "reqwest 0.13.5",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "kod-tools"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-trait",
  "fs4",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "kod-tui"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2714,7 +2714,7 @@ dependencies = [
 
 [[package]]
 name = "kod-types"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "base64 0.23.1",
  "compact_str 0.10.0",
