@@ -125,6 +125,36 @@ pub struct RouterConfig {
     pub embedder: Option<std::sync::Arc<dyn kod_memory::EmbeddingClient>>,
 }
 
+impl RouterConfig {
+    /// Standard test fixture. Every `RouterConfig` literal in an
+    /// integration test spelled out the same seven fields; when
+    /// `embedder` was added the fixture broke in N places at once.
+    /// Non-default fields override via struct update syntax:
+    ///
+    /// ```ignore
+    /// RouterConfig {
+    ///     context_window: 16384,
+    ///     ..RouterConfig::for_testing(tmp.path())
+    /// }
+    /// ```
+    ///
+    /// `#[doc(hidden)]` because it exists for tests and benches; a
+    /// production caller should choose its config explicitly.
+    #[doc(hidden)]
+    pub fn for_testing(working_dir: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: working_dir.into(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        }
+    }
+}
+
+
 impl std::fmt::Debug for RouterConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `dyn EmbeddingClient` is not `Debug`; the manual impl shows
