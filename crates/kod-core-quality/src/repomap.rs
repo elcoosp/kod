@@ -18,16 +18,22 @@ use std::sync::OnceLock;
 /// One extracted top-level symbol.
 #[derive(Debug, Clone)]
 pub struct Symbol {
+    /// Symbol kind: `fn`, `struct`, `enum`, `trait`, `mod`, `const`.
     pub kind: &'static str,
+    /// Symbol name as it appears in source.
     pub name: String,
+    /// 1-based start line.
     pub line: usize,
 }
 
 /// The full repository map.
 #[derive(Debug, Clone, Default)]
 pub struct RepoMap {
+    /// Symbols per source file.
     pub entries: BTreeMap<PathBuf, Vec<Symbol>>,
+    /// Imported paths per source file (resolved best-effort).
     pub imports: BTreeMap<PathBuf, Vec<PathBuf>>,
+    /// Ranking weight per file, used to order the rendered map.
     pub rank: BTreeMap<PathBuf, f32>,
     /// P4: distinct languages the walk recognized, as lowercase
     /// identifiers (`rust`, `python`, `js`, `go`, `ruby`, `java`,
@@ -81,10 +87,12 @@ impl RepoMap {
         out
     }
 
+    /// Number of files the map covers.
     pub fn file_count(&self) -> usize {
         self.entries.len()
     }
 
+    /// Total symbols across every file.
     pub fn symbol_count(&self) -> usize {
         self.entries.values().map(|v| v.len()).sum()
     }
@@ -163,6 +171,10 @@ pub fn looks_like_a_repo(root: &Path) -> bool {
     false
 }
 
+/// Walk `root` and build the full repository map.
+///
+/// Honors `.gitignore`, skips build trees, and refuses to descend a
+/// directory that does not look like a repo (see `looks_like_a_repo`).
 pub fn build_repo_map(root: &Path) -> RepoMap {
     let mut entries: BTreeMap<PathBuf, Vec<Symbol>> = BTreeMap::new();
     let mut raw_imports: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();

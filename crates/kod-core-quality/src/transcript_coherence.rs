@@ -215,6 +215,7 @@ pub struct DigestMemo {
 }
 
 impl DigestMemo {
+    /// An empty memo.
     pub fn new() -> Self {
         Self::default()
     }
@@ -225,6 +226,7 @@ impl DigestMemo {
         self.entries.len()
     }
 
+    /// True when the memo holds no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

@@ -88,6 +88,7 @@ pub struct AutoThinking {
 }
 
 impl AutoThinking {
+    /// Build a classifier over a shared judgment client, default mode.
     pub fn new(client: JudgmentClient) -> Self {
         Self {
             client,
@@ -95,11 +96,13 @@ impl AutoThinking {
         }
     }
 
+    /// Builder: set the classifier mode.
     pub fn with_mode(mut self, mode: ClassifierMode) -> Self {
         self.mode = mode;
         self
     }
 
+    /// The current classifier mode.
     pub fn mode(&self) -> ClassifierMode {
         self.mode
     }

@@ -157,7 +157,10 @@ pub enum PruneAction {
     /// assistant turn that issued the read is still the same turn, and
     /// the tool result still answers the same call. Only the body
     /// collapses.
-    Blank { placeholder: String },
+    Blank {
+        /// Text substituted for the collapsed body.
+        placeholder: String,
+    },
 }
 
 /// A prune plan: the ordered list of message mutations a caller
@@ -171,6 +174,7 @@ pub enum PruneAction {
 /// session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrunePlan {
+    /// Ordered list of mutations the caller should apply.
     pub actions: Vec<(MessageId, PruneAction)>,
 }
 
@@ -196,10 +200,12 @@ impl PrunePlan {
             .sum()
     }
 
+    /// True when the plan contains no actions.
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
 
+    /// Number of actions in the plan.
     pub fn len(&self) -> usize {
         self.actions.len()
     }

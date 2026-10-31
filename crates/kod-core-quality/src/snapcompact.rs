@@ -154,7 +154,12 @@ pub enum RasterizeError {
     /// The input is larger than the canvas limit. A caller that hits
     /// this should not rasterize — the image would be enormous and
     /// the token cost would exceed the text it replaced.
-    TooLarge { lines: usize, max: usize },
+    TooLarge {
+        /// Line count of the input.
+        lines: usize,
+        /// Maximum lines the canvas can hold.
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for RasterizeError {

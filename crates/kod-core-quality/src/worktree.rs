@@ -36,7 +36,9 @@ pub struct WorktreeInfo {
     /// `schema-writer`, ...). Sanitized by the caller or by
     /// [`sanitize_slug`].
     pub slug: String,
+    /// Filesystem path of the worktree.
     pub path: PathBuf,
+    /// Git branch the worktree is checked out to.
     pub branch: String,
 }
 
@@ -599,6 +601,7 @@ impl WorktreeManager {
         self.force_cleanup = false;
     }
 
+    /// Remove every worktree this manager created.
     pub fn cleanup(&mut self) {
         for info in self.created.drain(..) {
             // Delta §11.11: remove the ownership marker first, so a

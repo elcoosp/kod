@@ -73,9 +73,11 @@ pub struct ByteRange {
 }
 
 impl ByteRange {
+    /// Number of bytes in the range.
     pub fn len(&self) -> usize {
         self.end.saturating_sub(self.start)
     }
+    /// True when the range covers zero bytes.
     pub fn is_empty(&self) -> bool {
         self.end <= self.start
     }
@@ -89,10 +91,17 @@ impl ByteRange {
 pub enum RegionKind {
     /// A fenced code block. `language` is the fence's info string,
     /// trimmed, if any.
-    Fence { language: Option<String> },
+    Fence {
+        /// The info string after the opening fence, trimmed. None
+        /// when the fence has no language.
+        language: Option<String>,
+    },
     /// An XML-tagged block, e.g. `<analysis>...</analysis>`. `tag` is
     /// the tag name without angle brackets.
-    Xml { tag: String },
+    Xml {
+        /// The tag name without angle brackets.
+        tag: String,
+    },
     /// A whole tool-result body.
     ToolBody,
 }
@@ -132,8 +141,11 @@ impl RegionKind {
 /// One elision the plan wants to make.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShakeAction {
+    /// The message the elision applies to.
     pub message_id: MessageId,
+    /// The byte range inside the message body to elide.
     pub range: ByteRange,
+    /// The kind of region being elided.
     pub kind: RegionKind,
     /// Pre-rendered placeholder. Duplicated from `kind` for the
     /// caller's convenience — the caller mutates the message body,
@@ -152,13 +164,16 @@ pub struct ShakeAction {
 /// order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShakePlan {
+    /// Ordered list of elisions to apply.
     pub actions: Vec<ShakeAction>,
 }
 
 impl ShakePlan {
+    /// True when the plan contains no actions.
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
+    /// Number of actions in the plan.
     pub fn len(&self) -> usize {
         self.actions.len()
     }

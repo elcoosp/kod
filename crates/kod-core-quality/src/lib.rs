@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! kod-core-quality: codebase analysis, cleanup, and quality gates.
 //! Extracted from kod-core so the quality tools can be worked on
 //! independently of the agent engine.
