@@ -119,35 +119,52 @@ confirmation.
 
 One group, one commit, one gate cycle. Do not batch.
 
-## Shared-helper extraction attempt
+## Shared-helper extraction — LANDED at be7bc9d0
 
-Attempted to extract three helpers from `tools.rs` into a new
+The attempt that was documented as blocked in `990af8ed` landed
+at `be7bc9d0`. Three helpers moved from `tools.rs` to
 `crates/kod-tools/src/shared.rs`:
 
-  - `next_temp_seq`
-  - `atomic_write`
-  - `kill_child_tree`
+  - `next_temp_seq`: monotonic counter for temp-file naming.
+  - `atomic_write`: temp-file + fsync + rename, preserves dest
+    perms, invalidates the walk cache on success.
+  - `kill_child_tree`: SIGKILL to a command's process group so a
+    timeout does not orphan grandchildren.
 
-The extraction script found all three functions correctly and wrote
-`shared.rs` with the function bodies. The module declaration in
-`lib.rs` and the `use crate::shared::{...}` in `tools.rs` both
-landed. Compilation failed with `E0603: module is private` — the
-exact dependency the compiler names is in the next session's
-transcript; the pattern (single source file, byte-offset
-extraction, compile check, revert on failure) has been tried on
-`FileInfoTool` (succeeded) and on the `RouterConfig` fixtures
-(failed three times with a different cause each time).
+Two pieces made it work after the first E0603 failure:
 
-The next session's opener for the tool split is:
-1. Reproduce the extraction with `cargo check` captured to a log
-   with `grep -B2 -A8 '^error'` (not `tail -30`).
-2. Read the specific E0603 error — it names the private module
-   that `shared.rs` depends on.
-3. If the dependency is `walk_cache`, check whether its API needs
-   `pub(crate)` exposure for the new module, or whether the
-   helper should stay in `tools.rs` where it has visibility.
-4. Re-run the extraction with the visibility fix.
+1. `pub(crate) use crate::shared::{atomic_write, kill_child_tree,
+   next_temp_seq};` in `tools.rs` — plain `use` does not
+   re-export, so `crate::tools::atomic_write` (referenced from
+   `conflict_handler.rs:415` and `edit_hashline.rs:276`) vanished.
+   `pub(crate) use` restores the name under `crate::tools::*` and
+   keeps the two external callers working without an edit.
 
-The doc this session shipped (the three main-loop-split candidates
-above) stands regardless. The shared-helper extraction is a
-five-minute fix once the E0603 names its module.
+2. The full error output from `cargo check` named both files and
+   both lines, which is what the prior attempt hid by piping to
+   `tail -30`. A one-line diagnostic change — from
+   `tail -30` to `grep -B2 -A8 '^error'` — was the entire
+   difference between "blocked" and "five-minute fix."
+
+No behavioural change: same functions, private fns lifted to
+`pub(crate)`, three call sites resolve through the re-export.
+
+## Next: the read-only group (main-loop item 5)
+
+The shared-helper extraction was parallel work — it proves the
+tools-split pattern and does not touch the main-loop split. The
+first main-loop group from this proposal (six read-only arms:
+`/cache`, `/limits`, `/context`, `/theme`, `/tools`, `/whoami`)
+is the actual next step.
+
+The pattern is: extract each arm's body into a new
+`handle_observation_commands(&mut self, arm: &str) -> Result<()>`,
+replace the match arms with `self.handle_observation_commands("cache").await?`,
+and gate. One commit, one group, no batching.
+
+The doc's three candidates (a) per-group methods, (b) command
+registry, (c) handler trait stand as written above. Per-group
+first, read-only arms first, because the borrow-checker behavior
+of the mutation arms cannot be predicted from reading — the
+compiler is the confirmation step, same as every extraction this
+session.
