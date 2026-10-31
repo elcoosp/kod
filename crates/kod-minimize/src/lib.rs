@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Shell output minimizer (borrow from oh-my-pi, delta §5).
 //!
 //! # The gap this fills

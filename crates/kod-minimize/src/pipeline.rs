@@ -126,27 +126,47 @@ pub enum Stage {
     /// `replacement`. The `replacement` may reference capture groups
     /// with `$1`-style syntax.
     Replace {
+        /// The regex pattern to match.
         pattern: String,
+        /// The replacement text; may reference capture groups as `$1`.
         replacement: String,
     },
     /// Keep only lines matching at least one of `patterns`. An
     /// inverted variant is `strip_lines`.
-    KeepLines { patterns: Vec<String> },
+    KeepLines {
+        /// Patterns; a line is kept if it matches any.
+        patterns: Vec<String>,
+    },
     /// Drop every line matching any of `patterns`.
-    StripLines { patterns: Vec<String> },
+    StripLines {
+        /// Patterns; a line is dropped if it matches any.
+        patterns: Vec<String>,
+    },
     /// Keep the first `n` lines.
-    HeadLines { n: usize },
+    HeadLines {
+        /// Number of lines to keep from the start.
+        n: usize,
+    },
     /// Keep the last `n` lines.
-    TailLines { n: usize },
+    TailLines {
+        /// Number of lines to keep from the end.
+        n: usize,
+    },
     /// Hard cap on total lines. Equivalent to `head_lines` when the
     /// intent is "the output was too long"; kept separate so a def
     /// can express which bound it means without the reader guessing.
-    MaxLines { n: usize },
+    MaxLines {
+        /// Hard cap on the line count; the tail is dropped.
+        n: usize,
+    },
     /// Delta §5: a Rust-implemented filter. `filter` names one of the
     /// functions in [`crate::native`]; an unknown name aborts the
     /// pipeline so the def author sees the typo rather than a silent
     /// pass-through.
-    Native { filter: String },
+    Native {
+        /// Name of a Rust-implemented filter in [`crate::native`].
+        filter: String,
+    },
 }
 
 /// A pipeline stage failed.
@@ -155,7 +175,12 @@ pub enum PipelineError {
     /// A stage could not be run. `stage` is the kind as a string
     /// (`"replace"`, `"keep_lines"`); `reason` names the specific
     /// failure (a bad regex, an empty pattern list).
-    Stage { stage: &'static str, reason: String },
+    Stage {
+        /// The stage kind that failed (`"replace"`, `"keep_lines"`, …).
+        stage: &'static str,
+        /// Specific failure reason (bad regex, empty pattern list).
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for PipelineError {
@@ -171,7 +196,11 @@ impl std::error::Error for PipelineError {}
 /// A def-level failure, from parsing.
 #[derive(Debug, Clone)]
 pub enum DefError {
-    Parse { reason: String },
+    /// The def's TOML failed to deserialize.
+    Parse {
+        /// The specific parse error message.
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for DefError {
