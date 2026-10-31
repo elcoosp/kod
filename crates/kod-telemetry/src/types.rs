@@ -26,9 +26,13 @@ pub struct TurnRecord {
     pub model: String,
     /// Endpoint name in the kod registry.
     pub endpoint: String,
+    /// Prompt tokens the provider reported.
     pub prompt_tokens: u64,
+    /// Completion tokens the provider reported.
     pub completion_tokens: u64,
+    /// Tokens the provider read from its prompt cache.
     pub cache_read_tokens: u64,
+    /// Tokens the provider wrote to its prompt cache.
     pub cache_creation_tokens: u64,
     /// Time to first token, when the provider streamed.
     pub ttft_ms: Option<u64>,
@@ -48,5 +52,6 @@ pub struct ToolRecord {
     /// `ok` / `error` / `skipped` / `aborted` — a string, not an enum,
     /// so a caller can add a status without touching this type.
     pub status: String,
+    /// Wall time of the tool call in milliseconds.
     pub duration_ms: u64,
 }

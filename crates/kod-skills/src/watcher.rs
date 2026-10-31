@@ -11,8 +11,11 @@ use tokio::sync::mpsc;
 /// Events emitted by the skill watcher
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchEvent {
+    /// A skill file was created.
     Created(PathBuf),
+    /// A skill file was modified.
     Modified(PathBuf),
+    /// A skill file was removed.
     Removed(PathBuf),
 }
 

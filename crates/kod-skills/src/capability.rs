@@ -58,10 +58,12 @@ pub struct DiscoverySource {
     /// Free-form label ("kod-global", "claude-project") used in
     /// logs and in the `_source` field a caller renders.
     pub label: String,
+    /// The precedence band this source belongs to.
     pub band: Band,
 }
 
 impl DiscoverySource {
+    /// Build a source from a directory, label, and band.
     pub fn new(dir: impl Into<PathBuf>, label: impl Into<String>, band: Band) -> Self {
         Self {
             dir: dir.into(),
@@ -81,6 +83,7 @@ pub struct Discovered {
     pub path: PathBuf,
     /// The label of the source that produced it.
     pub source: String,
+    /// The precedence band the discovery landed in.
     pub band: Band,
 }
 
@@ -96,6 +99,7 @@ pub struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
+    /// Empty registry.
     pub fn new() -> Self {
         Self::default()
     }

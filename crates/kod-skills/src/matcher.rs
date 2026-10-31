@@ -21,6 +21,7 @@ impl Default for SkillMatcher {
 }
 
 impl SkillMatcher {
+    /// Matcher with default max-results and min-score.
     pub fn new() -> Self {
         Self {
             skills: RwLock::new(HashMap::new()),

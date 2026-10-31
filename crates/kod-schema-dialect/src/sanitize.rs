@@ -51,21 +51,42 @@ pub fn role_of(keyword: &str) -> KeywordRole {
 pub enum AppliedTransform {
     /// A keyword was renamed: `(from, to)`, at this JSON path.
     Renamed {
+        /// The JSON path where the rename happened.
         path: String,
+        /// The keyword that was renamed from.
         from: String,
+        /// The keyword that was renamed to.
         to: String,
     },
     /// A keyword was removed because the provider does not support it.
-    Removed { path: String, keyword: String },
+    Removed {
+        /// The JSON path where the keyword was removed.
+        path: String,
+        /// The keyword that was removed.
+        keyword: String,
+    },
     /// `required` entries naming properties that do not exist were
     /// dropped. A common 400: a model-authored schema lists a field
     /// it forgot to define.
-    PrunedRequired { path: String, names: Vec<String> },
+    PrunedRequired {
+        /// The JSON path where required entries were pruned.
+        path: String,
+        /// The property names removed from required.
+        names: Vec<String>,
+    },
     /// `const: v` was rewritten as `enum: [v]`.
-    ConstToEnum { path: String },
+    ConstToEnum {
+        /// The JSON path where const was rewritten as enum.
+        path: String,
+    },
     /// A combinator the provider does not support was flattened into
     /// its members' constraints merged onto the parent.
-    FlattenedCombiner { path: String, keyword: String },
+    FlattenedCombiner {
+        /// The JSON path where the combiner was flattened.
+        path: String,
+        /// The combiner keyword (allOf, anyOf, oneOf).
+        keyword: String,
+    },
 }
 
 /// One provider's (or gateway's) JSON Schema dialect.

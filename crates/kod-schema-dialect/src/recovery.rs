@@ -22,7 +22,10 @@ pub enum RetryPlan {
     /// Drop `keyword` from the schema and retry once. At most one
     /// retry per distinct construct — a schema that trips two
     /// unrelated keywords gets two attempts, not an infinite loop.
-    RetryWithoutConstruct { keyword: String },
+    RetryWithoutConstruct {
+        /// The keyword the provider refused.
+        keyword: String,
+    },
     /// The rejection named nothing actionable; surface it.
     GiveUp,
 }

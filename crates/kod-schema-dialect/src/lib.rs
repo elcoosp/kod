@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Schema dialects: make a JSON Schema acceptable to a provider that
 //! dislikes parts of it.
 //!

@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! OTLP GenAI telemetry (borrow from oh-my-pi, delta §14.5).
 //!
 //! # What this is
@@ -61,6 +62,8 @@ use std::sync::Arc;
 /// payloads beyond it are dropped with a counter increment.
 const MAX_CONCURRENT_POSTS: usize = 32;
 
+/// OTEL telemetry handle. Cheap to clone; every clone shares the
+/// same config and internal state.
 #[derive(Clone)]
 pub struct Telemetry {
     inner: Arc<Inner>,
@@ -190,6 +193,7 @@ impl Telemetry {
         self.inner.config.endpoint.is_some()
     }
 
+    /// The config this handle was built with.
     pub fn config(&self) -> &TelemetryConfig {
         &self.inner.config
     }
