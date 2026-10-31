@@ -14,18 +14,31 @@
 /// One provider call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestRecord {
+    /// Wire model id.
     pub model: String,
+    /// Endpoint name in the kod registry.
     pub endpoint: String,
+    /// Wall time of the call in milliseconds.
     pub duration_ms: u64,
+    /// Time to first token, when the provider streamed.
     pub ttft_ms: Option<u64>,
+    /// The provider's stop reason, when reported.
     pub stop_reason: Option<String>,
+    /// Input tokens the provider reported.
     pub input_tokens: u64,
+    /// Output tokens the provider reported.
     pub output_tokens: u64,
+    /// Tokens read from the provider's prompt cache.
     pub cache_read_tokens: u64,
+    /// Tokens written to the provider's prompt cache.
     pub cache_write_tokens: u64,
+    /// USD per million input tokens.
     pub input_rate: f64,
+    /// USD per million cached-read tokens.
     pub cache_read_rate: f64,
+    /// USD per million cached-write tokens.
     pub cache_write_rate: f64,
+    /// Whether the call failed.
     pub error: bool,
 }
 
@@ -61,23 +74,35 @@ impl RequestRecord {
 /// The fold over a set of records.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Aggregates {
+    /// Number of requests observed.
     pub requests: u64,
+    /// Number of those that failed.
     pub errors: u64,
+    /// Sum of input tokens.
     pub input_tokens: u64,
+    /// Sum of output tokens.
     pub output_tokens: u64,
+    /// Sum of cached-read tokens.
     pub cache_read_tokens: u64,
+    /// Sum of cached-write tokens.
     pub cache_write_tokens: u64,
+    /// Sum of request durations in milliseconds.
     pub total_duration_ms: u64,
+    /// Sum of per-request cache savings in USD.
     pub total_cache_savings_usd: f64,
+    /// Sum of ttft_ms values, for the average.
     pub ttft_sum_ms: u64,
+    /// Number of requests that reported ttft.
     pub ttft_count: u64,
 }
 
 impl Aggregates {
+    /// Empty aggregate.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Fold one request record into the aggregate.
     pub fn observe(&mut self, r: &RequestRecord) {
         self.requests += 1;
         if r.error {
@@ -95,6 +120,7 @@ impl Aggregates {
         }
     }
 
+    /// Fraction of requests that errored. None when no requests.
     pub fn error_rate(&self) -> Option<f64> {
         if self.requests == 0 {
             return None;
@@ -102,6 +128,8 @@ impl Aggregates {
         Some(self.errors as f64 / self.requests as f64)
     }
 
+    /// Average time to first token in milliseconds. None when no ttft
+    /// values were recorded.
     pub fn avg_ttft_ms(&self) -> Option<f64> {
         if self.ttft_count == 0 {
             return None;
@@ -109,6 +137,8 @@ impl Aggregates {
         Some(self.ttft_sum_ms as f64 / self.ttft_count as f64)
     }
 
+    /// Fraction of the input window read from cache. None when no
+    /// tokens were seen.
     pub fn cache_rate(&self) -> Option<f64> {
         let total = self.input_tokens + self.cache_read_tokens;
         if total == 0 {

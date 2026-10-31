@@ -47,7 +47,9 @@ pub struct CommitProposal {
 /// One change with a priority score.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PriorityChange {
+    /// Human-readable description of the change.
     pub description: String,
+    /// Priority score; higher means more urgent.
     pub score: i32,
 }
 
@@ -93,7 +95,12 @@ pub enum RejectReason {
     /// No changed paths.
     NoPaths,
     /// The type and the paths disagree.
-    TypePathMismatch { r#type: String, path: String },
+    TypePathMismatch {
+        /// The commit type supplied.
+        r#type: String,
+        /// The path the type disagrees with.
+        path: String,
+    },
 }
 
 impl std::fmt::Display for RejectReason {

@@ -26,7 +26,9 @@ const CHARS_PER_TOKEN: usize = 4;
 /// One file's section of a diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiff {
+    /// The file path the diff section is for.
     pub path: String,
+    /// The raw diff body for the file.
     pub body: String,
 }
 

@@ -8,10 +8,15 @@
 /// The counts for one user message.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BehavioralSignals {
+    /// Count of negations (no, wrong, not).
     pub negation: u32,
+    /// Count of repeated requests.
     pub repetition: u32,
+    /// Count of blame phrases (you broke, your fault).
     pub blame: u32,
+    /// Count of frustration markers (sigh, ugh).
     pub anguish: u32,
+    /// Count of all-caps shouting.
     pub yelling: u32,
 }
 
@@ -31,10 +36,12 @@ impl BehavioralSignals {
             .saturating_add(self.yelling)
     }
 
+    /// True when any signal is non-zero.
     pub fn any(&self) -> bool {
         self.total() > 0
     }
 
+    /// Saturating per-field sum with another set of signals.
     pub fn merge(&self, other: &BehavioralSignals) -> BehavioralSignals {
         BehavioralSignals {
             negation: self.negation.saturating_add(other.negation),

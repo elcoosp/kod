@@ -58,8 +58,11 @@ impl Default for IfBenchConfig {
 /// Where the cat sound must appear this turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundPosition {
+    /// The sound goes at the start of the array.
     Start,
+    /// The sound goes in the middle.
     Middle,
+    /// The sound goes at the end.
     End,
 }
 
@@ -73,6 +76,7 @@ impl SoundPosition {
         }
     }
 
+    /// Lowercase string label (start/middle/end).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Start => "start",
