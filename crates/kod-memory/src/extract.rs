@@ -27,7 +27,9 @@ use std::sync::Arc;
 /// A candidate fact produced by the extractor.
 #[derive(Debug, Clone)]
 pub struct ExtractedFact {
+    /// The fact's text.
     pub content: String,
+    /// The kind of fact.
     pub kind: FactKind,
 }
 
@@ -35,9 +37,13 @@ pub struct ExtractedFact {
 /// so a caller can filter later (`kod memory search --tag decision`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactKind {
+    /// A user preference.
     Preference,
+    /// A decision the user made.
     Decision,
+    /// A recurring pattern.
     Pattern,
+    /// A plain fact.
     Fact,
 }
 

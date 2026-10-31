@@ -49,6 +49,7 @@ impl PrefixHash {
     /// retained nothing hashes to this value.
     pub const SEED: PrefixHash = PrefixHash(0xcbf2_9ce4_8422_2325);
 
+    /// The raw hash value.
     pub fn value(self) -> u64 {
         self.0
     }
@@ -102,6 +103,7 @@ impl Default for RetentionCursor {
 }
 
 impl RetentionCursor {
+    /// Empty cursor.
     pub fn new() -> Self {
         Self::default()
     }

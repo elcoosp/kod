@@ -79,6 +79,7 @@ pub struct OllamaEmbedder {
 }
 
 impl OllamaEmbedder {
+    /// Build an Ollama-backed embedder against the given base URL and model.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -167,6 +168,8 @@ pub struct OpenAIEmbedder {
 }
 
 impl OpenAIEmbedder {
+    /// Build an OpenAI-compatible embedder against the given base URL,
+    /// model, and API key.
     pub fn new(
         base_url: impl Into<String>,
         model: impl Into<String>,

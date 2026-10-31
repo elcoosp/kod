@@ -51,7 +51,9 @@ pub enum RefreshTrigger {
 /// A model's seed: its identity and how to fill it.
 #[derive(Debug, Clone)]
 pub struct MentalModelSeed {
+    /// The model's unique id.
     pub id: String,
+    /// Human-readable name for the model.
     pub name: String,
     /// The memory query that fills the model.
     pub source_query: String,
@@ -61,12 +63,14 @@ pub struct MentalModelSeed {
     /// Token budget for the rendered block. The design uses 600 for
     /// preference models, 800 for decision models.
     pub max_tokens: usize,
+    /// The refresh policy that decides when this model re-fills.
     pub trigger: RefreshTrigger,
 }
 
 /// A filled model: the seed plus its rendered text and generation.
 #[derive(Debug, Clone)]
 pub struct MentalModel {
+    /// The seed that defines this model.
     pub seed: MentalModelSeed,
     /// The rendered block. `None` until the first fill.
     pub rendered: Option<String>,
@@ -117,6 +121,7 @@ pub struct MentalModels {
 }
 
 impl MentalModels {
+    /// Empty mental-models set.
     pub fn new() -> Self {
         Self::default()
     }

@@ -247,9 +247,13 @@ pub fn blend_weights(weights: IntentWeights, confidence: f64) -> IntentWeights {
 /// A weight bias for the four retrieval voices, for one intent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IntentWeights {
+    /// Weight on the vector (semantic) retrieval voice.
     pub vector: f64,
+    /// Weight on the keyword (lexical) retrieval voice.
     pub keyword: f64,
+    /// Weight on the importance signal.
     pub importance: f64,
+    /// Weight on the temporal recency signal.
     pub temporal: f64,
 }
 

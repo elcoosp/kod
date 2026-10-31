@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize};
 /// Built context ready for LLM processing
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Context {
+    /// The current user input.
     pub user_input: String,
+    /// Retrieved memory context for this turn.
     pub memory_context: MemoryContext,
+    /// Active skills for this turn.
     pub skills: Vec<Skill>,
+    /// Override system prompt. None uses the default.
     pub system_prompt: Option<String>,
 }
 
@@ -95,6 +99,7 @@ pub struct ContextBuilder {
 }
 
 impl ContextBuilder {
+    /// Start a builder with defaults.
     pub fn new() -> Self {
         Self::default()
     }

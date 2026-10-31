@@ -39,23 +39,29 @@ use serde::{Deserialize, Serialize};
 /// What kind of decision a delta records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecisionKind {
+    /// A recorded architecture decision.
     #[serde(rename = "architecture_decision")]
     Architecture,
+    /// A recorded product decision.
     #[serde(rename = "product_decision")]
     Product,
+    /// A recorded style decision.
     #[serde(rename = "style_decision")]
     Style,
+    /// A recorded constraint.
     #[serde(rename = "constraint")]
     Constraint,
     /// An approach that was tried and rejected — worth as much as the
     /// one that was chosen.
     #[serde(rename = "rejected_approach")]
     RejectedApproach,
+    /// A correction to a prior decision.
     #[serde(rename = "correction")]
     Correction,
 }
 
 impl DecisionKind {
+    /// The lowercase string label for this kind.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Architecture => "architecture_decision",
@@ -121,6 +127,7 @@ impl Friction {
 /// One extracted decision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionDelta {
+    /// The kind of decision.
     pub kind: DecisionKind,
     /// The decision, phrased as a timeless norm (no task state, no
     /// paths).
@@ -133,6 +140,7 @@ pub struct DecisionDelta {
     /// optional.
     #[serde(default)]
     pub rejected_alternative: Option<String>,
+    /// The reasoning behind the decision, when one was given.
     #[serde(default)]
     pub rationale: Option<String>,
     /// The exact substring of the user's prompt this came from.

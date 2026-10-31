@@ -58,6 +58,7 @@ impl VectorIndex {
         self.entries.len()
     }
 
+    /// True when no vectors are stored.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

@@ -37,10 +37,15 @@
 /// How a fact was learned. Ordered weakest to strongest evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Veracity {
+    /// The user stated the fact directly.
     Stated,
+    /// The fact was inferred from other content.
     Inferred,
+    /// The fact was imported from an external source.
     Imported,
+    /// The provenance is unknown.
     Unknown,
+    /// The fact was produced by a tool result.
     Tool,
 }
 
@@ -62,6 +67,7 @@ impl Veracity {
         self.weight() * 0.5
     }
 
+    /// The lowercase string label for this veracity level.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Stated => "stated",

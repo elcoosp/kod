@@ -50,6 +50,7 @@ pub enum Tier {
 }
 
 impl Tier {
+    /// The tier's 1-based number.
     pub fn number(self) -> u8 {
         match self {
             Self::One => 1,

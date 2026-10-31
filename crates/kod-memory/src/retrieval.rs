@@ -25,7 +25,9 @@ use time::OffsetDateTime;
 /// per-type `(η, k)` from [`weibull_shape_for`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Decay {
+    /// Historical exponential decay (2^(-Δt/H)).
     Exponential,
+    /// Default Weibull decay per the per-type shape table.
     #[default]
     Weibull,
 }
@@ -126,9 +128,13 @@ pub fn decay_at(ts: OffsetDateTime, now: OffsetDateTime, shape: DecayShape) -> f
 /// The three weights, the recency half-life, and the decay shape.
 #[derive(Debug, Clone, Copy)]
 pub struct HybridScorer {
+    /// Weight on the semantic similarity term.
     pub w_semantic: f32,
+    /// Weight on the keyword overlap term.
     pub w_keyword: f32,
+    /// Weight on the recency term.
     pub w_recency: f32,
+    /// Half-life in days for the recency term.
     pub half_life_days: f32,
     /// Which decay shape to apply. `Weibull` (the default) uses the
     /// per-type table; `Exponential` derives a shape from
@@ -160,12 +166,17 @@ pub fn redistribute(w_semantic: f32, w_keyword: f32) -> (f32, f32) {
 
 /// Precomputed query terms for keyword scoring.
 pub struct QueryTerms {
+    /// The tokenized query terms.
     pub tokens: Vec<String>,
+    /// Per-term document frequency across the candidate set.
     pub df: std::collections::HashMap<String, usize>,
+    /// Number of candidate documents the terms were scored against.
     pub n_docs: usize,
 }
 
 impl QueryTerms {
+    /// Tokenize the query and precompute its document frequencies
+    /// against the candidates.
     pub fn build(query: &str, candidates: &[MemoryEntry]) -> Self {
         let tokens = stopwords::tokens(query);
         let mut df = std::collections::HashMap::new();

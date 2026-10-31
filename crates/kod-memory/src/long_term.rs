@@ -604,6 +604,7 @@ impl LongTermMemory {
         Ok(out)
     }
 
+    /// Number of entries in the store.
     pub async fn count(&self) -> Result<usize> {
         // T1-H3: redb tracks the row count internally; `len()` is an
         // O(1) B-tree count, not a walk. The pre-fix shape iterated
@@ -651,6 +652,7 @@ impl LongTermMemory {
         drop(self);
     }
 
+    /// Remove every entry from the store.
     pub async fn clear(&self) -> Result<()> {
         self.blocking(|db| {
             let txn = db.begin_write().map_err(|e| {
