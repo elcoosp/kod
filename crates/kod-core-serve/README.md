@@ -14,7 +14,7 @@ kod serve --socket ~/.kod/sock
 
 Starts a long-lived daemon that speaks NDJSON over a Unix socket. The
 TUI and `kod run --attach` connect to the same socket; each connection
-is handled by [`serve_io`]. The ACP variant (`kod serve --acp`) speaks
+is handled by [`serve::serve_io`]. The ACP variant (`kod serve --acp`) speaks
 LSP-style Content-Length framing over stdio for editor integration.
 
 For embedding, `serve_io(engine, reader, writer, shutdown)` runs a
