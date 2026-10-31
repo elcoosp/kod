@@ -34,19 +34,27 @@ pub const MAX_REDIRECT_HOPS: usize = 5;
 /// An HTTP method, reduced to what the policy needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    /// A GET request.
     Get,
+    /// Any other method (POST, PUT, DELETE, …).
     Other,
 }
 
 /// One hop's origin: scheme + host + port, lower-cased.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
+    /// The URL scheme, lower-cased (`http` or `https`).
     pub scheme: String,
+    /// The host, lower-cased.
     pub host: String,
+    /// The explicit port, when the URL carries one. `None` means the
+    /// scheme's default.
     pub port: Option<u16>,
 }
 
 impl Origin {
+    /// Parse an absolute URL into a normalized `Origin`. Returns
+    /// `None` for a URL that is not absolute or lacks a host.
     pub fn parse(url: &str) -> Option<Origin> {
         // Delegated to the `url` crate — the same WHATWG parser
         // `reqwest` uses to actually follow the redirect. Any
@@ -103,9 +111,17 @@ impl Origin {
 pub enum RedirectDecision {
     /// Follow to the target. `attach_configured_headers` is false when
     /// the target is cross-origin.
-    Follow { attach_configured_headers: bool },
+    Follow {
+        /// Whether the configured auth headers should be attached to
+        /// the redirected request. False when the target is
+        /// cross-origin.
+        attach_configured_headers: bool,
+    },
     /// Refuse the redirect; the caller surfaces the response.
-    Refuse { reason: &'static str },
+    Refuse {
+        /// Why the redirect was refused; shown to the caller.
+        reason: &'static str,
+    },
 }
 
 /// Decide whether to follow a redirect.

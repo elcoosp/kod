@@ -59,21 +59,35 @@ const INIT_TIMEOUT_SECS: u64 = 60;
 /// the default covers a normal tool that reads a file or shells out.
 const DEFAULT_CALL_TIMEOUT_SECS: u64 = 60;
 
+/// Errors an MCP client can produce.
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
+    /// Spawning the server process failed.
     #[error("could not spawn {program}: {source}")]
     Spawn {
+        /// The server binary name as configured.
         program: String,
+        /// The underlying I/O failure.
         source: std::io::Error,
     },
+    /// Reading or writing the server's stdio failed.
     #[error("i/o: {0}")]
     Io(#[from] std::io::Error),
+    /// A frame failed to parse as JSON.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+    /// The server produced a message that violates the protocol.
     #[error("protocol: {0}")]
     Protocol(String),
+    /// The server returned a JSON-RPC error response.
     #[error("rpc error {code}: {message}")]
-    Rpc { code: i64, message: String },
+    Rpc {
+        /// The JSON-RPC error code.
+        code: i64,
+        /// The JSON-RPC error message.
+        message: String,
+    },
+    /// A response did not arrive within the timeout.
     #[error("timeout waiting for server response")]
     Timeout,
 }

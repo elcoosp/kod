@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 /// `initialize` response payload: what the server calls itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
+    /// The server's self-reported name.
     pub name: String,
+    /// The server's self-reported version. Empty when the server
+    /// does not report one.
     #[serde(default)]
     pub version: String,
 }
@@ -20,9 +23,13 @@ pub struct ServerInfo {
 /// object the spec calls `inputSchema`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolDef {
+    /// The tool name, as the server advertises it.
     pub name: String,
+    /// Human-readable description. `None` when the server omits one.
     #[serde(default)]
     pub description: Option<String>,
+    /// The JSON Schema for the tool's arguments (spec field
+    /// `inputSchema`).
     #[serde(rename = "inputSchema", default)]
     pub input_schema: serde_json::Value,
 }
@@ -33,8 +40,10 @@ pub struct McpToolDef {
 /// structured failure without the RPC layer itself failing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolResult {
+    /// Content parts returned by the tool.
     #[serde(default)]
     pub content: Vec<McpContent>,
+    /// True when the tool signalled a structured failure.
     #[serde(rename = "isError", default)]
     pub is_error: bool,
 }
@@ -48,16 +57,26 @@ pub struct McpToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum McpContent {
+    /// A text content part.
     Text {
+        /// The text content.
         text: String,
     },
+    /// An image content part; bytes are base64-encoded.
     Image {
+        /// Base64-encoded image bytes.
         data: String,
+        /// The image's MIME type (`image/png`, `image/jpeg`, …).
         #[serde(rename = "mimeType")]
         mime_type: String,
     },
+    /// A resource content part; `uri` identifies it, `text`
+    /// optionally inlines the body.
     Resource {
+        /// The resource URI.
         uri: String,
+        /// Optional inline body. `None` means the body must be
+        /// fetched separately.
         #[serde(default)]
         text: Option<String>,
     },

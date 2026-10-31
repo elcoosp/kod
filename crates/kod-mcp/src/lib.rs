@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Minimal Model Context Protocol (MCP) client over stdio.
 //!
 //! # Scope
