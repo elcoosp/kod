@@ -118,3 +118,36 @@ candidates from a grep are hypotheses; the compiler is the
 confirmation.
 
 One group, one commit, one gate cycle. Do not batch.
+
+## Shared-helper extraction attempt
+
+Attempted to extract three helpers from `tools.rs` into a new
+`crates/kod-tools/src/shared.rs`:
+
+  - `next_temp_seq`
+  - `atomic_write`
+  - `kill_child_tree`
+
+The extraction script found all three functions correctly and wrote
+`shared.rs` with the function bodies. The module declaration in
+`lib.rs` and the `use crate::shared::{...}` in `tools.rs` both
+landed. Compilation failed with `E0603: module is private` — the
+exact dependency the compiler names is in the next session's
+transcript; the pattern (single source file, byte-offset
+extraction, compile check, revert on failure) has been tried on
+`FileInfoTool` (succeeded) and on the `RouterConfig` fixtures
+(failed three times with a different cause each time).
+
+The next session's opener for the tool split is:
+1. Reproduce the extraction with `cargo check` captured to a log
+   with `grep -B2 -A8 '^error'` (not `tail -30`).
+2. Read the specific E0603 error — it names the private module
+   that `shared.rs` depends on.
+3. If the dependency is `walk_cache`, check whether its API needs
+   `pub(crate)` exposure for the new module, or whether the
+   helper should stay in `tools.rs` where it has visibility.
+4. Re-run the extraction with the visibility fix.
+
+The doc this session shipped (the three main-loop-split candidates
+above) stands regardless. The shared-helper extraction is a
+five-minute fix once the E0603 names its module.
