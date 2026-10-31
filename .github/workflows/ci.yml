@@ -29,15 +29,24 @@ jobs:
     env:
       RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: "1.98.1"
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: cargo doc --no-deps --workspace (-D warnings)
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --locked
 
   publish-dry-run:
     name: Publish dry-run (continue-on-error; typesafe-ai-rs blocker)
@@ -46,11 +55,20 @@ jobs:
     env:
       RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: "1.98.1"
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: cargo publish --dry-run per crate
         # Non-leaf crates fail dry-run until their internal deps publish,
         # and kod-provider-openai / -anthropic remain blocked by the
