@@ -27,6 +27,7 @@ pub struct Diagnostic {
     /// Server-specific code (`E0308` for rust-analyzer, `reportGeneralTypeIssues`
     /// for pyright). `None` when the server does not send one.
     pub code: Option<String>,
+    /// The diagnostic message text.
     pub message: String,
 }
 
@@ -35,21 +36,27 @@ pub struct Diagnostic {
 /// 0-based wire form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
+    /// 1-based line number.
     pub line: u32,
+    /// 1-based column, in characters.
     pub column: u32,
 }
 
 /// A range inside one file, both ends 1-based.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Range {
+    /// The range's start position (inclusive).
     pub start: Position,
+    /// The range's end position (exclusive).
     pub end: Position,
 }
 
 /// A location the server returned: a file plus a range in it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Location {
+    /// The file the location points into.
     pub file: std::path::PathBuf,
+    /// The range within `file`.
     pub range: Range,
 }
 
@@ -58,7 +65,9 @@ pub struct Location {
 /// server has nothing to say about the position.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hover {
+    /// The text the server wants to show; empty when it has nothing.
     pub text: String,
+    /// The range the hover applies to, when the server supplies one.
     pub range: Option<Range>,
 }
 

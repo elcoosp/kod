@@ -40,19 +40,27 @@ use tokio::io::{AsyncWriteExt, BufReader};
 const MAX_PENDING_NOTIFICATIONS: usize = 1024;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
+/// Errors a language server client can produce.
 #[derive(Debug, thiserror::Error)]
 pub enum LspError {
+    /// Spawning the language server process failed.
     #[error("could not spawn {program}: {source}")]
     Spawn {
+        /// The server binary name as configured.
         program: String,
+        /// The underlying I/O failure.
         source: std::io::Error,
     },
+    /// Reading or writing the server's stdio failed.
     #[error("i/o: {0}")]
     Io(#[from] std::io::Error),
+    /// A frame failed to parse as JSON.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+    /// The server produced a message that violates the protocol.
     #[error("protocol: {0}")]
     Protocol(String),
+    /// A response did not arrive within the timeout.
     #[error("timeout waiting for server response")]
     Timeout,
 }
@@ -169,6 +177,7 @@ impl LspClient {
         }
     }
 
+    /// The server binary name this client was spawned with.
     pub fn program(&self) -> &str {
         &self.program
     }
