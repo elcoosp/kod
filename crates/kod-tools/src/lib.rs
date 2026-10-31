@@ -61,6 +61,7 @@ pub mod query_syntax;
 pub mod registry;
 pub mod sandbox;
 pub mod search;
+pub(crate) mod shared;
 pub mod todo;
 pub mod todo_tracker;
 pub mod tools;
