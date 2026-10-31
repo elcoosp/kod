@@ -414,6 +414,12 @@ pub fn tools_array_with_cache(tools: &[ToolDefinition]) -> Value {
     json!(arr)
 }
 
+/// The non-cached variant of [`tools_array_with_cache`].
+///
+/// Same schema shape, without a `cache_control` marker on the last
+/// tool. Used when the caller has decided prompt caching is off for
+/// this request (older models, or a session where the cache hit rate
+/// would not pay for the marker).
 pub fn tools_array(tools: &[ToolDefinition]) -> Value {
     let arr: Vec<Value> = tools
         .iter()
@@ -483,7 +489,9 @@ pub struct AnthropicStreamState {
 pub struct BlockInfo {
     /// `text` or `tool_use`. Unknown types are ignored.
     pub kind: String,
+    /// The `tool_use` id, set once the block is a tool-use block.
     pub tool_id: Option<String>,
+    /// The tool name, set once the block is a tool-use block.
     pub tool_name: Option<String>,
 }
 

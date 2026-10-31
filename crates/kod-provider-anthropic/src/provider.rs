@@ -153,10 +153,15 @@ impl AnthropicProvider {
         })
     }
 
+    /// The configured API base URL, without a trailing slash.
+    ///
+    /// Defaults to `https://api.anthropic.com`; a self-hosted
+    /// compatible endpoint sets this explicitly at construction.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
+    /// The model name used when a request omits `model`.
     pub fn default_model(&self) -> &str {
         &self.model
     }
