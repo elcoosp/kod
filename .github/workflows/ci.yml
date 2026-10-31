@@ -23,6 +23,53 @@ env:
   # tool (audit, deny, tarpaulin, bloat).
 
 jobs:
+  docs:
+    name: Docs (-D warnings)
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.1"
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc --no-deps --workspace (-D warnings)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --workspace
+
+  publish-dry-run:
+    name: Publish dry-run (continue-on-error; typesafe-ai-rs blocker)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.1"
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run per crate
+        # Non-leaf crates fail dry-run until their internal deps publish,
+        # and kod-provider-openai / -anthropic remain blocked by the
+        # git-pinned typesafe-ai-rs (publish plan, Decision 2). This
+        # gate surfaces manifest regressions without blocking PRs.
+        run: |
+          set -u
+          fail=0
+          for crate in $(cargo metadata --no-deps --format-version 1 \
+              | python3 -c 'import json,sys; print(" ".join(sorted(p["name"] for p in json.load(sys.stdin)["packages"])))'); do
+            echo "=== $crate ==="
+            if ! cargo publish --dry-run --no-verify -p "$crate"; then
+              echo "dry-run FAILED for $crate (expected until providers resolve)"
+              fail=$((fail + 1))
+            fi
+          done
+          echo "failures: $fail"
+          exit 0
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
