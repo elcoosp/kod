@@ -10,10 +10,16 @@ use std::path::{Path, PathBuf};
 /// Configuration for the engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
+    /// Working directory the engine treats as the project root.
     pub working_dir: PathBuf,
+    /// Whether the memory subsystem is enabled for this session.
     pub enable_memory: bool,
+    /// Whether the skills subsystem is enabled.
     pub enable_skills: bool,
+    /// Maximum number of skills composed into a single query.
     pub max_skills_per_query: usize,
+    /// Override for the database path. None means the default under
+    /// the project's state directory.
     pub db_path: Option<PathBuf>,
 }
 

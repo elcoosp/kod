@@ -26,19 +26,26 @@ use kod_types::ChatMessage;
 /// How much of a turn to render.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Fidelity {
+    /// Drop the turn entirely.
     Omit,
+    /// Render only a one-line stub.
     Stub,
+    /// Render a condensed digest.
     Digest,
+    /// Render the full text.
     Full,
 }
 
 /// The terms a query was scored against.
 #[derive(Debug, Clone, Default)]
 pub struct Query {
+    /// Distinct lowercase terms the query was scored against.
     pub terms: HashSet<String>,
 }
 
 impl Query {
+    /// Build a query from free text: split on whitespace, keep
+    /// alphanumerics, lower-case, drop terms shorter than 3.
     pub fn from_text(text: &str) -> Self {
         let terms = text
             .split_whitespace()
@@ -51,6 +58,7 @@ impl Query {
         Self { terms }
     }
 
+    /// Jaccard similarity with another query, in [0.0, 1.0].
     pub fn jaccard(&self, other: &Query) -> f64 {
         if self.terms.is_empty() && other.terms.is_empty() {
             return 1.0;
@@ -67,19 +75,26 @@ impl Query {
 /// A turn plus the metadata the scorer uses.
 #[derive(Debug, Clone)]
 pub struct Chunk<'a> {
+    /// The message being scored.
     pub message: &'a ChatMessage,
     /// Zero = newest.
     pub age_turns: u32,
+    /// When true, the chunk bypasses scoring and renders Full.
     pub pinned: bool,
 }
 
+/// Scores a chunk against a query, choosing a Fidelity level.
 pub trait ChunkScorer: Send + Sync {
+    /// Decide how much of the chunk to render.
     fn score(&self, chunk: &Chunk<'_>, query: &Query) -> Fidelity;
 }
 
+/// Scores by lexical Jaccard against the query, with recency decay.
 #[derive(Debug, Clone, Copy)]
 pub struct LexicalScorer {
+    /// Turn half-life for the recency decay term.
     pub half_life_turns: f32,
+    /// Number of newest turns always rendered at Full.
     pub tail_full_turns: u32,
 }
 
@@ -93,10 +108,12 @@ impl Default for LexicalScorer {
 }
 
 impl LexicalScorer {
+    /// Scorer with the default half-life and tail window.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Builder: override the always-Full tail window size.
     pub fn with_tail(mut self, n: u32) -> Self {
         self.tail_full_turns = n;
         self
@@ -144,6 +161,7 @@ fn term_overlap(text: &str, terms: &HashSet<String>) -> usize {
     terms.iter().filter(|t| lower.contains(t.as_str())).count()
 }
 
+/// Render a message at the given Fidelity level. Returns None on Omit.
 pub fn render_at(message: &ChatMessage, fidelity: Fidelity) -> Option<String> {
     match fidelity {
         Fidelity::Omit => None,
@@ -239,6 +257,7 @@ pub struct FidelityCache {
 }
 
 impl FidelityCache {
+    /// Empty cache.
     pub fn new() -> Self {
         Self::default()
     }

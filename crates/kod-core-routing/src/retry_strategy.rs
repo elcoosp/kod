@@ -20,6 +20,7 @@ pub enum TurnFailure {
     TransportNetwork,
     /// Rate limited. `retry_after_secs` when the server sent a hint.
     TransportRateLimit {
+        /// Server-supplied retry delay hint, when one was sent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after_secs: Option<u64>,
     },
@@ -27,31 +28,56 @@ pub enum TurnFailure {
     /// Distinct from a send-frequency rate limit: the cooldown is
     /// shorter (~10 min) and the surfaced message names overload.
     TransportServerBusy {
+        /// Server-supplied retry delay hint, when one was sent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after_secs: Option<u64>,
     },
     /// The provider refused to answer (safety, policy, "cannot help").
-    ProviderRefused { reason: String },
+    ProviderRefused {
+        /// The refusal message the provider returned.
+        reason: String,
+    },
     /// Authentication or authorization failed (401/403). Never
     /// recoverable — the API key is wrong or the endpoint is
     /// forbidden for this account.
-    ProviderAuthError { detail: String },
+    ProviderAuthError {
+        /// The provider's error detail.
+        detail: String,
+    },
     /// The request exceeded the model's context window.
-    ContextWindowExceeded { over_by: Option<usize> },
+    ContextWindowExceeded {
+        /// Tokens the request exceeded the window by, when reported.
+        over_by: Option<usize>,
+    },
     /// The model produced JSON that did not parse.
-    MalformedJson { snippet: String },
+    MalformedJson {
+        /// Snippet of the output that failed to parse.
+        snippet: String,
+    },
     /// The model called a tool that does not exist.
-    HallucinatedTool { name: String },
+    HallucinatedTool {
+        /// The tool name the model invented.
+        name: String,
+    },
     /// The provider filtered the response (content policy).
-    ContentFiltered { category: String },
+    ContentFiltered {
+        /// The provider's filter category, when given.
+        category: String,
+    },
     /// The user cancelled the request.
     UserCancelled,
     /// A cost or token cap fired.
     BudgetExhausted,
     /// A policy rule refused the call.
-    PolicyDenied { rule: String },
+    PolicyDenied {
+        /// The rule that refused the call.
+        rule: String,
+    },
     /// Anything else.
-    Unknown { raw: String },
+    Unknown {
+        /// Raw failure text, kept for diagnostics.
+        raw: String,
+    },
 }
 
 /// Whether `haystack` contains `needle` bounded by non-digits
@@ -218,6 +244,7 @@ impl TurnFailure {
         }
     }
 
+    /// One-line human-readable summary of the failure.
     pub fn summary(&self) -> String {
         match self {
             TurnFailure::TransportTimeout => "transport timeout".to_string(),

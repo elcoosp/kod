@@ -10,11 +10,18 @@ use std::path::PathBuf;
 /// Full context for engine processing
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EngineContext {
+    /// The current user input being processed.
     pub user_input: String,
+    /// Retrieved long-term memory for this turn.
     pub memory_context: MemoryContext,
+    /// Skills active for this turn.
     pub skills: Vec<Skill>,
+    /// The working directory the engine operates from.
     pub working_dir: PathBuf,
+    /// Override system prompt. None means the default composed from
+    /// skills and project config.
     pub system_prompt: Option<String>,
+    /// Names of the tools currently available to the model.
     pub tools_available: Vec<String>,
 }
 
@@ -124,6 +131,7 @@ pub struct EngineContextBuilder {
 }
 
 impl EngineContextBuilder {
+    /// Start a builder with defaults.
     pub fn new() -> Self {
         Self::default()
     }
