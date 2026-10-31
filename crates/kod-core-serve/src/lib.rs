@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! kod-core-serve: Unix-socket daemon and ACP bridge.
 //!
 //! Extracted from kod-core. Both modules drive a `KodEngine` from an

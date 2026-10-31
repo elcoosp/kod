@@ -59,6 +59,10 @@ mod imp {
     use std::path::Path;
     use tokio::net::{UnixListener, UnixStream};
 
+    /// Handle to a bound Unix-socket listener.
+    ///
+    /// Returned by [`bind`]; both [`Stream::into_split`] and the
+    /// platform `connect` produce `Stream`s from it.
     #[derive(Debug)]
     pub struct Listener {
         inner: UnixListener,
@@ -119,6 +123,8 @@ mod imp {
         }
     }
 
+    /// Dial a Unix socket, returning a [`Stream`] whose halves can be
+    /// split and boxed.
     pub async fn connect(path: &Path) -> Result<Stream> {
         let s = UnixStream::connect(path).await.map_err(|e| {
             KodError::Internal(format!("could not connect to {}: {e}", path.display()))
@@ -131,6 +137,10 @@ mod imp {
     }
 
     impl Listener {
+        /// Accept the next connection.
+        ///
+        /// Peer credentials are checked before the socket is split;
+        /// after split they are no longer reachable.
         pub async fn accept(&self) -> Result<Stream> {
             let (s, _addr) = self
                 .inner
@@ -184,6 +194,10 @@ mod imp {
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
+// TODO: doc windows-side items; the unix branch is documented first and
+// windows cannot be verified locally. Remove the allow after both branches
+// carry the same doc set.
+#[allow(missing_docs)]
 mod imp {
     use super::*;
     use kod_error::{KodError, Result};

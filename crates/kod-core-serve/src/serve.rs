@@ -371,6 +371,12 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
     }
 }
 
+/// Drive one server connection over a caller-supplied reader/writer pair.
+///
+/// Mirrors [`crate::acp::serve_io`] on the NDJSON transport:
+/// `serve` binds a Unix socket and calls this per connection,
+/// while tests and embedders call it directly with `tokio::io::duplex`
+/// handles.
 pub async fn serve_io<R, W>(
     engine: Arc<KodEngine>,
     input: R,
