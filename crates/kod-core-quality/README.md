@@ -2,7 +2,17 @@
 
 Codebase analysis, cleanup, and quality gates for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+The `cargo check` integration, diff-based quality gates, and the
+auto-fix suggestions the engine offers after a turn. Reports findings
+with enough context that the model can propose a specific fix rather
+than a generic one.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core-tools` and `kod-core`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

@@ -9,6 +9,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["risk", "sandbox", "command", "security", "safety"]
+categories = ["development-tools", "command-line-utilities"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 
 [dev-dependencies]

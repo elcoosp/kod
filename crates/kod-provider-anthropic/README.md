@@ -2,7 +2,17 @@
 
 Anthropic Messages API provider for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Streaming, non-streaming, native compaction, and the wire module that
+preserves prompt-caching blocks the Anthropic client would otherwise
+flatten. Two wire paths: the modern path that builds the request body
+locally, and the legacy text path via `adk-model`.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core-routing`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

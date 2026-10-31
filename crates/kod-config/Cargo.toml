@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["config", "toml", "ai-agent", "settings", "llm"]
+categories = ["config", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 # SEC-A-12 (audit 2026-10): share the risk-tokenizer so
 # `forbidden_binaries` / `binaries` see the same de-quoted program the

@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["mcp", "model-context", "stdio", "llm", "tools"]
+categories = ["api-bindings", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 libc = { workspace = true }
 serde = { workspace = true }

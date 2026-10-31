@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Anthropic Messages API provider.
 //!
 //! # Two wire paths

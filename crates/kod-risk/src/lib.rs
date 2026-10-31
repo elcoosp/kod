@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Command blast-radius classification.
 //!
 //! Stage one of a two-stage design: a cheap deterministic high-recall

@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["swarm", "agents", "ai-agent", "orchestration", "llm"]
+categories = ["development-tools", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

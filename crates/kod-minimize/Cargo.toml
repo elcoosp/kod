@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["minimize", "output", "shell", "compress", "cli"]
+categories = ["command-line-utilities", "text-processing"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 toml = { workspace = true }
 serde = { workspace = true }

@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["memory", "storage", "ai-agent", "llm", "context"]
+categories = ["development-tools", "database"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 futures = { workspace = true }
 sha2 = { workspace = true }

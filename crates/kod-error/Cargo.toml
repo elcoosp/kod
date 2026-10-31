@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["error", "diagnostics", "ai-agent", "llm"]
+categories = ["rust-patterns"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 thiserror = { workspace = true }
 kod-types = { path = "../kod-types", version = "0.1.27" }

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! kod-core-routing: task routing, retry policy, provider
 //! construction, and the engine context. Extracted from kod-core
 //! so the engine and CLI can depend on a smaller routing surface.

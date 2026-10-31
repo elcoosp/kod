@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Skills system for markdown-based skill management.
 //!
 //! This crate handles loading, parsing, matching, and hot-reloading

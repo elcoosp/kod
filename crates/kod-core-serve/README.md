@@ -2,7 +2,16 @@
 
 Unix-socket daemon and ACP bridge for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Exposes a running engine to a local client over a Unix socket, and
+translates ACP (Agent Client Protocol) frames to engine calls. Used by
+the TUI and by the CLI in `serve` mode.
 
-Licensed under MIT.
+## Part of KOD
+
+Not part of the library surface.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

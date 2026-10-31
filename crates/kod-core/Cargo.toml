@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["ai-agent", "llm", "coding-agent", "engine", "async"]
+categories = ["development-tools", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 sha2 = { workspace = true }
 serde = { workspace = true }

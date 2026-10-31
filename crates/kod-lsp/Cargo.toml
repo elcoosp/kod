@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["lsp", "language-server", "protocol", "code", "ide"]
+categories = ["development-tools", "api-bindings"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Memory system for multi-layer storage (short-term and long-term).
 //!
 //! This crate provides different memory backends with a unified interface

@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["types", "shared", "ai-agent", "llm", "coding-agent"]
+categories = ["development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 tracing = { workspace = true }
 hmac = { workspace = true }

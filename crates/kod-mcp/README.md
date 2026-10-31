@@ -2,7 +2,17 @@
 
 Minimal Model Context Protocol (MCP) client over stdio for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Speaks the MCP request/response protocol to external servers
+(filesystem, git, github, etc.) so the KOD engine can expose them as
+tools. Handles the process lifecycle, request/response framing, and
+the pending-request map behind a mutex.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core-tools`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

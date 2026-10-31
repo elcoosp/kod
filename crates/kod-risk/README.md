@@ -2,7 +2,17 @@
 
 Command blast-radius classification for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Classifies shell commands by blast radius: read-only, additive,
+destructive, or unknown. Combined with the user's configured approval
+preset, this decides whether a command is auto-approved, prompted, or
+refused before the engine dispatches it.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core-tools`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

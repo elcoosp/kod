@@ -2,7 +2,19 @@
 
 LLM provider abstraction layer for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+The provider contract: the `LlmProvider` trait, streaming and
+non-streaming response types, tool definitions, and the concurrency
+and retry policy every provider shares. Implementing a new provider
+means implementing `LlmProvider` and reusing the concurrency primitive
+in `kod-provider::concurrency`.
 
-Licensed under MIT.
+## Part of KOD
+
+Depended on by every provider crate and by `kod-core`; direct use is
+for implementing a new provider.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

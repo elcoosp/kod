@@ -2,7 +2,16 @@
 
 Adapter layer wrapping KOD's built-in tools for the engine.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Bridges the tool implementations in `kod-tools` and the engine in
+`kod-core`: tool discovery, argument validation, permission checks,
+and pre-dispatch risk classification all live here.
 
-Licensed under MIT.
+## Part of KOD
+
+Internal adapter; end users reach it through `kod-core`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

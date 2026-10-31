@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["telemetry", "otlp", "tracing", "observability", "llm"]
+categories = ["development-tools", "network-programming"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

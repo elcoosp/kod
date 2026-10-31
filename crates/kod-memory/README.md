@@ -2,7 +2,16 @@
 
 Multi-layer short-term and long-term memory for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Short-term is the current session's transcript; long-term is
+per-project notes the engine chooses to persist. The retrieval path
+decides what each turn sees. Persisted through `kod-core-state`.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

@@ -9,6 +9,12 @@ license.workspace = true
 authors.workspace = true
 build = "build.rs"
 
+keywords = ["cli", "ai-agent", "coding-agent", "terminal", "llm"]
+categories = ["command-line-utilities", "command-line-interface"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 kod-core-tools = { path = "../kod-core-tools", version = "0.1.27" }
 kod-core-quality = { path = "../kod-core-quality", version = "0.1.27" }

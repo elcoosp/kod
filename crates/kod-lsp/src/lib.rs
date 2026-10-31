@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Minimal Language Server Protocol client for KOD.
 //!
 //! # Why this exists

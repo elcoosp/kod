@@ -2,7 +2,16 @@
 
 OTLP GenAI telemetry for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Emits traces and metrics per request, tool call, and turn, using the
+OpenTelemetry GenAI semantic conventions. Wired behind a trait so a
+session without an exporter pays no cost.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-core`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

@@ -2,7 +2,17 @@
 
 Shell output minimizer for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Compresses long shell output before it enters the conversation
+context: drops boilerplate, keeps the head and tail of long streams,
+and preserves error lines. Reduces token cost without hiding failures
+the model needs to see.
 
-Licensed under MIT.
+## Part of KOD
+
+Reached transitively through `kod-tools` and `kod-core-tools`.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

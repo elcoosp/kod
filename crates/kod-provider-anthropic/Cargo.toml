@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["anthropic", "claude", "llm", "provider", "api"]
+categories = ["api-bindings", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 async-trait = { workspace = true }
 serde = { workspace = true }

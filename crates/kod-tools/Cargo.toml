@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["tools", "ai-agent", "shell", "execution", "llm"]
+categories = ["development-tools", "command-line-utilities"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 thiserror = { workspace = true }
 async-trait = { workspace = true }

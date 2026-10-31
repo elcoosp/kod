@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["skills", "markdown", "ai-agent", "prompt", "llm"]
+categories = ["development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

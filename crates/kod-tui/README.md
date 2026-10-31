@@ -2,7 +2,16 @@
 
 Terminal user interface for KOD.
 
-Part of the [KOD](https://github.com/elcoosp/kod) workspace — a terminal-native
-AI coding agent.
+Interactive chat, tool approval prompts, live streaming render, and
+the status bar. Built on `ratatui` and `crossterm`. Runs in any
+modern terminal; the engine does the work.
 
-Licensed under MIT.
+## Part of KOD
+
+The end-user interface; not part of the library surface.
+
+See the [KOD workspace](https://github.com/elcoosp/kod).
+
+## License
+
+MIT

@@ -8,6 +8,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+keywords = ["llm", "provider", "traits", "ai-agent", "async"]
+categories = ["api-bindings", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 regex = { workspace = true }
 async-trait = { workspace = true }

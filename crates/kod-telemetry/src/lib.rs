@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! OTLP GenAI telemetry (borrow from oh-my-pi, delta §14.5).
 //!
 //! # What this is

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! CLI interface for KOD.
 //!
 //! Provides command-line entry point and command definitions.

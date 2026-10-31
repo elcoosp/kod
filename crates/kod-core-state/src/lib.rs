@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! kod-core-state: persistent state, journals, ledgers, and cost
 //! accounting. Extracted from kod-core to allow the engine, serve,
 //! and swarm layers to compile against a smaller state surface.

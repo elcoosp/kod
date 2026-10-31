@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Delta §7.3: tree-sitter parsing with a process-global parse cache.
 //!
 //! Two things live here:

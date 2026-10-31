@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Session statistics (borrow from oh-my-pi, delta §13.2).
 //!
 //! * [`behavioral`] — free quality signals from the user's own
