@@ -3,106 +3,194 @@
 use kod_types::{AgentId, SkillId};
 use thiserror::Error;
 
+/// The workspace-wide error type. Every fallible boundary in the
+/// engine returns `Result<T, KodError>`.
 #[derive(Error, Debug)]
 pub enum KodError {
     // Core errors
+    /// A configuration value is invalid or missing.
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// The engine reached an unexpected internal state.
     #[error("Invalid state: {0}")]
     InvalidState(String),
 
     // LLM Provider errors
+    /// A provider returned an error response.
     #[error("Provider error: {0}")]
     Provider(String),
 
+    /// A provider call timed out.
     #[error("{}", format_provider_timeout(*timeout_ms))]
-    ProviderTimeout { timeout_ms: u64 },
+    ProviderTimeout {
+        /// Milliseconds the call waited before timing out.
+        timeout_ms: u64,
+    },
 
+    /// The provider rate-limited the request.
     #[error("Rate limited by provider, retry after {retry_after_secs}s")]
-    RateLimited { retry_after_secs: u64 },
+    RateLimited {
+        /// Seconds to wait before retrying.
+        retry_after_secs: u64,
+    },
 
+    /// The provider reported overload.
     #[error("Server busy, retry after {retry_after_secs}s")]
-    ServerBusy { retry_after_secs: u64 },
+    ServerBusy {
+        /// Seconds to wait before retrying.
+        retry_after_secs: u64,
+    },
 
+    /// The requested model does not exist at the provider.
     #[error("Model not found: {model}")]
-    ModelNotFound { model: String },
+    ModelNotFound {
+        /// The model id that was not found.
+        model: String,
+    },
 
     // Skill errors
+    /// A referenced skill id was not found.
     #[error("Skill not found: {skill_id}")]
-    SkillNotFound { skill_id: SkillId },
+    SkillNotFound {
+        /// The missing skill id.
+        skill_id: SkillId,
+    },
 
+    /// A skill file failed to parse.
     #[error("Skill parse error in {path}: {reason}")]
-    SkillParseError { path: String, reason: String },
+    SkillParseError {
+        /// Path of the skill file that failed.
+        path: String,
+        /// The parse error message.
+        reason: String,
+    },
 
+    /// A skill failed validation.
     #[error("Skill validation failed: {reason}")]
-    SkillValidationFailed { reason: String },
+    SkillValidationFailed {
+        /// Why validation failed.
+        reason: String,
+    },
 
     // Memory errors
+    /// The memory storage backend failed.
     #[error("Memory storage error: {0}")]
     MemoryStorage(String),
 
+    /// The memory database failed.
     #[error("Memory database error: {0}")]
     MemoryDatabase(String),
 
+    /// Embedding generation failed.
     #[error("Embedding generation failed: {0}")]
     EmbeddingGeneration(String),
 
     // Agent Swarm errors
+    /// A referenced agent id was not found.
     #[error("Agent not found: {agent_id}")]
-    AgentNotFound { agent_id: AgentId },
+    AgentNotFound {
+        /// The missing agent id.
+        agent_id: AgentId,
+    },
 
+    /// Agent-to-agent communication failed.
     #[error("Agent communication error: {0}")]
     AgentCommunication(String),
 
+    /// Swarm coordination failed.
     #[error("Swarm coordination failed: {0}")]
     SwarmCoordination(String),
 
+    /// A file lock could not be acquired in time.
     #[error("File lock timeout for {path}")]
-    LockTimeout { path: String },
+    LockTimeout {
+        /// The path the lock was on.
+        path: String,
+    },
 
+    /// A write conflict was detected.
     #[error("Conflict detected in {path}: {description}")]
-    ConflictDetected { path: String, description: String },
+    ConflictDetected {
+        /// The conflicting path.
+        path: String,
+        /// Description of the conflict.
+        description: String,
+    },
 
     // Tool errors
+    /// A referenced tool name is not registered.
     #[error("Tool not found: {tool_name}")]
-    ToolNotFound { tool_name: String },
+    ToolNotFound {
+        /// The missing tool name.
+        tool_name: String,
+    },
 
+    /// A tool call failed during execution.
     #[error("Tool execution failed: {tool_name}: {reason}")]
-    ToolExecution { tool_name: String, reason: String },
+    ToolExecution {
+        /// The tool that failed.
+        tool_name: String,
+        /// Why it failed.
+        reason: String,
+    },
 
+    /// A permission check refused the action.
     #[error("Permission denied for {action}: {reason}")]
-    PermissionDenied { action: String, reason: String },
+    PermissionDenied {
+        /// The action that was denied.
+        action: String,
+        /// Why permission was denied.
+        reason: String,
+    },
 
+    /// A tool received invalid arguments.
     #[error("Invalid tool parameters: {reason}")]
-    InvalidParameters { reason: String },
+    InvalidParameters {
+        /// What is wrong with the parameters.
+        reason: String,
+    },
 
     // File system errors
+    /// An I/O operation failed.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// A referenced path does not exist.
     #[error("File not found: {path}")]
-    FileNotFound { path: String },
+    FileNotFound {
+        /// The missing path.
+        path: String,
+    },
 
+    /// The file changed since the edit was created.
     #[error("File modified since edit was created: {path}")]
-    FileModifiedSinceEdit { path: String },
+    FileModifiedSinceEdit {
+        /// The path that changed.
+        path: String,
+    },
 
     // Serialization errors
+    /// Serialization failed.
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// Deserialization failed.
     #[error("Deserialization error: {0}")]
     Deserialization(String),
 
     // Network errors
+    /// A network operation failed.
     #[error("Network error: {0}")]
     Network(String),
 
     // Sandbox violations
+    /// The sandbox refused an operation.
     #[error("Sandbox violation: {0}")]
     SandboxViolation(String),
 
     // Internal errors
+    /// An internal invariant was violated.
     #[error("Internal error: {0}")]
     Internal(String),
 }
