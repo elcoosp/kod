@@ -10,14 +10,23 @@ use std::path::Path;
 /// A tree-sitter grammar kod bundles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
+    /// Rust.
     Rust,
+    /// Python (`.py`, `.pyi`).
     Python,
+    /// TypeScript (`.ts`, `.mts`, `.cts`).
     TypeScript,
+    /// TypeScript+JSX (`.tsx`).
     Tsx,
+    /// JavaScript (`.js`, `.mjs`, `.cjs`, `.jsx`).
     JavaScript,
+    /// Go.
     Go,
+    /// Ruby.
     Ruby,
+    /// Java.
     Java,
+    /// C.
     C,
 }
 

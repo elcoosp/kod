@@ -67,6 +67,7 @@ pub struct ParseCache {
 }
 
 impl ParseCache {
+    /// Empty cache with no entries.
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -80,6 +81,7 @@ impl ParseCache {
         self.entries.lock().map(|g| g.len()).unwrap_or(0)
     }
 
+    /// True when the cache holds no entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

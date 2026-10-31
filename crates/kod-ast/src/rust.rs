@@ -15,7 +15,10 @@ use crate::lang::Lang;
 /// One symbol, matching `repomap::Symbol`'s shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstSymbol {
+    /// The item kind: one of `fn`, `struct`, `enum`, `trait`, `mod`,
+    /// `const`.
     pub kind: &'static str,
+    /// The item's name as it appears in source.
     pub name: String,
     /// 1-based line of the item's start.
     pub line: usize,
