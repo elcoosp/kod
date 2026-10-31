@@ -6,12 +6,12 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-kod-core-tools = { path = "../kod-core-tools" }
-kod-core-quality = { path = "../kod-core-quality" }
-kod-core-routing = { path = "../kod-core-routing" }
-kod-core-state = { path = "../kod-core-state" }
+kod-core-tools = { path = "../kod-core-tools", version = "0.1.27" }
+kod-core-quality = { path = "../kod-core-quality", version = "0.1.27" }
+kod-core-routing = { path = "../kod-core-routing", version = "0.1.27" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.27" }
 unicode-width = { workspace = true }
-kod-provider = { path = "../kod-provider" }
+kod-provider = { path = "../kod-provider", version = "0.1.27" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 syntect = { workspace = true }
@@ -22,14 +22,14 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
-kod-types = { path = "../kod-types" }
-kod-error = { path = "../kod-error" }
-kod-config = { path = "../kod-config" }
-kod-core = { path = "../kod-core" }
-kod-skills = { path = "../kod-skills" }
-kod-provider-openai = { path = "../kod-provider-openai" }
-kod-tools = { path = "../kod-tools" }
-kod-memory = { path = "../kod-memory" }
+kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-error = { path = "../kod-error", version = "0.1.27" }
+kod-config = { path = "../kod-config", version = "0.1.27" }
+kod-core = { path = "../kod-core", version = "0.1.27" }
+kod-skills = { path = "../kod-skills", version = "0.1.27" }
+kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.27" }
+kod-tools = { path = "../kod-tools", version = "0.1.27" }
+kod-memory = { path = "../kod-memory", version = "0.1.27" }
 walkdir = { workspace = true }
 regex = { workspace = true }
 dirs = { workspace = true }

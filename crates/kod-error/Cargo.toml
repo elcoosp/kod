@@ -7,7 +7,7 @@ authors.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
-kod-types = { path = "../kod-types" }
+kod-types = { path = "../kod-types", version = "0.1.27" }
 
 [lints]
 workspace = true

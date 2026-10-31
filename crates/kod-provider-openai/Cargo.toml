@@ -19,14 +19,14 @@ adk-core = { workspace = true }
 # which kod-provider-openai does not use. Without this, every build
 # compiles adk-gemini and pulls reqwest 0.12 into the graph twice.
 adk-model = { workspace = true, features = ["openai"] }
-kod-types = { path = "../kod-types" }
-kod-error = { path = "../kod-error" }
-kod-provider = { path = "../kod-provider" }
-kod-config = { path = "../kod-config" }
+kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-error = { path = "../kod-error", version = "0.1.27" }
+kod-provider = { path = "../kod-provider", version = "0.1.27" }
+kod-config = { path = "../kod-config", version = "0.1.27" }
 
 [dev-dependencies]
 proptest = { workspace = true }
-kod-provider = { path = "../kod-provider", features = ["testkit"] }
+kod-provider = { path = "../kod-provider", version = "0.1.27", features = ["testkit"] }
 time = { workspace = true }
 httpmock = { workspace = true }
 tempfile = { workspace = true }

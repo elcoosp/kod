@@ -18,13 +18,13 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
-kod-types = { path = "../kod-types" }
-kod-provider = { path = "../kod-provider" }
-kod-error = { path = "../kod-error" }
+kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-provider = { path = "../kod-provider", version = "0.1.27" }
+kod-error = { path = "../kod-error", version = "0.1.27" }
 # `embedding::from_config` reads `MemoryConfig` / `EmbeddingEndpoint`
 # to build the embedder the runtime installs. Foundation → foundation,
 # no cycle: kod-config depends only on kod-error.
-kod-config = { path = "../kod-config" }
+kod-config = { path = "../kod-config", version = "0.1.27" }
 
 [dev-dependencies]
 proptest = { workspace = true }
