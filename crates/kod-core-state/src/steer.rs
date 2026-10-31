@@ -8,7 +8,7 @@
 //! outranks a notification, and a notice about another agent's write
 //! is scoped to the agent that touched the file.
 //!
-//! Delivery is unchanged: [`KodEngine::apply_steers`] drains the queue
+//! Delivery is unchanged: `KodEngine::apply_steers` drains the queue
 //! at each round boundary. This module only makes the *content* typed
 //! and the source explicit; the transport is the same channel the TUI
 //! has been using since the first steering commit.

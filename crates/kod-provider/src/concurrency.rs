@@ -18,7 +18,7 @@
 //! # What this module provides
 //!
 //! [`ProviderConcurrency`] is the primitive: a per-endpoint
-//! admission counter with an async [`acquire`] that parks when the
+//! admission counter with an async `acquire` that parks when the
 //! cap is reached and releases on permit drop. The caller's
 //! obligation — wrap it around the request, not the agent — is
 //! documented here and enforced by convention; the primitive cannot

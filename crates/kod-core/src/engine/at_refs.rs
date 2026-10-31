@@ -21,9 +21,9 @@
 /// A user who typed `@real/file.rs` and got content back does not need
 /// to know about the error path.
 ///
-/// Reads cap at [`MAX_AT_REF_BYTES`] per file; a file larger than that
+/// Reads cap at `MAX_AT_REF_BYTES` per file; a file larger than that
 /// is truncated with a marker. The total number of files per prompt
-/// caps at [`MAX_AT_REFS`] so a user who pastes a wall of @-tokens
+/// caps at `MAX_AT_REFS` so a user who pastes a wall of @-tokens
 /// cannot blow the context window on one turn.
 pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> String {
     expand_at_references_with_policy(input, working_dir, None)

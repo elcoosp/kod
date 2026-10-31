@@ -623,7 +623,7 @@ impl KodEngine {
     ///
     /// # No fallback to `current_model`
     ///
-    /// Unlike [`Self::resolve_chain_for_task`], this deliberately does
+    /// Unlike `Self::resolve_chain_for_task`, this deliberately does
     /// **not** fall back to the current model when no `judge` role is
     /// configured. The design's premise (§9.5) is that the judge is a
     /// *different* model from the one being judged — a judge that is

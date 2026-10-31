@@ -339,7 +339,7 @@ impl KodEngine {
     /// the char-count version of the 4-chars-per-token approximation
     /// with headroom for prompt scaffolding).
     ///
-    /// Silently clamps below [`MIN_HISTORY_CHAR_BUDGET`]: a caller who
+    /// Silently clamps below `MIN_HISTORY_CHAR_BUDGET`: a caller who
     /// passes a tiny value would otherwise produce an engine that
     /// forgets every turn before it finishes.
     pub fn set_history_budget(&self, chars: usize) {

@@ -91,7 +91,7 @@ fn clean_call_id(cid: &str) -> String {
 /// Build a tool-start marker chunk for call `cid` carrying `name`.
 ///
 /// Both fields are sanitized: a `:` in the id would split the wrong
-/// way (see [`clean_call_id`]), and a `\0` in either field would
+/// way (see `clean_call_id`), and a `\0` in either field would
 /// terminate the marker early and leak the rest into the next
 /// chunk's parse. `name` is nominally a plugin-controlled string;
 /// sanitizing it here is the same discipline [`tool_done_marker`]
@@ -141,7 +141,7 @@ pub fn parse_tool_args(chunk: &str) -> Option<(&str, &str)> {
 /// Marker prefix for per-tool completion notices inside the
 /// `process_streaming` chunk channel:
 /// `\0kod-done:<cid>\0<header>\0<summary>\0<duration_ms>`.
-/// Sent by [`KodEngine::run_streaming_loop`] the moment each tool call
+/// Sent by `KodEngine::run_streaming_loop` the moment each tool call
 /// finishes — long before the whole agentic loop returns — so the TUI
 /// can fill the live "running …" row in immediately instead of batching
 /// every `ToolCompleted` at task end. Headers/summaries are sanitized
@@ -301,7 +301,7 @@ pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
 /// Marker prefix for approval requests inside the `process_streaming`
 /// chunk channel: `\0kod-approval:<id>:<json>\0`. The consumer (TUI,
 /// CLI) renders a diff dialog and calls
-/// [`KodEngine::respond_to_approval`] with the id.
+/// `KodEngine::respond_to_approval` with the id.
 pub const TOOL_APPROVAL_MARKER: &str = "\0kod-approval:";
 
 /// Build an approval-request chunk carrying the JSON-encoded request.
@@ -326,7 +326,7 @@ pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
 /// Marker prefix for a batch of approval requests: one marker per
 /// round, carrying every `Ask`-gated call the round produced.
 /// `\0kod-approval-batch:<batch_id>:<json>\0`, where `<json>` decodes
-/// to [`ApprovalBatch`].
+/// to `ApprovalBatch`.
 ///
 /// A batch of exactly one item is protocol-identical to the old
 /// single-item marker from the user's point of view: a consumer that

@@ -748,7 +748,7 @@ impl KodEngine {
     /// directories. Skills sharing a name across directories count once
     /// in the matcher (later dirs shadow earlier ones) but each file is
     /// counted here, so the returned number is "files loaded", not
-    /// "distinct skills available" — use [`loaded_skill_names`] for the
+    /// "distinct skills available" — use `loaded_skill_names` for the
     /// deduplicated set.
     pub async fn load_skills_from_dirs(&self, dirs: &[std::path::PathBuf]) -> Result<usize> {
         let mut total = 0;

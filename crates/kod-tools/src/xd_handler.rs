@@ -2,7 +2,7 @@
 //!
 //! # What this is
 //!
-//! A tool marked [`LoadMode::Discoverable`] is removed from the
+//! A tool marked `LoadMode::Discoverable` is removed from the
 //! provider's tools array — its schema no longer costs prompt
 //! budget on every request. It stays reachable through the
 //! internal-URL router:

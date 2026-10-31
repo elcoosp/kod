@@ -2,7 +2,7 @@
 //!
 //! # Two wire paths
 //!
-//! The modern paths — [`AnthropicProvider::complete`], the streaming
+//! The modern paths — `AnthropicProvider::complete`, the streaming
 //! loop, and native compaction — build the request body in the local
 //! [`wire`] module. That module exists because `adk-model`'s Anthropic
 //! client takes a single `system: String` and flattens a multi-segment

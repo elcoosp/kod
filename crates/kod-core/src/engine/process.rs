@@ -779,7 +779,7 @@ impl KodEngine {
 
     /// Process user input, streaming text chunks live to `chunk_tx`.
     ///
-    /// Same result as [`process`], but answer tokens arrive as they generate
+    /// Same result as `process`, but answer tokens arrive as they generate
     /// (the TUI renders each chunk immediately) and tool starts arrive as
     /// [`tool_start_marker`] chunks (see [`parse_tool_start`]) so the UI can
     /// show "running …" while the tool actually executes.
@@ -1322,10 +1322,10 @@ impl KodEngine {
 
     /// Work toward `goal` across turns until the model declares it met.
     ///
-    /// Same streaming contract as [`process_streaming`], but after each
+    /// Same streaming contract as `process_streaming`, but after each
     /// agentic pass the conversation continues with a "keep going" nudge
     /// until the reply contains `GOAL MET` (case-insensitive),
-    /// [`MAX_GOAL_TURNS`] passes run, or [`KodEngine::request_cancel`]
+    /// `MAX_GOAL_TURNS` passes run, or [`KodEngine::request_cancel`]
     /// fires. Steer notes queued via [`KodEngine::steer`] are injected
     /// every turn. Each turn's text streams live; turns are separated by
     /// a turn-marker chunk (see [`turn_marker`]) so the TUI can render progress.

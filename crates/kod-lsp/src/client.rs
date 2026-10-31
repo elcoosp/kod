@@ -368,7 +368,7 @@ impl LspClient {
     /// Read notifications until diagnostics for `path` have arrived
     /// and settled. "Settled" is: at least one
     /// `textDocument/publishDiagnostics` for this file has been seen,
-    /// and no new message has arrived for [`SETTLE_AFTER`]. That is
+    /// and no new message has arrived for `SETTLE_AFTER`. That is
     /// what rust-analyzer does in practice — it publishes an empty
     /// list first, then the real list once indexing finishes — and a
     /// fixed post-first-message wait is the simplest correct handling.

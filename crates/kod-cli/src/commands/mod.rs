@@ -1610,7 +1610,7 @@ pub enum PolicyAction {
     /// Example:
     ///   kod policy explain write_file path=src/main.rs
     ///   kod policy explain execute_command command="cargo test"
-    ///   kod policy explain web_fetch url=https://docs.rs/
+    ///   kod policy explain web_fetch url=<https://docs.rs/>
     ///
     /// The decision is the same one the engine makes: session deny
     /// rules are not consulted (there are none in a fresh CLI

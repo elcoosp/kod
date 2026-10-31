@@ -3,7 +3,7 @@
 //! # The gap this fills
 //!
 //! kod caps tool results at 16 KiB
-//! ([`kod_core::engine::cap_rendered_result`]) and `execute_command`
+//! (`kod_core::engine::cap_rendered_result`) and `execute_command`
 //! caps its own capture at `MAX_CMD_OUTPUT_BYTES`. Both are *chops*:
 //! a large `git status`, a verbose `pytest` run, or a `cargo check`
 //! with fifty warnings all get truncated at the same byte boundary,
@@ -21,8 +21,8 @@
 //!
 //! A [`Minimizer`] holds a registry of [`Def`]s. Each def names a
 //! program (`git`, `cargo`, `pytest`), the subcommands it applies to,
-//! and a pipeline of [`Stage`]s. [`Minimizer::minimize`] takes a
-//! command string and the captured [`Capture`], classifies the
+//! and a pipeline of `Stage`s. [`Minimizer::minimize`] takes a
+//! command string and the captured `Capture`, classifies the
 //! command via [`plan::classify`], looks up the def, and runs the
 //! pipeline. When no def matches — or when the command is a pipe, a
 //! chain, or unsupported — the raw capture is returned unchanged.

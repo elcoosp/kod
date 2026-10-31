@@ -150,7 +150,7 @@ pub trait LlmProvider: Send + Sync {
     /// Stream a completion with tool calling support: live `Text` chunks
     /// plus `ToolCallStart`/`ToolCallDelta`/`Done` framing.
     ///
-    /// The default implementation collects [`generate_with_tools`] and
+    /// The default implementation collects `generate_with_tools` and
     /// replays it as chunks (no live tokens, but every implementor works).
     /// Providers with SSE support should override for real token streaming.
     ///

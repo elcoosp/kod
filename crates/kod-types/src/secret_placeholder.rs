@@ -43,7 +43,7 @@
 //!
 //! * **Not a redactor.** It does not detect secrets on its own; it
 //!   takes a set of *known* secret values and returns placeholders
-//!   for them. The known set comes from the sources in [`sources`]
+//!   for them. The known set comes from the sources in `sources`
 //!   — the process environment and a small set of vendor-shaped
 //!   regexes.
 //! * **Not a guarantee.** A model that never sees a secret cannot
@@ -131,7 +131,7 @@ pub struct RegisteredSecret {
 
 impl SecretVault {
     /// A vault with a freshly generated random key. Used when no key
-    /// file exists yet; [`Self::with_key_file`] is what the engine
+    /// file exists yet; `with_key_file` is what the engine
     /// actually calls.
     pub fn with_random_key() -> Self {
         // `kod-types` deliberately does not depend on a crypto RNG

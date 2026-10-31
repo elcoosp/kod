@@ -54,7 +54,7 @@
 //!   is the caller's concern.
 //! * Not the advisor's own loop guard. An advisor that keeps
 //!   emitting noise will see rejections here; the advisor's own
-//!   loop can also be guarded by [`crate::tool_loop_guard`]-style
+//!   loop can also be guarded by `crate::tool_loop_guard`-style
 //!   detection, but that is separate.
 //! * Not a persistent filter. History is bounded to
 //!   [`HISTORY_CAP`] keys; a note older than the last 4096 unique

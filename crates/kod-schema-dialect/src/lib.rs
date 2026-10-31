@@ -10,7 +10,7 @@
 //!
 //! Three layers, in the notebook's shape:
 //!
-//! 1. **Prevention** ([`sanitize`]) — rewrite a schema into the subset
+//! 1. **Prevention** ([`sanitize()`]) — rewrite a schema into the subset
 //!    a provider accepts before sending it. Renames first, then
 //!    structural transforms, then removal of keywords the provider
 //!    does not support and that are safe to drop.

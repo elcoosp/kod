@@ -413,7 +413,7 @@ impl KodEngine {
     ///
     /// The typed entry point for producers that are not the user:
     /// swarm conflict notices, background-task completions, harness
-    /// system messages. [`steer_for`] is the user-facing wrapper.
+    /// system messages. `steer_for` is the user-facing wrapper.
     ///
     /// An empty body is dropped — an interrupt with no content would
     /// render a bare header into the transcript, which is noise the
@@ -435,7 +435,7 @@ impl KodEngine {
     /// The soft interrupts currently queued for `key`, without
     /// draining. A caller that wants to display or test what is
     /// pending reads here; the round-boundary drain is
-    /// [`Self::take_steers_for`].
+    /// `Self::take_steers_for`.
     pub async fn pending_steers_for(&self, key: &str) -> Vec<kod_core_state::steer::SoftInterrupt> {
         self.steers
             .read()

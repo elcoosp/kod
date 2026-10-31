@@ -32,7 +32,7 @@
 //! full content of each prior version is self-contained: a restore is
 //! a single `write`, with no dependency on any other snapshot having
 //! survived. The storage cost is bounded by the retention cap and the
-//! per-file ceiling ([`MAX_SNAPSHOT_BYTES`]).
+//! per-file ceiling (`MAX_SNAPSHOT_BYTES`).
 //!
 //! # What it does not do
 //!

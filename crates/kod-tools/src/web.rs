@@ -20,7 +20,7 @@
 //!   does `http://0x7f000001`.
 //! - HTTP only, `GET` only. No redirect chain beyond what the HTTP
 //!   client follows (see `reqwest`'s default 10-hop limit).
-//! - Response body is capped at [`MAX_BODY_BYTES`]. A stream that
+//! - Response body is capped at `MAX_BODY_BYTES`. A stream that
 //!   would exceed it is truncated, and the result flags that.
 //! - Response `Content-Type` is checked: HTML and JSON are decoded as
 //!   text; anything else (image, octet-stream, video) returns an error

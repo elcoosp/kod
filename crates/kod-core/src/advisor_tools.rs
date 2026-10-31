@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 /// Where an admitted advice goes. The tool is generic over its sink
 /// so a unit test can substitute a stub; production uses
-/// [`EngineAdvisorSink`].
+/// `EngineAdvisorSink`.
 #[async_trait::async_trait]
 pub trait AdvisorSink: Send + Sync {
     /// The primary's current state, for [`route`]. A sink that cannot

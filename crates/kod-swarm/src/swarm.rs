@@ -54,7 +54,7 @@ impl AgentSwarm {
     }
 
     /// Add an agent to the swarm. The Agent is wrapped in an Arc so
-    /// callers can keep a handle (via [`get_agent`]) and drive its
+    /// callers can keep a handle (via `get_agent`) and drive its
     /// lifecycle while it stays registered.
     pub async fn add_agent(&self, agent: Agent) -> Result<()> {
         let agent_id = agent.id().clone();

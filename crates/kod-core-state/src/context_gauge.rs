@@ -32,7 +32,7 @@
 //! It does not detect a *changed* prefix. If a caller mutates an
 //! already-anchored message in place (compaction, a system-prompt
 //! edit, a model switch), the anchor is now lying about the prefix
-//! the provider is charging for. The caller must call [`clear`] on
+//! the provider is charging for. The caller must call `clear` on
 //! those events — the same events P0's `CacheLedger` invalidation
 //! already tracks. Wiring the two together is a follow-up; this module
 //! stays a pure primitive so each caller can decide when an anchor is
@@ -114,7 +114,7 @@ impl ContextGauge {
     /// Call this on any event that invalidates the cached prefix the
     /// provider last charged for: a compaction (messages removed), a
     /// model switch, a tool-surface change, a system-prompt edit.
-    /// After `clear`, [`estimate`] returns `None` until the next
+    /// After `clear`, `estimate` returns `None` until the next
     /// settled call re-anchors.
     pub fn clear(&mut self) {
         self.anchor = None;
@@ -154,7 +154,7 @@ impl ContextGauge {
             .map(|a| a.context_tokens.saturating_add(tail_tokens))
     }
 
-    /// [`estimate`] with a caller-supplied fallback for the
+    /// `estimate` with a caller-supplied fallback for the
     /// unanchored case. Convenience for the common "use the anchor if
     /// we have one, otherwise use the char-arithmetic estimate" shape.
     pub fn estimate_or(&self, tail_tokens: u64, fallback: u64) -> u64 {

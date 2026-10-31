@@ -549,7 +549,7 @@ impl CompactionMethod for PruneMethod {
 ///
 /// # What is wired
 ///
-/// The provider is asked to compact via [`LlmProvider::native_compact`].
+/// The provider is asked to compact via `LlmProvider::native_compact`.
 /// When it returns a `NativeCompaction`, the plain-text `summary` is
 /// returned as a `CompactionPlan::Summary` — the older half of the
 /// transcript is replaced by the summary in kod's view.

@@ -185,7 +185,7 @@ pub enum StreamChunk {
 }
 
 /// Expand a collected [`GenerationResponse`] into the chunk sequence
-/// [`LlmProvider::stream_with_tools`]'s default implementation replays.
+/// `LlmProvider::stream_with_tools`'s default implementation replays.
 pub fn response_chunks(response: GenerationResponse) -> Vec<StreamChunk> {
     let mut chunks = Vec::new();
     match response {

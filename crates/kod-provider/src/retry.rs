@@ -651,7 +651,7 @@ fn scan_text_hint(body: &str) -> Option<Duration> {
     None
 }
 
-/// Public form of [`scan_text_hint`]: the seconds a provider body text
+/// Public form of `scan_text_hint`: the seconds a provider body text
 /// suggests, when it does. Used by adapters that only see a formatted
 /// error message (adk flattens the HTTP response, so tab-bridge's
 /// `"…wait ~20 minutes…"` body reaches this module as plain text).

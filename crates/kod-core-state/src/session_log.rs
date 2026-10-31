@@ -172,7 +172,7 @@ pub enum SessionEntry {
     },
     /// Semantic classification of a tool call's outcome (P5.3).
     /// Written only when the Jev integration is enabled and the call
-    /// ran for at least [`MIN_JEV_CLASSIFY_MS`] — a sub-100ms call is
+    /// ran for at least `MIN_JEV_CLASSIFY_MS` — a sub-100ms call is
     /// not worth a network round-trip. Distinct from `ToolCall`
     /// (which is syntactic: name, args, duration, raw result) so a
     /// reader that wants the raw trail is not slowed by the extra
@@ -448,7 +448,7 @@ const MAX_SESSION_LOG_BYTES: u64 = 256 * 1024 * 1024;
 /// hard error — the file is machine-written, and a partial line means
 /// the log is corrupt, not that the reader should skip.
 ///
-/// Refuses a log larger than [`MAX_SESSION_LOG_BYTES`] with a clear
+/// Refuses a log larger than `MAX_SESSION_LOG_BYTES` with a clear
 /// error rather than allocating past the cap. The `metadata` check
 /// runs before any read, so a sparse or hostile file cannot force a
 /// multi-GB allocation.

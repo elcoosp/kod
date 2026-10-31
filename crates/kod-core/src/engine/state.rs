@@ -527,7 +527,7 @@ impl KodEngine {
     /// Delta §12.7: drain the "consolidation moved facts" flag the
     /// periodic task sets. When set, re-fill the models whose seed
     /// triggers on `AfterConsolidation` (the decision/convention
-    /// models — see [`Self::fill_mental_models`] for what the trigger
+    /// models — see `Self::fill_mental_models` for what the trigger
     /// filter means). Runs at the *start* of a turn, never mid-turn:
     /// the model block sits in the cacheable prefix and a mid-turn
     /// rewrite would invalidate the provider's prefix cache.

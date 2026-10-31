@@ -286,9 +286,9 @@ fn estimate_message_tokens(msg: &ChatMessage) -> u64 {
 /// The `suffix_tokens_after` closure is called with a message index
 /// and returns the estimated token count of everything strictly after
 /// that message. It exists because the caller owns the estimator: a
-/// session with a live [`ContextGauge`](crate::context_gauge::ContextGauge)
+/// session with a live `ContextGauge`
 /// can supply its provider-anchored number for the tail and fall back
-/// to [`estimate_message_tokens`] for the pre-anchor region, while a
+/// to `estimate_message_tokens` for the pre-anchor region, while a
 /// test supplies a constant. The prune pass itself has no opinion on
 /// where the number came from.
 ///
