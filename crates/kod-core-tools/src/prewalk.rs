@@ -54,6 +54,7 @@ pub enum PrewalkState {
 /// One armed prewalk.
 #[derive(Debug, Clone)]
 pub struct Prewalk {
+    /// Where the prewalk is in its arm → fire → done lifecycle.
     pub state: PrewalkState,
     /// The model to switch to when the prewalk fires.
     pub target_model: String,

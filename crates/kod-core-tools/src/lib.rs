@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! kod-core-tools: adapter layer wrapping the built-in tools
 //! (memory, lsp, mcp, hub, jfind) for use by the agent engine.
 

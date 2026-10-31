@@ -78,9 +78,13 @@ pub trait Judge: Send + Sync {
 /// One hit: a file, a line range, and the verified score.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
+    /// The file the hit is in.
     pub path: PathBuf,
+    /// 1-based first line of the matched range.
     pub start_line: usize,
+    /// 1-based last line of the matched range (inclusive).
     pub end_line: usize,
+    /// The relevance score the judge assigned, in `[0.0, 1.0]`.
     pub score: f32,
 }
 

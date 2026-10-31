@@ -65,9 +65,13 @@ use std::path::Path;
 /// granularity on some filesystems) would miss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Evidence {
+    /// Device id (Unix `st_dev`). Zero on platforms without one.
     pub dev: u64,
+    /// Inode number (Unix `st_ino`). Zero on platforms without one.
     pub ino: u64,
+    /// Modification time, nanoseconds since the Unix epoch.
     pub mtime_ns: i128,
+    /// File size in bytes.
     pub size: u64,
     /// SHA-256 over the raw bytes read. The metadata checks catch a
     /// file replaced by a different inode; the digest catches an
@@ -267,7 +271,12 @@ pub enum SpecOutcome {
     /// The evidence validated and the read is usable. Carries the
     /// text and the digest (the digest is useful for a
     /// file-touch record that wants to store what was read).
-    Committed { text: String, digest: [u8; 32] },
+    Committed {
+        /// The text that was read.
+        text: String,
+        /// The digest captured when the read began.
+        digest: [u8; 32],
+    },
     /// The evidence no longer describes the file. The caller must
     /// re-read from scratch — the speculative read's bytes are
     /// discarded, not returned.

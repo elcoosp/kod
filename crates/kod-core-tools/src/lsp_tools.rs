@@ -59,11 +59,13 @@ fn lsp_permissions() -> ToolPermissions {
 
 /// `lsp_diagnostics(path)`.
 pub struct LspDiagnosticsTool {
+    /// The tool's registered definition (id, name, description, trust).
     pub definition: ToolDefinition,
     manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspDiagnosticsTool {
+    /// Build the tool over a shared LSP manager for diagnostics.
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
@@ -143,11 +145,13 @@ impl Tool for LspDiagnosticsTool {
 
 /// `lsp_definition(path, line, column)`.
 pub struct LspDefinitionTool {
+    /// The tool's registered definition (id, name, description, trust).
     pub definition: ToolDefinition,
     manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspDefinitionTool {
+    /// Build the tool over a shared LSP manager for definition lookup.
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
@@ -227,11 +231,13 @@ impl Tool for LspDefinitionTool {
 
 /// `lsp_references(path, line, column, include_declaration?)`.
 pub struct LspReferencesTool {
+    /// The tool's registered definition (id, name, description, trust).
     pub definition: ToolDefinition,
     manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspReferencesTool {
+    /// Build the tool over a shared LSP manager for references.
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
@@ -321,11 +327,13 @@ impl Tool for LspReferencesTool {
 
 /// `lsp_hover(path, line, column)`.
 pub struct LspHoverTool {
+    /// The tool's registered definition (id, name, description, trust).
     pub definition: ToolDefinition,
     manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspHoverTool {
+    /// Build the tool over a shared LSP manager for hover information.
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
