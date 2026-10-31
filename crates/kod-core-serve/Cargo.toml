@@ -1,5 +1,8 @@
 [package]
 name = "kod-core-serve"
+description = "Unix-socket daemon and ACP bridge for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

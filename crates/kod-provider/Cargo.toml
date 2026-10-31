@@ -1,5 +1,8 @@
 [package]
 name = "kod-provider"
+description = "LLM provider abstraction layer for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

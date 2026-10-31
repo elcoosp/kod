@@ -1,5 +1,8 @@
 [package]
 name = "kod-cli"
+description = "Command-line interface for the KOD terminal-native AI coding agent."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

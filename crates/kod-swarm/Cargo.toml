@@ -1,5 +1,8 @@
 [package]
 name = "kod-swarm"
+description = "Coordinated multi-agent swarm collaboration for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

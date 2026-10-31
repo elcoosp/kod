@@ -1,5 +1,8 @@
 [package]
 name = "kod-core-quality"
+description = "Codebase analysis, cleanup, and quality gates for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

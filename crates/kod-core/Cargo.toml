@@ -1,5 +1,8 @@
 [package]
 name = "kod-core"
+description = "Core engine coordinating all KOD subsystems."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,5 +1,8 @@
 [package]
 name = "kod-core-state"
+description = "Persistent state, journals, ledgers, and cost accounting for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

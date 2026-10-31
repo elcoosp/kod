@@ -1,5 +1,8 @@
 [package]
 name = "kod-schema-dialect"
+description = "JSON Schema dialect adaptation for KOD providers."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

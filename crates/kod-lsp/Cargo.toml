@@ -1,5 +1,8 @@
 [package]
 name = "kod-lsp"
+description = "Minimal Language Server Protocol client for KOD."
+readme = "README.md"
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
