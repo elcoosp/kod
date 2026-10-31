@@ -14,9 +14,13 @@ use crate::paths::{PathDanger, RiskContext};
 /// How dangerous a command is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RiskLevel {
+    /// Nothing about the command is dangerous.
     Safe,
+    /// Reversible or additive; runs without a prompt.
     Low,
+    /// The gate should reflect: ask the model to justify.
     Confirm,
+    /// Refused outright; the user runs it themselves.
     Catastrophic,
 }
 
@@ -29,6 +33,7 @@ impl RiskLevel {
     pub fn is_absolute_deny(self) -> bool {
         self == Self::Catastrophic
     }
+    /// The stable lowercase token this level serialises to.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -44,15 +49,20 @@ impl RiskLevel {
 /// the operation, not a rule id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskFinding {
+    /// The severity this finding contributes.
     pub level: RiskLevel,
+    /// User-facing explanation; shown to the model verbatim.
     pub reason: String,
+    /// The path, command, or token the finding is about.
     pub target: String,
 }
 
 /// The whole classification. `level` is the max of the findings.
 #[derive(Debug, Clone)]
 pub struct RiskAssessment {
+    /// The maximum severity across `findings`.
     pub level: RiskLevel,
+    /// Every reason the assessment produced, in discovery order.
     pub findings: Vec<RiskFinding>,
 }
 
@@ -62,9 +72,15 @@ pub enum GateOutcome {
     /// Run it.
     Allow,
     /// The model must re-issue with a substantive `justification`.
-    Reflect { prompt: String },
+    Reflect {
+        /// The reflection prompt to show the model.
+        prompt: String,
+    },
     /// Refused; the user must run it themselves.
-    Deny { reason: String },
+    Deny {
+        /// Why the command was refused.
+        reason: String,
+    },
 }
 
 /// A justification supplied on a re-issue. Substantive means long
@@ -73,6 +89,8 @@ pub enum GateOutcome {
 pub struct Justification(pub String);
 
 impl Justification {
+    /// True when the text is long enough and specific enough to count
+    /// as an actual justification rather than an affirmation.
     pub fn is_substantive(&self) -> bool {
         // T5-C29: reject all-whitespace justifications.
         if self.0.trim().is_empty() {

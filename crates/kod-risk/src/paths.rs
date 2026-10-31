@@ -11,17 +11,24 @@ use std::path::{Component, Path, PathBuf};
 /// How dangerous an operation on a path is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PathDanger {
+    /// The path is inside the working directory and nothing special.
     Safe,
+    /// The path is outside the working directory but not protected.
     Low,
+    /// The path is ambiguous (unresolved variable, symlinked out); confirm.
     Confirm,
+    /// A protected directory, credential store, or system path.
     Catastrophic,
 }
 
 /// The directories a classification is relative to.
 #[derive(Debug, Clone)]
 pub struct RiskContext {
+    /// The directory a path is considered inside relative to.
     pub working_dir: PathBuf,
+    /// The user's home directory; the root of most credential stores.
     pub home_dir: PathBuf,
+    /// A scratch directory whose contents are safe to overwrite.
     pub scratch_dir: PathBuf,
 }
 
