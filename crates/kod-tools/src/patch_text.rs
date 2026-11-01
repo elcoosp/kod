@@ -1,7 +1,7 @@
 //! Delta §7.7 item 5: lift a `*** Begin Patch` payload out of
 //! assistant text.
 //!
-//! A model that has learned the OpenAI `apply_patch` envelope will
+//! A model that has learned the `OpenAI` `apply_patch` envelope will
 //! sometimes emit one as prose — no tool call, just the text — and
 //! then stop. Without a recovery step the edit is lost; the user
 //! sees a reply that describes a change and no change.
@@ -14,7 +14,7 @@
 //!
 //! # Strict by construction
 //!
-//! The OpenAI format carries no line numbers: a hunk is an `@@`
+//! The `OpenAI` format carries no line numbers: a hunk is an `@@`
 //! marker, then context / `-` / `+` lines. Applying it means
 //! *searching* for the context block. This module does a **strict
 //! search**: the block must occur exactly once in the file. Zero

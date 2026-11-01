@@ -111,7 +111,7 @@ impl ToolRegistry {
     }
 
     /// Get all tool definitions. Sorted by name for reproducibility:
-    /// HashMap iteration order varies between runs and would make prompt
+    /// `HashMap` iteration order varies between runs and would make prompt
     /// diffs unstable.
     pub async fn get_definitions(&self) -> Vec<ToolDefinition> {
         let tools = self.tools.read().await;

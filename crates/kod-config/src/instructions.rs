@@ -765,7 +765,7 @@ mod instructions_proptests {
     //! starts a named section. Inside a ```` ``` ```` code fence none
     //! of those are live (F2b-9). Two behaviors below are
     //! CHARACTERIZED, not asserted correct: `::: whenfoo` is
-    //! silently treated as `::: when` (strip_prefix("when") matches
+    //! silently treated as `::: when` (`strip_prefix("when`") matches
     //! the "when" prefix of "whenfoo"), and `::: <other>` is
     //! silently dropped rather than preserved in the body.
     use super::*;

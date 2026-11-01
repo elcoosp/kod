@@ -99,7 +99,7 @@ fn render_one(r: &AsyncResult) -> String {
 /// The delivery queue.
 #[derive(Debug, Default)]
 pub struct AsyncDelivery {
-    /// owner_id -> queued results, oldest first.
+    /// `owner_id` -> queued results, oldest first.
     queues: HashMap<String, Vec<AsyncResult>>,
     /// Current session epoch.
     epoch: u64,

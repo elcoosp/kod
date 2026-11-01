@@ -90,7 +90,7 @@ fn write_trace(path: &std::path::Path, id: u64, user_prompt: &str) {
     w.record(&trace).expect("record trace");
 }
 
-/// `strict = false`: the trace's request_summary hash almost certainly
+/// `strict = false`: the trace's `request_summary` hash almost certainly
 /// differs from what the fresh engine produces (the trace has
 /// `model = "mock-model"`; the engine will build its own model from
 /// whatever the default endpoint is). Divergence is printed and

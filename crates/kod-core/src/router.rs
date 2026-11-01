@@ -117,7 +117,7 @@ pub struct RouterConfig {
     /// `MemoryManager`'s own 4096 hardcode.
     pub context_window: usize,
     /// Short-term memory capacity. Read from `MemoryConfig::short_term_capacity`.
-    /// Defaults to 100 for callers that build RouterConfig directly.
+    /// Defaults to 100 for callers that build `RouterConfig` directly.
     pub short_term_capacity: usize,
     /// Minimum score for a skill to be considered a match. Read from
     /// `SkillsConfig::match_threshold` by the CLI and TUI; the
@@ -258,7 +258,7 @@ pub struct TaskResponse {
 ///   current request — which is always volatile.
 ///
 /// The concrete split point is the `## Volatile suffix` marker the
-/// router already emits between its stable block (Identity + RepoMap)
+/// router already emits between its stable block (Identity + `RepoMap`)
 /// and its volatile one (Environment + Tool inventory + skills +
 /// history + user request). That marker was a text convention; this
 /// struct makes it a type. `render_text` reproduces the pre-`PromptPlan`
@@ -272,7 +272,7 @@ pub struct TaskResponse {
 #[derive(Debug, Clone)]
 pub struct PromptPlan {
     /// Ordered segments. `cacheable == true` for the invariant prefix
-    /// (Identity + RepoMap) and `false` for everything the model sees
+    /// (Identity + `RepoMap`) and `false` for everything the model sees
     /// that depends on the turn — the environment block, the tool
     /// inventory, the skills, the transcript, and the user's request.
     pub system: Vec<SystemSegment>,
@@ -391,7 +391,7 @@ pub struct TaskRouter {
     watched_dirs_shared: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
     /// Repository map cache with mtime-based invalidation. Stores the
     /// structured `RepoMap` (not the pre-rendered string) so future
-    /// consumers — PageRank in D5, a `/map` command that wants counts —
+    /// consumers — `PageRank` in D5, a `/map` command that wants counts —
     /// can reuse the same build without another walk.
     ///
     /// Invalidation is checked at the start of every `build_prompt`
@@ -1123,7 +1123,7 @@ impl TaskRouter {
 
     /// H-7: async variant that runs the fingerprint walk and, on a
     /// miss, the full map build on the blocking pool. The sync
-    /// `repo_map_text` ran a 100k-file parse + PageRank on a tokio
+    /// `repo_map_text` ran a 100k-file parse + `PageRank` on a tokio
     /// worker on every cache miss (the normal state of an agentic
     /// loop); callers on the async path must use this.
     pub(crate) async fn repo_map_text_async(&self) -> Option<std::sync::Arc<String>> {
@@ -1851,7 +1851,7 @@ mod tests {
     /// `TaskResponse::memory_used` must be true only when a memory
     /// entry actually reached the prompt. Regression: it was set to
     /// `memory_context.is_some()`, which is true whenever a manager
-    /// exists — always, since enable_memory defaults on — so the flag
+    /// exists — always, since `enable_memory` defaults on — so the flag
     /// reported "memory infrastructure present", not "memory used".
     /// `build_prompt_with_context` must NOT retrieve when a context is
     /// supplied — that is the entire point of D0.4. Guard: store a
@@ -2025,7 +2025,7 @@ mod tests {
     }
 
     /// `build_prompt` must consult the memory manager. Regression:
-    /// the router built a MemoryManager and marked the field
+    /// the router built a `MemoryManager` and marked the field
     /// `#[allow(dead_code)]`; `build_context` was always called with
     /// `&None`, so anything stored in memory — including long-term
     /// facts written via `MemoryManager::store` — never reached the
@@ -2077,7 +2077,7 @@ mod tests {
         );
     }
 
-    /// RouterConfig::context_window must reach the memory manager so its
+    /// `RouterConfig::context_window` must reach the memory manager so its
     /// token budget is the model's window, not the manager's own 4096
     /// hardcode.
     #[tokio::test]

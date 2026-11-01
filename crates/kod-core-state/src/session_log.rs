@@ -196,7 +196,7 @@ pub enum SessionEntry {
         /// Unix milliseconds when the redaction was recorded.
         timestamp_ms: u64,
         /// The rule names that fired, with their counts. Aggregated
-        /// over the whole entry so a tool result with three OpenAI
+        /// over the whole entry so a tool result with three `OpenAI`
         /// keys produces one `openai-key: 3` item.
         rules: Vec<kod_types::redact::Redaction>,
     },
@@ -226,7 +226,7 @@ pub enum SessionEntry {
         /// `"jev"` | `"heuristic"`.
         source: String,
     },
-    /// One Jev (TypeSafe System One) decision. Written by the
+    /// One Jev (`TypeSafe` System One) decision. Written by the
     /// `JevClient` wrapper for every call site — including the
     /// heuristic fallback when Jev is disabled or errors. The
     /// `source` field distinguishes the three cases so
@@ -239,7 +239,7 @@ pub enum SessionEntry {
         holder: String,
         /// A short label for the call site (`tool_filter`,
         /// `task_classify`, `auto_approve`, ...). Not sent to
-        /// TypeSafe.
+        /// `TypeSafe`.
         purpose: String,
         /// First 200 characters of the state sent to Jev.
         state_preview: String,
@@ -813,7 +813,7 @@ pub enum RehydrationMode {
 /// the `ToolCall` entries back into the `ChatMessage` pairs the model
 /// saw — an assistant turn carrying the call, immediately followed by
 /// a tool turn carrying its result. Other entry kinds (Cost,
-/// PolicyDecision, …) are audit records, not transcript; they are
+/// `PolicyDecision`, …) are audit records, not transcript; they are
 /// skipped.
 ///
 /// The function is pure and deterministic: given the same entries

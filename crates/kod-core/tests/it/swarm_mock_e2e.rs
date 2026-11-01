@@ -145,7 +145,7 @@ async fn run_produces_decomposed_and_agent_events_over_a_mock_provider() {
 /// agent whose request could never fit re-ran and printed
 /// `AgentRetrying (2/2): request too long`. The engine's own retry
 /// ladders gate on `is_retryable()`; the swarm's did not, because
-/// the KodError was stringified before the decision. This test pins
+/// the `KodError` was stringified before the decision. This test pins
 /// the corrected behaviour: exactly one `AgentStarted`, zero
 /// `AgentRetrying`, one `AgentFailed` whose message carries the
 /// real reason.

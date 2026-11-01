@@ -49,7 +49,7 @@ pub const MOCK_REPLY: &str = "Hi from the mock";
 pub enum MockStep {
     /// Plain text, streamed as content deltas.
     Text(String),
-    /// One tool call, streamed in the OpenAI `tool_calls` delta shape.
+    /// One tool call, streamed in the `OpenAI` `tool_calls` delta shape.
     /// The harness then runs the tool and calls the model again; the
     /// next step answers that call.
     ToolCall {
@@ -224,7 +224,7 @@ async fn models() -> axum::Json<serde_json::Value> {
 /// `POST /v1/chat/completions` — the completion.
 ///
 /// Extracts `State` (shared per-request config) and returns an SSE
-/// stream of chunk events matching the OpenAI streaming shape:
+/// stream of chunk events matching the `OpenAI` streaming shape:
 /// opening role delta, content delta(s), terminal `finish_reason`
 /// delta, then `[DONE]`.
 async fn chat_completions(
@@ -314,7 +314,7 @@ async fn chat_completions(
 
 /// SSE events for a tool call.
 ///
-/// The OpenAI wire shape the provider's adk parser expects: a
+/// The `OpenAI` wire shape the provider's adk parser expects: a
 /// `tool_calls` array in the delta, each entry carrying `index`, `id`,
 /// and a `function` with `name` and (possibly fragmented)
 /// `arguments`. The finish chunk carries `finish_reason: "tool_calls"`,

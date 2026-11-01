@@ -40,7 +40,7 @@ const BACKGROUND_SUGGEST_AFTER_SECS: u64 = 60;
 
 /// Map a path-level IO error into a message the model can act on.
 ///
-/// The default Display of std::io::Error on a directory read is
+/// The default Display of `std::io::Error` on a directory read is
 /// "Is a directory (os error 21)" — technically accurate, but it does
 /// not tell the model what to do next. Same for the bare "No such file
 /// or directory" and "Permission denied". Return a short label plus a
@@ -158,14 +158,14 @@ pub fn is_secret_like_env(name: &str) -> bool {
     PREFIXES.iter().any(|p| upper.starts_with(p))
 }
 
-/// The read_file tool.
+/// The `read_file` tool.
 pub struct ReadFileTool {
     /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl ReadFileTool {
-    /// Build the read_file tool.
+    /// Build the `read_file` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -582,7 +582,7 @@ pub struct WriteFileTool {
 }
 
 impl WriteFileTool {
-    /// Build the write_file tool.
+    /// Build the `write_file` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -839,7 +839,7 @@ pub struct ExecuteCommandTool {
 }
 
 impl ExecuteCommandTool {
-    /// Build the execute_command tool.
+    /// Build the `execute_command` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -1366,7 +1366,7 @@ pub struct ListFilesTool {
 }
 
 impl ListFilesTool {
-    /// Build the list_files tool.
+    /// Build the `list_files` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -1604,7 +1604,7 @@ pub struct PatchFileTool {
 }
 
 impl PatchFileTool {
-    /// Build the patch_file tool.
+    /// Build the `patch_file` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -2091,7 +2091,7 @@ impl Tool for GrepTool {
     }
 }
 
-/// Tier 1.3 — sanitize a read_file payload. Returns the sanitized
+/// Tier 1.3 — sanitize a `read_file` payload. Returns the sanitized
 /// text and, when anything was redacted, a one-line notice. The
 /// caller chooses where the notice goes: the plain path prepends it
 /// to `content`; the numbered path must keep the notice OUT of the
@@ -2128,7 +2128,7 @@ fn redact_read_content_parts(
     (sanitized, Some(notice))
 }
 
-/// Tier 1.3 — sanitize a read_file payload, prepending the redaction
+/// Tier 1.3 — sanitize a `read_file` payload, prepending the redaction
 /// notice to the content. Used by the plain (non-numbered) path.
 fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::path::Path) -> String {
     let (sanitized, notice) = redact_read_content_parts(content, context, resolved);
@@ -2357,7 +2357,7 @@ mod tests {
     /// …) checked `Refuse` but not `Redact`, so a protected file read
     /// through a protocol URL returned raw content while the same file
     /// read as a plain path was redacted. Same class as the grep and
-    /// git_diff leaks.
+    /// `git_diff` leaks.
     #[tokio::test]
     async fn internal_url_read_redacts_a_protected_path() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -2961,14 +2961,14 @@ mod tests {
     /// A file with NUL bytes in the first 1 KB must be returned as
     /// binary (flag + hex preview), not decoded as UTF-8 lossy.
     /// Regression: the previous code passed the bytes through
-    /// from_utf8_lossy, so the model saw a wall of U+FFFD characters
+    /// `from_utf8_lossy`, so the model saw a wall of U+FFFD characters
     /// and had no way to know the file was a PNG, an ELF, or a
     /// UTF-16 text file.
     /// Writing under a path whose parent is a file (not a directory)
-    /// must return Ok(ToolResult::Error(...)) with a message the model
-    /// can act on — the same shape read_file uses for directories and
+    /// must return `Ok(ToolResult::Error`(...)) with a message the model
+    /// can act on — the same shape `read_file` uses for directories and
     /// missing files. Regression: the previous code propagated
-    /// KodError::Io, forcing callers to handle two shapes for the same
+    /// `KodError::Io`, forcing callers to handle two shapes for the same
     /// class of "the model asked for something that cannot work."
     #[tokio::test]
     async fn test_write_file_parent_is_a_file_reports_error() {
@@ -3067,8 +3067,8 @@ mod tests {
         }
     }
 
-    /// read_file on a directory must return an error message the
-    /// model can act on ("use list_files"), not a raw "Is a directory"
+    /// `read_file` on a directory must return an error message the
+    /// model can act on ("use `list_files`"), not a raw "Is a directory"
     /// IO error that it cannot distinguish from "file not found".
     #[tokio::test]
     async fn read_file_directory_returns_actionable_error() {
@@ -3096,7 +3096,7 @@ mod tests {
         }
     }
 
-    /// read_file on a missing path must say so, and the message must
+    /// `read_file` on a missing path must say so, and the message must
     /// suggest checking the path rather than re-running the same call.
     #[tokio::test]
     async fn read_file_missing_returns_actionable_error() {
@@ -3455,9 +3455,9 @@ mod tests {
         }
     }
 
-    /// A file larger than MAX_GREP_FILE_BYTES must be skipped, and
+    /// A file larger than `MAX_GREP_FILE_BYTES` must be skipped, and
     /// the skip must be reported in the result. Before streaming, the
-    /// old code called read_to_string on every candidate file and
+    /// old code called `read_to_string` on every candidate file and
     /// would OOM on a multi-gigabyte log.
     #[tokio::test]
     async fn grep_skips_oversized_files() {
@@ -3533,7 +3533,7 @@ mod tests {
         }
     }
 
-    /// list_files on a file must return path_kind: "file" with a
+    /// `list_files` on a file must return `path_kind`: "file" with a
     /// single-entry list, not the ambiguous empty-directory shape.
     /// Regression: the walker rooted at a file yielded nothing, so the
     /// result was indistinguishable from an empty directory.
@@ -3560,7 +3560,7 @@ mod tests {
         }
     }
 
-    /// list_files on a directory still reports directory and its
+    /// `list_files` on a directory still reports directory and its
     /// entries, unchanged.
     #[tokio::test]
     async fn list_files_on_directory_reports_directory_kind() {
@@ -3583,7 +3583,7 @@ mod tests {
         }
     }
 
-    /// list_files on a missing path returns a structured error naming
+    /// `list_files` on a missing path returns a structured error naming
     /// the path, not an empty result.
     #[tokio::test]
     async fn list_files_missing_path_errors() {

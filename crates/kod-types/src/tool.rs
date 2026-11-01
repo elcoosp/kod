@@ -70,9 +70,9 @@ pub enum ToolCategory {
     Git,
     /// Web tools (fetch, search).
     Web,
-    /// Code-analysis tools (check, search_files).
+    /// Code-analysis tools (check, `search_files`).
     Code,
-    /// System tools (execute_command, sandbox probes).
+    /// System tools (`execute_command`, sandbox probes).
     System,
 }
 
@@ -167,7 +167,7 @@ pub struct ToolPermissions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     /// Wire-level id the provider assigned to this call, when
-    /// available (OpenAI's `tool_calls[i].id`, Anthropic's
+    /// available (`OpenAI`'s `tool_calls[i].id`, Anthropic's
     /// `tool_use.id`). The engine preserves it through the tool
     /// round so a `Role::Tool` message can be linked back to its
     /// originating call. `None` for a locally constructed call or a

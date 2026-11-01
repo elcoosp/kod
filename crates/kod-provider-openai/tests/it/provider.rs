@@ -2,7 +2,7 @@
 //!
 //! `from_config` was removed in Cleanup-3a: the `LlmConfig` v2 shape
 //! carries a list of `EndpointConfig` entries rather than a single
-//! model / base_url pair, and every provider is built by
+//! model / `base_url` pair, and every provider is built by
 //! `kod_core::build_registry` or by a direct `with_api_key` call.
 //! These tests exercise the constructor and endpoint-normalisation
 //! paths that remain.

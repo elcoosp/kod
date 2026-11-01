@@ -188,7 +188,7 @@ async fn goal_loop_second_turn_sees_first_turn_output() {
 /// dead code. This test drives the goal loop with a provider that
 /// always reports 200 prompt tokens and never declares GOAL MET. With
 /// `token_budget = 100` the runtime must flip to `BudgetLimited` after
-/// turn 1, the loop must break (not run MAX_GOAL_TURNS), and exactly
+/// turn 1, the loop must break (not run `MAX_GOAL_TURNS`), and exactly
 /// one steer must appear on the chunk channel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn goal_budget_flips_to_budget_limited_and_emits_one_steer() {

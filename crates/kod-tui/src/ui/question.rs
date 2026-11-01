@@ -1,4 +1,4 @@
-//! Question dialog overlay: the ask_user prompt.
+//! Question dialog overlay: the `ask_user` prompt.
 //!
 //! Centered modal on top of the chat when the agent has called
 //! `ask_user` and is waiting for a text answer. Enter submits,

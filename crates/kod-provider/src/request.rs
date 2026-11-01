@@ -3,7 +3,7 @@
 //! The `LlmProvider` trait historically accepted a single `&str` prompt.
 //! That shape made two things impossible:
 //!
-//! - Native prompt caching. Anthropic's `cache_control` and OpenAI's
+//! - Native prompt caching. Anthropic's `cache_control` and `OpenAI`'s
 //!   automatic prefix caching both need structured messages, not one
 //!   concatenated string.
 //! - Multiple models per session. A single prompt string is fine when
@@ -70,7 +70,7 @@ pub struct SystemSegment {
     /// turns in a session. A provider with explicit cache support
     /// (Anthropic `cache_control`) places a cache breakpoint at the
     /// **last** cacheable segment; providers with implicit prefix
-    /// caching (OpenAI) ignore the flag and rely on byte-stable
+    /// caching (`OpenAI`) ignore the flag and rely on byte-stable
     /// ordering of the cacheable segments.
     pub cacheable: bool,
 }
@@ -180,7 +180,7 @@ pub struct CompletionRequest {
     pub image_frames: Vec<ImageFrame>,
     /// Tab-bridge affinity: the kod session (transcript) this request
     /// belongs to. Providers backed by stateful browser tabs send it as
-    /// the OpenAI `user` field so consecutive turns land in the same tab
+    /// the `OpenAI` `user` field so consecutive turns land in the same tab
     /// instead of allocating (and leaking) one tab per request.
     ///
     /// `None` on prewarm/health-check traffic and in tests. Stateless
@@ -350,8 +350,8 @@ pub struct ModelPricing {
 }
 
 /// Default cache-read rate as a fraction of the full input rate.
-/// Anthropic's published ratio; OpenAI's automatic caching is 0.5x,
-/// but a caller with a `[pricing]` block on an OpenAI endpoint can
+/// Anthropic's published ratio; `OpenAI`'s automatic caching is 0.5x,
+/// but a caller with a `[pricing]` block on an `OpenAI` endpoint can
 /// set the field explicitly.
 const DEFAULT_CACHE_READ_RATIO: f64 = 0.1;
 /// Default cache-write rate as a fraction of the full input rate.
@@ -736,7 +736,7 @@ mod cache_convention_tests {
 
 #[cfg(test)]
 mod one_hour_tier_regression {
-    /// Bug-hunt post-v0.1.9 (P3): cost_for_usage's 1h cache tier
+    /// Bug-hunt post-v0.1.9 (P3): `cost_for_usage`'s 1h cache tier
     /// must fall back to 2x input when `cache_write_1h_per_mtok_usd`
     /// is None (matching the doc comment), not to the 5-minute rate.
     /// On Anthropic the 5m rate is ~1.25x input and the 1h rate is

@@ -22,7 +22,7 @@ use kod_types::{AgentId, Priority};
 // IrcBus
 // ---------------------------------------------------------------------------
 
-/// One writer per recipient, each writing below MAILBOX_CAP. Every
+/// One writer per recipient, each writing below `MAILBOX_CAP`. Every
 /// message that was enqueued must come back out exactly once. This
 /// exercises the bus's lock and drain path without triggering the
 /// documented cap-drop.
@@ -106,7 +106,7 @@ async fn irc_bus_concurrent_sends_do_not_lose_messages() {
     );
 }
 
-/// Flood a single mailbox past MAILBOX_CAP. The bus drops the oldest
+/// Flood a single mailbox past `MAILBOX_CAP`. The bus drops the oldest
 /// entries by design; the invariant is not "no loss" but
 /// `sent == drained + DroppedOldest`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -242,7 +242,7 @@ async fn irc_bus_send_await_under_concurrent_replies() {
     );
 }
 
-/// Register / set_receiver / mark_dead / send / drain racing across
+/// Register / `set_receiver` / `mark_dead` / send / drain racing across
 /// many agents. No invariant beyond "did not panic / did not deadlock",
 /// plus: an agent that was tombstoned stays tombstoned.
 //
@@ -313,7 +313,7 @@ async fn irc_bus_register_and_mark_dead_race() {
 
 /// Every agent sends to every other agent; each recipient's channel
 /// must yield exactly the expected count. Exercises the per-agent
-/// RwLock map and the bounded history map under contention.
+/// `RwLock` map and the bounded history map under contention.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn communication_hub_concurrent_send_does_not_lose_messages() {
     let hub = Arc::new(AgentCommunicationHub::new());

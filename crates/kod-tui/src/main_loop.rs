@@ -7749,7 +7749,7 @@ mod tests {
     /// This is what a user hits if they `/review` on the very first
     /// Dispatching a plain prompt must record it as `last_prompt`, so
     /// `/retry` and the `r` key have something to resend. Regression:
-    /// before this, last_prompt was only set by retry_generation
+    /// before this, `last_prompt` was only set by `retry_generation`
     /// itself — a chicken-and-egg that made /retry a no-op.
     #[tokio::test]
     async fn test_retry_prompt_is_recorded_on_dispatch() {
@@ -7784,7 +7784,7 @@ mod tests {
         );
     }
 
-    /// `/model` with no argument must route to show_and_refresh_models.
+    /// `/model` with no argument must route to `show_and_refresh_models`.
     /// Without an engine the handler reports that clearly rather than
     /// printing the old "Usage: /model <name>".
     #[tokio::test]
@@ -7801,8 +7801,8 @@ mod tests {
         );
     }
 
-    /// available_models() reports what was last set. Pins the shape
-    /// switch_model relies on: an empty list means 'unknown' (do not
+    /// `available_models()` reports what was last set. Pins the shape
+    /// `switch_model` relies on: an empty list means 'unknown' (do not
     /// warn), a non-empty list is what validation compares against.
     #[tokio::test]
     async fn test_available_models_accessor_roundtrips() {

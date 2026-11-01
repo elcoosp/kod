@@ -463,7 +463,7 @@ mod path_lock_concurrency {
     /// Existing tests cover pairwise acquire/timeout, but none
     /// observes the invariant "no two tasks hold simultaneously"
     /// across N>2 tasks. This is the shape a regression in the
-    /// cells map (e.g. release_all clearing while a holder is live —
+    /// cells map (e.g. `release_all` clearing while a holder is live —
     /// v0.1.10's bug) would violate.
     #[tokio::test]
     async fn concurrent_acquires_never_overlap() {

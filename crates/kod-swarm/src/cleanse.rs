@@ -85,7 +85,7 @@ pub struct CleanseScheduler {
 }
 
 impl CleanseScheduler {
-    /// Scheduler capped at max_agents concurrent cleanses.
+    /// Scheduler capped at `max_agents` concurrent cleanses.
     #[must_use]
     pub fn new(max_agents: usize) -> Self {
         Self {

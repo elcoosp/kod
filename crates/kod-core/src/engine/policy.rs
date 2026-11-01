@@ -140,7 +140,7 @@ impl KodEngine {
         n
     }
 
-    /// Answer a pending ask_user question. Returns `true` when the id
+    /// Answer a pending `ask_user` question. Returns `true` when the id
     /// matched and the answer was delivered.
     pub async fn respond_to_question(&self, id: u64, answer: String) -> bool {
         let sender = self.pending_questions.write().await.remove(&id);

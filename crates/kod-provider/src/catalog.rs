@@ -113,7 +113,7 @@ pub struct ModelMeta {
 pub enum ProviderPriority {
     /// A generic gateway or a self-hosted proxy.
     Gateway = 0,
-    /// A multi-provider aggregator (OpenRouter and the like).
+    /// A multi-provider aggregator (`OpenRouter` and the like).
     Aggregator = 1,
     /// The vendor that trained the model.
     FirstParty = 2,

@@ -258,7 +258,7 @@ impl KodApp {
     /// Turn a raw provider/transport error into something the user can act
     /// on. The original text is always kept — advice is appended.
     ///
-    /// Ordering matters: "model not found" is often reported by OpenAI-
+    /// Ordering matters: "model not found" is often reported by `OpenAI`-
     /// compatible servers as a 404, and context-length errors sometimes
     /// arrive wrapped in a `400` or `422`. Match the most specific
     /// phrasing first.

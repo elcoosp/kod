@@ -64,7 +64,7 @@ impl KodApp {
     /// path depends on the feature set and version, and this crate
     /// does not otherwise need it — write to a sibling temp file and
     /// rename over the target. `rename` is atomic on POSIX and on
-    /// Windows (via ReplaceFile semantics under the std
+    /// Windows (via `ReplaceFile` semantics under the std
     /// implementation), so no reader ever sees a partially written
     /// file. The worst case is one session's last append losing to
     /// the other's — the same last-writer-wins as before, without

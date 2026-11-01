@@ -1,7 +1,7 @@
 use super::*;
 
 impl KodEngine {
-    /// On the first turn of a Complex or MultiStep task, ask the
+    /// On the first turn of a Complex or `MultiStep` task, ask the
     /// model for a step-by-step plan and store it (Tier 2.1).
     ///
     /// The plan prompt is deliberately short — the model already has

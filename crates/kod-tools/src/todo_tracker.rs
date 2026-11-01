@@ -1,4 +1,4 @@
-//! TodoTracker: nudge machinery for the todo tool (borrow from
+//! `TodoTracker`: nudge machinery for the todo tool (borrow from
 //! oh-my-pi, delta §11.7).
 //!
 //! # The gap

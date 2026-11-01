@@ -3,7 +3,7 @@
 //! # Why a hand-rolled parser
 //!
 //! The chat renders in a fixed-width terminal, not a browser, so
-//! most of CommonMark is either irrelevant (links, tables, reference
+//! most of `CommonMark` is either irrelevant (links, tables, reference
 //! definitions) or actively hostile to the layout (raw HTML). The
 //! subset a coding agent actually emits — and a user actually reads —
 //! is small and stable:

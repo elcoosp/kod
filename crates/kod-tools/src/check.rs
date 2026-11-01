@@ -893,7 +893,7 @@ mod coverage_diagnostic_parsing {
 #[cfg(test)]
 mod coverage_project_detection {
     //! `ProjectKind::detect` picks one toolchain when several are
-    //! present. The priority is Cargo > Go > Ruff > NodeTsc. A
+    //! present. The priority is Cargo > Go > Ruff > `NodeTsc`. A
     //! regression that reordered the checks would run `cargo check`
     //! in a Go repo (silently a no-op) and report a clean build
     //! where there is none.

@@ -59,7 +59,7 @@ impl Default for CacheTracker {
 }
 
 impl CacheTracker {
-    /// Build a tracker keeping at most max_history hashes.
+    /// Build a tracker keeping at most `max_history` hashes.
     #[must_use]
     pub fn new(max_history: usize) -> Self {
         Self {

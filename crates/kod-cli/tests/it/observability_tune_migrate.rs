@@ -4,7 +4,7 @@
 //! path argument. None builds an engine, spawns a process, or reads
 //! stdin on the paths covered here.
 //!
-//! `run_jev_test` is not tested end-to-end: it builds a JevClient and
+//! `run_jev_test` is not tested end-to-end: it builds a `JevClient` and
 //! calls an external service. Its *disabled-config* failure branch
 //! IS tested — `from_config` returns Ok(None) when `[jev]` is absent,
 //! so the call fails before any network I/O.

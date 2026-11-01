@@ -103,7 +103,7 @@ pub struct KodConfig {
     /// section, which is the default — no plugin is registered
     /// unless the user writes a block for it.
     pub mcp: crate::McpConfig,
-    /// TypeSafe AI / Jev integration (design P0.1). Disabled by
+    /// `TypeSafe` AI / Jev integration (design P0.1). Disabled by
     /// default — an unconfigured KOD runs identically to a
     /// build that predates the integration. The CLI and TUI
     /// construct a `JevClient` from this block at startup and
@@ -1287,7 +1287,7 @@ mod recover_sections_proptests {
         );
     }
 
-    /// `config_version = 4294967296` (u32::MAX + 1) also overflows.
+    /// `config_version = 4294967296` (`u32::MAX` + 1) also overflows.
     /// `u32::try_from` rejects it and the default survives.
     #[test]
     fn control_out_of_range_config_version_uses_default() {

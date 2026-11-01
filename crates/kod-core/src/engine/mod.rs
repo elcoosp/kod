@@ -369,8 +369,8 @@ pub struct KodEngine {
     /// invalidate the provider's cached prefix. The flag lives here
     /// rather than on the task so the task can stay router-only.
     mental_models_due: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Tier 1.4: per-dispatch parent TurnId. The swarm runner
-    /// allocates one TurnId per `run` and stores it here, keyed on
+    /// Tier 1.4: per-dispatch parent `TurnId`. The swarm runner
+    /// allocates one `TurnId` per `run` and stores it here, keyed on
     /// the dispatch transcript, before calling
     /// `process_streaming_with_model_for`. That call takes the entry
     /// when it builds its `TurnTraceBuilder`, so every swarm
@@ -385,7 +385,7 @@ pub struct KodEngine {
     prewalks: RwLock<HashMap<String, kod_core_tools::prewalk::Prewalk>>,
     /// Delta §11.10: transcripts currently in explicit plan mode. A
     /// transcript in plan mode restricts the tool set to read-only
-    /// tools (read_file / grep / list_files / file_info / web_search)
+    /// tools (`read_file` / grep / `list_files` / `file_info` / `web_search`)
     /// so the model cannot mutate the workspace while planning. The
     /// user enters and exits plan mode with the TUI/CLI toggle; the
     /// engine holds no implicit state machine — a plan that was
@@ -438,7 +438,7 @@ pub struct KodEngine {
     /// Same keying as `history`.
     last_prompt: RwLock<HashMap<String, kod_core_state::budget::PromptTrace>>,
     /// Provider options captured from `LlmConfig` at engine construction.
-    /// Transitional until D1 (endpoint config per ModelRef). Kept in an
+    /// Transitional until D1 (endpoint config per `ModelRef`). Kept in an
     /// `RwLock<Option<...>>` so `set_generation_defaults` works through
     /// `&self` (the engine is shared as `Arc<KodEngine>`).
     generation_defaults: RwLock<GenerationDefaults>,
@@ -454,7 +454,7 @@ pub struct KodEngine {
     /// request in their Jev state. Cleared when the call
     /// returns.
     current_requests: RwLock<HashMap<String, String>>,
-    /// Optional Jev (TypeSafe System One) client (design P0.1).
+    /// Optional Jev (`TypeSafe` System One) client (design P0.1).
     /// `None` — the default — means every Jev-aware call site
     /// runs its pre-Jev heuristic with no network call. The
     /// CLI/TUI install one via `set_jev_client` when
@@ -655,10 +655,10 @@ pub struct KodEngine {
     /// Monotonic counter for approval request ids. Ids are only unique
     /// within an engine's lifetime, which is all the consumer needs.
     next_approval_id: std::sync::atomic::AtomicU64,
-    /// Pending ask_user questions, keyed by id. Same shape as
+    /// Pending `ask_user` questions, keyed by id. Same shape as
     /// `pending_approvals`, different answer type.
     pending_questions: RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<String>>>,
-    /// Monotonic id source for ask_user questions. Kept distinct from
+    /// Monotonic id source for `ask_user` questions. Kept distinct from
     /// the approval counter so a marker cannot be accidentally
     /// answered by the wrong dialog.
     next_question_id: std::sync::atomic::AtomicU64,

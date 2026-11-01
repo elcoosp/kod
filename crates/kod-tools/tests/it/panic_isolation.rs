@@ -6,7 +6,7 @@
 //! there is no spawn boundary between the registry and the caller. A
 //! panic inside any one tool therefore unwinds through the registry
 //! and out of the engine's task, killing the turn. The swarm runner
-//! wraps agent bodies in `catch_unwind` (swarm_runner.rs:1630); the
+//! wraps agent bodies in `catch_unwind` (`swarm_runner.rs:1630`); the
 //! registry does not.
 //!
 //! A model can invoke ~40 tools per round and the tool surface is

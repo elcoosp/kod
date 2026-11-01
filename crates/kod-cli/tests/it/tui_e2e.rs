@@ -95,7 +95,7 @@ fn submitting_a_prompt_shows_it_in_the_transcript() {
 /// The mock's reply streams back and lands in the transcript.
 ///
 /// This is the test that pays for the whole harness: it exercises
-/// crossterm input, engine dispatch, the OpenAI provider's SSE
+/// crossterm input, engine dispatch, the `OpenAI` provider's SSE
 /// parser, the streaming chunk handlers added in H-T1/T2/T3, and the
 /// chat widget's streaming-render branch — end-to-end, against a real
 /// socket.

@@ -1,4 +1,4 @@
-//! IrcBus: delivery semantics over the communication hub (borrow
+//! `IrcBus`: delivery semantics over the communication hub (borrow
 //! from oh-my-pi, delta §11.3).
 //!
 //! # The gap

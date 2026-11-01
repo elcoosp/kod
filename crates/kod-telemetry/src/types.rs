@@ -12,7 +12,7 @@ pub struct TelemetryConfig {
     pub headers: Vec<(String, String)>,
 }
 
-/// One provider call's telemetry, keyed to the GenAI semconv.
+/// One provider call's telemetry, keyed to the `GenAI` semconv.
 ///
 /// A `Default` record is a no-op: an empty model string, zero tokens.
 /// The emitter does not skip a default record — a `record_turn` call

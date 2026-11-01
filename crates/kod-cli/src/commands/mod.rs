@@ -61,7 +61,7 @@ fn parse_preset(s: Option<&str>) -> Result<Option<kod_config::Preset>> {
     }
 }
 
-/// Async version of `install_policy`: builds the engine's PolicyEngine
+/// Async version of `install_policy`: builds the engine's `PolicyEngine`
 /// from config + cwd + CLI preset, and installs it.
 async fn install_policy_async(
     engine: &kod_core::KodEngine,
@@ -136,7 +136,7 @@ impl<'a> Default for EngineBootstrapOptions<'a> {
     }
 }
 
-/// Build a KodEngine from a config and bootstrap options.
+/// Build a `KodEngine` from a config and bootstrap options.
 pub async fn engine_from_config(
     config: &KodConfig,
     opts: EngineBootstrapOptions<'_>,
@@ -1309,7 +1309,7 @@ pub enum Command {
         model: Option<String>,
     },
 
-    /// Jev (TypeSafe AI) status, statistics, and threshold tuning.
+    /// Jev (`TypeSafe` AI) status, statistics, and threshold tuning.
     Jev {
         #[command(subcommand)]
         /// The JEV subcommand to run.
@@ -1346,7 +1346,7 @@ pub enum Command {
 
     /// Delta §14.4: validate a proposed conventional-commit message
     /// against the staged changes. Reads `git diff --cached
-    /// --name-only` for the path list, composes a CommitProposal from
+    /// --name-only` for the path list, composes a `CommitProposal` from
     /// the flags, and prints either the formatted message or the
     /// rejection reason. Exits non-zero on a rejection so a script
     /// can gate a commit on it.
@@ -1630,9 +1630,9 @@ pub enum PolicyAction {
     /// parses, and treated as a string otherwise.
     ///
     /// Example:
-    ///   kod policy explain write_file path=src/main.rs
-    ///   kod policy explain execute_command command="cargo test"
-    ///   kod policy explain web_fetch url=<https://docs.rs/>
+    ///   kod policy explain `write_file` path=src/main.rs
+    ///   kod policy explain `execute_command` command="cargo test"
+    ///   kod policy explain `web_fetch` url=<https://docs.rs/>
     ///
     /// The decision is the same one the engine makes: session deny
     /// rules are not consulted (there are none in a fresh CLI
@@ -1888,7 +1888,7 @@ pub enum SessionsAction {
 /// filtered by a case-insensitive substring.
 ///
 /// Read-only. The provider builds its model list from
-/// `GET /v1/models` (Ollama, LM Studio, MLX, vLLM, OpenAI all expose
+/// `GET /v1/models` (Ollama, LM Studio, MLX, vLLM, `OpenAI` all expose
 /// this). Distinguishes three outcomes a user must be able to tell
 /// apart:
 ///
@@ -4135,7 +4135,7 @@ mod parse_kv_args_proptests {
         assert_eq!(v["a"], serde_json::Value::String(String::new()));
     }
 
-    /// Bare `=`: split_once gives empty key, so the parser errors.
+    /// Bare `=`: `split_once` gives empty key, so the parser errors.
     /// This is the same as the existing `parse_kv_args_rejects_an_empty_key`
     /// test, restated for completeness.
     #[test]

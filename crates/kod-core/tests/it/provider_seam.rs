@@ -2,7 +2,7 @@
 //! integration arc).
 //!
 //! Every other `kod-core/tests/it/*` test injects a fake
-//! `LlmProvider` (MockProvider / NopProvider / FailingProvider) at the
+//! `LlmProvider` (`MockProvider` / `NopProvider` / `FailingProvider`) at the
 //! trait boundary. That proves the engine handles the
 //! `CompletionRequest` / `GenerationResponse` structs correctly; it
 //! does NOT prove the engine's request survives serialization into
@@ -46,7 +46,7 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     KodEngine::new(cfg, dir.join("db.redb")).unwrap()
 }
 
-/// The minimal OpenAI chat-completion success body. Mirrors
+/// The minimal `OpenAI` chat-completion success body. Mirrors
 /// `kod-provider-openai/tests/it/contracts.rs::simple_text_response`.
 fn text_completion_body(text: &str) -> String {
     format!(
@@ -69,7 +69,7 @@ fn text_sse_body(text: &str) -> String {
     format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\ndata: [DONE]\n\n")
 }
 
-/// Build an engine whose single provider is a real OpenAICompatProvider
+/// Build an engine whose single provider is a real `OpenAICompatProvider`
 /// pointed at `mock.base_url()`.
 async fn engine_with_real_adapter(
     temp: &TempDir,

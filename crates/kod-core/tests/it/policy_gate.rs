@@ -10,7 +10,7 @@
 //! - A session deny rule wins over an `Allow` policy.
 //! - Without a policy, the legacy `confirm_writes` default lets the
 //!   write through.
-//! - DenyAlways registers a session rule (the TUI 'a' key's server
+//! - `DenyAlways` registers a session rule (the TUI 'a' key's server
 //!   side), and a matching rule blocks a write without an approval.
 
 use async_trait::async_trait;
@@ -262,7 +262,7 @@ async fn no_policy_allows_every_call() {
     engine.shutdown().await.unwrap();
 }
 
-/// DenyAlways registers a session deny rule on the engine, so a
+/// `DenyAlways` registers a session deny rule on the engine, so a
 /// second matching call is denied without any policy prompt. This is
 /// the TUI 'a' key's server-side contract.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -298,7 +298,7 @@ async fn deny_always_registers_session_rule() {
 /// noticed the cancel. The user saw a frozen dialog for two minutes
 /// after already having asked to stop.
 ///
-/// This test starts a `process_streaming` call whose write_file is
+/// This test starts a `process_streaming` call whose `write_file` is
 /// held at the approval gate, waits for the approval marker to reach
 /// the chunk channel, calls `request_cancel`, and then asserts the
 /// call returns well inside `AWAIT_APPROVAL_SECS`. A pre-fix build
@@ -406,7 +406,7 @@ async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
     engine.shutdown().await.unwrap();
 }
 
-/// The `list_files` counterpart of the grep / search_files / jfind
+/// The `list_files` counterpart of the grep / `search_files` / jfind
 /// end-to-end tests. `list_files` shares the `34961905` fix with
 /// `grep` (both in `kod-tools`), but only `grep`'s through-engine
 /// path was proven. This closes the symmetry: every walk tool in
@@ -504,7 +504,7 @@ async fn list_files_skips_entries_under_forbidden_paths_through_the_engine() {
     );
 }
 
-/// The `jfind` counterpart of the grep / search_files end-to-end
+/// The `jfind` counterpart of the grep / `search_files` end-to-end
 /// tests. `JfindTool` lives in `kod-core` (not `kod-tools`), so this
 /// is the only walk tool whose per-file check is in a different
 /// crate -- proving the union wiring at c4c5f0df reaches it too.
@@ -589,8 +589,8 @@ async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
 
 /// The `search_files` counterpart of
 /// `grep_walks_skip_forbidden_paths_through_the_engine`. Same shape,
-/// different tool. Proves the walk-shaped tools (grep, list_files,
-/// search_files) all honor the engine-installed `forbidden_paths`.
+/// different tool. Proves the walk-shaped tools (grep, `list_files`,
+/// `search_files`) all honor the engine-installed `forbidden_paths`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_files_walks_skip_forbidden_paths_through_the_engine() {
     let temp = TempDir::new().unwrap();

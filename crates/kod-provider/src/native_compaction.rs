@@ -17,7 +17,7 @@
 //!   compaction free — the server reuses its own KV cache and does
 //!   not re-read the prefix.
 //! * `summary` is the *fallback*. When the session later routes to a
-//!   provider that cannot consume the encrypted block (OpenAI, a
+//!   provider that cannot consume the encrypted block (`OpenAI`, a
 //!   local model, a different Anthropic endpoint), the plain text is
 //!   what the next provider sees.
 //!

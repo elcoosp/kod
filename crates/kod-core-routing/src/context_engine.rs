@@ -249,7 +249,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
 pub struct FidelityCache {
     /// The query that last scored this cache's turns.
     pub last_query: Query,
-    /// MessageId -> (content hash, age at scoring, cached fidelity).
+    /// `MessageId` -> (content hash, age at scoring, cached fidelity).
     ///
     /// `age_turns` is part of the entry because `ChunkScorer::score`
     /// reads it: the `LexicalScorer` weights recency by age, and a

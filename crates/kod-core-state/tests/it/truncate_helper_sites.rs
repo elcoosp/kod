@@ -12,9 +12,9 @@
 //!     }
 //!
 //! On CJK input whose char count is at the cap but whose byte count
-//! exceeds it, the guard fires, truncate_chars returns the string
+//! exceeds it, the guard fires, `truncate_chars` returns the string
 //! unchanged, and the ellipsis is appended to a string that was never
-//! truncated. The helper (kod_types::strutil::truncate_with_ellipsis)
+//! truncated. The helper (`kod_types::strutil::truncate_with_ellipsis`)
 //! is unit-tested in kod-types; this file pins the site's use of it.
 
 fn read(rel: &str) -> String {

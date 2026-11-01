@@ -1,6 +1,6 @@
 //! HTTP embedding clients (D2-B1).
 //!
-//! Two shapes only: Ollama's `/api/embed` and OpenAI's
+//! Two shapes only: Ollama's `/api/embed` and `OpenAI`'s
 //! `/v1/embeddings`. Both return JSON, both accept a batch of strings,
 //! both work over plain HTTP. No local model is linked into the
 //! binary — the "no ML weight" rule (README, ADR-04) is easier to
@@ -60,7 +60,7 @@ impl EmbeddingClient for NoEmbedder {
 }
 
 /// The largest batch we will ever send in one HTTP call. Ollama's
-/// default is 512; OpenAI accepts up to 2048. 32 keeps the request
+/// default is 512; `OpenAI` accepts up to 2048. 32 keeps the request
 /// small enough that a slow link does not stall, and the caller loops
 /// when it has more.
 const MAX_BATCH: usize = 32;
@@ -157,8 +157,8 @@ impl EmbeddingClient for OllamaEmbedder {
     }
 }
 
-/// OpenAI embedder: `POST {base}/embeddings`, where `base` is the
-/// OpenAI API root (typically `.../v1`).
+/// `OpenAI` embedder: `POST {base}/embeddings`, where `base` is the
+/// `OpenAI` API root (typically `.../v1`).
 pub struct OpenAIEmbedder {
     base_url: String,
     model: String,
@@ -270,7 +270,7 @@ impl EmbeddingClient for OpenAIEmbedder {
 /// retrieval path is broken by an absent embedder.
 ///
 /// The function is intentionally infallible: a misconfiguration
-/// (an OpenAI endpoint with no API key in the environment) logs a
+/// (an `OpenAI` endpoint with no API key in the environment) logs a
 /// warning and returns `None`. A caller does not have to thread a
 /// `Result` through its own setup for a subsystem whose absence is
 /// already a supported mode.

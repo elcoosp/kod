@@ -1,7 +1,7 @@
 #![cfg(test)]
 //! Tests for the auto-check injection in `run_tool_calls`.
 //!
-//! The feature is subtle: after a write_file succeeds, the engine
+//! The feature is subtle: after a `write_file` succeeds, the engine
 //! runs the project's compiler and appends its diagnostics to the
 //! prompt the model sees on the next round. These tests drive a
 //! real tool round against a real tempfile workspace, so a

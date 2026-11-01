@@ -534,7 +534,7 @@ async fn contract_stream_completion_error(_provider: &Arc<dyn LlmProvider>) {
 // Mock helpers for the concrete providers' request-shape tests
 // ---------------------------------------------------------------------------
 
-/// A minimal valid OpenAI chat-completions SSE body. Used by the
+/// A minimal valid `OpenAI` chat-completions SSE body. Used by the
 /// OpenAI-compatible provider's `tests/contracts.rs` as the mock
 /// server's response.
 ///

@@ -1,6 +1,6 @@
 //! Shared helpers used by more than one module in this crate.
 //!
-//! Extracted from `tools.rs` so the next tool split (WriteFileTool,
+//! Extracted from `tools.rs` so the next tool split (`WriteFileTool`,
 //! which uses `atomic_write`) can move its own impl to a module
 //! without dragging these helpers along.
 

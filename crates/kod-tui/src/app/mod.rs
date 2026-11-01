@@ -671,8 +671,8 @@ pub struct KodApp {
     /// estimate that `note_usage` accumulates from
     /// `note_prompt` / `flush_streamed_text` / `finish_response` also
     /// runs across the same turn. Without this flag the two stacked:
-    /// TokenUsage arrived, replaced the estimate with the real total,
-    /// and then finish_response immediately added the assistant's
+    /// `TokenUsage` arrived, replaced the estimate with the real total,
+    /// and then `finish_response` immediately added the assistant's
     /// chars/4 on top — over-reporting the context by roughly the
     /// reply length every turn.
     turn_has_real_usage: bool,
@@ -760,7 +760,7 @@ pub struct KodApp {
     /// approval-batch marker chunk; cleared when every item has been
     /// decided (or Esc denies the remainder).
     pending_batch: Option<PendingApprovalBatch>,
-    /// The ask_user question the TUI is currently prompting for.
+    /// The `ask_user` question the TUI is currently prompting for.
     /// Populated from a question-marker chunk; cleared on answer.
     pending_question: Option<PendingQuestion>,
     /// The buffer the user is typing into while a question is up.

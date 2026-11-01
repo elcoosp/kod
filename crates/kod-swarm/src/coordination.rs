@@ -111,11 +111,11 @@ impl TaskCoordinator {
     /// and that silently corrupted the load counters:
     ///
     /// - The task is already Completed or Failed. Assigning finished
-    ///   work created a new InProgress assignment and incremented a
+    ///   work created a new `InProgress` assignment and incremented a
     ///   load counter that nothing would decrement for the new agent,
-    ///   because finish_task only decrements for the assignee recorded
+    ///   because `finish_task` only decrements for the assignee recorded
     ///   at completion time.
-    /// - The task is already InProgress. Reassigning mid-flight left
+    /// - The task is already `InProgress`. Reassigning mid-flight left
     ///   the original agent's load inflated forever — its slot was
     ///   released only on complete/fail, which no longer matched the
     ///   task it held.
@@ -164,7 +164,7 @@ impl TaskCoordinator {
 
     /// Mark a task completed and release its slot in the assignee's load.
     ///
-    /// Without this, `agent_load` only ever grew (assign_task incremented
+    /// Without this, `agent_load` only ever grew (`assign_task` incremented
     /// it and nothing decremented it), so `least_loaded_agent` degenerated
     /// into "whichever agent was spawned last" after a handful of task
     /// assignments — the load-based routing stopped being load-based.
@@ -238,7 +238,7 @@ impl TaskCoordinator {
     /// Pending.
     ///
     /// Returns [`TaskFinish::Transitioned`] when the task moved from
-    /// InProgress (or Blocked) to Pending, and
+    /// `InProgress` (or Blocked) to Pending, and
     /// [`TaskFinish::AlreadyInState`] when the task was already
     /// Pending and no state changed — the same shape
     /// [`TaskCoordinator::complete_task`] and [`TaskCoordinator::fail_task`]
@@ -355,10 +355,10 @@ mod tests {
         Task::new(desc.to_string(), Priority::Medium)
     }
 
-    /// Regression: assign_task used to increment agent_load with no
+    /// Regression: `assign_task` used to increment `agent_load` with no
     /// counterpart, so a coordinator that assigned N tasks to one agent
     /// and completed all of them still reported that agent as loaded.
-    /// least_loaded_agent then always picked whichever agent had been
+    /// `least_loaded_agent` then always picked whichever agent had been
     /// idle the longest — routing stopped being load-based.
     #[tokio::test]
     async fn load_is_released_on_completion() {
@@ -496,11 +496,11 @@ mod tests {
         assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
     }
 
-    /// unassign_task must refuse a task that has already reached a
+    /// `unassign_task` must refuse a task that has already reached a
     /// terminal state. Regression: the previous implementation took
-    /// assigned_to unconditionally, decremented the assignee's load
+    /// `assigned_to` unconditionally, decremented the assignee's load
     /// counter a second time (the first decrement was at
-    /// complete_task), and reset the task to Pending — corrupting the
+    /// `complete_task`), and reset the task to Pending — corrupting the
     /// load accounting and resurrecting finished work.
     #[tokio::test]
     async fn test_unassign_refuses_terminal_task() {
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
     }
 
-    /// unassign_task on an InProgress task returns Transitioned and
+    /// `unassign_task` on an `InProgress` task returns Transitioned and
     /// releases the load slot.
     #[tokio::test]
     async fn test_unassign_in_progress_releases_load() {
@@ -554,7 +554,7 @@ mod tests {
         assert!(coord.all_assignments().await.is_empty());
     }
 
-    /// unassign_task on a Pending task reports AlreadyInState and
+    /// `unassign_task` on a Pending task reports `AlreadyInState` and
     /// changes nothing. A caller that races a re-plan sees exactly
     /// that, without having to unwind.
     #[tokio::test]

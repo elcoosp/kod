@@ -6,7 +6,7 @@
 //! filters the chain to endpoints whose configured trust tier is
 //! high enough.
 //!
-//! The classifier reads the same ReadProtection globs the policy
+//! The classifier reads the same `ReadProtection` globs the policy
 //! engine uses for secret detection, so a path the engine would
 //! redact also constrains the routing.
 
@@ -205,7 +205,7 @@ mod sensitivity_proptests {
     //! properties pin the general shape.
     //!
     //! One ambiguity surfaced during this round and is pinned as a
-    //! **control, not a fixed bug**: `..` (ParentDir, length 2,
+    //! **control, not a fixed bug**: `..` (`ParentDir`, length 2,
     //! starts with `.`) is counted as a dot-component by the
     //! `starts_with('.') && len > 1` check, so `foo/../bar` is
     //! classified `Internal`. The `Sensitivity::Internal` docstring
@@ -331,7 +331,7 @@ mod sensitivity_proptests {
 
     // ---- controls ------------------------------------------------------
 
-    /// `..` (ParentDir) starts with `.` and has length 2, so the
+    /// `..` (`ParentDir`) starts with `.` and has length 2, so the
     /// `starts_with('.') && len > 1` check counts it as a
     /// dot-component. `foo/../bar` -> Internal. The `Internal`
     /// docstring has been updated to include this case explicitly;
@@ -345,7 +345,7 @@ mod sensitivity_proptests {
         );
     }
 
-    /// `.` (CurDir) has length 1, so it does **not** count as a
+    /// `.` (`CurDir`) has length 1, so it does **not** count as a
     /// dot-component. `./foo` -> Public. This is the case the
     /// `len > 1` check exists for.
     #[test]

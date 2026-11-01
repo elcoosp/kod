@@ -10,7 +10,7 @@
 //!   - system-prompt override reply — `rest`, 80 chars
 //!
 //! All three had the pre-fix shape; on CJK input at the char cap, the
-//! guard fired, truncate_chars returned the string unchanged, and the
+//! guard fired, `truncate_chars` returned the string unchanged, and the
 //! caller appended an ellipsis to a string that was never truncated.
 //!
 //! The helper is unit-tested in kod-types. This file pins the three

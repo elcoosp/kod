@@ -1,4 +1,4 @@
-//! KOD wrapper around the `typesafe-ai-rs` TypeSafe System One client.
+//! KOD wrapper around the `typesafe-ai-rs` `TypeSafe` System One client.
 //!
 //! The underlying crate (`typesafe_ai_rs`) ships the HTTP client, the
 //! typed Noul/Choice/Score questions, retries, and cancellation. This
@@ -388,7 +388,7 @@ impl JevClient {
     /// Ask one yes/no question about `state`.
     ///
     /// `purpose` is a short label used in the session log; it is not
-    /// sent to TypeSafe.
+    /// sent to `TypeSafe`.
     pub async fn evaluate_yes_no(
         &self,
         state: &Value,
@@ -719,7 +719,7 @@ pub fn build_state(text: &str, metadata: &[(&str, &str)]) -> Value {
 /// judgment endpoint. The engine's provider path scrubs secrets with
 /// the vault (`agent_loop.rs`), but the Jev advisor built its state
 /// with raw text and passed it straight to the client — so a
-/// registered secret in a preview reached TypeSafe in the clear. The
+/// registered secret in a preview reached `TypeSafe` in the clear. The
 /// vault's `redact_paths` knob (see `JevClient::wire_state`) covers
 /// only paths; this covers the secret *values*.
 ///

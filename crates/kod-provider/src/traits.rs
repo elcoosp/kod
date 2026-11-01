@@ -182,7 +182,7 @@ pub trait LlmProvider: Send + Sync {
     }
 
     /// Default capabilities. Providers that care — Anthropic for
-    /// explicit cache support, OpenAI for pricing — override this.
+    /// explicit cache support, `OpenAI` for pricing — override this.
     /// The conservative default disables nothing that works (tools
     /// on, `streaming_tools` off), which is the safe side of the
     /// trade.
@@ -257,9 +257,9 @@ pub trait LlmProvider: Send + Sync {
         })
     }
 
-    /// Streaming variant of generate_with_tools. The default impl
+    /// Streaming variant of `generate_with_tools`. The default impl
     /// drives the non-streaming path and replays it as one Text or
-    /// ToolCall chunk sequence.
+    /// `ToolCall` chunk sequence.
     fn stream_with_tools<'a>(
         &'a self,
         prompt: &'a str,

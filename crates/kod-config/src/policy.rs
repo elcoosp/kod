@@ -313,7 +313,7 @@ pub struct PolicyDecision {
     /// The final merged decision.
     pub outcome: Decision,
     /// A one-line description of the rule that fired, for
-    /// `kod policy explain` and the SessionEntry log.
+    /// `kod policy explain` and the `SessionEntry` log.
     pub rule: String,
     /// The layer that produced the decision.
     pub source: PolicySource,
@@ -701,7 +701,7 @@ impl PolicyEngine {
 
 /// A session-scoped "never" rule. `path_pattern` is `None` for a
 /// tool-wide rule (`a` was pressed without a path-specific context —
-/// e.g. execute_command on an unknown binary).
+/// e.g. `execute_command` on an unknown binary).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionDeny {
     /// The tool the deny applies to.
@@ -853,7 +853,7 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 /// Public so `kod-core`'s prompt-redaction pass can call the same
 /// matcher the policy engine uses; there must be exactly one
 /// implementation of the glob semantics (verbatim, relative to
-/// working_dir, `**/`-prefixed) or the two would drift.
+/// `working_dir`, `**/`-prefixed) or the two would drift.
 ///
 /// `patterns` empty means "no argument redaction" and returns false
 /// without touching the args.
@@ -2155,8 +2155,8 @@ pub fn binary_candidates_for_tests(cmd: &str) -> Vec<String> {
     binary_candidates(cmd)
 }
 
-/// T5-C32: cache the compiled GlobBuilder matcher per (pattern,
-/// literal_separator). The pre-fix shape recompiled up to three
+/// T5-C32: cache the compiled `GlobBuilder` matcher per (pattern,
+/// `literal_separator`). The pre-fix shape recompiled up to three
 /// patterns on every decide.
 fn compiled_glob(pattern: &str) -> Option<std::sync::Arc<globset::GlobMatcher>> {
     use std::collections::HashMap;

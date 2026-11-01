@@ -4,7 +4,7 @@
 //! between *retrying* and *delivering* on three failure shapes:
 //!
 //! * a pre-commit HTTP error (5xx / 429 / network),
-//! * a pre-commit stall (StreamGuard verdict),
+//! * a pre-commit stall (`StreamGuard` verdict),
 //! * a clean-but-empty completion.
 //!
 //! The invariant that makes the loop replay-safe: a stream that has

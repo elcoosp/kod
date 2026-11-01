@@ -279,7 +279,7 @@ impl KodEngine {
     /// `*** Begin Patch` envelope out of the reply text and run it as
     /// synthetic `patch_file` calls.
     ///
-    /// A model that learned the OpenAI `apply_patch` envelope sometimes
+    /// A model that learned the `OpenAI` `apply_patch` envelope sometimes
     /// emits one as prose and stops — without this the edit is lost.
     /// The synthetic calls go through the normal tool path (approval,
     /// path lock, policy), so extraction is not an approval bypass.

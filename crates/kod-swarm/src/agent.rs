@@ -163,7 +163,7 @@ impl Agent {
     ///
     /// Returns the resolved name, which is what `AgentBuilder::with_model`
     /// overrides. The previous implementation read
-    /// `model_config.model_name`, i.e. the builder's ModelConfig
+    /// `model_config.model_name`, i.e. the builder's `ModelConfig`
     /// default, so `Agent::new("x").with_model("qwen").build().model()`
     /// returned the *default* ("codellama:13b") instead of "qwen" —
     /// the override was stored on the `model` field but never read.
@@ -172,7 +172,7 @@ impl Agent {
     }
 
     /// The full model configuration this agent was built with —
-    /// provider, temperature, max_tokens, and the config-file model
+    /// provider, temperature, `max_tokens`, and the config-file model
     /// name. `model()` returns the resolved name (which
     /// `with_model` can override); this accessor exposes the rest.
     /// Used by status panels and by callers that need to clone an
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(agent.state(), AgentState::Stopped);
     }
 
-    /// start() and stop() must not contain artificial delays. They
+    /// `start()` and `stop()` must not contain artificial delays. They
     /// used to sleep 10 ms each, which added up across a swarm of
     /// agents and made lifecycle tests pay for a wall-clock cost that
     /// did no real work. The bound below is generous (100 ms) so a

@@ -268,7 +268,7 @@ impl MemoryManager {
     /// not take down the retrieval path — the `Err` arm already
     /// falls through to keyword+recency scoring, and a panic must do
     /// the same. Mirrors the tool-registry isolation in
-    /// kod-tools::registry (commit 1dbf8cc).
+    /// `kod-tools::registry` (commit 1dbf8cc).
     async fn embed_safe(
         embedder: &dyn crate::embedding::EmbeddingClient,
         texts: &[String],
@@ -484,7 +484,7 @@ impl MemoryManager {
     }
 
     /// Store content with caller-supplied metadata (D2-B3a). Used by
-    /// the memory tools to attach tags and the project_key the hybrid
+    /// the memory tools to attach tags and the `project_key` the hybrid
     /// retrieval filters on. `store()` is the no-metadata shorthand.
     pub async fn store_with_metadata(
         &self,

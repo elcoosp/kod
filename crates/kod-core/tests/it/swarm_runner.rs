@@ -691,11 +691,11 @@ async fn gated_subtask_does_not_leak_blackboard_viewer() {
 /// Regression: `forget_transcript` must clear every transcript-scoped
 /// map on the engine, and the swarm's end-of-run cleanup must route
 /// through it. Pre-fix, `forget_transcript` cleared only three maps
-/// (history / last_prompt / context_gauges), the swarm's cleanup loop
+/// (history / `last_prompt` / `context_gauges`), the swarm's cleanup loop
 /// cleared three more by hand, and every other per-transcript map —
-/// tool_loop_guards, todo_trackers, plans, prewalks, write_globs,
-/// working_dirs, blackboard_viewers, native_compaction_blocks,
-/// image_frames, fidelity_cache, tool_filter_states, steers — leaked
+/// `tool_loop_guards`, `todo_trackers`, plans, prewalks, `write_globs`,
+/// `working_dirs`, `blackboard_viewers`, `native_compaction_blocks`,
+/// `image_frames`, `fidelity_cache`, `tool_filter_states`, steers — leaked
 /// one entry per dispatch. On a long-lived daemon that is unbounded.
 ///
 /// This test drives a swarm whose only subtask makes an actual tool
@@ -1858,9 +1858,9 @@ async fn swarm_publishes_write_claims_and_completions() {
 ///
 /// Budget and agent count are env-controlled so the test is usable at
 /// both ends of the profile spectrum:
-///   KOD_SWARM_STRESS_SECS   default 5   (set to 30 for the release
+///   `KOD_SWARM_STRESS_SECS`   default 5   (set to 30 for the release
 ///                                        stress run the handoff wants)
-///   KOD_SWARM_STRESS_AGENTS default 4   (clamped to [2, 8])
+///   `KOD_SWARM_STRESS_AGENTS` default 4   (clamped to [2, 8])
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn swarm_stress_repeated_runs_leave_no_state_behind() {
     use std::sync::atomic::{AtomicUsize, Ordering};

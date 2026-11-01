@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
-/// Alias for message content type (re-exports AgentMessageContent)
+/// Alias for message content type (re-exports `AgentMessageContent`)
 pub type MessageContent = AgentMessageContent;
 
 /// Maximum messages retained per agent in the hub's history map.
@@ -62,10 +62,10 @@ impl SwarmMessage {
     }
 }
 
-/// Re-export types from kod_types for convenience
+/// Re-export types from `kod_types` for convenience
 pub use kod_types::MessageDestination;
 
-/// Receiver for agent messages — wraps an UnboundedReceiver that can be cloned
+/// Receiver for agent messages — wraps an `UnboundedReceiver` that can be cloned
 #[derive(Clone)]
 /// Receiver for one agent's incoming messages.
 pub struct AgentMessageReceiver {
@@ -515,7 +515,7 @@ mod tests {
         assert!(!hub.get_agent_history(&b).await.is_empty());
     }
 
-    /// Per-agent history is capped at MAX_HISTORY_PER_AGENT, keeping
+    /// Per-agent history is capped at `MAX_HISTORY_PER_AGENT`, keeping
     /// the newest entries.
     #[tokio::test]
     async fn test_history_is_capped_per_agent() {

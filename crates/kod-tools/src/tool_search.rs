@@ -40,7 +40,7 @@ impl ToolInventory {
     }
 }
 
-/// The tool_search tool.
+/// The `tool_search` tool.
 pub struct ToolSearchTool {
     /// The tool's registered definition.
     pub definition: ToolDefinition,
@@ -51,7 +51,7 @@ pub struct ToolSearchTool {
 }
 
 impl ToolSearchTool {
-    /// Build the tool_search tool over a shared inventory.
+    /// Build the `tool_search` tool over a shared inventory.
     pub fn new(inventory: std::sync::Arc<std::sync::RwLock<ToolInventory>>) -> Self {
         Self {
             inventory,

@@ -130,7 +130,7 @@ async fn profile_show_is_ok() {
 
 // ---- run_policy ------------------------------------------------------
 
-/// `kod policy show` loads the PolicyEngine against the config and
+/// `kod policy show` loads the `PolicyEngine` against the config and
 /// the current cwd. Read-only: no policy.toml is created, no file is
 /// touched. The cwd is the test runner's, which exists.
 #[serial]

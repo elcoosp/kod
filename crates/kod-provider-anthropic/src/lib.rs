@@ -26,7 +26,7 @@
 //!   supports explicit prompt caching (`cache_control`) and the TUI
 //!   can display pricing when configured.
 //! - An error message naming the Anthropic endpoint instead of a
-//!   generic HTTP failure, matching the OpenAI provider's diagnostic
+//!   generic HTTP failure, matching the `OpenAI` provider's diagnostic
 //!   quality.
 //! - Native-compaction support (`compact-2026-01-12` beta): the
 //!   `native_compact` request/response, built in [`wire`] like the

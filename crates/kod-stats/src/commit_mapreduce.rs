@@ -252,17 +252,17 @@ mod cap_file_body_proptests {
     //! at roughly a third of the intended character budget.
     //!
     //! The property below sizes the body to the minimum that trips
-    //! the byte branch without hitting the char branch: 66_667 CJK
-    //! chars = 200_001 bytes > 200_000 (byte budget), and 66_667
-    //! chars < 200_000 (char budget). Pre-fix the byte comparison
+    //! the byte branch without hitting the char branch: `66_667` CJK
+    //! chars = `200_001` bytes > `200_000` (byte budget), and `66_667`
+    //! chars < `200_000` (char budget). Pre-fix the byte comparison
     //! truncates; post-fix the char comparison keeps the body.
     //!
     //! The case count is capped at 16 (rather than proptest's default
     //! 256) because the input is a single fixed shape, not a search
-    //! space. The property added in 610b487 used 133_333 chars and
+    //! space. The property added in 610b487 used `133_333` chars and
     //! the default 256 cases — 34M char iterations, and that one
     //! property took the whole-workspace gate from 55s to 291s.
-    //! 66_667 chars × 16 cases is ~1.07M iterations, 32x fewer.
+    //! `66_667` chars × 16 cases is ~1.07M iterations, 32x fewer.
 
     use super::*;
     use proptest::prelude::*;

@@ -1,4 +1,4 @@
-//! WorkPool: keep-alive swarm workers (borrow from oh-my-pi, delta
+//! `WorkPool`: keep-alive swarm workers (borrow from oh-my-pi, delta
 //! §11.1).
 //!
 //! # The shape this replaces
@@ -189,7 +189,7 @@ pub struct WorkPool {
 }
 
 impl WorkPool {
-    /// Build a pool capped at max_agents with a per-batch budget.
+    /// Build a pool capped at `max_agents` with a per-batch budget.
     #[must_use]
     pub fn new(max_agents: usize, batch_budget: usize) -> Self {
         Self {
@@ -797,7 +797,7 @@ mod dispatch_proptests {
     //! The fix (same commit) pushes the item into the fresh slot's
     //! queue, so both `Spawn` branches mean the same thing: "your
     //! item is in a slot, go spawn the agent". The fix preserves
-    //! the FreshAgents property (one slot per item, no sharing):
+    //! the `FreshAgents` property (one slot per item, no sharing):
     //! each fresh slot has its own queue of exactly one item.
 
     use super::*;

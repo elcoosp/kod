@@ -958,7 +958,7 @@ mod sharpshooter_proptests {
         }
     }
 
-    /// A well-formed JSON array round-trips: parse_reply with a
+    /// A well-formed JSON array round-trips: `parse_reply` with a
     /// generous cap returns deltas whose statements match the input.
     #[test]
     fn prop_parse_reply_well_formed_roundtrip() {

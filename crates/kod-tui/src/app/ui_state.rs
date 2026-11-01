@@ -224,11 +224,11 @@ impl KodApp {
     }
 
     /// The models the provider last reported. Empty when no list has
-    /// been fetched yet (engine not initialized, list_models failed).
+    /// been fetched yet (engine not initialized, `list_models` failed).
     /// Callers that want to validate a `/model <name>` request must
     /// treat empty as "unknown — do not warn" rather than "no models
     /// exist", because an empty list is also what a cold provider
-    /// returns before the first list_models call.
+    /// returns before the first `list_models` call.
     #[must_use]
     pub fn available_models(&self) -> &[String] {
         &self.available_models
@@ -638,7 +638,7 @@ impl KodApp {
         &self.theme.name
     }
 
-    /// Context fill ratio 0.0–1.0+ (rough estimate, see context_label).
+    /// Context fill ratio 0.0–1.0+ (rough estimate, see `context_label`).
     #[must_use]
     pub fn context_usage(&self) -> f64 {
         self.context_tokens as f64 / self.context_limit.max(1) as f64
@@ -1021,8 +1021,8 @@ mod friendly_duration_boundaries {
     //!
     //! The tier test in `super::tests` picks one example per tier but
     //! never the exact transition point. `ms < 1000` means 1000 must
-    //! render as seconds; `s < 60` means 60_000 must render as
-    //! minutes; `s < 3600` means 3_600_000 must render as hours. An
+    //! render as seconds; `s < 60` means `60_000` must render as
+    //! minutes; `s < 3600` means `3_600_000` must render as hours. An
     //! off-by-one in any of the three `<` comparisons is invisible to
     //! the example test and visible to a user at exactly those values.
     use super::KodApp;
@@ -1148,7 +1148,7 @@ mod duration_differential {
     }
 
     /// The tier boundaries themselves, side by side. Both formatters
-    /// must switch at 1000ms and at 60_000ms; only the third switch
+    /// must switch at 1000ms and at `60_000ms`; only the third switch
     /// differs.
     #[test]
     fn tier_boundaries_match_below_the_hour() {

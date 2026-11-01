@@ -17,7 +17,7 @@
 //!                 still completes (a denied call is not a failed
 //!                 turn).
 //!
-//! The setup mirrors acp_session.rs: `serve_io` over a duplex pair, a
+//! The setup mirrors `acp_session.rs`: `serve_io` over a duplex pair, a
 //! `MockProvider`-backed engine, no subprocess or network.
 
 use kod_config::{Decision, Policy, PolicyEngine, Preset, ToolPolicy};

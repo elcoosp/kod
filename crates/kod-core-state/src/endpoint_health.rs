@@ -52,7 +52,7 @@ impl Default for EndpointHealth {
 }
 
 impl EndpointHealth {
-    /// Build a breaker that trips after strike_limit failures and
+    /// Build a breaker that trips after `strike_limit` failures and
     /// holds the endpoint out for cooldown.
     #[must_use]
     pub fn new(strike_limit: u32, cooldown: Duration) -> Self {

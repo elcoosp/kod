@@ -369,11 +369,11 @@ mod tests {
     ///     NOT appear WITH it.
     ///
     /// Both files satisfy every stage of jfind's cascade:
-    ///   Wave 1 (lexical_rank): path contains "secret" -> candidate
-    ///   Wave 2 (judge_filenames): filename contains "secret" ->
-    ///     LexicalJudge score 1.0 > 0 -> kept
+    ///   Wave 1 (`lexical_rank)`: path contains "secret" -> candidate
+    ///   Wave 2 (`judge_filenames)`: filename contains "secret" ->
+    ///     `LexicalJudge` score 1.0 > 0 -> kept
     ///   Wave 3 (content): "secret data" contains "secret" -> score
-    ///     1.0 > CUTOFF(0.45) and > FILE_THRESHOLD(0.2) -> Hit
+    ///     1.0 > CUTOFF(0.45) and > `FILE_THRESHOLD(0.2)` -> Hit
     #[tokio::test]
     async fn jfind_skips_files_under_forbidden_paths() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -432,7 +432,7 @@ mod tests {
     /// `read_file` and `grep` both honour `[policy.read_protection]`;
     /// this tool did not. It checked `is_path_allowed` (forbidden
     /// globs) and then read every remaining file and shipped up to
-    /// SKETCH_BYTES of it to the judge. With a Jev client installed
+    /// `SKETCH_BYTES` of it to the judge. With a Jev client installed
     /// that judge is a network call, so `.env` / `*.pem` / `id_rsa*`
     /// content left the process. The default policy protects exactly
     /// those paths, so this was live for every user who had not

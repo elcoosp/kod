@@ -354,7 +354,7 @@ pub fn slugify(text: &str) -> String {
 /// The destination is `plan_dir_for_working_dir(working_dir)`; the
 /// filename is `plan-<yyyymmdd>-<slug>.md` where `<slug>` is
 /// [`slugify`] of the goal, and a numeric suffix is added on
-/// collision. The claim is made with `create_new(true)` (O_EXCL) so
+/// collision. The claim is made with `create_new(true)` (`O_EXCL`) so
 /// two concurrent processes cannot both write the same path — a
 /// mismatch retries with the next suffix, up to
 /// [`MAX_AUTOSAVE_CANDIDATES`].
@@ -1057,15 +1057,15 @@ mod plan_proptests {
 
     /// Control: **the backward-advance case.** Mark `current` (step
     /// 1) as Blocked, then `advance`. The loop finds the first
-    /// *Pending* step, which is step 2 (already InProgress in the
+    /// *Pending* step, which is step 2 (already `InProgress` in the
     /// fresh-plan state, so not Pending), so it parks on the last
     /// index. If a future change makes `advance` search forward-only,
     /// this control fails and the choice becomes visible.
     ///
     /// To force the backward case: block step 1 (not step 2), then
     /// `advance` marks step 1 Done, finds step 2 Pending? No —
-    /// step 2 is InProgress in the fresh plan. So we need to first
-    /// set step 1 Blocked while a fresh plan has step 1 InProgress,
+    /// step 2 is `InProgress` in the fresh plan. So we need to first
+    /// set step 1 Blocked while a fresh plan has step 1 `InProgress`,
     /// then advance — advance marks step 1 Done (overwriting the
     /// Blocked), then finds no Pending, parks on last.
     ///

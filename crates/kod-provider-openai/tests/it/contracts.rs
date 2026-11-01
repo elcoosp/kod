@@ -4,7 +4,7 @@
 //! The trait-level suite (`kod_provider::testkit::run_trait_contracts`)
 //! proves the `LlmProvider` surface behaves the same across
 //! implementors. This file proves the OpenAI-compatible wire format is
-//! the OpenAI spec — what the server on the other end of the socket
+//! the `OpenAI` spec — what the server on the other end of the socket
 //! expects to receive.
 //!
 //! Each test starts an `httpmock` server that only answers a POST whose

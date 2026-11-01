@@ -3,7 +3,7 @@
 //!
 //! `run_models` calls `kod_core::build_registry`, which builds a real
 //! `OpenAICompatible` provider from the config's `base_url`, then calls
-//! `provider.list_models()` — an HTTP `GET` to that base_url. The only
+//! `provider.list_models()` — an HTTP `GET` to that `base_url`. The only
 //! hermetic way to exercise the success path is to point `base_url` at
 //! a socket we control. `axum` is already a dev-dependency of
 //! `kod-cli` (used by `tui_e2e::mock_llm`); this file stands up a
@@ -12,7 +12,7 @@
 //!
 //! `KOD_CONFIG_DIR` points the config load at a temp dir, and the
 //! temp `config.toml` sets `base_url` to the mock's `127.0.0.1`
-//! address. `normalize_base_url` in the OpenAI provider appends `/v1`
+//! address. `normalize_base_url` in the `OpenAI` provider appends `/v1`
 //! when absent, so the mock serves both `/v1/models` and `/models` to
 //! be robust to whichever the provider requests.
 use std::sync::Arc;
@@ -50,7 +50,7 @@ impl Drop for ConfigDirEnv {
     }
 }
 
-/// The OpenAI `/v1/models` response shape: an object with a `data`
+/// The `OpenAI` `/v1/models` response shape: an object with a `data`
 /// array of model entries. Each entry is `{"id": ..., "object":
 /// "model", ...}`. `list_models` in the provider parses this.
 async fn list_models_handler(State(models): State<Arc<Vec<String>>>) -> Json<Value> {

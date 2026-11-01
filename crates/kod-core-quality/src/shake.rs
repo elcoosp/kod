@@ -35,7 +35,7 @@
 //!   just the region is ineligible — everything after the opener is
 //!   extended to the end of the containing block, so a ` ``` ` that
 //!   follows an unclosed ` ```` ` is literal content of the first
-//!   fence, not a new opener. This is CommonMark's rule, and it is
+//!   fence, not a new opener. This is `CommonMark`'s rule, and it is
 //!   what the doc's §3.2 "unterminated fence ⇒ ineligible" reads
 //!   literally once you ask what a markdown renderer would have
 //!   shown as a code block.
@@ -1904,7 +1904,7 @@ mod plan_shake_protected_paths_proptests {
         }
     }
 
-    /// Control (L43): the two_read_transcript under `open_config()`
+    /// Control (L43): the `two_read_transcript` under `open_config()`
     /// does yield a non-empty plan, so the universal properties above
     /// are not checks over an empty set.
     #[test]

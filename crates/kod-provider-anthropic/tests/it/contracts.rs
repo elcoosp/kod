@@ -12,7 +12,7 @@
 //! - consecutive same-role messages are merged (the API requires
 //!   alternating turns);
 //! - the `tools` array uses Anthropic's `input_schema` shape, not
-//!   OpenAI's `parameters`.
+//!   `OpenAI`'s `parameters`.
 //!
 //! As in the OpenAI-compatible contract file, the assertions run
 //! through `httpmock`'s body *matcher*, which is the API httpmock has

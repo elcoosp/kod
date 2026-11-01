@@ -11,13 +11,13 @@
 //!
 //! Two endpoint kinds are handled today:
 //!
-//! - `openai-compatible` — Ollama, LM Studio, vLLM, MLX, OpenAI, and
+//! - `openai-compatible` — Ollama, LM Studio, vLLM, MLX, `OpenAI`, and
 //!   every other server that speaks the `/chat/completions` protocol.
 //!   Constructed via [`OpenAICompatProvider`].
 //! - `anthropic` — returns an error today; the native provider lands
 //!   in A5. The error message names the PR that will fix it, so a
 //!   user running a v2 config before A5 sees an honest "not yet"
-//!   instead of a silent fallback to OpenAI protocol that Anthropic
+//!   instead of a silent fallback to `OpenAI` protocol that Anthropic
 //!   would reject.
 //!
 //! # Default model selection

@@ -208,7 +208,7 @@ impl AgentSwarm {
     /// Results are sorted by agent name so a caller selecting "the first
     /// agent with capability X" gets the same answer across calls. The
     /// previous implementation collected directly from the underlying
-    /// `HashMap`, so the order varied between runs (HashMap iteration
+    /// `HashMap`, so the order varied between runs (`HashMap` iteration
     /// order is unspecified and depends on insertion history and the
     /// random state seed). Anything that leaned on "first" — a
     /// dispatcher picking an agent, a status panel rendering a list,
@@ -332,7 +332,7 @@ mod tests {
         assert!(swarm.stop_agent(&unknown).await.is_err());
     }
 
-    /// remove_agent on a running agent must leave the agent in the
+    /// `remove_agent` on a running agent must leave the agent in the
     /// Stopped state (so anyone holding a state watcher sees a clean
     /// transition) and must remove it from the swarm.
     #[tokio::test]
@@ -367,8 +367,8 @@ mod tests {
             .expect("state watcher should observe Stopped before the channel closes");
     }
 
-    /// remove_agent on an idle (never-started) agent still removes it
-    /// cleanly — stop() on Idle is an error per Agent's own state
+    /// `remove_agent` on an idle (never-started) agent still removes it
+    /// cleanly — `stop()` on Idle is an error per Agent's own state
     /// machine, and removal must not propagate that as a failure.
     #[tokio::test]
     async fn remove_idle_agent_is_best_effort() {

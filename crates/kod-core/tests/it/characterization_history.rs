@@ -175,9 +175,9 @@ async fn history_rendering_shape_is_stable_across_turns() {
 /// always survive.
 ///
 /// The engine floors `set_history_budget` at `MIN_HISTORY_CHAR_BUDGET`
-/// (4_000 chars). A "tight 60-char budget" is silently raised to 4_000
+/// (`4_000` chars). A "tight 60-char budget" is silently raised to `4_000`
 /// and nothing drops — so the test must exceed the floor to exercise
-/// the drop path. Ten turns of ~640 chars each sum to ~6_400, well
+/// the drop path. Ten turns of ~640 chars each sum to ~`6_400`, well
 /// past the floor.
 ///
 /// Each turn carries a unique `UNIQ_<i>_` marker so we can assert on

@@ -51,7 +51,7 @@ pub const DEFAULT_MAP_CHARS: usize = 16_000;
 
 impl RepoMap {
     /// Render as a compact text block, one file per line, ordered by
-    /// PageRank descending with a lexical tie-break. The budget goes
+    /// `PageRank` descending with a lexical tie-break. The budget goes
     /// to the files that matter, not to whichever happens to sort
     /// first alphabetically.
     #[must_use]
@@ -457,7 +457,7 @@ fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
 /// Pull every import-like token from a source file. Deliberately
 /// crude: one regex per common language shape, results deduplicated.
 /// A real parser is a follow-up; today's goal is enough signal for
-/// PageRank to prefer the hubs over alphabetically-first files.
+/// `PageRank` to prefer the hubs over alphabetically-first files.
 fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     use regex::Regex;
     // A small set of patterns keyed by language family.
@@ -979,7 +979,7 @@ pub struct Engine;
         assert!(!names.contains(&"attributed_test"), "got: {names:?}");
     }
 
-    /// Regression target for D5-L4: the repomap sorts by PageRank, not
+    /// Regression target for D5-L4: the repomap sorts by `PageRank`, not
     /// alphabetically. A file imported by three others must appear
     /// before a file no one imports, even if the latter sorts first
     /// lexically.

@@ -205,7 +205,7 @@ fn which_rg() -> Option<PathBuf> {
     None
 }
 
-/// Rank hits by relevance and return their (path, line_number)
+/// Rank hits by relevance and return their (path, `line_number`)
 /// identifiers in descending score order. Ties preserve input order
 /// so a caller that reorders a parallel Vec gets a deterministic
 /// result.

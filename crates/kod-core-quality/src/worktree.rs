@@ -60,7 +60,7 @@ pub struct MergeReport {
 /// Delta §11.11: reap worktrees whose owner process is provably dead.
 ///
 /// Best-effort: a `git worktree remove --force` that fails is logged
-/// and the worktree is left in place; the next detect() retries. The
+/// and the worktree is left in place; the next `detect()` retries. The
 /// reaper never touches a worktree without an ownership marker (a
 /// hand-created worktree, or one from a kod version before the
 /// marker existed).
@@ -104,7 +104,7 @@ pub struct WorktreeManager {
     /// -D` on cleanup; an unmerged branch holds the only copy of an
     /// agent's commits and deleting it loses the work.
     merged_ok: std::collections::HashSet<String>,
-    /// When true, cleanup() also deletes unmerged branches. Set by the
+    /// When true, `cleanup()` also deletes unmerged branches. Set by the
     /// caller that has explicitly accepted the loss (a `--force`
     /// style flag, or after a manual reconcile).
     force_cleanup: bool,

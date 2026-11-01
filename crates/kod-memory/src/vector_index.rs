@@ -123,7 +123,7 @@ impl VectorIndex {
     /// broken by insertion order (stable via `sort_by` semantics).
     ///
     /// `keep` is an optional predicate evaluated against each id; a
-    /// `false` result skips that entry. Used to filter by project_key
+    /// `false` result skips that entry. Used to filter by `project_key`
     /// without materialising a second index.
     pub fn search<F>(&self, query: &[f32], k: usize, keep: F) -> Result<Vec<(MemoryId, f32)>>
     where

@@ -26,7 +26,7 @@
 //! after the agent has already been revived is a no-op for the
 //! *older* generation, so a stale finalizer cannot clobber a newer
 //! session that happens to reuse the same id. This is the design's
-//! "bound to the exact AgentRef" rule.
+//! "bound to the exact `AgentRef`" rule.
 //!
 //! # What this does NOT do
 //!

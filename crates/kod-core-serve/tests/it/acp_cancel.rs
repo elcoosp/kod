@@ -16,11 +16,11 @@
 //!
 //! Two tests:
 //!   1. `session_cancel_during_pending_approval_returns_cancelled`
-//!      — the ACP dispatch path, the engine_key construction, and the
+//!      — the ACP dispatch path, the `engine_key` construction, and the
 //!        cancelled stop-reason mapping, driven end to end.
 //!   2. `provider_error_maps_to_refusal_stop_reason`
 //!      — the other side of the same match arm: a non-cancel error
-//!        must map to "refusal", not "cancelled" and not "end_turn".
+//!        must map to "refusal", not "cancelled" and not "`end_turn`".
 //!
 //! No model, no network, no subprocess. The two helpers `write_frame`
 //! and `read_frame` are duplicates of `acp_session.rs` / `acp_approval.rs`
@@ -136,7 +136,7 @@ where
 }
 
 /// Standard preset Yolo + per-tool override forcing `write_file` to
-/// Ask. A write_file tool call parks on the approval gate, which is
+/// Ask. A `write_file` tool call parks on the approval gate, which is
 /// the "in flight" state the cancel has to interrupt.
 fn ask_write_file_policy() -> PolicyEngine {
     let mut tools = std::collections::BTreeMap::new();

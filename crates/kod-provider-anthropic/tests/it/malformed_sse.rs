@@ -48,8 +48,8 @@ fn request() -> CompletionRequest {
     req
 }
 
-/// message_start, a text delta "before", a malformed frame, another
-/// delta "after", message_stop. If the malformed frame is dropped, both
+/// `message_start`, a text delta "before", a malformed frame, another
+/// delta "after", `message_stop`. If the malformed frame is dropped, both
 /// deltas survive and the stream ends cleanly. If it is fatal, "after"
 /// and the stop reason are lost.
 fn mixed_sse_body() -> String {

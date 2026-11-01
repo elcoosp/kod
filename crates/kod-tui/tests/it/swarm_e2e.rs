@@ -1,8 +1,8 @@
-//! End-to-end test: `/swarm <goal>` on a TuiLoop with a real
+//! End-to-end test: `/swarm <goal>` on a `TuiLoop` with a real
 //! `KodEngine` backed by a scripted provider.
 //!
 //! `test_swarm_state_machine` (in app.rs) tests how a swarm event
-//! mutates app state. `test_swarm_command_routing` (in main_loop.rs)
+//! mutates app state. `test_swarm_command_routing` (in `main_loop.rs`)
 //! tests that `/swarm` reaches `dispatch_swarm`. Neither covers the
 //! whole path: command → spawned runner → event pump → app state →
 //! merged answer in the chat. This test does.

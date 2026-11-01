@@ -129,7 +129,7 @@ impl OpenAICompatProvider {
 
     /// Bound how long the retry loops may sleep out a provider-suggested
     /// rate-limit window. Tab-bridge's send-frequency limit is ~20 min;
-    /// set ~1500 s for such endpoints (see EndpointConfig).
+    /// set ~1500 s for such endpoints (see `EndpointConfig`).
     #[must_use]
     pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
         self.rate_limit_wait = wait;
@@ -138,7 +138,7 @@ impl OpenAICompatProvider {
 
     /// WS-A: stamp sessionless requests with `session` (the engine's
     /// stable background id) instead of leaving them anonymous. Only
-    /// applied when the endpoint is a tab bridge (see provider_setup);
+    /// applied when the endpoint is a tab bridge (see `provider_setup`);
     /// explicit `session_id`s always win.
     #[must_use]
     pub fn with_default_session(self, session: impl Into<String>) -> Self {
@@ -251,7 +251,7 @@ impl OpenAICompatProvider {
     /// leading `system` content; adk-model's converters extract it into
     /// the top-level `system` field for providers that use one
     /// (Anthropic, Gemini, Bedrock) and leave it as a role message for
-    /// OpenAI-compatible ones, which is exactly the OpenAI spec.
+    /// OpenAI-compatible ones, which is exactly the `OpenAI` spec.
     ///
     /// Tool calls and tool results are attached as `Part::FunctionCall`
     /// and `Part::FunctionResponse` respectively. The multi-role
@@ -1080,7 +1080,7 @@ impl OpenAICompatProvider {
     }
 }
 
-/// Normalize a user-supplied endpoint to the OpenAI API root.
+/// Normalize a user-supplied endpoint to the `OpenAI` API root.
 ///
 /// Accepts a server root (`http://localhost:11434`, `http://localhost:1234`)
 /// or an API root that already ends in `/v1`.
@@ -1112,7 +1112,7 @@ fn adk_err(e: adk_core::AdkError) -> KodError {
     KodError::Provider(e.to_string())
 }
 
-/// Map an adk error onto the typed KodError taxonomy. adk owns the raw
+/// Map an adk error onto the typed `KodError` taxonomy. adk owns the raw
 /// HTTP response and exposes only `details.upstream_status_code` plus a
 /// formatted message, so: 429 → typed `RateLimited` with a hint parsed
 /// from the message text — tab-bridge's 429 body embeds
@@ -1187,7 +1187,7 @@ fn rate_limit_delay(
 /// Whether a failed streaming attempt may be retried without colliding with
 /// live server-side work. Transport failures, timeouts and 5xx/429 are safe
 /// (nothing is running, or the server already failed the turn). Any 4xx —
-/// notably 409 session_busy from stateful tab backends, meaning *our own
+/// notably 409 `session_busy` from stateful tab backends, meaning *our own
 /// previous attempt is still running* — must surface immediately: retrying
 /// would stack another turn onto the busy session and cascade.
 fn adk_precommit_retryable(e: &adk_core::AdkError) -> bool {
@@ -1216,7 +1216,7 @@ fn options_to_config(options: &GenerationOptions) -> GenerateContentConfig {
     }
 }
 
-/// Stamp the tab-bridge session key as the OpenAI `user` field.
+/// Stamp the tab-bridge session key as the `OpenAI` `user` field.
 fn stamp_openai_user(config: &mut GenerateContentConfig, session: &str) {
     let entry = config
         .extensions
@@ -1844,7 +1844,7 @@ mod normalize_base_url_proptests {
     //! **A path-suffix input double-appends:** `"http://x/v1/foo"`
     //! (ends with `/foo`, not `/v1`) normalizes to
     //! `"http://x/v1/foo/v1"`. That may be a caller mistake (a
-    //! base_url shouldn't have a path suffix after `/v1`) or a
+    //! `base_url` shouldn't have a path suffix after `/v1`) or a
     //! function bug (the contract doesn't say). It is pinned as a
     //! **control** to document the current behaviour, not fixed in
     //! this commit. Fixing it would require deciding whether the

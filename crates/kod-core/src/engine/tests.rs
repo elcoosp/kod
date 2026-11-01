@@ -717,10 +717,10 @@ fn test_reply_declares_goal_met() {
     assert!(!reply_declares_goal_met("   \n\n"));
 }
 
-/// set_provider must complete promptly even while a streaming
-/// generation is in flight. Before the fix, process_streaming held
-/// the RwLock read guard across the whole agentic loop, so
-/// set_provider's write awaited the end of the generation — a
+/// `set_provider` must complete promptly even while a streaming
+/// generation is in flight. Before the fix, `process_streaming` held
+/// the `RwLock` read guard across the whole agentic loop, so
+/// `set_provider`'s write awaited the end of the generation — a
 /// `/model` switch mid-prompt looked like a hang.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_set_provider_not_blocked_by_running_generation() {
@@ -919,7 +919,7 @@ async fn test_process_goal_streaming_without_provider_errors() {
 /// `remember_turn` must write the turn to both the transcript and
 /// short-term memory. Regression: nothing in the engine ever
 /// called `MemoryManager::store`, so the memory subsystem was
-/// read-only from the engine's perspective — retrieve_context
+/// read-only from the engine's perspective — `retrieve_context`
 /// returned whatever a caller had stored externally, never a
 /// session turn.
 #[tokio::test]
@@ -1106,8 +1106,8 @@ fn test_truncate_chars_respects_boundaries() {
     }
 }
 
-/// last_prompt() must return the grounded prompt after a
-/// successful process_streaming call, so /debug last-prompt has
+/// `last_prompt()` must return the grounded prompt after a
+/// successful `process_streaming` call, so /debug last-prompt has
 /// something to show. Uses a no-op provider that yields Done
 /// immediately.
 #[tokio::test]
@@ -1207,8 +1207,8 @@ async fn test_last_prompt_is_captured() {
     );
 }
 
-/// set_history_budget clamps to the floor and takes effect in
-/// render_history.
+/// `set_history_budget` clamps to the floor and takes effect in
+/// `render_history`.
 #[tokio::test]
 async fn test_history_budget_clamps_and_applies() {
     let temp = TempDir::new().unwrap();
@@ -1237,7 +1237,7 @@ async fn test_history_budget_clamps_and_applies() {
     assert_eq!(engine.history_budget(), 100_000);
 }
 
-/// With a small budget, render_history drops the oldest turns
+/// With a small budget, `render_history` drops the oldest turns
 /// first — newest turns are always retained.
 #[tokio::test]
 async fn test_render_history_drops_oldest_first() {
@@ -1277,8 +1277,8 @@ async fn test_render_history_drops_oldest_first() {
     engine.compact_history(5).await;
 }
 
-/// record_turn runs on both sides of every prompt. A turn longer
-/// than MAX_TURN_CHARS whose boundary byte falls inside a multibyte
+/// `record_turn` runs on both sides of every prompt. A turn longer
+/// than `MAX_TURN_CHARS` whose boundary byte falls inside a multibyte
 /// codepoint used to panic and abort the whole loop.
 ///
 /// The boundary offset is derived from `MAX_TURN_CHARS` rather than
@@ -1351,7 +1351,7 @@ fn test_truncate_does_not_panic_mid_multibyte() {
     }
 }
 
-/// list_files routes through summarize_tool_result so the model
+/// `list_files` routes through `summarize_tool_result` so the model
 /// sees "N entries in …" instead of a truncated quoted-path dump.
 #[tokio::test]
 async fn test_run_tool_calls_summarizes_list_files() {
@@ -1417,10 +1417,10 @@ async fn test_run_tool_calls_summarizes_list_files() {
     );
 }
 
-/// summarize_success must surface the tool's truncation flags so
+/// `summarize_success` must surface the tool's truncation flags so
 /// the row does not present a partial read or a killed command as
 /// if it were complete.
-/// cap_rendered_result must produce valid JSON for an oversized
+/// `cap_rendered_result` must produce valid JSON for an oversized
 /// result: the model has to be able to parse every metadata field
 /// even when the content itself is trimmed.
 #[test]
@@ -1466,7 +1466,7 @@ fn test_cap_rendered_result_small_is_untouched() {
     assert_eq!(rendered, raw);
 }
 
-/// execute_command with both stdout and stderr over the per-field
+/// `execute_command` with both stdout and stderr over the per-field
 /// budget must still produce valid JSON with all four fields present.
 #[test]
 fn test_cap_rendered_result_trims_both_streams() {
@@ -1752,7 +1752,7 @@ fn test_tool_intent_surfaces_in_brief_and_header() {
 
 /// A round containing a mutating tool must run serially in caller
 /// order: the read must observe the write that precedes it in the
-/// same round. Before the serialization fix, join_all could run the
+/// same round. Before the serialization fix, `join_all` could run the
 /// read before the write committed, and this test would flake (or
 /// fail when the file did not exist yet).
 #[tokio::test]

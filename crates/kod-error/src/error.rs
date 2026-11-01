@@ -763,16 +763,16 @@ mod proptest_provider_status {
     //!
     //! Note on what is *not* asserted (both are false):
     //!
-    //! - "auth status is never retryable" — provider_status puts the
-    //!   body into Provider(...), and is_retryable runs
-    //!   is_transient_transport_error on that message. A 401 whose
+    //! - "auth status is never retryable" — `provider_status` puts the
+    //!   body into Provider(...), and `is_retryable` runs
+    //!   `is_transient_transport_error` on that message. A 401 whose
     //!   body says "please try again" is retryable.
     //! - "500..=599 is always retryable" — a plain 503 with a
     //!   non-busy body is Provider(...) and retryable only if the
     //!   body contains a transient phrase.
     //!
-    //! What IS true, and asserted below: for provider_status outputs,
-    //! is_recoverable ⇒ is_retryable.
+    //! What IS true, and asserted below: for `provider_status` outputs,
+    //! `is_recoverable` ⇒ `is_retryable`.
 
     use super::*;
     use proptest::prelude::*;

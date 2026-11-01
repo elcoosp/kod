@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
-//! OTLP GenAI telemetry (borrow from oh-my-pi, delta §14.5).
+//! OTLP `GenAI` telemetry (borrow from oh-my-pi, delta §14.5).
 //!
 //! # What this is
 //!
@@ -29,7 +29,7 @@
 //!
 //! # Semconv
 //!
-//! Attribute names follow the OpenTelemetry GenAI semantic
+//! Attribute names follow the OpenTelemetry `GenAI` semantic
 //! conventions (`gen_ai.system`, `gen_ai.request.model`,
 //! `gen_ai.usage.input_tokens`, …). A collector that understands the
 //! semconv sees a familiar shape; one that does not still sees

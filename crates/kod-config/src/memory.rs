@@ -42,11 +42,11 @@ pub enum EmbeddingEndpoint {
     /// No embeddings. Retrieval is keyword + recency only.
     #[default]
     None,
-    /// Ollama `/api/embed`. The URL is derived from the LLM base_url
+    /// Ollama `/api/embed`. The URL is derived from the LLM `base_url`
     /// when `embedding_url` is not set: `http://host:port/v1` becomes
     /// `http://host:port`.
     Ollama,
-    /// OpenAI `/v1/embeddings`. `embedding_api_key_env` names the
+    /// `OpenAI` `/v1/embeddings`. `embedding_api_key_env` names the
     /// environment variable holding the key; the value is never
     /// written to the config file.
     OpenAI,
@@ -92,7 +92,7 @@ pub struct MemoryConfig {
     /// derives one from `llm.base_url` for the Ollama case.
     pub embedding_url: Option<String>,
     /// Environment variable holding the embedder's API key, for the
-    /// OpenAI case. The value is read at startup; never stored.
+    /// `OpenAI` case. The value is read at startup; never stored.
     pub embedding_api_key_env: Option<String>,
 
     // ---- D2-B3b extraction fields ----
@@ -166,7 +166,7 @@ mod tests {
 
     /// `scope = "project"` (lowercase) and `scope = "global"` are the
     /// shapes the strategy doc uses. A config written with those must
-    /// deserialize; the serde rename_all = "lowercase" is the contract.
+    /// deserialize; the serde `rename_all` = "lowercase" is the contract.
     #[test]
     fn test_memory_scope_deserializes_from_lowercase() {
         let config: MemoryConfig = toml::from_str("scope = \"project\"").unwrap();

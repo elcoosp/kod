@@ -11,7 +11,7 @@
 //! The tool itself is thin: it holds an `Arc<RwLock<HashMap<u64,
 //! oneshot::Sender<String>>>>` and a counter, plus a reference to the
 //! `chunk_tx` the engine was called with. But `Tool::execute` does not
-//! receive the chunk_tx — the tool would have to reach into the engine,
+//! receive the `chunk_tx` — the tool would have to reach into the engine,
 //! which is the wrong direction. Instead, the engine intercepts calls
 //! to `ask_user` *before* dispatching to the tool: it does the marker
 //! emission and the await itself, then hands the answer back as the
@@ -55,14 +55,14 @@ pub struct QuestionRequest {
     pub placeholder: Option<String>,
 }
 
-/// The ask_user tool.
+/// The `ask_user` tool.
 pub struct AskUserTool {
     /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl AskUserTool {
-    /// Build the ask_user tool.
+    /// Build the `ask_user` tool.
     #[must_use]
     pub fn new() -> Self {
         Self {

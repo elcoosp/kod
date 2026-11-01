@@ -486,7 +486,7 @@ impl KodEngine {
     ///   pipeline separately feeds `architecture.md`, but the mental
     ///   model is a rolling view the model sees every turn).
     ///
-    /// Best-effort: every failure logs and returns; start() never
+    /// Best-effort: every failure logs and returns; `start()` never
     /// fails because the seeds could not be filled.
     pub async fn bootstrap_mental_models(&self) {
         use kod_memory::mental_models::{MentalModelSeed, RefreshTrigger};

@@ -27,7 +27,7 @@ fn kod_bin() -> &'static str {
 /// identically on Linux, macOS, and Windows — unlike `XDG_CONFIG_HOME`
 /// (ignored on macOS by `dirs::config_dir`) or `HOME` (which expands
 /// to `$HOME/Library/Application Support/kod` on macOS, not `$HOME/kod`).
-/// Returns (stdout, stderr, status_code).
+/// Returns (stdout, stderr, `status_code`).
 fn run_kod_in(config_dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(kod_bin())
         .args(args)

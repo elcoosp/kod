@@ -1,9 +1,9 @@
 # kod-telemetry
 
-OTLP GenAI telemetry for KOD.
+OTLP `GenAI` telemetry for KOD.
 
 Emits traces and metrics per request, tool call, and turn, using the
-OpenTelemetry GenAI semantic conventions. Wired behind a trait so a
+OpenTelemetry `GenAI` semantic conventions. Wired behind a trait so a
 session without an exporter pays no cost.
 
 ## Part of KOD

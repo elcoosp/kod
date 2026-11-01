@@ -743,8 +743,8 @@ mod tests {
         //! Properties for the transcript-coherence primitives.
         //!
         //! `MessageDigest::of` is documented as hashing exactly the
-        //! fields that reach the wire: role, content, tool_calls (id,
-        //! name, args), and tool_call_id. The example tests pin each
+        //! fields that reach the wire: role, content, `tool_calls` (id,
+        //! name, args), and `tool_call_id`. The example tests pin each
         //! field case-by-case. The properties below are the generic
         //! form of that claim: either a field is wire-relevant and
         //! the digest must separate two values that differ in it, or

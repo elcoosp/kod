@@ -1,6 +1,6 @@
 //! Git tools integration tests (D3-C4).
 //!
-//! Confirms the GitAccess enum contract:
+//! Confirms the `GitAccess` enum contract:
 //! - A context with `GitAccess::None` denies every git tool.
 //! - A context with `GitAccess::Read` allows `git_status` / `git_diff`
 //!   and `git_branch list`, and denies `git_commit` / `git_branch

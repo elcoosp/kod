@@ -37,7 +37,7 @@ pub struct JevConfig {
     /// working.
     #[serde(serialize_with = "serialize_redacted_option")]
     pub api_key: Option<String>,
-    /// Override for the TypeSafe API root.
+    /// Override for the `TypeSafe` API root.
     ///
     /// Resolution order (highest precedence first):
     ///
@@ -68,7 +68,7 @@ pub struct JevConfig {
     /// choice: Jev is an optimisation, not a hard dependency.
     pub fail_open: bool,
     /// When true, absolute paths in the state are hashed before the
-    /// state is sent to TypeSafe. Trade-off: Jev's judgment gets a
+    /// state is sent to `TypeSafe`. Trade-off: Jev's judgment gets a
     /// little weaker, and the user keeps the paths on their machine.
     pub redact_paths: bool,
     /// Seconds the TUI will hide reasoning-classified text before it

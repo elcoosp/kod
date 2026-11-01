@@ -22,7 +22,7 @@
 //!
 //! The ledger observes rather than assumes: the fingerprint comes
 //! from bytes the engine already renders, and the cache-token counts
-//! come from the provider's own usage report (see P0's TokenUsage
+//! come from the provider's own usage report (see P0's `TokenUsage`
 //! extension). A provider that reports no cache fields leaves the
 //! ledger in a conservative state — every target looks cold, and the
 //! gate declines hops that cannot be justified.

@@ -93,7 +93,7 @@ pub struct Aggregates {
     pub total_duration_ms: u64,
     /// Sum of per-request cache savings in USD.
     pub total_cache_savings_usd: f64,
-    /// Sum of ttft_ms values, for the average.
+    /// Sum of `ttft_ms` values, for the average.
     pub ttft_sum_ms: u64,
     /// Number of requests that reported ttft.
     pub ttft_count: u64,

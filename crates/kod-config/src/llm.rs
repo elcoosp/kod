@@ -106,8 +106,8 @@ impl LlmConfig {
     /// Called by `KodConfig::load_default()` after deserialization.
     ///
     /// Providers accept a narrow range of temperature, a positive
-    /// context_window, a positive max_tokens, a timeout >= 1 s, and a
-    /// non-empty base_url + model. A value outside those ranges fails
+    /// `context_window`, a positive `max_tokens`, a timeout >= 1 s, and a
+    /// non-empty `base_url` + model. A value outside those ranges fails
     /// with an opaque HTTP error at the first prompt otherwise. This
     /// clamps with a `tracing::warn!` per adjustment so the session
     /// still runs and the user sees what changed.
@@ -374,7 +374,7 @@ impl LlmConfig {
 /// has a different set of legal values (no `Custom` placeholder).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderKind {
-    /// OpenAI-compatible protocol (OpenAI, Ollama, vLLM, gateways).
+    /// OpenAI-compatible protocol (`OpenAI`, Ollama, vLLM, gateways).
     #[serde(rename = "openai-compatible", alias = "Ollama", alias = "OpenAI")]
     OpenAICompatible,
     /// Anthropic Messages API protocol.

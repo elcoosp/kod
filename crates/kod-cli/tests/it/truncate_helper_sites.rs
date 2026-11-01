@@ -12,11 +12,11 @@
 //!     };
 //!
 //! On CJK input whose char count is at the cap but whose byte count
-//! exceeds it, the guard fires, truncate_chars returns the string
+//! exceeds it, the guard fires, `truncate_chars` returns the string
 //! unchanged, and the ellipsis is appended to a string that was
 //! never truncated.
 //!
-//! The helper (kod_types::strutil::truncate_with_ellipsis) is
+//! The helper (`kod_types::strutil::truncate_with_ellipsis`) is
 //! unit-tested in kod-types. This file pins that kod-cli's two sites
 //! call it, so a future refactor cannot reintroduce the old shape
 //! here without failing.

@@ -72,9 +72,9 @@ impl Default for ImageBudgetPolicy {
 pub struct BudgetReport {
     /// Frames dropped because they were not decodable.
     pub dropped_undecodable: usize,
-    /// Frames dropped for exceeding max_bytes_per_frame.
+    /// Frames dropped for exceeding `max_bytes_per_frame`.
     pub dropped_oversize: usize,
-    /// Frames dropped for exceeding max_frames.
+    /// Frames dropped for exceeding `max_frames`.
     pub dropped_over_cap: usize,
 }
 
@@ -145,7 +145,7 @@ mod tests {
         format!("{PNG_BASE64_PREFIX}A")
     }
 
-    /// Length > MAX_FRAME_BYTES and ≡ 0 (mod 4).
+    /// Length > `MAX_FRAME_BYTES` and ≡ 0 (mod 4).
     fn oversize_png() -> String {
         format!("{PNG_BASE64_PREFIX}{}", "A".repeat(MAX_FRAME_BYTES + 1))
     }

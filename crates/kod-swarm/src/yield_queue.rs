@@ -1,4 +1,4 @@
-//! YieldQueue: the typed aside pipeline (borrow from oh-my-pi,
+//! `YieldQueue`: the typed aside pipeline (borrow from oh-my-pi,
 //! delta §11.5).
 //!
 //! # The problem
@@ -16,7 +16,7 @@
 //!
 //! # The shape
 //!
-//! A **YieldQueue** is a per-kind queue of *thunks*. A source
+//! A **`YieldQueue`** is a per-kind queue of *thunks*. A source
 //! registers a producer: a closure that either renders the event
 //! into an injection string, or returns `None` when the event has
 //! gone stale by the time the loop drains it. The staleness check

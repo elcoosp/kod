@@ -806,7 +806,7 @@ impl KodEngine {
     ///
     /// The override is the swarm runner's per-capability routing hook
     /// (design D1.4 PR A7): a subtask's `capability` (Coding, Testing,
-    /// CodeReview, …) resolves against `[llm.routing.swarm]` to a
+    /// `CodeReview`, …) resolves against `[llm.routing.swarm]` to a
     /// `ModelRef`, and the streaming chain tries that model first.
     /// Fallback endpoints from `[llm.routing].fallback` are still
     /// appended — the override replaces the *primary* choice, not the

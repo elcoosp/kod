@@ -1,6 +1,6 @@
 //! Engine configuration integration with main KOD config.
 //!
-//! Bridges the main [KodConfig] with the engine-specific configuration
+//! Bridges the main [`KodConfig`] with the engine-specific configuration
 //! needed by the task router and engine.
 
 use kod_config::KodConfig;

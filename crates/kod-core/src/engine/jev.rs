@@ -2,7 +2,7 @@ use super::*;
 
 impl KodEngine {
     /// Snapshot of the cache ledger for a `/cache` surface (P1).
-    /// Returns (endpoint, cached_tokens, last_used_turn) plus the
+    /// Returns (endpoint, `cached_tokens`, `last_used_turn`) plus the
     /// currently-warm endpoint's name.
     pub fn cache_snapshot(&self) -> (Vec<(String, u64, u64)>, Option<String>) {
         match self.cache_ledger.lock() {
@@ -12,7 +12,7 @@ impl KodEngine {
     }
 
     /// Snapshot of the endpoint circuit breaker (hygiene 3.2).
-    /// Returns (endpoint, failures, last_error) for every endpoint
+    /// Returns (endpoint, failures, `last_error`) for every endpoint
     /// currently in cooldown.
     pub fn unhealthy_endpoints(&self) -> Vec<(String, u32, Option<String>)> {
         match self.endpoint_health.lock() {
@@ -378,7 +378,7 @@ impl KodEngine {
     /// Returns `None` when Jev is disabled, the loaded skill set is
     /// empty, or the call errors. `None` means "keep the router's
     /// answer as-is".
-    /// Rank grep / search_files results by Jev relevance (P2.3).
+    /// Rank grep / `search_files` results by Jev relevance (P2.3).
     ///
     /// When a search returns more than `MIN_RESULTS_TO_RANK` hits,
     /// ask Jev which ones best address the user's request, then drop
@@ -451,7 +451,7 @@ impl KodEngine {
     /// should still treat as new. On disabled/errored Jev, every
     /// index is returned (the syntactic diff stands).
     ///
-    /// Logged as a JevDecision with `purpose = "diagnostic_triage"`.
+    /// Logged as a `JevDecision` with `purpose = "diagnostic_triage"`.
     /// Ask Jev whether each citation in `text` is substantiated by
     /// the cited location (P4.5). The syntactic check in
     /// `citations::check_and_annotate` verifies the file exists and
@@ -660,7 +660,7 @@ impl KodEngine {
     ///
     /// Only `read_file` benefits meaningfully: the other tools'
     /// output is already structured (grep results, diffs, JSON) and
-    /// the caller's own caps already handle those. A read_file of
+    /// the caller's own caps already handle those. A `read_file` of
     /// 400 lines for a task that needs 20 is the common case this
     /// targets.
     ///
@@ -893,7 +893,7 @@ impl KodEngine {
     ///
     /// The caller uses the returned answer as the tool result
     /// instead of emitting a question marker, so the model proceeds
-    /// without interrupting the user. Logged as a JevDecision.
+    /// without interrupting the user. Logged as a `JevDecision`.
     pub(crate) async fn try_answer_question_from_context(
         &self,
         key: &str,
@@ -962,7 +962,7 @@ impl KodEngine {
     ///
     /// On the first round of a turn, and on every round after a tool
     /// execution, asks Jev what kind of round this is (planning,
-    /// tool_execution, synthesis, summary) and maps the answer to an
+    /// `tool_execution`, synthesis, summary) and maps the answer to an
     /// endpoint via `[jev.round_routing]`. Returns `None` when Jev is
     /// disabled, the kind has no mapping, the mapping does not name a
     /// registered endpoint, or the state does not warrant a route.
@@ -1158,7 +1158,7 @@ impl KodEngine {
     ///
     /// * `likely_approved`: would the user almost certainly approve
     ///   this call?
-    /// * `risk_level`: read_only | reversible | destructive |
+    /// * `risk_level`: `read_only` | reversible | destructive |
     ///   irreversible.
     ///
     /// A call is auto-approved only when:
@@ -1320,7 +1320,7 @@ mod redaction_wiring_tests {
     //! Proves `set_jev_decider` / `set_jev_client` wrap the decider
     //! in the redaction decorator, so a secret in an outbound Jev
     //! state never reaches the installed decider (and, in production,
-    //! never reaches TypeSafe).
+    //! never reaches `TypeSafe`).
 
     use super::*;
     use kod_config::JevConfig;

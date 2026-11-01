@@ -528,7 +528,7 @@ mod proptests {
     //!    by dropping spaces from the output strategy — no trim can
     //!    change a value it can produce.
     //!
-    //! Neither was a parser bug. Same shape as the parse_reply round
+    //! Neither was a parser bug. Same shape as the `parse_reply` round
     //! (`1ce1bb6`) — the test input was not what the assertion
     //! assumed.
     use super::*;

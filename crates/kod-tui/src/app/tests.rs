@@ -156,7 +156,7 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /// Serializes tests that mutate KOD_TUI_STATE_DIR (a process-wide
+    /// Serializes tests that mutate `KOD_TUI_STATE_DIR` (a process-wide
     /// environment variable). Rust runs unit tests in parallel by
     /// default, and two tests racing to set the same env var would
     /// step on each other's state directories.
@@ -525,8 +525,8 @@ mod tests {
 
     /// Real token usage replaces the char estimate, and subsequent
     /// estimate calls in the same turn must not stack on top of it.
-    /// Regression: TokenUsage arrives before ResponseComplete in the
-    /// event queue; finish_response then called note_usage, adding
+    /// Regression: `TokenUsage` arrives before `ResponseComplete` in the
+    /// event queue; `finish_response` then called `note_usage`, adding
     /// the reply's chars/4 to a total that already included the
     /// completion — every turn over-reported by roughly the reply
     /// length.
@@ -578,9 +578,9 @@ mod tests {
         );
     }
 
-    /// The type-ahead search states: begin_search opens the bar with
+    /// The type-ahead search states: `begin_search` opens the bar with
     /// an empty query, typing appends, Enter commits (query stays,
-    /// editing stops), Escape/clear_search drops everything.
+    /// editing stops), `Escape/clear_search` drops everything.
     #[test]
     fn test_type_ahead_search_state_transitions() {
         let mut app = KodApp::new();
@@ -782,13 +782,13 @@ mod tests {
     /// A failed save must leave the previous session file intact.
     /// Regression: the old `std::fs::write` truncated the target
     /// before writing, so a mid-write failure (disk full, crash,
-    /// permission flip) left a zero-byte file — which load_session
+    /// permission flip) left a zero-byte file — which `load_session`
     /// then discarded, losing the transcript.
     ///
     /// The temp+rename implementation writes the temp first and only
     /// renames on success, so the target is either the old complete
     /// file or the new complete file, never a partial one. This test
-    /// simulates the failure by pointing KOD_TUI_STATE_DIR at a path
+    /// simulates the failure by pointing `KOD_TUI_STATE_DIR` at a path
     /// whose parent cannot be created, and asserts the previously
     /// saved file still loads.
     #[serial_test::serial]

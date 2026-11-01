@@ -179,7 +179,7 @@ pub enum StreamChunk {
     /// The provider has begun describing a tool call.
     ///
     /// `index` distinguishes concurrent calls within one response
-    /// (OpenAI SSE numbers them; a provider that emits calls one at
+    /// (`OpenAI` SSE numbers them; a provider that emits calls one at
     /// a time uses `index: 0`). `id` is the wire-level id when the
     /// provider reports one — `None` otherwise.
     /// A tool call has started.

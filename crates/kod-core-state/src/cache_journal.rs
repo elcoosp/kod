@@ -175,7 +175,7 @@ mod tests {
     /// The truncation path keeps the newest half of the journal, but
     /// the rewrite must preserve a trailing newline. The pre-fix
     /// `lines().skip(..).join("\n")` dropped it, so the next
-    /// `writeln!` (O_APPEND) concatenated its record onto the last
+    /// `writeln!` (`O_APPEND`) concatenated its record onto the last
     /// surviving line — producing `...lastline{"ts_ms":...}`, a
     /// corrupted JSONL record that `recent` then skips on parse
     /// failure.

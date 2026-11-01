@@ -126,7 +126,7 @@ impl EngineContext {
     }
 }
 
-/// Builder for EngineContext
+/// Builder for `EngineContext`
 #[derive(Debug, Default)]
 pub struct EngineContextBuilder {
     context: EngineContext,

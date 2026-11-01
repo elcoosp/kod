@@ -117,7 +117,7 @@ async fn test_seed_turn_feeds_history() {
     engine.clear_history().await;
 }
 
-/// A write_file against a path already held in the engine's lock table
+/// A `write_file` against a path already held in the engine's lock table
 /// must fail with a lock-timeout error rather than writing.
 ///
 /// The engine's lock is enforced inside `WriteFileTool::execute`, via

@@ -366,7 +366,7 @@ mod tests {
 ///
 /// On HEAD this test fails: the future-dated entry is returned
 /// as fresh. After the fix (reject timestamps more than
-/// CLOCK_SKEW_TOLERANCE_NANOS in the future, delete the file,
+/// `CLOCK_SKEW_TOLERANCE_NANOS` in the future, delete the file,
 /// return None) it passes.
 #[test]
 fn future_timestamped_entry_is_rejected() {

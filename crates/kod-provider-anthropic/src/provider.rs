@@ -32,23 +32,23 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     /// H-P7: per-request timeout in seconds, carried so a
     /// `with_model` switch keeps the same setting. Retained for
-    /// API parity with the OpenAI provider; the client itself is
+    /// API parity with the `OpenAI` provider; the client itself is
     /// built with connect-only + a per-request wrapper, so a long
     /// stream is not killed mid-flight.
     timeout_secs: u64,
     /// Per-endpoint streaming concurrency bracket (§9.9). Same
-    /// semantics as the OpenAI provider's field; see
+    /// semantics as the `OpenAI` provider's field; see
     /// `kod_provider::concurrency`. The default cap is 0 (unbounded).
     concurrency: Arc<kod_provider::concurrency::ProviderConcurrency>,
     /// Whether the §9.3 stream stall detector runs on this provider's
-    /// streaming paths. On by default; same contract as the OpenAI
+    /// streaming paths. On by default; same contract as the `OpenAI`
     /// provider's field.
     stream_guard_enabled: bool,
     /// Longest provider-suggested rate-limit window (H-RL1) the
     /// collect and streaming paths may sleep out once per call.
     /// `ZERO` (default) keeps the legacy fail-fast; the config's
     /// `rate_limit_wait_secs` flows in via `with_rate_limit_wait`.
-    /// Same semantics as the OpenAI provider's field.
+    /// Same semantics as the `OpenAI` provider's field.
     rate_limit_wait: std::time::Duration,
 }
 
@@ -63,7 +63,7 @@ impl AnthropicProvider {
     }
 
     /// Like `with_api_key` but with a configurable request timeout.
-    /// H-P7: parity with the OpenAI provider, and the field the
+    /// H-P7: parity with the `OpenAI` provider, and the field the
     /// `[llm.endpoints].timeout_secs` config flows into.
     ///
     /// Note: the client below carries only a *connect* timeout. A
@@ -115,7 +115,7 @@ impl AnthropicProvider {
     }
 
     /// Set the longest provider-suggested rate-limit window (H-RL1)
-    /// the provider may sleep out once per call. Mirrors the OpenAI
+    /// the provider may sleep out once per call. Mirrors the `OpenAI`
     /// provider's `with_rate_limit_wait`; `ZERO` (the default) keeps
     /// the legacy fail-fast behavior.
     #[must_use]
@@ -127,7 +127,7 @@ impl AnthropicProvider {
     /// Set the per-endpoint streaming concurrency cap (§9.9).
     ///
     /// `0` is unbounded and is the default. A positive cap wraps only
-    /// the streaming HTTP request — see the OpenAI provider's
+    /// the streaming HTTP request — see the `OpenAI` provider's
     /// `with_concurrency` for the contract, and
     /// `kod_provider::concurrency` for the deadlock reasoning.
     #[must_use]
@@ -1135,7 +1135,7 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
 /// }
 /// ```
 ///
-/// Text-only → `Text`; tool_use only → `ToolCalls`; both → `Mixed`. An
+/// Text-only → `Text`; `tool_use` only → `ToolCalls`; both → `Mixed`. An
 /// empty `content` array collapses to `Text { content: "" }` rather
 /// than erroring — Anthropic does return empty content on a refusal or
 /// an immediate stop, and the engine treats an empty reply as "nothing

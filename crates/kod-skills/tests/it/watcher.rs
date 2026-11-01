@@ -1,10 +1,10 @@
 //! Tests for the skill file watcher.
 //!
-//! macOS FSEvents reports an in-place rewrite (truncate + write) as
+//! macOS `FSEvents` reports an in-place rewrite (truncate + write) as
 //! `Created` rather than `Modified`, and delivers events with a
 //! configurable coalescing latency (about one second by default).
 //! Under load — a full `cargo nextest run --workspace`, for
-//! instance — the system-wide FSEvents service delays delivery
+//! instance — the system-wide `FSEvents` service delays delivery
 //! further, so a test that asserts on the *first* event received
 //! flakes. These tests wait for the event they actually care about,
 //! skipping over platform-specific noise, and give the OS a
@@ -21,7 +21,7 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Time to wait after installing the watcher so the OS has a chance
 /// to deliver any events for files that already exist, and to
 /// establish the subscription itself. Two seconds covers the
-/// FSEvents default latency even on a loaded CI box.
+/// `FSEvents` default latency even on a loaded CI box.
 const WATCHER_SETTLE: Duration = Duration::from_millis(2_000);
 
 /// Drain every queued event for `duration`, discarding what is

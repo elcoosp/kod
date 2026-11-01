@@ -616,7 +616,7 @@ mod proptests {
         }
     }
 
-    /// Control: exactly MAX_LINES non-empty lines renders (the `>`
+    /// Control: exactly `MAX_LINES` non-empty lines renders (the `>`
     /// comparison in the code is not `>=`).
     #[test]
     fn exactly_max_lines_renders() {
@@ -626,7 +626,7 @@ mod proptests {
     }
 
     /// Control: the Empty-vs-TooLarge precedence. A text that is both
-    /// too many lines and all-whitespace returns Empty, not TooLarge.
+    /// too many lines and all-whitespace returns Empty, not `TooLarge`.
     /// The module checks Empty first.
     #[test]
     fn whitespace_only_many_lines_is_empty_not_too_large() {

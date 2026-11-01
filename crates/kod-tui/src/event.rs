@@ -322,7 +322,7 @@ pub enum Event {
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
     Thinking,
     /// The engine wants yes/no answers for one or more mutating calls
-    /// (write_file, patch_file, or execute_command gated by policy).
+    /// (`write_file`, `patch_file`, or `execute_command` gated by policy).
     /// The items are ordered; the TUI walks them one at a time with
     /// y/n/a, navigates with ↑/↓, and calls `respond_to_approval`
     /// per item.
@@ -335,7 +335,7 @@ pub enum Event {
         /// The requests in the batch.
         items: Vec<ApprovalItem>,
     },
-    /// The agent called ask_user and wants a text answer. Carries the
+    /// The agent called `ask_user` and wants a text answer. Carries the
     /// question and optional placeholder hint. The TUI shows an input
     /// prompt; the answer is sent back via
     /// `respond_to_question`.

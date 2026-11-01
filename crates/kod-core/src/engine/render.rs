@@ -454,7 +454,7 @@ pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     }
 }
 
-/// Cap on the diff body shown for a write_file / patch_file row. A
+/// Cap on the diff body shown for a `write_file` / `patch_file` row. A
 /// small edit is 5–30 lines; a large one is 200+. The TUI's `o` key
 /// expands the full body, so the summary preview can stay tight.
 const TOOL_DIFF_LINES: usize = 40;

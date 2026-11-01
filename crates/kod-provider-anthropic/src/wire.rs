@@ -386,7 +386,7 @@ pub fn build_streaming_body(req: &CompletionRequest) -> Value {
 
 /// Convert kod tool definitions to Anthropic's `tools` array shape.
 ///
-/// Anthropic uses `input_schema` where OpenAI uses `parameters`. The
+/// Anthropic uses `input_schema` where `OpenAI` uses `parameters`. The
 /// description is passed through; a missing description becomes an
 /// empty string so the tool block is well-formed.
 /// Anthropic accepts at most four cache breakpoints per request.
@@ -444,8 +444,8 @@ pub fn tools_array(tools: &[ToolDefinition]) -> Value {
 /// content-typed: each `event:` line names the shape of the following
 /// `data:` payload. The set of events we care about:
 ///
-/// - `content_block_start`: opens either a text block or a tool_use
-///   block. Carries the tool name and id for a tool_use block, which
+/// - `content_block_start`: opens either a text block or a `tool_use`
+///   block. Carries the tool name and id for a `tool_use` block, which
 ///   is where a `ToolCallStart` chunk comes from.
 /// - `content_block_delta`: an incremental update. `text_delta`
 ///   carries a text fragment; `input_json_delta` carries a fragment of
@@ -2217,7 +2217,7 @@ mod proptests {
     //! base + cache_read + cache_creation` is `usize` addition on three
     //! wire-supplied `u64`s. Test/dev profile has `overflow-checks` on
     //! by default, so adversarial values panic here. The fix
-    //! (saturating_add) lands in the next commit.
+    //! (`saturating_add`) lands in the next commit.
     use super::*;
     use proptest::prelude::*;
     use std::collections::HashMap;

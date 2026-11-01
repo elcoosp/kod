@@ -260,10 +260,10 @@ fn test_no_path_completion_for_plain_words() {
 
 /// `KodApp::save_session` + `load_session` are the only persistence
 /// between TUI runs. Regression: both existed but neither was called
-/// from TuiLoop, so a restart silently lost the whole chat and the
+/// from `TuiLoop`, so a restart silently lost the whole chat and the
 /// engine's transcript started empty every time.
 ///
-/// Uses KOD_TUI_STATE_DIR so the test never touches the user's real
+/// Uses `KOD_TUI_STATE_DIR` so the test never touches the user's real
 /// ~/.kod directory. The env var is process-global, so this test must
 /// not run in parallel with any other test that relies on the same
 /// state dir — it sets a per-test unique path under the OS temp dir,
@@ -317,7 +317,7 @@ fn test_session_persistence_roundtrip() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// Serializes tests that mutate KOD_TUI_STATE_DIR (process-global).
+/// Serializes tests that mutate `KOD_TUI_STATE_DIR` (process-global).
 /// Rust runs unit tests in parallel by default; the session tests must
 /// not race each other for the same env var.
 fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -328,7 +328,7 @@ fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Friendly-error coverage: each branch of KodApp::friendly_error must
+/// Friendly-error coverage: each branch of `KodApp::friendly_error` must
 /// fire on the phrasing OpenAI-compatible servers actually produce,
 /// and the raw error text must always be preserved.
 #[test]

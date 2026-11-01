@@ -10,7 +10,7 @@ use super::*;
 
 /// Find the newest `.jsonl` under `~/.kod/sessions/`.
 /// `kod jev status` — print the effective Jev config.
-/// `kod jev stats` — read JevDecision entries from a session log.
+/// `kod jev stats` — read `JevDecision` entries from a session log.
 /// `kod jev test` — ping the endpoint. Exits non-zero on failure.
 pub async fn run_jev_test() -> Result<()> {
     let cfg = KodConfig::load_default()?;

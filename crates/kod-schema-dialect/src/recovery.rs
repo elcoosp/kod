@@ -66,7 +66,7 @@ const CANDIDATES: &[&str] = &[
 ///
 /// High-recall and deliberately simple: it looks for a known keyword
 /// as a whole word in the message. A provider that names the offending
-/// construct in prose (OpenAI: *"Invalid schema ... 'const' is not
+/// construct in prose (`OpenAI`: *"Invalid schema ... 'const' is not
 /// permitted"*) is understood; one that returns an opaque "invalid
 /// request" yields [`RetryPlan::GiveUp`] rather than a guess.
 #[must_use]

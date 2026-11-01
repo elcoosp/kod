@@ -927,7 +927,7 @@ async fn write_done(
 /// Spawn `fut` with panic isolation.
 ///
 /// A bare `tokio::spawn(fut)` is the pre-fix shape: a panic unwinds
-/// past the JoinHandle, no error frame reaches the client, and the
+/// past the `JoinHandle`, no error frame reaches the client, and the
 /// caller waits on its request id until its own timeout. The fix is
 /// the shape `acp.rs:464` uses for `run_prompt` (aa21bf8): an inner
 /// `tokio::spawn` whose `JoinHandle::await` returns `Err` on panic,
