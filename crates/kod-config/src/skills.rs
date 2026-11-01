@@ -3,11 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Skills subsystem configuration.
 #[serde(default)]
 pub struct SkillsConfig {
+    /// Directory to load skills from. Uses the default when None.
     pub skills_dir: Option<String>,
+    /// Reload skill files when they change on disk.
     pub enable_hot_reload: bool,
+    /// Maximum number of skills composed into a single query.
     pub max_skills_per_query: usize,
+    /// Minimum matcher score for a skill to apply.
     pub match_threshold: f32,
 }
 

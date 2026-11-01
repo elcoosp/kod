@@ -23,6 +23,7 @@ pub enum PrewarmMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+/// LLM configuration: the endpoint list, routing rules, and defaults.
 pub struct LlmConfig {
     /// Allow the agent to reach the network through `web_fetch`.
     /// Default false: the agent running with a user's shell privileges
@@ -371,8 +372,10 @@ impl LlmConfig {
 /// has a different set of legal values (no `Custom` placeholder).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderKind {
+    /// OpenAI-compatible protocol (OpenAI, Ollama, vLLM, gateways).
     #[serde(rename = "openai-compatible", alias = "Ollama", alias = "OpenAI")]
     OpenAICompatible,
+    /// Anthropic Messages API protocol.
     #[serde(rename = "anthropic")]
     Anthropic,
 }
@@ -437,23 +440,33 @@ pub fn family_context_window(model: &str) -> Option<usize> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One named endpoint: connection details plus per-call defaults.
 pub struct EndpointConfig {
+    /// The endpoint name used as a config key.
     pub name: String,
+    /// The provider protocol kind.
     pub provider: ProviderKind,
+    /// The provider's API base URL.
     pub base_url: String,
+    /// The model id sent on the wire.
     pub model: String,
     /// Name of the environment variable that holds the API key. The
     /// value itself is never written to the config file — only the
     /// variable name is, so a shared config does not leak a secret.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// Sampling temperature override.
     #[serde(default)]
     pub temperature: Option<f32>,
+    /// Output token cap for one call.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+    /// The model's context window size.
     pub context_window: usize,
+    /// Per-request timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// USD pricing per million tokens, for cost accounting.
     #[serde(default)]
     pub pricing: Option<PricingConfig>,
     /// Reasoning-effort preference for this endpoint (delta §9.6).
@@ -538,7 +551,9 @@ pub const DEFAULT_RATE_LIMIT_WAIT_SECS: u64 = 1800;
 /// USD per million tokens; used by the TUI cost accounting.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PricingConfig {
+    /// USD per million input tokens.
     pub input_per_mtok_usd: f64,
+    /// USD per million output tokens.
     pub output_per_mtok_usd: f64,
 }
 

@@ -1,15 +1,28 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
+/// The config config module.
 pub mod config;
+/// The instructions config module.
 pub mod instructions;
+/// The jev config module.
 pub mod jev;
+/// The limits config module.
 pub mod limits;
+/// The llm config module.
 pub mod llm;
+/// The mcp config module.
 pub mod mcp;
+/// The memory config module.
 pub mod memory;
+/// The policy config module.
 pub mod policy;
+/// The profiles config module.
 pub mod profiles;
+/// The retry config module.
 pub mod retry;
+/// The skills config module.
 pub mod skills;
+/// The swarm config module.
 pub mod swarm;
 
 pub use config::{HooksConfig, KodConfig, LspConfig, RedactConfig, SecurityConfig, ToolsConfig};

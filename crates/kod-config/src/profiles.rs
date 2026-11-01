@@ -14,12 +14,19 @@
 /// A named set of `[llm]` values.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelProfile {
+    /// The profile name used as a config key.
     pub name: &'static str,
+    /// One-line human-readable description.
     pub description: &'static str,
+    /// The model id to send on the wire.
     pub model: &'static str,
+    /// The provider's API base URL.
     pub base_url: &'static str,
+    /// The model's context window size.
     pub context_window: usize,
+    /// Maximum output tokens for one call.
     pub max_tokens: usize,
+    /// Shell command to install the model, when applicable.
     pub install_command: Option<&'static str>,
 }
 
@@ -65,6 +72,7 @@ pub const PRESETS: &[ModelProfile] = &[
     },
 ];
 
+/// Look up a profile by name.
 pub fn by_name(name: &str) -> Option<&'static ModelProfile> {
     PRESETS.iter().find(|p| p.name == name)
 }

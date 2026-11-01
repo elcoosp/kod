@@ -53,6 +53,7 @@ pub enum EmbeddingEndpoint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// When the engine extracts memories from the turn stream.
 #[serde(rename_all = "lowercase")]
 pub enum ExtractionMode {
     /// No extraction at all — continuous and shutdown passes are silent.
@@ -65,13 +66,20 @@ pub enum ExtractionMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Memory subsystem configuration.
 #[serde(default)]
 pub struct MemoryConfig {
+    /// Short-term memory slot count.
     pub short_term_capacity: usize,
+    /// Override for the long-term database path.
     pub long_term_db_path: Option<String>,
+    /// Enable semantic (embedding-based) search.
     pub enable_semantic_search: bool,
+    /// Embedding model name.
     pub embedding_model: String,
+    /// Context window used for memory rendering.
     pub context_window: usize,
+    /// Seconds between compaction passes.
     pub compaction_interval_secs: u64,
     /// Which default the engine uses when `long_term_db_path` is not
     /// set. See [`MemoryScope`].

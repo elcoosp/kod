@@ -67,6 +67,7 @@ pub enum Preset {
 pub enum Decision {
     /// Most permissive.
     Allow,
+    /// Middle ground: require user confirmation.
     Ask,
     /// Most restrictive. Ordering: Allow < Ask < Deny, so the
     /// "narrower of two decisions" is `max(a, b)`.
@@ -78,10 +79,15 @@ pub enum Decision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PolicySource {
+    /// The active approval preset.
     Preset,
+    /// The global config file.
     GlobalConfig,
+    /// The project's .kod/policy.toml.
     ProjectPolicy,
+    /// A CLI flag override.
     CliOverride,
+    /// A session-scoped "never" rule.
     SessionDeny,
 }
 
@@ -148,9 +154,12 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadMode {
+    /// Redact the sensitive content and return the rest.
     #[default]
     Redact,
+    /// Refuse the read entirely.
     Refuse,
+    /// Allow the read with no protection.
     Allow,
 }
 
@@ -163,8 +172,11 @@ pub enum ReadMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReadProtection {
+    /// Whether read protection is active.
     pub enabled: bool,
+    /// How to handle a protected path.
     pub mode: ReadMode,
+    /// Glob patterns for protected paths.
     pub deny: Vec<String>,
 }
 
@@ -229,7 +241,9 @@ impl ReadProtection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single policy layer (one of the four the engine merges).
 pub struct Policy {
+    /// The approval preset.
     #[serde(default)]
     pub preset: Preset,
     /// Non-serialized. `true` when the source TOML contained an
@@ -241,8 +255,10 @@ pub struct Policy {
     /// `[tools] preset = "yolo"`.
     #[serde(skip)]
     pub preset_explicit: bool,
+    /// Per-tool policy overrides.
     #[serde(default)]
     pub tools: BTreeMap<String, ToolPolicy>,
+    /// Git-operation policy.
     #[serde(default)]
     pub git: GitPolicy,
 
@@ -293,10 +309,12 @@ impl Policy {
 /// One resolved decision with provenance.
 #[derive(Debug, Clone)]
 pub struct PolicyDecision {
+    /// The final merged decision.
     pub outcome: Decision,
     /// A one-line description of the rule that fired, for
     /// `kod policy explain` and the SessionEntry log.
     pub rule: String,
+    /// The layer that produced the decision.
     pub source: PolicySource,
 }
 
@@ -678,7 +696,9 @@ impl PolicyEngine {
 /// e.g. execute_command on an unknown binary).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionDeny {
+    /// The tool the deny applies to.
     pub tool: String,
+    /// Optional path glob narrowing the deny; None means the whole tool.
     pub path_pattern: Option<String>,
 }
 

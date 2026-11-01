@@ -71,6 +71,7 @@ pub struct RedactConfig {
 // KodConfig::default() instead of failing with "missing field memory".
 // This is the common hand-edited config shape — write the block you
 // care about, leave the rest out.
+/// The top-level config: every subsystem's settings.
 #[serde(default)]
 pub struct KodConfig {
     /// Config schema version. Absent means "v1" — the shape that
@@ -84,12 +85,19 @@ pub struct KodConfig {
     /// version is `version == 0 ? 1 : version`.
     #[serde(default)]
     pub config_version: u32,
+    /// LLM configuration: endpoints, routing, defaults.
     pub llm: LlmConfig,
+    /// Memory subsystem configuration.
     pub memory: MemoryConfig,
+    /// Skills subsystem configuration.
     pub skills: SkillsConfig,
+    /// Swarm configuration.
     pub swarm: SwarmConfig,
+    /// Hook configuration (pre/post tool-use).
     pub hooks: HooksConfig,
+    /// Tools configuration.
     pub tools: ToolsConfig,
+    /// Language-server configuration.
     pub lsp: LspConfig,
     /// MCP servers (D6.1). Empty when the config has no `[mcp]`
     /// section, which is the default — no plugin is registered
@@ -153,9 +161,13 @@ pub struct KodConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LspConfig {
+    /// Fetch LSP diagnostics after each write.
     pub auto_diagnostics: bool,
+    /// Milliseconds to wait for initial diagnostics to settle.
     pub settle_ms: u64,
+    /// Milliseconds to wait for the deferred diagnostics pass.
     pub deferred_settle_ms: u64,
+    /// Enable the deferred diagnostics pass.
     pub deferred_enabled: bool,
 }
 
@@ -215,10 +227,14 @@ impl Default for ToolsConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Pre- and post-tool-use hook configuration.
 #[serde(default)]
 pub struct HooksConfig {
+    /// Hook commands to run before a tool call, keyed by tool name.
     pub pre_tool_use: std::collections::HashMap<String, String>,
+    /// Hook commands to run after a tool call, keyed by tool name.
     pub post_tool_use: std::collections::HashMap<String, String>,
+    /// Whether hooks are enabled.
     pub enabled: bool,
 }
 
@@ -344,6 +360,8 @@ impl KodConfig {
         Ok(cfg)
     }
 
+    /// Load the config from the default location, falling back to
+    /// defaults on first run.
     pub fn load_default() -> Result<Self> {
         let config_dir = match Self::config_dir() {
             Ok(d) => d,

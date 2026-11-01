@@ -142,11 +142,17 @@ impl JevConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JevThresholds {
+    /// Probability threshold for task classification.
     pub task_classify_min: f32,
+    /// Probability threshold for tool filtering.
     pub tool_filter_min: f32,
+    /// Probability threshold for early termination.
     pub early_termination_min: f32,
+    /// Probability threshold for auto-approval.
     pub auto_approve_min: f32,
+    /// Probability threshold for memory filtering.
     pub memory_filter_min: f32,
+    /// Probability threshold for flagging ambiguity.
     pub ambiguity_min: f32,
 }
 

@@ -23,7 +23,9 @@ pub enum OnExhausted {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolQuota {
+    /// Maximum calls per turn. 0 disables.
     pub per_turn: usize,
+    /// Maximum calls per session. 0 disables.
     pub per_session: usize,
     /// For `execute_command`: how many times the same command string
     /// may run per turn.
@@ -66,6 +68,7 @@ impl Default for LimitsConfig {
 }
 
 impl LimitsConfig {
+    /// Clamp non-finite or negative values to safe defaults.
     pub fn clamp(&mut self) {
         if !self.soft_warn_at.is_finite() {
             self.soft_warn_at = 0.5;
@@ -79,6 +82,7 @@ impl LimitsConfig {
         }
     }
 
+    /// True when at least one limit is active.
     pub fn any_active(&self) -> bool {
         self.max_cost_usd_per_session > 0.0
             || self.max_cost_usd_per_turn > 0.0

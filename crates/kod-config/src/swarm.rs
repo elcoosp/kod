@@ -34,6 +34,7 @@ pub enum Isolation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Swarm configuration.
 #[serde(default)]
 pub struct SwarmConfig {
     /// Maximum number of agents a swarm will spawn. The decompose step

@@ -34,13 +34,18 @@ use serde::{Deserialize, Serialize};
 /// Which turns an instruction section applies to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum When {
+    /// Applies to every turn regardless of task or path.
     Always,
+    /// Applies only when the turn's task type matches.
     TaskType(String),
+    /// Applies only when the turn touches a matching path.
     Path(String),
+    /// Applies only when the turn's primary language matches.
     Lang(String),
 }
 
 impl When {
+    /// One-line label used in rendered prompts.
     pub fn label(&self) -> String {
         match self {
             When::Always => "always".to_string(),
@@ -54,10 +59,13 @@ impl When {
 /// One rendered block from an AGENTS.md.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstructionSection {
+    /// The condition that gates when this section applies.
     pub when: When,
+    /// The file that produced the section.
     pub source: PathBuf,
     /// Section heading, if the block had one. Used for shadowing.
     pub name: Option<String>,
+    /// The section's rendered body text.
     pub body: String,
 }
 
@@ -302,6 +310,7 @@ fn try_expand_import(
 /// The full instruction chain, root → leaf.
 #[derive(Debug, Clone, Default)]
 pub struct InstructionChain {
+    /// The sections in root-to-leaf order.
     pub sections: Vec<InstructionSection>,
 }
 
