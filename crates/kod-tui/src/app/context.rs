@@ -5,10 +5,12 @@
 use super::*;
 
 impl KodApp {
+    /// Set the model name shown in the status bar.
     pub fn set_model_name(&mut self, name: &str) {
         self.model_name = name.to_string();
     }
 
+    /// The model name shown in the status bar.
     pub fn model_name(&self) -> &str {
         &self.model_name
     }
@@ -92,14 +94,17 @@ impl KodApp {
             .saturating_add(Self::estimate_tokens(chars));
     }
 
+    /// Tokens used in the current context.
     pub fn context_tokens(&self) -> usize {
         self.context_tokens
     }
 
+    /// The context window limit in tokens.
     pub fn context_limit(&self) -> usize {
         self.context_limit
     }
 
+    /// Update the context limit.
     pub fn set_context_limit(&mut self, limit: usize) {
         self.context_limit = limit.max(1_000);
     }
@@ -111,6 +116,7 @@ impl KodApp {
         Self::format_k(self.context_tokens)
     }
 
+    /// The context limit formatted as kilotokens.
     pub fn context_limit_k(&self) -> String {
         Self::format_k(self.context_limit)
     }

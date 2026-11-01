@@ -8,10 +8,12 @@
 use super::*;
 
 impl KodApp {
+    /// True when a hunk selection is in progress.
     pub fn is_selecting_hunks(&self) -> bool {
         self.pending_hunk_selection.is_some()
     }
 
+    /// The pending hunk selection, if any.
     pub fn hunk_selection(&self) -> Option<&PendingHunkSelection> {
         self.pending_hunk_selection.as_ref()
     }
@@ -48,22 +50,26 @@ impl KodApp {
         true
     }
 
+    /// Cancel the current hunk selection.
     pub fn cancel_hunk_selection(&mut self) {
         self.pending_hunk_selection = None;
     }
 
+    /// Toggle the current hunk in the selection.
     pub fn hunk_toggle(&mut self) {
         if let Some(h) = self.pending_hunk_selection.as_mut() {
             h.toggle_current();
         }
     }
 
+    /// Move to the next hunk.
     pub fn hunk_next(&mut self) {
         if let Some(h) = self.pending_hunk_selection.as_mut() {
             h.advance();
         }
     }
 
+    /// Move to the previous hunk.
     pub fn hunk_prev(&mut self) {
         if let Some(h) = self.pending_hunk_selection.as_mut() {
             h.retreat();

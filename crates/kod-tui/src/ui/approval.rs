@@ -28,13 +28,16 @@ const MAX_DIFF_LINES: usize = 40;
 /// the current item is always shown in full below.
 const MAX_LISTED_ITEMS: usize = 6;
 
+/// The approval-prompt widget.
 pub struct ApprovalWidget;
 
 impl ApprovalWidget {
+    /// Build the approval widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the approval prompt.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let Some(batch) = app.pending_batch() else {
             return;

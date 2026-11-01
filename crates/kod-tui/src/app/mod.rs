@@ -60,16 +60,24 @@ pub const SESSION_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     #[serde(default)]
+    /// The persisted schema version.
     pub schema_version: u32,
+    /// Persisted messages.
     pub messages: Vec<Message>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One chat message in the TUI.
 pub struct Message {
+    /// The message id.
     pub id: MessageId,
+    /// The role that produced the message.
     pub role: MessageRole,
+    /// The message content.
     pub content: String,
+    /// When the message was created.
     pub timestamp: DateTime<Utc>,
+    /// Structured message metadata.
     pub metadata: MessageMetadata,
     /// Monotonic insertion order — chat sorts by this, never by wall-clock
     /// timestamp (which can collide or go backwards after a restore).
@@ -80,9 +88,13 @@ pub struct Message {
 /// Agent status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
+    /// The agent name.
     pub name: String,
+    /// The agent capabilities.
     pub capabilities: Vec<String>,
+    /// The current agent status.
     pub status: String,
+    /// The agent current task, if any.
     pub current_task: Option<String>,
 }
 
@@ -93,7 +105,9 @@ pub struct AgentInfo {
 /// events the engine emits.
 #[derive(Debug, Clone)]
 pub struct SwarmAgentView {
+    /// The message the stream is attached to.
     pub message_id: MessageId,
+    /// True when the stream is finished.
     pub finished: bool,
     /// Display name (`agent-1-design-schema`).
     pub name: String,
@@ -117,33 +131,48 @@ pub struct SwarmAgentView {
 /// Tool execution state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecution {
+    /// The tool name.
     pub tool_name: String,
+    /// The execution status.
     pub status: ToolStatus,
+    /// When the execution started.
     pub start_time: DateTime<Utc>,
+    /// The tool result, when complete.
     pub result: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The execution status of a tool call.
 pub enum ToolStatus {
+    /// The tool is running.
     Running,
+    /// The tool completed.
     Completed,
+    /// The tool failed.
     Failed,
 }
 
 /// Application modes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
+    /// The normal chat view.
     Normal,
+    /// The agent-panel view.
     AgentPanel,
+    /// The tool-execution view.
     ToolExecution,
+    /// The help view.
     Help,
+    /// The input prompt view.
     Input,
 }
 
 /// Input modes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
+    /// Normal input mode.
     Normal,
+    /// Insert (Vim-like) input mode.
     Insert,
 }
 
@@ -152,7 +181,9 @@ pub enum InputMode {
 /// automatically (Tier UX).
 #[derive(Debug, Clone)]
 pub struct CommandPaletteEntry {
+    /// The display label.
     pub label: String,
+    /// The hint shown next to the label.
     pub hint: String,
     /// The value inserted into the input when the entry is accepted.
     /// For a slash command this is the command name; for a keybinding
@@ -164,11 +195,14 @@ pub struct CommandPaletteEntry {
 /// palette is a single-use overlay, not a mode.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPaletteState {
+    /// The current query text.
     pub query: String,
+    /// The currently-selected index.
     pub selected: usize,
 }
 
 impl CommandPaletteState {
+    /// Empty palette state.
     pub fn new() -> Self {
         Self::default()
     }
@@ -225,7 +259,9 @@ pub fn build_palette_entries() -> Vec<CommandPaletteEntry> {
 /// A slash command the TUI understands
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlashCommand {
+    /// The shortcut's name.
     pub name: &'static str,
+    /// The shortcut's hint.
     pub hint: &'static str,
 }
 
@@ -505,10 +541,15 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
 /// the spinner is never a generic "thinking…" mystery.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenPhase {
+    /// Nothing in flight.
     Idle,
+    /// Connecting to the provider.
     Connecting,
+    /// The model is generating.
     Generating,
+    /// A tool call is running.
     ExecutingTool(String),
+    /// Summarizing context.
     Summarizing,
     /// Auxiliary engine work that stalls the visible turn without the
     /// model thinking: Jev verdicts, memory fact extraction, decision
@@ -526,7 +567,9 @@ pub enum GenPhase {
 /// Destructive action awaiting a yes/no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmKind {
+    /// Clear the chat.
     Clear,
+    /// Quit the TUI.
     Quit,
     /// Clear chat, long-term memory, AND checkpoints for this project.
     /// The most destructive action; the caller must request it
@@ -784,6 +827,7 @@ pub struct KodApp {
 pub const DEFAULT_CONTEXT_LIMIT: usize = 128_000;
 /// Fraction of the window that triggers auto-compact.
 pub const COMPACT_AT_FRACTION_NUM: usize = 4;
+/// The denominator of the auto-compaction fraction.
 pub const COMPACT_AT_FRACTION_DEN: usize = 5;
 
 /// Tier 2.3 — an in-progress approval-argument edit. The user has
@@ -836,12 +880,14 @@ impl PendingHunkSelection {
         }
     }
 
+    /// Move to the next hunk.
     pub fn advance(&mut self) {
         if !self.hunks.is_empty() {
             self.cursor = (self.cursor + 1) % self.hunks.len();
         }
     }
 
+    /// Move to the previous hunk.
     pub fn retreat(&mut self) {
         if !self.hunks.is_empty() {
             self.cursor = (self.cursor + self.hunks.len() - 1) % self.hunks.len();
@@ -895,9 +941,13 @@ pub fn split_hunks(diff: &str) -> (String, Vec<String>) {
 /// sent back via `KodEngine::respond_to_approval`.
 #[derive(Debug, Clone)]
 pub struct PendingApproval {
+    /// The approval item id.
     pub id: u64,
+    /// The tool name.
     pub tool_name: String,
+    /// The approval summary.
     pub summary: String,
+    /// The diff for review.
     pub diff: Option<String>,
 
     /// The call's arguments (Tier 2.3). Carried so the "learn an
@@ -914,6 +964,7 @@ pub struct PendingApproval {
 pub struct PendingApprovalBatch {
     /// The engine's batch id, for logging.
     pub batch_id: u64,
+    /// The requests in the batch.
     pub items: Vec<PendingApproval>,
     /// Index of the item currently shown. Advanced past
     /// `items.len()` when every item has been decided; the engine
@@ -923,6 +974,7 @@ pub struct PendingApprovalBatch {
 }
 
 impl PendingApprovalBatch {
+    /// The currently-shown approval item.
     pub fn current_item(&self) -> Option<&PendingApproval> {
         self.items.get(self.current)
     }
@@ -954,12 +1006,16 @@ impl PendingApprovalBatch {
 /// A question currently waiting for a text answer in the TUI.
 #[derive(Debug, Clone)]
 pub struct PendingQuestion {
+    /// The question id.
     pub id: u64,
+    /// The question text.
     pub question: String,
+    /// Optional placeholder for the input.
     pub placeholder: Option<String>,
 }
 
 impl KodApp {
+    /// Build an empty app.
     pub fn new() -> Self {
         Self {
             mode: AppMode::Normal,
@@ -1045,10 +1101,12 @@ impl KodApp {
     }
 
     // Mode management
+    /// The current app mode.
     pub fn mode(&self) -> &AppMode {
         &self.mode
     }
 
+    /// Update the app mode.
     pub fn set_mode(&mut self, mode: AppMode) {
         self.mode = mode;
     }
@@ -1136,15 +1194,25 @@ pub enum SearchStatus {
     /// Non-empty query with matches. `position` is 1-based and always
     /// `<= total` (the modulo happens in `search_status`, not at the
     /// call site).
-    At { position: usize, total: usize },
+    /// A position indicator.
+    At {
+        /// The current match position.
+        position: usize,
+        /// The total number of matches.
+        total: usize,
+    },
 }
 
 /// Which completion popup list is currently showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionKind {
+    /// No completion.
     None,
+    /// Slash-command completion.
     Slash,
+    /// Model-name completion.
     Model,
+    /// Path completion.
     Path,
 }
 

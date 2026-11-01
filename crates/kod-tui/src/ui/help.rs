@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 pub struct HelpWidget;
 
 impl HelpWidget {
+    /// Build the help widget.
     pub fn new() -> Self {
         Self
     }
@@ -28,6 +29,7 @@ impl HelpWidget {
         Rect::new(x, y, w, h)
     }
 
+    /// Render the help panel.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let title = Style::default()

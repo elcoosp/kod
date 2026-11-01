@@ -25,6 +25,7 @@ pub const TOOL_DISPLAY_LINES: usize = 4;
 pub struct ChatWidget;
 
 impl ChatWidget {
+    /// Build the chat widget.
     pub fn new() -> Self {
         Self
     }
@@ -575,6 +576,7 @@ impl ChatWidget {
         lines
     }
 
+    /// Render the chat transcript.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         // Strict insertion order via monotonic sequence — never by
         // wall-clock timestamp (which can collide or go backwards after

@@ -11,22 +11,36 @@ use ratatui::style::Color;
 /// a partial `theme.toml` still renders sensibly.
 #[derive(Debug, Clone)]
 pub struct Theme {
+    /// The theme name.
     pub name: String,
+    /// The background color.
     pub background: Color,
+    /// The foreground color.
     pub foreground: Color,
+    /// The assistant text color.
     pub assistant: Color,
+    /// The user text color.
     pub user: Color,
+    /// The system text color.
     pub system: Color,
+    /// The tool-row text color.
     pub tool: Color,
+    /// The accent color.
     pub accent: Color,
+    /// The warning color.
     pub warning: Color,
+    /// The error color.
     pub error: Color,
+    /// The dim text color.
     pub dim: Color,
+    /// The inline code color.
     pub code: Color,
+    /// The syntax keyword color.
     pub keyword: Color,
 }
 
 impl Theme {
+    /// The default dark theme.
     pub fn dark() -> Self {
         Self {
             name: "dark".to_string(),
@@ -45,6 +59,7 @@ impl Theme {
         }
     }
 
+    /// The light theme.
     pub fn light() -> Self {
         Self {
             name: "light".to_string(),
@@ -63,6 +78,7 @@ impl Theme {
         }
     }
 
+    /// Look up a theme by name (defaulting to dark).
     pub fn from_name(name: &str) -> Self {
         match name.trim().to_ascii_lowercase().as_str() {
             "light" => Self::light(),

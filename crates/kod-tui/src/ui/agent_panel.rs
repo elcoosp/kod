@@ -17,10 +17,12 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 pub struct AgentPanelWidget;
 
 impl AgentPanelWidget {
+    /// Build the agent-panel widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the agent panel.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let title_style = Style::default()

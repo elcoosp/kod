@@ -15,10 +15,12 @@ use ratatui::widgets::Widget;
 pub struct HeaderWidget;
 
 impl HeaderWidget {
+    /// Build the header widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the header bar.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let title_style = Style::default()

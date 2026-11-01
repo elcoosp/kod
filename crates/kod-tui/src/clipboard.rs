@@ -11,6 +11,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command;
 
+/// Copy text to the system clipboard; returns true on success.
 pub fn write_clipboard(text: &str) -> bool {
     let bytes = text.as_bytes();
 

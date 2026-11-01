@@ -224,14 +224,17 @@ impl KodApp {
         }
     }
 
+    /// True when a completion is active and input mode allows it.
     pub fn show_completions(&self) -> bool {
         *self.input_mode() == InputMode::Insert && self.active_completion_len() > 0
     }
 
+    /// The currently-highlighted completion index.
     pub fn completion_index(&self) -> usize {
         self.completion_index
     }
 
+    /// Move to the next completion.
     pub fn completion_next(&mut self) {
         let n = self.active_completion_len();
         if n > 0 {
@@ -239,6 +242,7 @@ impl KodApp {
         }
     }
 
+    /// Move to the previous completion.
     pub fn completion_prev(&mut self) {
         let n = self.active_completion_len();
         if n > 0 {
@@ -298,6 +302,7 @@ impl KodApp {
         self.completion_index = 0;
     }
 
+    /// Clear the active completion selection.
     pub fn reset_completion(&mut self) {
         self.completion_index = 0;
     }

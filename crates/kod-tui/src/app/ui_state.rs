@@ -6,6 +6,7 @@
 use super::*;
 
 impl KodApp {
+    /// The current generation phase.
     pub fn phase(&self) -> &GenPhase {
         &self.phase
     }
@@ -116,10 +117,12 @@ impl KodApp {
         }
     }
 
+    /// The most recent user prompt.
     pub fn last_prompt(&self) -> Option<&str> {
         self.last_prompt.as_deref()
     }
 
+    /// Record the most recent user prompt.
     pub fn set_last_prompt(&mut self, prompt: &str) {
         self.last_prompt = Some(prompt.to_string());
     }
@@ -129,14 +132,17 @@ impl KodApp {
         self.fail_count >= 2
     }
 
+    /// The current consecutive-failure count.
     pub fn fail_count(&self) -> usize {
         self.fail_count
     }
 
+    /// The active theme.
     pub fn theme(&self) -> &Theme {
         &self.theme
     }
 
+    /// Update the active theme.
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
     }
@@ -181,14 +187,17 @@ impl KodApp {
         name
     }
 
+    /// True when the app should exit.
     pub fn should_quit(&self) -> bool {
         self.should_quit
     }
 
+    /// Request an app exit.
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
 
+    /// Update the exit flag.
     pub fn set_should_quit(&mut self, quit: bool) {
         self.should_quit = quit;
     }
@@ -216,38 +225,47 @@ impl KodApp {
         &self.available_models
     }
 
+    /// Record the loaded skill names.
     pub fn set_loaded_skills(&mut self, names: Vec<String>) {
         self.loaded_skills = names;
     }
 
+    /// The loaded skill names.
     pub fn loaded_skills(&self) -> &[String] {
         &self.loaded_skills
     }
 
+    /// Toggle notification bell.
     pub fn set_notify_bell(&mut self, enabled: bool) {
         self.notify_bell_enabled = enabled;
     }
 
+    /// True when the notification bell is enabled.
     pub fn notify_bell(&self) -> bool {
         self.notify_bell_enabled
     }
 
+    /// Toggle auto-compaction.
     pub fn set_autocompact(&mut self, enabled: bool) {
         self.autocompact_enabled = enabled;
     }
 
+    /// True when auto-compaction is enabled.
     pub fn autocompact(&self) -> bool {
         self.autocompact_enabled
     }
 
+    /// Override the system prompt for this session.
     pub fn set_session_system_prompt(&mut self, text: String) {
         self.session_system_prompt = Some(text);
     }
 
+    /// Clear the session system-prompt override.
     pub fn clear_session_system_prompt(&mut self) {
         self.session_system_prompt = None;
     }
 
+    /// The session system-prompt override, if any.
     pub fn session_system_prompt(&self) -> Option<&str> {
         self.session_system_prompt.as_deref()
     }
@@ -543,6 +561,7 @@ impl KodApp {
         Some(tokens / elapsed)
     }
 
+    /// Time-to-first-token for the current turn, in ms.
     pub fn ttft_ms(&self) -> Option<u128> {
         let started = self.spinner_started?;
         let first = self.first_chunk_at?;
@@ -626,6 +645,7 @@ impl KodApp {
         self.sandbox_label = label;
     }
 
+    /// Toggle network access for the app.
     pub fn set_network_access_enabled(&mut self, enabled: bool) {
         self.network_access_enabled = enabled;
     }
@@ -692,41 +712,50 @@ impl KodApp {
         self.pending_batch.is_some()
     }
 
+    /// Install a pending question.
     pub fn set_pending_question(&mut self, q: PendingQuestion) {
         self.pending_question = Some(q);
         self.question_input.clear();
     }
 
+    /// The pending question, if any.
     pub fn pending_question(&self) -> Option<&PendingQuestion> {
         self.pending_question.as_ref()
     }
 
+    /// Clear the pending question, returning its input.
     pub fn clear_pending_question(&mut self) -> String {
         let text = std::mem::take(&mut self.question_input);
         self.pending_question = None;
         text
     }
 
+    /// True when a question is pending.
     pub fn is_asking(&self) -> bool {
         self.pending_question.is_some()
     }
 
+    /// The current text of the question input.
     pub fn question_input(&self) -> &str {
         &self.question_input
     }
 
+    /// Mutable access to the question input.
     pub fn question_input_mut(&mut self) -> &mut String {
         &mut self.question_input
     }
 
+    /// Install a pending confirmation prompt.
     pub fn request_confirm(&mut self, kind: ConfirmKind) {
         self.pending_confirm = Some(kind);
     }
 
+    /// The pending confirmation prompt, if any.
     pub fn pending_confirm(&self) -> Option<ConfirmKind> {
         self.pending_confirm
     }
 
+    /// Resolve a pending confirmation prompt.
     pub fn resolve_confirm(&mut self, confirmed: bool) -> Option<ConfirmKind> {
         let kind = self.pending_confirm.take()?;
         if confirmed {
@@ -742,14 +771,17 @@ impl KodApp {
         Some(kind)
     }
 
+    /// True when the user is editing an approval argument.
     pub fn is_editing_approval(&self) -> bool {
         self.pending_edit.is_some()
     }
 
+    /// The current approval-edit buffer.
     pub fn edit_buffer(&self) -> Option<&str> {
         self.pending_edit.as_ref().map(|e| e.buffer.as_str())
     }
 
+    /// Start editing the current approval argument.
     pub fn begin_edit_current_approval(&mut self) {
         let Some(batch) = self.pending_batch.as_ref() else {
             return;
@@ -766,22 +798,26 @@ impl KodApp {
         });
     }
 
+    /// Cancel the current approval edit.
     pub fn cancel_edit(&mut self) {
         self.pending_edit = None;
     }
 
+    /// Append a character to the edit buffer.
     pub fn edit_push_char(&mut self, c: char) {
         if let Some(e) = self.pending_edit.as_mut() {
             e.buffer.push(c);
         }
     }
 
+    /// Append a newline to the edit buffer.
     pub fn edit_push_newline(&mut self) {
         if let Some(e) = self.pending_edit.as_mut() {
             e.buffer.push('\n');
         }
     }
 
+    /// Delete the last character of the edit buffer.
     pub fn edit_backspace(&mut self) {
         if let Some(e) = self.pending_edit.as_mut() {
             e.buffer.pop();

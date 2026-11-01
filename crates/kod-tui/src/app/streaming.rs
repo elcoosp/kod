@@ -12,19 +12,23 @@
 use super::*;
 
 impl KodApp {
+    /// The response text accumulated so far.
     pub fn current_response(&self) -> &str {
         &self.current_response
     }
 
+    /// True when a response stream is active.
     pub fn is_streaming(&self) -> bool {
         self.is_streaming
     }
 
+    /// Begin a new response stream.
     pub fn start_response_stream(&mut self) {
         self.is_streaming = true;
         self.current_response.clear();
     }
 
+    /// Append a chunk to the current response.
     pub fn add_response_chunk(&mut self, chunk: &str) {
         if self.is_streaming {
             // The first non-empty text chunk of a turn is the
@@ -59,6 +63,7 @@ impl KodApp {
         }
     }
 
+    /// Finalize the current response.
     pub fn complete_response(&mut self) {
         if self.is_streaming {
             let response = Self::trim_blank_lines(&self.current_response);
@@ -125,6 +130,7 @@ impl KodApp {
         self.set_phase(GenPhase::Connecting);
     }
 
+    /// Flush accumulated text into the transcript.
     pub fn flush_streamed_text(&mut self) {
         let text = Self::trim_blank_lines(&self.current_response);
         self.current_response.clear();
@@ -376,11 +382,13 @@ impl KodApp {
         self.goal = Some(goal.to_string());
     }
 
+    /// Clear the current goal.
     pub fn clear_goal(&mut self) {
         self.goal = None;
         self.goal_budget = GoalBudget::default();
     }
 
+    /// The current goal text.
     pub fn goal(&self) -> Option<&str> {
         self.goal.as_deref()
     }
@@ -399,10 +407,12 @@ impl KodApp {
         self.goal_budget
     }
 
+    /// True when a turn is in flight.
     pub fn is_generating(&self) -> bool {
         self.generating
     }
 
+    /// Update the generating flag.
     pub fn set_generating(&mut self, generating: bool) {
         self.generating = generating;
     }

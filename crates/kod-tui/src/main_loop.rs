@@ -81,6 +81,7 @@ pub struct TuiLoop {
 }
 
 impl TuiLoop {
+    /// Build a new main-loop driver.
     pub fn new() -> Self {
         Self {
             app: KodApp::new(),
@@ -562,14 +563,17 @@ impl TuiLoop {
         self.engine = Some(engine);
     }
 
+    /// True when the loop has been initialized.
     pub fn is_initialized(&self) -> bool {
         true
     }
 
+    /// The underlying app.
     pub fn app(&self) -> &KodApp {
         &self.app
     }
 
+    /// Mutable access to the underlying app.
     pub fn app_mut(&mut self) -> &mut KodApp {
         &mut self.app
     }

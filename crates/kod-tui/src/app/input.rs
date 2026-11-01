@@ -9,18 +9,22 @@
 use super::*;
 
 impl KodApp {
+    /// The current input mode.
     pub fn input_mode(&self) -> &InputMode {
         &self.input_mode
     }
 
+    /// Update the input mode.
     pub fn set_input_mode(&mut self, mode: InputMode) {
         self.input_mode = mode;
     }
 
+    /// The current input text.
     pub fn input(&self) -> &str {
         &self.input
     }
 
+    /// Replace the current input text.
     pub fn set_input(&mut self, input: String) {
         self.input = input;
         self.cursor_position = self.input.len();
@@ -29,6 +33,7 @@ impl KodApp {
         self.pasted_blocks.clear();
     }
 
+    /// Insert a character at the cursor.
     pub fn add_char(&mut self, c: char) {
         let pos = self.cursor_position.min(self.input.len());
         self.cursor_position = pos;
@@ -43,10 +48,12 @@ impl KodApp {
         self.add_char('\n');
     }
 
+    /// The cursor position, in bytes.
     pub fn cursor_position(&self) -> usize {
         self.cursor_position
     }
 
+    /// Move the cursor one character left.
     pub fn move_cursor_left(&mut self) {
         if self.cursor_position > 0 {
             // Step back one full char, never into the middle of UTF-8.
@@ -58,6 +65,7 @@ impl KodApp {
         }
     }
 
+    /// Move the cursor one character right.
     pub fn move_cursor_right(&mut self) {
         if self.cursor_position < self.input.len() {
             let mut pos = self.cursor_position + 1;
@@ -125,10 +133,12 @@ impl KodApp {
             .clamp(3, INPUT_MAX_ROWS)
     }
 
+    /// True when the input contains a newline.
     pub fn is_multiline_input(&self) -> bool {
         self.input.contains('\n')
     }
 
+    /// Delete the character before the cursor.
     pub fn backspace(&mut self) {
         if self.cursor_position > 0 {
             let old = self.cursor_position.min(self.input.len());
@@ -169,12 +179,14 @@ impl KodApp {
         self.history_index = None;
     }
 
+    /// Clear the current input.
     pub fn clear_input(&mut self) {
         self.input.clear();
         self.cursor_position = 0;
         self.pasted_blocks.clear();
     }
 
+    /// Submit the current input and push it to history.
     pub fn submit_input(&mut self) {
         if !self.input.is_empty() {
             self.input_history.push(self.input.clone());
@@ -193,10 +205,12 @@ impl KodApp {
         }
     }
 
+    /// The input history.
     pub fn input_history(&self) -> &[String] {
         &self.input_history
     }
 
+    /// Recall the previous history entry.
     pub fn history_previous(&mut self) {
         if self.input_history.is_empty() {
             return;
@@ -216,6 +230,7 @@ impl KodApp {
         }
     }
 
+    /// Move to the next history entry.
     pub fn history_next(&mut self) {
         if self.input_history.is_empty() {
             return;

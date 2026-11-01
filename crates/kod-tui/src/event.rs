@@ -28,20 +28,35 @@ fn wake_notify() -> &'static tokio::sync::Notify {
 /// Key codes we care about
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyCode {
+    /// A typed character.
     Char(char),
+    /// The Enter key.
     Enter,
+    /// The Escape key.
     Escape,
+    /// The Backspace key.
     Backspace,
+    /// The Delete key.
     Delete,
+    /// Up arrow.
     Up,
+    /// Down arrow.
     Down,
+    /// Left arrow.
     Left,
+    /// Right arrow.
     Right,
+    /// Home key.
     Home,
+    /// End key.
     End,
+    /// Page Up.
     PageUp,
+    /// Page Down.
     PageDown,
+    /// Tab.
     Tab,
+    /// Shift+Tab.
     BackTab,
     /// Ctrl+C — cancels the running prompt.
     CtrlC,
@@ -55,9 +70,13 @@ pub enum KeyCode {
     CtrlW,
     /// Ctrl+E — load your last message back for editing.
     CtrlE,
+    /// Ctrl+K.
     CtrlK,
+    /// Ctrl+Left.
     CtrlLeft,
+    /// Ctrl+Right.
     CtrlRight,
+    /// A function key.
     F(u8),
     /// F2g-12: a crossterm key the mapping does not name (Insert,
     /// Media, …). Ignored by the input loop rather than typed as a
@@ -94,47 +113,67 @@ impl From<CrosstermKeyCode> for KeyCode {
 /// Priority for events
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub enum EventPriority {
+    /// Low priority.
     Low,
     #[default]
+    /// Normal priority (default).
     Normal,
+    /// High priority.
     High,
+    /// Critical priority.
     Critical,
 }
 
 /// Events that can occur in the TUI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
+    /// A key press.
     Key(KeyCode),
     /// H-T9: a bracketed paste payload. Every character arrives in
     /// one event, including newlines, so a multi-line code block can
     /// be inserted verbatim instead of being dispatched line by line
     /// (which is what pasting did before bracketed paste was enabled).
     Paste(String),
+    /// User-typed input text.
     UserInput(String),
+    /// A periodic tick.
     Tick,
+    /// A system-generated message with priority.
     System(EventPriority, String),
+    /// A tool call has started.
     ToolStarted {
         /// Provider tool-call id; `""` when unknown (legacy heuristic path).
         id: String,
+        /// The tool name.
         name: String,
     },
+    /// A tool call has completed.
     ToolCompleted {
+        /// The tool call id.
         id: String,
+        /// The one-line header.
         header: String,
+        /// The result summary.
         summary: String,
     },
     /// Live per-tool completion from the engine's done-marker: same row
     /// fill as `ToolCompleted`, plus wall time for the header
     /// (`execute_command … · 1.2s`).
     ToolCompletedWithDuration {
+        /// The tool call id.
         id: String,
+        /// The one-line header.
         header: String,
+        /// The result summary.
         summary: String,
+        /// Wall time of the call in milliseconds.
         duration_ms: u64,
     },
     /// Live one-line excerpt of what the running tool is doing.
     ToolProgress {
+        /// The tool call id.
         id: String,
+        /// A short display string.
         display: String,
     },
     /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
@@ -152,8 +191,11 @@ pub enum Event {
     SwarmDecomposed(Vec<(String, String)>),
     /// A swarm agent began work.
     SwarmAgentStarted {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The agent name.
         name: String,
+        /// The subtask name.
         subtask: String,
         /// Display string of the endpoint+model the agent runs against
         /// (`endpoint/model`), when known. The agent panel renders it
@@ -163,35 +205,50 @@ pub enum Event {
     },
     /// A swarm agent produced a text chunk.
     SwarmAgentChunk {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The text chunk.
         text: String,
     },
     /// A swarm agent finished with this result.
     SwarmAgentCompleted {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The result body.
         result: String,
     },
     /// A swarm agent failed; the others continue.
     SwarmAgentFailed {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The failure error.
         error: String,
     },
     /// A swarm agent's worktree was created (D4-D5).
     SwarmAgentWorktree {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The worktree path.
         path: std::path::PathBuf,
+        /// The branch name.
         branch: String,
     },
     /// A swarm agent is retrying after a failure (D4-D6).
     SwarmAgentRetrying {
+        /// The agent id.
         id: kod_types::AgentId,
+        /// The attempt number.
         attempt: u32,
+        /// The maximum number of attempts.
         max_attempts: u32,
+        /// The previous attempt error.
         previous_error: String,
     },
     /// Two swarm agents wrote to the same file.
     SwarmConflict {
+        /// The conflicting file.
         file: String,
+        /// The agents that touched it.
         agents: Vec<String>,
     },
     /// All swarm agents done; the runner is calling the merge.
@@ -200,7 +257,9 @@ pub enum Event {
     SwarmComplete(String),
     /// Swarm run failed before producing an answer.
     SwarmError(String),
+    /// A message from one agent to another.
     AgentMessage(String, String),
+    /// A response chunk from the assistant.
     ResponseChunk(String),
     /// Engine auxiliary work (Jev verdict, memory fact extraction,
     /// decision mining). Carries the short label the spinner shows
@@ -212,7 +271,9 @@ pub enum Event {
     /// turn's merged total sums history once per round and would
     /// overstate it. Later markers supersede earlier ones.
     WindowUsage {
+        /// Input tokens the provider reported.
         prompt_tokens: usize,
+        /// Output tokens the provider reported.
         completion_tokens: usize,
     },
     /// The provider rate-limited the turn; the engine is sleeping out
@@ -220,14 +281,18 @@ pub enum Event {
     /// window in seconds so the spinner can count down live; the two
     /// come from one event so they can never disagree.
     RateLimited {
+        /// A human-readable rate-limit message.
         message: String,
+        /// Seconds to wait before retrying.
         wait_secs: u64,
     },
     /// The provider is overloaded (HTTP 503 `server_busy`); the engine
     /// is sleeping out the ~10-minute cooldown. Same shape as
     /// [`Event::RateLimited`] but rendered distinctly.
     ServerBusy {
+        /// A human-readable overload message.
         message: String,
+        /// Seconds to wait before retrying.
         wait_secs: u64,
     },
     /// Goal-loop turn boundary: the engine finished turn N-1 and is
@@ -235,6 +300,7 @@ pub enum Event {
     /// as its own bubble and opens a new one — turns must never merge
     /// into a single message.
     TurnBoundary(u32),
+    /// The complete assistant response.
     ResponseComplete(String),
     /// Per-call usage breakdown for the session-accounting counters.
     /// A running total that only grows (correctly merged across
@@ -246,8 +312,11 @@ pub enum Event {
     /// endpoint has no `[pricing]` block — the counter simply does
     /// not advance for this turn rather than showing a guess.
     SessionUsage {
+        /// Input tokens the provider reported.
         prompt_tokens: usize,
+        /// Output tokens the provider reported.
         completion_tokens: usize,
+        /// USD cost of the call, when pricing is configured.
         cost_usd: Option<f64>,
     },
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
@@ -261,7 +330,9 @@ pub enum Event {
     /// A batch of one item is the common case (a single write in a
     /// round) and renders exactly like the old single-item dialog.
     ApprovalBatchRequested {
+        /// The batch id.
         batch_id: u64,
+        /// The requests in the batch.
         items: Vec<ApprovalItem>,
     },
     /// The agent called ask_user and wants a text answer. Carries the
@@ -269,22 +340,32 @@ pub enum Event {
     /// prompt; the answer is sent back via
     /// `respond_to_question`.
     QuestionRequested {
+        /// The question id.
         id: u64,
+        /// The question text.
         question: String,
+        /// Optional placeholder for the input.
         placeholder: Option<String>,
     },
+    /// A generic error message.
     Error(String),
+    /// Quit the TUI.
     Quit,
+    /// The terminal was resized.
     Resize(u16, u16),
 }
 
 /// One item of an [`Event::ApprovalBatchRequested`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalItem {
+    /// The approval item id.
     pub id: u64,
+    /// The tool name.
     pub tool_name: String,
+    /// A human-readable summary.
     pub summary: String,
     #[serde(default)]
+    /// Optional diff text.
     pub diff: Option<String>,
 
     /// The call's arguments, carried so an "always approve" action

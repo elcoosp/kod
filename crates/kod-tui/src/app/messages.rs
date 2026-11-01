@@ -7,10 +7,12 @@
 use super::*;
 
 impl KodApp {
+    /// The chat messages.
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
+    /// Add a message to the chat.
     pub fn add_message(&mut self, message: Message) {
         // Sticky bottom: pin to live only if the user was already there.
         // Otherwise a new arrival mid-read would yank the viewport away.
@@ -24,6 +26,7 @@ impl KodApp {
         }
     }
 
+    /// Clear the messages (saving them for undo).
     pub fn clear_messages(&mut self) {
         if !self.messages.is_empty() {
             self.cleared_stack.push(std::mem::take(&mut self.messages));
@@ -70,6 +73,7 @@ impl KodApp {
         }
     }
 
+    /// True when a cleared message set can be restored.
     pub fn has_undo(&self) -> bool {
         !self.cleared_stack.is_empty()
     }
@@ -120,6 +124,7 @@ impl KodApp {
         }
     }
 
+    /// Add an assistant reply (trimming blank lines).
     pub fn push_assistant_message(&mut self, content: &str) {
         // LLMs (and streamed chunks) often start with blank lines — even
         // whitespace-only ones (`"\n  \nHello"`). A raw push renders those
@@ -139,6 +144,7 @@ impl KodApp {
         });
     }
 
+    /// Add a system notice (deduping consecutive).
     pub fn push_system_message(&mut self, content: &str) {
         // Collapse exact consecutive duplicates: repeated engine notices
         // must not stack identical `sys` rows. Non-consecutive repeats
@@ -264,6 +270,7 @@ impl KodApp {
         self.scroll_lines = self.scroll_lines.saturating_sub(lines);
     }
 
+    /// Scroll to the bottom of the transcript.
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_lines = 0;
     }
@@ -273,10 +280,12 @@ impl KodApp {
         self.scroll_lines = usize::MAX;
     }
 
+    /// True when the viewport is at the bottom.
     pub fn is_scrolled_to_bottom(&self) -> bool {
         self.scroll_lines == 0
     }
 
+    /// Scroll offset from the bottom, in lines.
     pub fn scroll_offset(&self) -> usize {
         self.scroll_lines
     }

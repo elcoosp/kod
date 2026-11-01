@@ -11,13 +11,16 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
+/// The question-prompt widget.
 pub struct QuestionWidget;
 
 impl QuestionWidget {
+    /// Build the question widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the question prompt.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let Some(q) = app.pending_question() else {
             return;

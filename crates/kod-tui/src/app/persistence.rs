@@ -18,10 +18,12 @@ impl KodApp {
         dirs::home_dir().map(|h| h.join(".kod"))
     }
 
+    /// The path for persisted input history.
     pub fn history_path() -> Option<std::path::PathBuf> {
         Self::state_dir().map(|d| d.join("tui_history.json"))
     }
 
+    /// The path for persisted session state.
     pub fn session_path() -> Option<std::path::PathBuf> {
         Self::state_dir().map(|d| d.join("tui_session.json"))
     }

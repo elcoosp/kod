@@ -60,6 +60,7 @@ pub struct RenderCache {
 }
 
 impl RenderCache {
+    /// Empty render cache.
     pub fn new() -> Self {
         Self::default()
     }
@@ -169,6 +170,7 @@ impl RenderCache {
         self.entries.len()
     }
 
+    /// True when the cache holds no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

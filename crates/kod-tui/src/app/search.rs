@@ -23,12 +23,14 @@ impl KodApp {
         n
     }
 
+    /// Clear the search query and reset the index.
     pub fn clear_search(&mut self) {
         self.search_query = None;
         self.search_index = 0;
         self.search_editing = false;
     }
 
+    /// The current search query.
     pub fn search_query(&self) -> Option<&str> {
         self.search_query.as_deref()
     }
@@ -65,6 +67,7 @@ impl KodApp {
         Some((self.search_index + 1, n))
     }
 
+    /// Move to the previous search match.
     pub fn search_prev(&mut self) -> Option<(usize, usize)> {
         let n = self.search_matches().len();
         if n == 0 {
@@ -75,6 +78,7 @@ impl KodApp {
         Some((self.search_index + 1, n))
     }
 
+    /// The current match position, if any.
     pub fn current_search_pos(&self) -> Option<(usize, usize)> {
         let n = self.search_matches().len();
         if n == 0 {

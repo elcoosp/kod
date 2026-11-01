@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Terminal UI for KOD - provides interactive interface.
 //!
 //! This crate implements the terminal user interface using Ratatui,

@@ -19,18 +19,31 @@ use std::collections::HashMap;
 /// Actions a single normal-mode key can trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyAction {
+    /// Enter insert mode.
     Insert,
+    /// Quit the app.
     Quit,
+    /// Toggle the help panel.
     Help,
+    /// Cycle through panels.
     Panel,
+    /// Scroll up one line.
     ScrollUp,
+    /// Scroll down one line.
     ScrollDown,
+    /// Scroll to the top.
     Top,
+    /// Scroll to the bottom.
     Bottom,
+    /// Edit the last user message.
     EditLast,
+    /// Undo the last clear.
     Undo,
+    /// Toggle tool-row visibility.
     ToggleTools,
+    /// Start a search.
     SearchPrefix,
+    /// Copy the last message to the clipboard.
     CopyLast,
 }
 

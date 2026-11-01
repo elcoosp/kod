@@ -15,18 +15,22 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Widget}
 pub struct CompletionsWidget;
 
 impl CompletionsWidget {
+    /// Build the completions widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// True when the completions panel should render.
     pub fn should_show(app: &KodApp) -> bool {
         app.active_completion_len() > 0
     }
 
+    /// Panel height for the current completion count.
     pub fn height(app: &KodApp) -> u16 {
         (app.active_completion_len().min(8) + 2).min(10) as u16
     }
 
+    /// Render the completions panel.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let (title, items): (String, Vec<(String, String)>) = match app.active_completion_kind() {

@@ -17,10 +17,12 @@ use ratatui::widgets::Widget;
 pub struct StatusWidget;
 
 impl StatusWidget {
+    /// Build the status widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the status bar.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let dim = Style::default().fg(theme.dim);

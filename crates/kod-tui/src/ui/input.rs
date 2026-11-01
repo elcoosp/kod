@@ -20,10 +20,12 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 pub struct InputWidget;
 
 impl InputWidget {
+    /// Build the input widget.
     pub fn new() -> Self {
         Self
     }
 
+    /// Render the input area.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let (title, border) = match app.input_mode() {

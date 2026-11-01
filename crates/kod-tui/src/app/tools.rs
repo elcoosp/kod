@@ -66,10 +66,12 @@ impl KodApp {
         self.tool_executions.push(execution);
     }
 
+    /// The name of the currently-running tool.
     pub fn current_tool(&self) -> Option<&String> {
         self.current_tool.as_ref()
     }
 
+    /// The tool executions in the current transcript.
     pub fn tool_executions(&self) -> &[ToolExecution] {
         &self.tool_executions
     }
@@ -88,6 +90,7 @@ impl KodApp {
             .count()
     }
 
+    /// Record the start of a tool execution.
     pub fn start_tool_execution(&mut self, id: &str, tool_name: &str) {
         // Repeat start for a call we already finished (duplicated marker,
         // engine round restart): never spawn a second row, and never
@@ -223,6 +226,7 @@ impl KodApp {
         }
     }
 
+    /// Record a tool call completion.
     pub fn complete_tool_execution(&mut self, id: &str, tool_name: &str, result: &str) {
         self.complete_tool_execution_with_duration(id, tool_name, result, None);
     }
@@ -320,6 +324,7 @@ impl KodApp {
         }
     }
 
+    /// Record a tool call failure.
     pub fn fail_tool_execution(&mut self, id: &str, tool_name: &str, error: &str) {
         if !id.is_empty() && self.completed_calls.contains(id) {
             return;
@@ -382,6 +387,7 @@ impl KodApp {
         self.expanded_tools.insert(msg_id);
     }
 
+    /// Toggle expansion of a tool result.
     pub fn toggle_tool_expanded(&mut self, id: &MessageId) -> bool {
         if self.expanded_tools.remove(id) {
             false
@@ -391,14 +397,17 @@ impl KodApp {
         }
     }
 
+    /// True when the tool result is expanded.
     pub fn is_tool_expanded(&self, id: &MessageId) -> bool {
         self.expanded_tools.contains(id)
     }
 
+    /// True when tool rows are visible.
     pub fn show_tools(&self) -> bool {
         self.show_tools
     }
 
+    /// Toggle tool-row visibility.
     pub fn toggle_show_tools(&mut self) -> bool {
         self.show_tools = !self.show_tools;
         self.show_tools

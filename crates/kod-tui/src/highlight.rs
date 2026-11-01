@@ -118,8 +118,11 @@ fn highlight_rows(
 /// writes them in ` ```diff ` fences.
 #[derive(Debug, Clone)]
 pub struct DiffBody<'a> {
+    /// Leading lines before the highlighted region.
     pub lead: Vec<&'a str>,
+    /// The highlighted body lines.
     pub lines: Vec<&'a str>,
+    /// The syntax used for highlighting, when any.
     pub syntax: Option<&'static SyntaxReference>,
 }
 

@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Widget}
 pub struct PaletteWidget;
 
 impl PaletteWidget {
+    /// Build the palette widget.
     pub fn new() -> Self {
         Self
     }
@@ -31,6 +32,7 @@ impl PaletteWidget {
         (n + 4).min(20)
     }
 
+    /// Render the command palette.
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let theme = app.theme();
         let candidates = app.palette_candidates();

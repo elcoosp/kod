@@ -7,10 +7,12 @@
 use super::*;
 
 impl KodApp {
+    /// The command palette state, if open.
     pub fn palette(&self) -> Option<&CommandPaletteState> {
         self.palette.as_ref()
     }
 
+    /// True when the command palette is open.
     pub fn is_palette_open(&self) -> bool {
         self.palette.is_some()
     }
@@ -23,6 +25,7 @@ impl KodApp {
         }
     }
 
+    /// Close the command palette.
     pub fn close_palette(&mut self) {
         self.palette = None;
     }
@@ -35,6 +38,7 @@ impl KodApp {
         }
     }
 
+    /// Delete a character from the palette query.
     pub fn palette_backspace(&mut self) {
         if let Some(p) = self.palette.as_mut() {
             p.query.pop();
@@ -72,10 +76,12 @@ impl KodApp {
         }
     }
 
+    /// The current palette query text.
     pub fn palette_query(&self) -> Option<&str> {
         self.palette.as_ref().map(|p| p.query.as_str())
     }
 
+    /// The index of the currently-selected palette item.
     pub fn palette_selected(&self) -> usize {
         self.palette.as_ref().map(|p| p.selected).unwrap_or(0)
     }

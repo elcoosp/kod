@@ -9,14 +9,17 @@
 use super::*;
 
 impl KodApp {
+    /// All tracked agents.
     pub fn agents(&self) -> Vec<&AgentInfo> {
         self.agents.values().collect()
     }
 
+    /// The agent map keyed by name.
     pub fn agents_map(&self) -> &HashMap<String, AgentInfo> {
         &self.agents
     }
 
+    /// Register an agent with a name and capabilities.
     pub fn add_agent(&mut self, name: &str, capabilities: Vec<String>) {
         self.agents.insert(
             name.to_string(),
@@ -29,16 +32,19 @@ impl KodApp {
         );
     }
 
+    /// Look up an agent by name.
     pub fn get_agent(&self, name: &str) -> Option<&AgentInfo> {
         self.agents.get(name)
     }
 
+    /// Update an agent status string.
     pub fn update_agent_status(&mut self, name: &str, status: &str) {
         if let Some(agent) = self.agents.get_mut(name) {
             agent.status = status.to_string();
         }
     }
 
+    /// Update an agent current task.
     pub fn update_agent_task(&mut self, name: &str, task: &str) {
         if let Some(agent) = self.agents.get_mut(name) {
             agent.current_task = Some(task.to_string());

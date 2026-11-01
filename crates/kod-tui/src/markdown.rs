@@ -133,10 +133,12 @@ impl RenderCache {
     /// entries is ~0.5 MB at the outside).
     pub const DEFAULT_CAPACITY: usize = 128;
 
+    /// Empty markdown cache.
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
 
+    /// Markdown cache with a given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: std::sync::Mutex::new(HashMap::new()),
@@ -203,6 +205,7 @@ impl RenderCache {
         self.entries.lock().map(|e| e.len()).unwrap_or(0)
     }
 
+    /// True when the cache holds no entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
