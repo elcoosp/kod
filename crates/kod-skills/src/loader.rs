@@ -353,7 +353,7 @@ mod tests {
         let skills_dir = temp_dir.path().join("skills");
         std::fs::create_dir_all(&skills_dir).unwrap();
 
-        let skill_content = r#"---
+        let skill_content = r"---
 name: test
 description: Test skill
 version: 1.0.0
@@ -363,7 +363,7 @@ category: test
 ## Instructions
 
 Test.
-"#;
+";
 
         std::fs::write(skills_dir.join("test.md"), skill_content).unwrap();
 

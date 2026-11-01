@@ -315,7 +315,7 @@ impl KodEngine {
             policy: RwLock::new(None),
             deny_rules: RwLock::new(std::collections::HashSet::new()),
             learned_allows: RwLock::new(std::collections::HashSet::new()),
-            lsp_manager: Arc::new(kod_lsp::LspManager::new(working_dir.clone())),
+            lsp_manager: Arc::new(kod_lsp::LspManager::new(working_dir)),
             check_baseline: Arc::new(RwLock::new(None)),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
             pending_approvals: RwLock::new(std::collections::HashMap::new()),

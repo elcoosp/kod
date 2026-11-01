@@ -692,7 +692,7 @@ mod coverage_message_destination {
     fn every_variant_round_trips_through_json() {
         let agent = AgentId::new();
         for d in [
-            MessageDestination::Agent(agent.clone()),
+            MessageDestination::Agent(agent),
             MessageDestination::Broadcast,
             MessageDestination::Coordinator,
         ] {

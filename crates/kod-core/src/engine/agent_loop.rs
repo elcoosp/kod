@@ -706,7 +706,7 @@ impl KodEngine {
         // boundary. The request must be owned by the stream's
         // closure because `stream_completion` borrows it.
         let provider_clone = provider.clone();
-        let req_owned = req.clone();
+        let req_owned = req;
         // Same trick as the primary stream: `async_stream` owns its
         // captures, so the boxed stream is `'static`.
         let stream = Box::pin(async_stream::stream! {
@@ -1333,8 +1333,8 @@ impl KodEngine {
         let previous = guard.insert(key.to_string(), fingerprint);
         drop(guard);
 
-        if let Some(prev) = previous {
-            if prev != fingerprint {
+        if let Some(prev) = previous
+            && prev != fingerprint {
                 // Late MCP registration is the expected cause. Anything
                 // else is worth a look at the journal.
                 kod_core_state::cache_journal::record(
@@ -1345,7 +1345,6 @@ impl KodEngine {
                     },
                 );
             }
-        }
     }
 
     /// Delta §4.5: the inline-imaging pass.
@@ -1564,7 +1563,7 @@ impl KodEngine {
         let mut req = CompletionRequest {
             system,
             messages,
-            tools: definitions.to_vec(),
+            tools: definitions.clone(),
             options: options.clone(),
             model: model.clone(),
             // P0 cache control: normally the transcript carries a

@@ -490,7 +490,7 @@ impl Plan {
                 format!("Noted on step {}: {note}", step_id + 1)
             }
             PlanUpdate::Insert { after_id, text } => {
-                let id = self.insert_after(after_id, text.clone());
+                let id = self.insert_after(after_id, text);
                 format!("Inserted step {} after {}", id + 1, after_id + 1)
             }
             PlanUpdate::Remove { step_id } => {

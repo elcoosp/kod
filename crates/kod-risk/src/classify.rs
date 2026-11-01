@@ -496,11 +496,10 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
         }
         // For `env -S`, the rest of the line is a single quoted
         // command; we cannot see through it.
-        if let Some(pos) = tokens.iter().take(i).position(|t| unquote(t) == "-S") {
-            if pos < i {
+        if let Some(pos) = tokens.iter().take(i).position(|t| unquote(t) == "-S")
+            && pos < i {
                 return (None, Vec::new(), false);
             }
-        }
     }
 }
 
@@ -876,8 +875,8 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                     _ => None,
                 }
             };
-            if let Some(target) = redir_target {
-                if !target.is_empty() && !is_safe_sink(&target) {
+            if let Some(target) = redir_target
+                && !target.is_empty() && !is_safe_sink(&target) {
                     let (danger, why) = classify_path(&target, ctx);
                     // A truncating write to scratch is the normal
                     // "write a temp file" pattern and destroys
@@ -905,7 +904,6 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                         });
                     }
                 }
-            }
             i += 1;
         }
 
@@ -2050,7 +2048,7 @@ mod tokenize_proptests {
         /// escapes — tokenizes to exactly itself.
         #[test]
         fn prop_simple_word_is_one_token(word in "[a-zA-Z0-9_]{1,10}") {
-            prop_assert_eq!(tokenize(&word), vec![word.clone()]);
+            prop_assert_eq!(tokenize(&word), vec![word]);
         }
 
         /// Whitespace-only input yields no tokens.
@@ -2070,7 +2068,7 @@ mod tokenize_proptests {
             let s = format!("{a}|{b}");
             prop_assert_eq!(
                 tokenize(&s),
-                vec![a.clone(), "|".to_string(), b.clone()],
+                vec![a, "|".to_string(), b],
             );
         }
 
@@ -2083,7 +2081,7 @@ mod tokenize_proptests {
             let s = format!("{a} && {b}");
             prop_assert_eq!(
                 tokenize(&s),
-                vec![a.clone(), "&&".to_string(), b.clone()],
+                vec![a, "&&".to_string(), b],
             );
         }
 
@@ -2096,7 +2094,7 @@ mod tokenize_proptests {
             let s = format!("{a} || {b}");
             prop_assert_eq!(
                 tokenize(&s),
-                vec![a.clone(), "||".to_string(), b.clone()],
+                vec![a, "||".to_string(), b],
             );
         }
     }

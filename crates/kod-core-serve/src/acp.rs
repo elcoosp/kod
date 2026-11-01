@@ -997,7 +997,7 @@ mod tests {
         let session2 = "s2".to_string();
         map.insert((session2.clone(), "call_a".to_string()), "tc-c".to_string());
         assert_ne!(
-            map.get(&(session.clone(), "call_a".to_string())),
+            map.get(&(session, "call_a".to_string())),
             map.get(&(session2, "call_a".to_string())),
         );
     }

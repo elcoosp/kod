@@ -1727,7 +1727,7 @@ impl TuiLoop {
                                     tool_name: i.tool_name,
                                     summary: i.summary,
                                     diff: i.diff,
-                                    arguments: i.arguments.clone(),
+                                    arguments: i.arguments,
                                 })
                             })
                             .collect();
@@ -2492,7 +2492,7 @@ impl TuiLoop {
                     self.app.push_system_message(&format!(
                         "Goal set: {rest}\nBudget: {bdesc}\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
                     ));
-                    self.app.set_input(rest.to_string());
+                    self.app.set_input(rest.clone());
                     Box::pin(self.dispatch_prompt()).await?;
                 }
             }
@@ -5716,7 +5716,7 @@ impl TuiLoop {
                         // A key-only entry just shows its key as a
                         // system message.
                         if e.insert.starts_with('/') {
-                            self.app.set_input(e.insert.clone());
+                            self.app.set_input(e.insert);
                         } else {
                             self.app.push_system_message(&format!(
                                 "\u{2192} {} ({})",

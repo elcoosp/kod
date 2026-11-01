@@ -313,7 +313,7 @@ mod tests {
         let expected1 = apply(&expected0, action_for_turn(1, 4)); // swap(1,2)
         let replies = vec![
             TurnReply {
-                reported: Some(expected0.clone()),
+                reported: Some(expected0),
                 sound_ok: true,
             },
             TurnReply {
@@ -519,7 +519,7 @@ mod driver_tests {
         };
         // A closure that always answers correctly.
         let initial = initial_array(4);
-        let mut expected = initial.clone();
+        let mut expected = initial;
         let expected_seq: Vec<Vec<char>> = (0..4)
             .map(|t| {
                 expected = apply(&expected, action_for_turn(t, expected.len()));

@@ -164,7 +164,7 @@ impl TurnFailure {
             || l.contains("authentication")
         {
             return TurnFailure::ProviderAuthError {
-                detail: l.to_string(),
+                detail: l,
             };
         }
         if l.contains("timed out") || l.contains("timeout") {

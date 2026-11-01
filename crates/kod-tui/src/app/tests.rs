@@ -990,7 +990,7 @@ mod tests {
         let mut app = KodApp::new();
         app.begin_swarm();
         let a = kod_types::AgentId::new();
-        app.swarm_agent_started(a.clone(), "a", "first run", None);
+        app.swarm_agent_started(a, "a", "first run", None);
         assert!(app.swarm_agent_by_index(1).is_some());
 
         // A new run must clear both the map and the order vector so

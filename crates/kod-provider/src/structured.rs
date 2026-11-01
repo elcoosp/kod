@@ -365,6 +365,6 @@ mod structured_extract_proptests {
     #[test]
     fn unterminated_object_is_none() {
         assert_eq!(extract_json(r#"{"a": 1"#), None);
-        assert_eq!(extract_json(r#"[1, 2"#), None);
+        assert_eq!(extract_json(r"[1, 2"), None);
     }
 }

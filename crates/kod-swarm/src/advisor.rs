@@ -279,7 +279,7 @@ impl EmissionGuard {
             // gets a second entry that the eviction pass will
             // ignore (its severity no longer matches the map's).
             self.seen.insert(key.clone(), advice.severity);
-            self.history.push_back(key.clone());
+            self.history.push_back(key);
             if self.history.len() > HISTORY_CAP {
                 self.evict_one();
             }

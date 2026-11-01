@@ -76,7 +76,7 @@ impl SkillParser {
             instructions,
             examples,
             constraints,
-            content: body.to_string(),
+            content: body,
             path: PathBuf::from(source_name),
         })
     }
@@ -281,7 +281,7 @@ Test constraints.
 
     #[test]
     fn test_no_constraints() {
-        let content = r#"---
+        let content = r"---
 name: test
 description: Test
 version: 1.0.0
@@ -291,7 +291,7 @@ category: test
 ## Instructions
 
 Just instructions.
-"#;
+";
 
         let parser = SkillParser::new();
         let skill = parser.parse_content(content, "test.md").unwrap();
@@ -302,7 +302,7 @@ Just instructions.
     fn test_claude_style_skill_without_instructions_section() {
         // Real-world SKILL.md files (e.g. ~/.agents/skills) rarely carry an
         // `## Instructions` section — the whole body becomes instructions.
-        let content = r#"---
+        let content = r"---
 name: caveman
 description: A test skill
 ---
@@ -312,7 +312,7 @@ description: A test skill
 ## Rules
 
 Do things well.
-"#;
+";
 
         let parser = SkillParser::new();
         let skill = parser.parse_content(content, "SKILL.md").unwrap();

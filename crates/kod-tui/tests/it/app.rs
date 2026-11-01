@@ -23,7 +23,7 @@ fn test_add_message() {
         sequence: 0,
     };
 
-    app.add_message(message.clone());
+    app.add_message(message);
 
     assert_eq!(app.messages().len(), 1);
     assert_eq!(app.messages()[0].content, "Hello");

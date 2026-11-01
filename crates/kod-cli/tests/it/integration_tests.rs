@@ -80,7 +80,7 @@ async fn test_task_routers_config() {
             short_term_capacity: 100,
             enable_memory: true,
             max_skills_per_query: 3,
-            working_dir: env.working_dir.clone(),
+            working_dir: env.working_dir,
         },
         db_path,
     )

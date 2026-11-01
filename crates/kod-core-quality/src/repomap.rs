@@ -924,7 +924,7 @@ async fn an_async_test() {}
 
     #[test]
     fn extract_rust_finds_top_level_symbols() {
-        let src = r#"
+        let src = r"
 use std::io;
 
 pub struct Engine {
@@ -945,7 +945,7 @@ impl Engine {
         Engine { name: String::new() }
     }
 }
-"#;
+";
         let symbols = extract_rust(src);
         let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"Engine"), "got: {names:?}");

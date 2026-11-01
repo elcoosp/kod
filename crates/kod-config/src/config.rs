@@ -818,10 +818,10 @@ mod tests {
 
         // Only [skills] present: every other section defaults.
         let cfg: KodConfig = toml::from_str(
-            r#"
+            r"
             [skills]
             max_skills_per_query = 7
-            "#,
+            ",
         )
         .unwrap();
         assert_eq!(cfg.memory.short_term_capacity, 100);
@@ -933,13 +933,13 @@ mod tests {
     #[test]
     fn lsp_section_overrides_are_honoured() {
         let cfg: KodConfig = toml::from_str(
-            r#"
+            r"
             [lsp]
             auto_diagnostics = false
             settle_ms = 400
             deferred_settle_ms = 8000
             deferred_enabled = false
-            "#,
+            ",
         )
         .unwrap();
         assert!(!cfg.lsp.auto_diagnostics);
@@ -1030,10 +1030,10 @@ mod coverage_hooks_config {
     #[test]
     fn a_partial_hooks_block_keeps_the_missing_fields_at_their_defaults() {
         let cfg: KodConfig = toml::from_str(
-            r#"
+            r"
             [hooks]
             enabled = true
-            "#,
+            ",
         )
         .unwrap();
         assert!(cfg.hooks.enabled);

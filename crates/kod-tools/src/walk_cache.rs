@@ -167,11 +167,10 @@ impl WalkCache {
             paths.truncate(MAX_PATHS_PER_ENTRY);
         }
         let mut g = self.entries.lock().expect("walk_cache poisoned");
-        if g.len() >= MAX_ENTRIES && !g.contains_key(&key) {
-            if let Some(oldest_key) = g.iter().min_by_key(|(_, e)| e.at).map(|(k, _)| k.clone()) {
+        if g.len() >= MAX_ENTRIES && !g.contains_key(&key)
+            && let Some(oldest_key) = g.iter().min_by_key(|(_, e)| e.at).map(|(k, _)| k.clone()) {
                 g.remove(&oldest_key);
             }
-        }
         let arc = std::sync::Arc::new(paths);
         g.insert(
             key,
@@ -361,7 +360,7 @@ mod tests {
         std::fs::write(&mid, "b").unwrap();
         std::thread::sleep(Duration::from_millis(15));
         std::fs::write(&new, "c").unwrap();
-        let ranked = collect_ranked(&[old.clone(), mid.clone(), new.clone()], 2);
+        let ranked = collect_ranked(&[old, mid.clone(), new.clone()], 2);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0], new, "newest first");
         assert_eq!(ranked[1], mid);

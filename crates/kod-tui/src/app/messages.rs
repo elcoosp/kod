@@ -139,7 +139,7 @@ impl KodApp {
         self.add_message(Message {
             id: MessageId::new(),
             role: MessageRole::Assistant,
-            content: trimmed.to_string(),
+            content: trimmed,
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
             sequence: 0,

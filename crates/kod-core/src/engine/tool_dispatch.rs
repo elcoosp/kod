@@ -1774,7 +1774,7 @@ impl KodEngine {
                             let q = std::sync::Arc::clone(&self.deferred_diagnostics);
                             let holder_owned = effective_holder.to_string();
                             let path_owned = path.clone();
-                            let content_owned = content.to_string();
+                            let content_owned = content.clone();
                             tokio::spawn(async move {
                                 let later = mgr
                                     .diagnostics(

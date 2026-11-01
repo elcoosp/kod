@@ -2096,7 +2096,7 @@ mod compaction_tests {
     fn a_compaction_body_is_a_messages_body_plus_the_flag() {
         let r = req(vec![user("hello")]);
         let base = build_messages_body(&r);
-        let mut expected = base.clone();
+        let mut expected = base;
         expected["pause_after_compaction"] = json!(true);
         assert_eq!(build_compaction_body(&r), expected);
     }

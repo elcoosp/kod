@@ -1066,7 +1066,7 @@ mod tests {
         let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
         let info = mgr.create("agent-1").unwrap();
         let path = info.path.clone();
-        let branch = info.branch.clone();
+        let branch = info.branch;
         mgr.cleanup();
         assert!(!path.exists(), "worktree path should be gone");
         // The branch survives because it never merged.
@@ -1148,7 +1148,7 @@ mod tests {
         {
             let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
             let info = mgr.create("agent-1").unwrap();
-            path_to_check = info.path.clone();
+            path_to_check = info.path;
             // mgr dropped here without explicit cleanup.
         }
         assert!(!path_to_check.exists(), "Drop should have cleaned up");
@@ -1451,7 +1451,7 @@ mod merge_refusal_tests {
         {
             let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
             let info = mgr.create("agent-1").expect("create agent-1");
-            worktree_path = info.path.clone();
+            worktree_path = info.path;
             assert!(worktree_path.exists(), "worktree not created");
             mgr.disarm();
         } // Drop runs here.

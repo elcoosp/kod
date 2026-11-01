@@ -241,7 +241,7 @@ mod tests {
         let b = MessageId::new();
         c.begin_frame();
         c.insert(a.clone(), 1, 80, 1, false);
-        c.insert(b.clone(), 1, 80, 1, false);
+        c.insert(b, 1, 80, 1, false);
         c.end_frame();
         assert_eq!(c.len(), 2);
 

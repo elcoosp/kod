@@ -48,7 +48,7 @@ impl CompletionsWidget {
                 " models ".to_string(),
                 app.model_candidates()
                     .iter()
-                    .map(|m| (m.to_string(), "available model".to_string()))
+                    .map(|m| (m.clone(), "available model".to_string()))
                     .collect(),
             ),
             CompletionKind::Path => (

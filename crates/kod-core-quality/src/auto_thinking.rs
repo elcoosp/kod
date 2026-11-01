@@ -857,7 +857,7 @@ mod proptests {
             let result = clamp_to_supported(level, &supported);
             let mut sorted = supported.clone();
             sorted.sort();
-            let mut reversed = supported.clone();
+            let mut reversed = supported;
             reversed.reverse();
             prop_assert_eq!(result, clamp_to_supported(level, &sorted));
             prop_assert_eq!(result, clamp_to_supported(level, &reversed));
@@ -909,7 +909,7 @@ mod proptests {
             supported in supported(),
         ) {
             prop_assume!(!supported.is_empty());
-            let mut deduped: Vec<EffortLevel> = supported.to_vec();
+            let mut deduped: Vec<EffortLevel> = supported.clone();
             deduped.sort();
             deduped.dedup();
             let top = if deduped.len() >= 2 {
@@ -952,7 +952,7 @@ mod proptests {
             let result = ceiling_for_auto(level, &supported);
             let mut sorted = supported.clone();
             sorted.sort();
-            let mut reversed = supported.clone();
+            let mut reversed = supported;
             reversed.reverse();
             prop_assert_eq!(result, ceiling_for_auto(level, &sorted));
             prop_assert_eq!(result, ceiling_for_auto(level, &reversed));

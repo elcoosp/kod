@@ -191,7 +191,7 @@ mod tests {
         let mut idx = VectorIndex::new(2);
         let i = id();
         idx.insert(i.clone(), vec![1.0, 0.0]).unwrap();
-        idx.insert(i.clone(), vec![0.0, 1.0]).unwrap();
+        idx.insert(i, vec![0.0, 1.0]).unwrap();
         assert_eq!(idx.len(), 1);
     }
 
@@ -319,7 +319,7 @@ mod coverage_vector_search {
         let mut idx = VectorIndex::new(2);
         let i = id();
         idx.insert(i.clone(), vec![1.0, 0.0]).unwrap();
-        idx.insert(i.clone(), vec![0.0, 1.0]).unwrap();
+        idx.insert(i, vec![0.0, 1.0]).unwrap();
         // The index is now a single vector along +y; a query
         // along +x must not match it at the top of the ranking.
         let hits_x = idx.search(&[1.0, 0.0], 5, |_| true).unwrap();
@@ -410,7 +410,7 @@ mod coverage_vector_search {
         let fresh = MemoryId::new();
         idx.insert(fresh.clone(), vec![9.0, 0.0]).unwrap();
         assert_eq!(idx.len(), 4);
-        idx.insert(fresh.clone(), vec![8.0, 0.0]).unwrap();
+        idx.insert(fresh, vec![8.0, 0.0]).unwrap();
         assert_eq!(idx.len(), 4, "replace must not grow the index");
     }
 
@@ -420,7 +420,7 @@ mod coverage_vector_search {
         let a = MemoryId::new();
         let b = MemoryId::new();
         idx.insert(a.clone(), vec![1.0, 0.0]).unwrap();
-        idx.insert(b.clone(), vec![0.0, 1.0]).unwrap();
+        idx.insert(b, vec![0.0, 1.0]).unwrap();
         // Replace a — should not add a duplicate entry.
         idx.insert(a.clone(), vec![1.0, 0.0]).unwrap();
         assert_eq!(idx.len(), 2);

@@ -312,13 +312,13 @@ mod tests {
 
     #[test]
     fn every_field_parses_independently() {
-        let s = r#"
+        let s = r"
             enabled = true
             cache_ttl_secs = 60
             timeout_ms = 250
             fail_open = false
             redact_paths = true
-        "#;
+        ";
         let c: JevConfig = toml::from_str(s).unwrap();
         assert!(c.enabled);
         assert_eq!(c.cache_ttl_secs, 60);

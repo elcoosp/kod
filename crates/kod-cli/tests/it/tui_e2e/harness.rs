@@ -248,7 +248,7 @@ auto_lsp = false
         cmd.arg(env!("CARGO_BIN_EXE_kod"));
         cmd.arg("tui");
         cmd.arg("--no-resume");
-        let stderr_log = log_file.clone();
+        let stderr_log = log_file;
         eprintln!(
             "test: spawning with KOD_CONFIG_DIR={}",
             self.config_dir.display()
@@ -486,14 +486,12 @@ impl Drop for TuiSession {
 /// should fail loudly, not silently do the wrong thing.
 fn encode_key(key: KeyCode, mods: Modifiers) -> Vec<u8> {
     // Ctrl+letter: emit the control byte.
-    if mods.contains(Modifiers::CTRL) {
-        if let KeyCode::Char(c) = key {
-            if c.is_ascii_alphabetic() {
+    if mods.contains(Modifiers::CTRL)
+        && let KeyCode::Char(c) = key
+            && c.is_ascii_alphabetic() {
                 let byte = (c.to_ascii_lowercase() as u8) - b'a' + 1;
                 return vec![byte];
             }
-        }
-    }
 
     match key {
         KeyCode::Char(c) => {

@@ -1032,7 +1032,7 @@ mod extract_retry_hints_proptests {
             ]),
             "[0-9a-zA-Z .]{0,20}",
         )
-            .prop_map(|(k, v)| (k.to_string(), v.to_string()))
+            .prop_map(|(k, v)| (k.to_string(), v))
     }
 
     proptest! {
@@ -1091,7 +1091,7 @@ mod extract_retry_hints_proptests {
             extra_n in 0u64..10_000u64,
         ) {
             let baseline = extract_retry_hints(None, &existing, "");
-            let mut augmented = existing.clone();
+            let mut augmented = existing;
             augmented.push(hdr("Retry-After", &extra_n.to_string()));
             let after = extract_retry_hints(None, &augmented, "");
             match (baseline.delay, after.delay) {

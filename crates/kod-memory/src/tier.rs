@@ -119,11 +119,10 @@ pub fn compress_body(body: &str) -> String {
     }
     // Trim back to the last whitespace, if there is one in the back
     // half (a very long first word is left as-is).
-    if let Some(pos) = out.rfind(char::is_whitespace) {
-        if pos > TIER3_MAX_CHARS / 2 {
+    if let Some(pos) = out.rfind(char::is_whitespace)
+        && pos > TIER3_MAX_CHARS / 2 {
             out.truncate(pos);
         }
-    }
     out.push('…');
     out
 }

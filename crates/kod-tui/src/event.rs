@@ -533,11 +533,10 @@ impl EventHandler {
                 return Some(event);
             }
         }
-        if let Ok(mut rx) = self.event_rx.try_lock() {
-            if let Ok(event) = rx.try_recv() {
+        if let Ok(mut rx) = self.event_rx.try_lock()
+            && let Ok(event) = rx.try_recv() {
                 return Some(event);
             }
-        }
         None
     }
 

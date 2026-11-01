@@ -137,8 +137,8 @@ impl LlmConfig {
         for e in &mut self.endpoints {
             // Clamp an unrecognised trust tier to `standard` rather
             // than silently treating a typo as `trusted`.
-            if let Some(t) = &e.trust {
-                if !matches!(t.as_str(), "trusted" | "standard" | "untrusted") {
+            if let Some(t) = &e.trust
+                && !matches!(t.as_str(), "trusted" | "standard" | "untrusted") {
                     tracing::warn!(
                         endpoint = %e.name,
                         value = %t,
@@ -146,7 +146,6 @@ impl LlmConfig {
                     );
                     e.trust = Some("standard".to_string());
                 }
-            }
         }
         if self.endpoints.is_empty() {
             tracing::warn!("llm.endpoints is empty; falling back to the built-in default endpoint");
@@ -1529,7 +1528,7 @@ mod proptests {
         /// accepts both.
         #[test]
         fn prop_validate_is_idempotent(cfg in arb_llm_config()) {
-            let mut c1 = cfg.clone();
+            let mut c1 = cfg;
             c1.validate();
             let mut c2 = c1.clone();
             c2.validate();

@@ -218,7 +218,7 @@ fn benchmark_task_classification(c: &mut Criterion) {
     let db_path = env.working_dir.join("bench.redb");
 
     let cfg = RouterConfig {
-        working_dir: env.working_dir.clone(),
+        working_dir: env.working_dir,
         enable_memory: false,
         ..RouterConfig::default()
     };
@@ -262,7 +262,7 @@ fn benchmark_task_processing(c: &mut Criterion) {
     let db_path = env.working_dir.join("bench_process.redb");
 
     let cfg = RouterConfig {
-        working_dir: env.working_dir.clone(),
+        working_dir: env.working_dir,
         enable_memory: false,
         ..RouterConfig::default()
     };

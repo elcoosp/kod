@@ -145,13 +145,11 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             continue;
         }
 
-        if has_id && method.is_some() {
-            panic!(
-                "unexpected server->client request `{}`; bridge makes only \
-                 session/request_permission; frame: {frame}",
-                method.unwrap_or(""),
-            );
-        }
+        assert!(!(has_id && method.is_some()), 
+            "unexpected server->client request `{}`; bridge makes only \
+             session/request_permission; frame: {frame}",
+            method.unwrap_or(""),
+        );
 
         notifications.push(frame);
     }

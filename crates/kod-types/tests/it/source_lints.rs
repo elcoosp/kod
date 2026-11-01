@@ -615,9 +615,7 @@ fn pending_notifications_fill_and_drain_match() {
         .cloned()
         .collect();
 
-    if fills.is_empty() {
-        panic!("no pending_notifications.push_back found; the lint's anchor moved");
-    }
+    assert!(!fills.is_empty(), "no pending_notifications.push_back found; the lint's anchor moved");
     let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
     for (line, text) in &drains {
         if text.contains("pending_notifications.pop_back(") {

@@ -309,7 +309,7 @@ mod validation_proptests {
         fn prop_required_violation_rejected(missing in "[a-z]{1,10}") {
             let schema = json!({
                 "type": "object",
-                "required": [missing.clone()],
+                "required": [missing],
             });
             let value = json!({});
             let err = validate(&schema, &value).unwrap_err();

@@ -189,7 +189,7 @@ impl RenderCache {
             entries.insert(key.clone(), Arc::clone(&rendered));
         }
         if let Ok(mut order) = self.order.lock() {
-            order.push_back(key.clone());
+            order.push_back(key);
             // Evict oldest beyond capacity.
             while order.len() > self.capacity {
                 if let Some(old) = order.pop_front()

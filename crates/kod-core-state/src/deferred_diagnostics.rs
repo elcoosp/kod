@@ -209,7 +209,7 @@ mod tests {
         // Push the same one again plus a new one — only the new one
         // is a fresh entry.
         let two = d("b.rs", 7, "other");
-        assert_eq!(q.push("h", &[one.clone(), two]), 1);
+        assert_eq!(q.push("h", &[one, two]), 1);
         assert_eq!(q.len_for("h"), 2);
     }
 

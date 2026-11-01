@@ -517,7 +517,7 @@ mod tests {
         let mut pool = WorkPool::new(3, 10);
         match pool.dispatch(item("a")) {
             Dispatch::Spawn { agent_id } => {
-                pool.record_spawned(agent_id.clone(), 8192);
+                pool.record_spawned(agent_id, 8192);
                 assert_eq!(pool.slot_count(), 1);
             }
             other => panic!("expected Spawn, got {other:?}"),

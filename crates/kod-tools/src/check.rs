@@ -1140,7 +1140,7 @@ mod location_parser_differential {
             let with_msg = format!("{file}:{line}:{col}: {msg}");
             let from_bare = parse_location_colon(&bare);
             let from_prefix = parse_location_colon_prefix(&with_msg);
-            let expected = Some((file.clone(), line, col));
+            let expected = Some((file, line, col));
             prop_assert_eq!(&from_bare, &expected, "bare form {:?}", bare);
             prop_assert_eq!(&from_prefix, &expected, "prefixed form {:?}", with_msg);
         }

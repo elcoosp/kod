@@ -678,7 +678,7 @@ mod goals_proptests {
         fn prop_delta_none_equals_some_zero(u in arb_usage()) {
             let mut no_cache = u.clone();
             no_cache.cache_read_tokens = None;
-            let mut zero_cache = u.clone();
+            let mut zero_cache = u;
             zero_cache.cache_read_tokens = Some(0);
             prop_assert_eq!(
                 Goal::delta_tokens(&no_cache),

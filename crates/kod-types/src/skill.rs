@@ -256,7 +256,7 @@ mod coverage_skill_metadata {
             path: std::path::PathBuf::new(),
         };
         let m = SkillMatch {
-            skill: s.clone(),
+            skill: s,
             score: 0.75,
             match_reasons: vec![MatchReason::NameMatch { name: "x".into() }],
         };

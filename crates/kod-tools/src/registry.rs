@@ -67,7 +67,7 @@ impl ToolRegistry {
         let mut names: Vec<String> = tools
             .values()
             .filter(|t| t.definition().category == category)
-            .map(|t| t.definition().name.clone())
+            .map(|t| t.definition().name)
             .collect();
         names.sort();
         names

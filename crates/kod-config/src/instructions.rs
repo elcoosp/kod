@@ -256,20 +256,17 @@ fn expand_imports_rec(
         }
         // Outside a fence: an `@path` line with no trailing prose is
         // a reference.
-        if let Some(rest) = line.trim().strip_prefix('@') {
-            if !rest.is_empty()
+        if let Some(rest) = line.trim().strip_prefix('@')
+            && !rest.is_empty()
                 && !rest.chars().any(char::is_whitespace)
                 && depth < MAX_IMPORT_DEPTH
-            {
-                if let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited) {
+                && let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited) {
                     out.push_str(&expanded);
                     if !expanded.ends_with('\n') {
                         out.push('\n');
                     }
                     continue;
                 }
-            }
-        }
         out.push_str(line);
         out.push('\n');
     }

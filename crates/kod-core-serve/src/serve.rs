@@ -680,8 +680,7 @@ where
                     async move {
                         if let Err(e) =
                             run_swarm(&engine, &out, &id, &goal, max_agents, merge).await
-                        {
-                            if let Err(write_err) = send_response(
+                            && let Err(write_err) = send_response(
                                 &out,
                                 &Response {
                                     id: &id,
@@ -697,7 +696,6 @@ where
                                     "serve: could not deliver the swarm error frame",
                                 );
                             }
-                        }
                     },
                     out_for_guard,
                     id_for_guard,
@@ -1897,7 +1895,7 @@ mod capped_lines_proptests {
                 b.push(b'\n');
                 one_line(b, cap)
             };
-            let at_eof = one_line(content.clone().into_bytes(), cap);
+            let at_eof = one_line(content.into_bytes(), cap);
 
             prop_assert_eq!(
                 with_lf.is_ok(),

@@ -555,7 +555,7 @@ mod coverage_agent_message_content {
     fn message_destination_round_trips_its_three_forms() {
         let agent = AgentId::new();
         for dest in [
-            MessageDestination::Agent(agent.clone()),
+            MessageDestination::Agent(agent),
             MessageDestination::Broadcast,
             MessageDestination::Coordinator,
         ] {
