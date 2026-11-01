@@ -13,11 +13,14 @@ use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResul
 use serde_json::Value;
 
 /// See the module docs.
+/// The plan_update tool.
 pub struct PlanTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl PlanTool {
+    /// Build the plan_update tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

@@ -37,12 +37,25 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilePatch {
     /// Replace the whole file body with `content`.
-    Add { path: String, content: String },
+    Add {
+        /// The path to add.
+        path: String,
+        /// The full file content.
+        content: String,
+    },
     /// Remove the file.
-    Delete { path: String },
+    Delete {
+        /// The path to delete.
+        path: String,
+    },
     /// Apply `hunks` (each a `@@` block of context/`-`/`+` lines) to
     /// the existing file.
-    Update { path: String, hunks: Vec<Hunk> },
+    Update {
+        /// The path to update.
+        path: String,
+        /// The hunks to apply.
+        hunks: Vec<Hunk>,
+    },
 }
 
 /// One `@@`-delimited block inside an `Update`.

@@ -29,11 +29,13 @@ use serde_json::Value;
 /// `{"question": "...", "placeholder": "..."}`.
 pub const QUESTION_MARKER: &str = "\0kod-question:";
 
+/// Build the sentinel string that wraps a question marker.
 pub fn question_marker(id: u64, question_json: &str) -> String {
     let clean = question_json.replace('\0', " ");
     format!("{QUESTION_MARKER}{id}:{clean}\0")
 }
 
+/// Parse a question marker back into its id and JSON.
 pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
     let rest = chunk.strip_prefix(QUESTION_MARKER)?;
     let body = rest.strip_suffix('\0')?;
@@ -44,16 +46,21 @@ pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
 /// The serialized question. Mirrors the approval request shape.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuestionRequest {
+    /// The question to ask the user.
     pub question: String,
+    /// Optional placeholder text for the input UI.
     #[serde(default)]
     pub placeholder: Option<String>,
 }
 
+/// The ask_user tool.
 pub struct AskUserTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl AskUserTool {
+    /// Build the ask_user tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

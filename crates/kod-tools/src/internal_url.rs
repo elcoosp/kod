@@ -71,6 +71,7 @@ pub struct ResolveContext {
 }
 
 impl ResolveContext {
+    /// Build a resolve context with no tool-permission override.
     pub fn new(holder: impl Into<String>, working_dir: impl Into<std::path::PathBuf>) -> Self {
         Self {
             holder: holder.into(),
@@ -127,6 +128,7 @@ pub struct ResolvedResource {
 }
 
 impl ResolvedResource {
+    /// Build a text/plain resource.
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
@@ -135,11 +137,13 @@ impl ResolvedResource {
         }
     }
 
+    /// Builder: override the MIME type.
     pub fn with_mime(mut self, mime: impl Into<String>) -> Self {
         self.mime = Some(mime.into());
         self
     }
 
+    /// Builder: mark the resource as immutable.
     pub fn immutable(mut self) -> Self {
         self.immutable = true;
         self
@@ -154,19 +158,40 @@ pub enum ProtocolError {
     /// The scheme has no registered handler. Includes the scheme name
     /// so the caller can print "unknown scheme `foo://`" with the
     /// list of known schemes.
-    UnknownScheme { scheme: String, known: Vec<String> },
+    UnknownScheme {
+        /// The scheme that had no handler.
+        scheme: String,
+        /// The schemes that do have handlers.
+        known: Vec<String>,
+    },
     /// The handler knows the scheme but has nothing at the URL's
     /// path.
-    NotFound { url: String },
+    NotFound {
+        /// The URL that was not found.
+        url: String,
+    },
     /// The handler serves reads only; a `write` was attempted.
-    ReadOnly { url: String },
+    ReadOnly {
+        /// The URL a write was attempted on.
+        url: String,
+    },
     /// The URL's syntax is malformed (no scheme, empty path where
     /// the handler requires one).
-    Malformed { url: String, reason: String },
+    Malformed {
+        /// The malformed URL.
+        url: String,
+        /// What is wrong with it.
+        reason: String,
+    },
     /// A handler-specific failure with a message the model can act
     /// on. Used when none of the shapes above fit — a decode error,
     /// a store that is unavailable.
-    Handler { url: String, message: String },
+    Handler {
+        /// The URL the handler failed on.
+        url: String,
+        /// The handler's error message.
+        message: String,
+    },
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -294,6 +319,7 @@ pub fn scheme_of(url: &str) -> Option<String> {
 }
 
 impl ProtocolRouter {
+    /// Empty router with no handlers.
     pub fn new() -> Self {
         Self::default()
     }
@@ -437,6 +463,7 @@ struct StoredArtifact {
 }
 
 impl ArtifactHandler {
+    /// Empty artifact handler with no stored resources.
     pub fn new() -> Self {
         Self {
             store: Arc::new(tokio::sync::RwLock::new(HashMap::new())),

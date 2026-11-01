@@ -48,6 +48,7 @@ pub struct PathLockTable {
 }
 
 impl PathLockTable {
+    /// Empty lock table.
     pub fn new() -> Self {
         Self::default()
     }
@@ -163,7 +164,12 @@ pub enum LockError {
     /// would need a second lock to keep the "current holder" field
     /// consistent with the mutex itself.
     #[error("timed out after {waited:?} waiting to write {path} (another caller is holding it)")]
-    Timeout { path: PathBuf, waited: Duration },
+    Timeout {
+        /// The path the lock was on.
+        path: PathBuf,
+        /// How long the caller waited before giving up.
+        waited: Duration,
+    },
 }
 
 #[cfg(test)]

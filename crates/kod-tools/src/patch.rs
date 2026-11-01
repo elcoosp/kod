@@ -18,10 +18,15 @@ use similar::TextDiff;
 /// One hunk in a parsed patch.
 #[derive(Debug, Clone)]
 pub struct Hunk {
+    /// 1-based start line in the original file.
     pub old_start: usize,
+    /// Number of lines in the original range.
     pub old_lines: usize,
+    /// 1-based start line in the new file.
     pub new_start: usize,
+    /// Number of lines in the new range.
     pub new_lines: usize,
+    /// The body lines (context, additions, removals).
     pub lines: Vec<HunkLine>,
     /// Tag of the last body line (`+`, `-`, or space); `None` if the
     /// hunk has no body. Decides whether the patch changed the file's
@@ -36,9 +41,13 @@ pub struct Hunk {
 }
 
 #[derive(Debug, Clone)]
+/// One body line in a hunk.
 pub enum HunkLine {
+    /// An unchanged context line.
     Context(String),
+    /// A removed line.
     Remove(String),
+    /// An added line.
     Add(String),
 }
 

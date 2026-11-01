@@ -26,19 +26,24 @@ use std::process::Command;
 /// One search hit, as both backends produce it.
 #[derive(Debug, Clone)]
 pub struct SearchHit {
+    /// The file path.
     pub path: PathBuf,
+    /// 1-based line the match is on.
     pub line_number: u64,
     /// The matching line, already trimmed of trailing newline.
     pub line: String,
     /// Lines of context before and after, if the backend collected
     /// them.
+    /// Context lines before the match.
     pub before: Vec<String>,
+    /// Context lines after the match.
     pub after: Vec<String>,
 }
 
 /// The result of a search, before truncation.
 #[derive(Debug, Clone, Default)]
 pub struct SearchResults {
+    /// The matching hits.
     pub hits: Vec<SearchHit>,
     /// Files the search scanned but did not match, for a
     /// "N files searched" line.
@@ -89,6 +94,7 @@ impl RipgrepBackend {
         }
     }
 
+    /// True when ripgrep was found in PATH.
     pub fn has_rg(&self) -> bool {
         self.rg.is_some()
     }

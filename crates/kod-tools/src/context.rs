@@ -65,12 +65,16 @@ impl Default for SandboxOpts {
 /// engine's UI (and `kod doctor`) can surface it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
+    /// Bubblewrap (bwrap).
     Bwrap,
+    /// Landlock LSM.
     Landlock,
+    /// macOS seatbelt (sandbox-exec).
     Seatbelt,
 }
 
 impl Backend {
+    /// The backend binary name.
     pub fn name(self) -> &'static str {
         match self {
             Backend::Bwrap => "bwrap",
@@ -150,6 +154,7 @@ impl SandboxResolver {
         }
     }
 
+    /// True when at least one backend is available.
     pub fn has_any(&self) -> bool {
         !self.available.is_empty()
     }
@@ -610,8 +615,11 @@ fn which(program: &str) -> bool {
 /// on `kod-swarm` (the dependency runs the other way).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileOp {
+    /// A read.
     Read,
+    /// A full-file write.
     Write,
+    /// An in-place edit.
     Edit,
 }
 
@@ -648,6 +656,7 @@ impl std::fmt::Debug for BackgroundSpawnHook {
 }
 
 impl BackgroundSpawnHook {
+    /// Build a spawner hook from a closure.
     pub fn new(
         f: impl Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync + 'static,
     ) -> Self {
@@ -688,6 +697,7 @@ pub struct DetachedChild {
     /// The adopter writes these into the spool first, then continues
     /// reading live.
     pub prior_stdout: Vec<u8>,
+    /// Bytes already read from the stderr pipe.
     pub prior_stderr: Vec<u8>,
 }
 
@@ -707,6 +717,7 @@ impl std::fmt::Debug for BackgroundAdoptHook {
 }
 
 impl BackgroundAdoptHook {
+    /// Build an adopter hook from a closure.
     pub fn new(f: impl Fn(DetachedChild) -> Option<String> + Send + Sync + 'static) -> Self {
         Self {
             inner: std::sync::Arc::new(f),
@@ -722,6 +733,7 @@ impl BackgroundAdoptHook {
 }
 
 #[derive(Clone)]
+/// Callback that checks a per-tool quota before dispatching.
 pub struct QuotaHook {
     inner: std::sync::Arc<dyn Fn(&str, Option<&str>) -> Result<()> + Send + Sync>,
 }
@@ -733,17 +745,20 @@ impl std::fmt::Debug for QuotaHook {
 }
 
 impl QuotaHook {
+    /// Build a quota hook from a closure.
     pub fn new(f: impl Fn(&str, Option<&str>) -> Result<()> + Send + Sync + 'static) -> Self {
         Self {
             inner: std::sync::Arc::new(f),
         }
     }
+    /// Run the quota check for this tool call.
     pub fn check_and_record(&self, tool: &str, command: Option<&str>) -> Result<()> {
         (self.inner)(tool, command)
     }
 }
 
 #[derive(Clone)]
+/// Callback fired on every file touch.
 pub struct FileTouchHook {
     inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync>,
 }
@@ -755,6 +770,7 @@ impl std::fmt::Debug for FileTouchHook {
 }
 
 impl FileTouchHook {
+    /// Build a file-touch hook from a closure.
     pub fn new(
         f: impl Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync + 'static,
     ) -> Self {
@@ -762,6 +778,7 @@ impl FileTouchHook {
             inner: std::sync::Arc::new(f),
         }
     }
+    /// Fire the hook with the touch details.
     pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp, intent: Option<&str>) {
         (self.inner)(holder, path, op, intent)
     }
@@ -913,7 +930,9 @@ pub struct ToolContext {
 /// the `SpeculativeRead`, validates it, and constructs this one.
 #[derive(Debug, Clone)]
 pub struct PrefetchedRead {
+    /// The path of the prefetched file.
     pub path: std::path::PathBuf,
+    /// The file's text at prefetch time.
     pub text: String,
 }
 
@@ -941,6 +960,7 @@ type ArtifactStoreFn = dyn Fn(
     + Sync;
 
 impl ArtifactStoreHook {
+    /// Build a store hook from a closure.
     pub fn new<F>(f: F) -> Self
     where
         F: Fn(
@@ -1098,6 +1118,7 @@ impl ToolContext {
         self
     }
 
+    /// Builder: set the sandbox mode.
     pub fn with_sandbox(mut self, mode: SandboxMode) -> Self {
         self.sandbox = mode;
         self
@@ -1141,6 +1162,7 @@ impl ToolContext {
         }
     }
 
+    /// Builder: set the tool timeout in seconds.
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
         self

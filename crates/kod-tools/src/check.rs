@@ -33,12 +33,15 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// One structured diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One diagnostic returned by a compiler or linter.
 pub struct Diagnostic {
     /// Path as reported by the tool — usually relative to the workspace
     /// root, sometimes absolute. Not canonicalized; the model resolves
     /// it against the working directory.
     pub file: String,
+    /// 1-based line the diagnostic refers to.
     pub line: u32,
+    /// 1-based column the diagnostic refers to.
     pub column: u32,
     /// `error` or `warning`.
     pub severity: String,
@@ -53,9 +56,13 @@ pub struct Diagnostic {
 /// What kind of project are we in?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectKind {
+    /// A Rust project (Cargo.toml).
     Cargo,
+    /// A TypeScript project (package.json with tsc).
     NodeTsc,
+    /// A Python project (pyproject.toml or ruff.toml).
     Ruff,
+    /// A Go project (go.mod).
     Go,
 }
 
@@ -78,6 +85,7 @@ impl ProjectKind {
         }
     }
 
+    /// The tool name that reports diagnostics for this project kind.
     pub fn name(&self) -> &'static str {
         match self {
             ProjectKind::Cargo => "cargo",
@@ -365,11 +373,14 @@ fn parse_severity_and_code(s: &str) -> Option<(String, Option<String>, String)> 
     Some((severity.to_string(), code, message))
 }
 
+/// The check tool (runs the project's compiler or linter).
 pub struct CheckTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl CheckTool {
+    /// Build the check tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -550,12 +561,19 @@ impl Default for CheckTool {
 /// Everything `run_check` produces.
 #[derive(Debug, Clone)]
 pub struct CheckOutcome {
+    /// The project kind that produced this outcome.
     pub kind: String,
+    /// The command that was run.
     pub command: String,
+    /// The process exit code.
     pub exit_code: i32,
+    /// Diagnostics parsed from the tool output.
     pub diagnostics: Vec<Diagnostic>,
+    /// The tool's stdout.
     pub stdout: String,
+    /// The tool's stderr.
     pub stderr: String,
+    /// True when the output was truncated to fit the budget.
     pub truncated: bool,
 }
 

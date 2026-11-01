@@ -13,11 +13,14 @@ use crate::edit_hashline::parse;
 use crate::{Tool, ToolContext};
 
 /// The hashline edit tool.
+/// The hashline edit tool.
 pub struct EditHashlineTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl EditHashlineTool {
+    /// Build the hashline edit tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

@@ -82,8 +82,11 @@ struct Entry {
 /// assert hit/miss behavior.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Stats {
+    /// Number of cache hits.
     pub hits: u64,
+    /// Number of cache misses.
     pub misses: u64,
+    /// Current number of cached entries.
     pub entries: usize,
 }
 
@@ -193,6 +196,7 @@ impl WalkCache {
         self.entries.lock().expect("walk_cache poisoned").len()
     }
 
+    /// True when the cache holds no entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Tool system for agent-environment interaction.
 //!
 //! Provides the Tool trait, registry, execution context, and built-in tools

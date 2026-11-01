@@ -119,11 +119,14 @@ where
 }
 
 /// Fetch a URL over HTTP/HTTPS and return its text content.
+/// The web_fetch tool.
 pub struct WebFetchTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl WebFetchTool {
+    /// Build the web_fetch tool.
     pub fn new() -> Self {
         // H-S7 / T1-C15: the initial client is no longer built here.
         // `fetch_with_safe_redirects` builds a per-hop client with the

@@ -30,12 +30,15 @@ use std::sync::Weak;
 /// combined output stays inside a normal tool-result budget.
 pub const MAX_INVOCATIONS: usize = 10;
 
+/// The batch tool (fans out to sub-calls).
 pub struct BatchTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     registry: Weak<ToolRegistry>,
 }
 
 impl BatchTool {
+    /// Build the batch tool over a weak reference to the registry.
     pub fn new(registry: Weak<ToolRegistry>) -> Self {
         Self {
             definition: ToolDefinition {

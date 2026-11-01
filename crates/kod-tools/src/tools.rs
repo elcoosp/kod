@@ -157,11 +157,14 @@ pub fn is_secret_like_env(name: &str) -> bool {
     PREFIXES.iter().any(|p| upper.starts_with(p))
 }
 
+/// The read_file tool.
 pub struct ReadFileTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl ReadFileTool {
+    /// Build the read_file tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -576,10 +579,12 @@ impl Tool for ReadFileTool {
 
 /// Write content to a file
 pub struct WriteFileTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl WriteFileTool {
+    /// Build the write_file tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -830,10 +835,12 @@ impl Tool for WriteFileTool {
 
 /// Execute a shell command
 pub struct ExecuteCommandTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl ExecuteCommandTool {
+    /// Build the execute_command tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1354,10 +1361,12 @@ impl Tool for ExecuteCommandTool {
 
 /// List tools available in a directory for filesystem operations
 pub struct ListFilesTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl ListFilesTool {
+    /// Build the list_files tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1587,10 +1596,12 @@ pub fn gitaware_walk_arc(
 /// and "cannot". The patch is also a reviewable artifact, so a caller
 /// can show every pending diff before anything touches disk.
 pub struct PatchFileTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl PatchFileTool {
+    /// Build the patch_file tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1766,10 +1777,12 @@ impl Tool for PatchFileTool {
 
 /// Search files for a pattern
 pub struct GrepTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl GrepTool {
+    /// Build the grep tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

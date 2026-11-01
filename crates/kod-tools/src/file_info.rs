@@ -14,11 +14,14 @@ use kod_types::{
 };
 
 /// Get file information
+/// The file-info tool.
 pub struct FileInfoTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl FileInfoTool {
+    /// Build the file-info tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

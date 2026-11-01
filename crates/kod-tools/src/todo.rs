@@ -23,8 +23,11 @@ use tokio::sync::RwLock;
 /// One task in the list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
+    /// The item's stable id.
     pub id: u64,
+    /// The item's text.
     pub text: String,
+    /// Current lifecycle status.
     pub status: TodoStatus,
     /// Ids of todos that must reach `Completed` before this one may
     /// start. Empty for an unblocked item.
@@ -63,10 +66,15 @@ impl TodoItem {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// The lifecycle status of a todo item.
 pub enum TodoStatus {
+    /// Not yet started.
     Pending,
+    /// Currently in progress.
     InProgress,
+    /// Finished.
     Completed,
+    /// Cancelled.
     Cancelled,
 }
 
@@ -124,17 +132,21 @@ pub struct Evidence {
 /// The shared list. Clone the `Arc` to share it.
 pub type TodoList = Arc<RwLock<Vec<TodoItem>>>;
 
+/// Build a fresh empty todo list.
 pub fn new_list() -> TodoList {
     Arc::new(RwLock::new(Vec::new()))
 }
 
+/// The todo tool.
 pub struct TodoTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     list: TodoList,
     next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl TodoTool {
+    /// Build the todo tool over a shared list.
     pub fn new(list: TodoList) -> Self {
         Self {
             definition: ToolDefinition {

@@ -83,11 +83,13 @@ struct Registered {
 /// The session-scoped conflict registry. `resolve` scans and registers;
 /// `write` splices and deregisters.
 #[derive(Debug, Default)]
+/// Shared store of registered merge conflicts.
 pub struct ConflictStore {
     entries: Mutex<HashMap<String, Registered>>,
 }
 
 impl ConflictStore {
+    /// Empty conflict store.
     pub fn new() -> Self {
         Self::default()
     }
@@ -98,6 +100,7 @@ impl ConflictStore {
         self.entries.lock().map(|g| g.len()).unwrap_or(0)
     }
 
+    /// True when no conflicts are registered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -229,11 +232,13 @@ pub fn scan(text: &str) -> Vec<ConflictBlock> {
 }
 
 /// The `conflict://` handler.
+/// Handler that surfaces registered conflicts.
 pub struct ConflictHandler {
     store: Arc<ConflictStore>,
 }
 
 impl ConflictHandler {
+    /// Wrap a shared conflict store.
     pub fn new(store: Arc<ConflictStore>) -> Self {
         Self { store }
     }

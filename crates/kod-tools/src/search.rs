@@ -15,11 +15,14 @@ const MAX_MATCHES: usize = 200;
 const MAX_LINE_CHARS: usize = 400;
 const MAX_CONTEXT_LINES: u32 = 5;
 
+/// The search_files tool.
 pub struct SearchFilesTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl SearchFilesTool {
+    /// Build the search_files tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

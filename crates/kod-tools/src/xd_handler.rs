@@ -42,6 +42,7 @@ pub struct XdHandler {
 }
 
 impl XdHandler {
+    /// Wrap a tool registry.
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
         Self { registry }
     }

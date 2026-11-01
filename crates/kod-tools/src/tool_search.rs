@@ -28,16 +28,20 @@ use serde_json::Value;
 /// construction from the live registry.
 #[derive(Clone, Default)]
 pub struct ToolInventory {
+    /// The current tool definitions.
     pub definitions: Vec<ToolDefinition>,
 }
 
 impl ToolInventory {
+    /// Build an inventory from a list of definitions.
     pub fn from_definitions(defs: Vec<ToolDefinition>) -> Self {
         Self { definitions: defs }
     }
 }
 
+/// The tool_search tool.
 pub struct ToolSearchTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     /// Shared with the engine. The engine updates this whenever the
     /// registry changes (MCP server added, hot-reload) so the search
@@ -46,6 +50,7 @@ pub struct ToolSearchTool {
 }
 
 impl ToolSearchTool {
+    /// Build the tool_search tool over a shared inventory.
     pub fn new(inventory: std::sync::Arc<std::sync::RwLock<ToolInventory>>) -> Self {
         Self {
             inventory,

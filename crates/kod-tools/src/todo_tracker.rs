@@ -73,6 +73,7 @@ pub struct TodoTracker {
 }
 
 impl TodoTracker {
+    /// Fresh tracker.
     pub fn new() -> Self {
         Self::default()
     }

@@ -42,7 +42,10 @@ pub enum Next {
     /// The response is fine (or not retryable); return it.
     Return,
     /// Sleep this long, then retry with the same UA.
-    RetrySameAgent { wait_secs: u64 },
+    RetrySameAgent {
+        /// How long to sleep before retrying.
+        wait_secs: u64,
+    },
     /// Retry with the next UA in [`USER_AGENTS`].
     RetryNextAgent,
 }

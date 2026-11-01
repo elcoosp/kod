@@ -77,17 +77,37 @@ pub enum EditError {
     /// session forgot it).
     NeverRead,
     /// The file changed since the snapshot was taken.
-    StaleTag { expected: Tag, got: Tag },
+    StaleTag {
+        /// The tag the model saw.
+        expected: Tag,
+        /// The tag the file has now.
+        got: Tag,
+    },
     /// An op addresses a line the model did not read.
-    UnseenAnchor { line: usize },
+    UnseenAnchor {
+        /// The 1-based line the model did not read.
+        line: usize,
+    },
     /// A line number is past the end of the file.
-    OutOfRange { line: usize, len: usize },
+    OutOfRange {
+        /// The out-of-range line number.
+        line: usize,
+        /// The file's actual line count.
+        len: usize,
+    },
     /// An op's `s` is greater than its `e`.
-    BadRange { s: usize, e: usize },
+    BadRange {
+        /// The start line of the bad range.
+        s: usize,
+        /// The end line of the bad range.
+        e: usize,
+    },
     /// Two ops address overlapping line ranges — applying both would
     /// splice against shifted indices.
     Overlap {
+        /// The first (start, end) range.
         first: (usize, usize),
+        /// The second (start, end) range.
         second: (usize, usize),
     },
     /// The op text did not parse.
@@ -160,6 +180,7 @@ pub struct EditStore {
 }
 
 impl EditStore {
+    /// Empty edit store.
     pub fn new() -> Self {
         Self::default()
     }

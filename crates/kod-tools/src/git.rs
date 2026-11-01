@@ -189,10 +189,12 @@ fn truncate_git_output(s: &str) -> (String, bool) {
 
 /// `git status --porcelain=v2 -b`.
 pub struct GitStatusTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl GitStatusTool {
+    /// Build the git-status tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -309,10 +311,12 @@ impl Tool for GitStatusTool {
 
 /// `git diff [--staged] [--stat] [path]`.
 pub struct GitDiffTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl GitDiffTool {
+    /// Build the git-diff tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -462,10 +466,12 @@ impl Tool for GitDiffTool {
 /// mode for this tool is `ask`), so a user sees a diff before the
 /// commit lands.
 pub struct GitCommitTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl GitCommitTool {
+    /// Build the git-commit tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -611,10 +617,12 @@ impl Tool for GitCommitTool {
 /// path uses it) without giving it the ability to rewrite refs or
 /// discard work. `list` requires `Read`; `create` requires `Write`.
 pub struct GitBranchTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
 }
 
 impl GitBranchTool {
+    /// Build the git-branch tool.
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
