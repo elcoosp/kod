@@ -1310,8 +1310,7 @@ async fn test_record_turn_does_not_panic_mid_multibyte() {
     assert!(
         !prompt.is_char_boundary(MAX_TURN_CHARS),
         "the test must place the cap inside the é codepoint; \
-             MAX_TURN_CHARS={} fell on a boundary",
-        MAX_TURN_CHARS
+             MAX_TURN_CHARS={MAX_TURN_CHARS} fell on a boundary"
     );
 
     // Must not panic. The stored text ends at the last safe boundary
@@ -1795,18 +1794,17 @@ async fn test_run_tool_calls_serializes_mutating_round() {
     // Write must succeed.
     match &round.results[0] {
         ToolResult::Success(_) => {}
-        other => panic!("write_file did not succeed: {:?}", other),
+        other => panic!("write_file did not succeed: {other:?}"),
     }
     // Read must observe the write.
     match &round.results[1] {
         ToolResult::Success(v) => {
             assert_eq!(
                 v["content"], "hello-serial",
-                "read did not observe write — round raced: {:?}",
-                v
+                "read did not observe write — round raced: {v:?}"
             );
         }
-        other => panic!("read_file did not succeed: {:?}", other),
+        other => panic!("read_file did not succeed: {other:?}"),
     }
 }
 
@@ -1852,7 +1850,7 @@ async fn test_run_tool_calls_parallelizes_read_only_round() {
             assert_eq!(a["content"], "AAA");
             assert_eq!(b["content"], "BBB");
         }
-        other => panic!("expected two successes, got {:?}", other),
+        other => panic!("expected two successes, got {other:?}"),
     }
 }
 

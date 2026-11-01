@@ -125,8 +125,7 @@ impl AgentCommunicationHub {
         let mut agents = self.agents.write().await;
         if agents.contains_key(&agent_id) {
             return Err(KodError::InvalidState(format!(
-                "Agent {} already registered",
-                agent_id
+                "Agent {agent_id} already registered"
             )));
         }
         agents.insert(
@@ -203,8 +202,7 @@ impl AgentCommunicationHub {
         let agents = self.agents.read().await;
         if !agents.contains_key(from) {
             return Err(KodError::InvalidState(format!(
-                "Sender {} not registered",
-                from
+                "Sender {from} not registered"
             )));
         }
         let agent_info = agents.get(to);
@@ -230,10 +228,9 @@ impl AgentCommunicationHub {
                 self.record_message(to, &message).await;
                 Ok(())
             }
-            Some(_) => Err(KodError::InvalidState(format!("Agent {} is offline", to))),
+            Some(_) => Err(KodError::InvalidState(format!("Agent {to} is offline"))),
             None => Err(KodError::InvalidState(format!(
-                "Agent {} not registered",
-                to
+                "Agent {to} not registered"
             ))),
         }
     }
@@ -248,8 +245,7 @@ impl AgentCommunicationHub {
         let agents = self.agents.read().await;
         if !agents.contains_key(from) {
             return Err(KodError::InvalidState(format!(
-                "Sender {} not registered",
-                from
+                "Sender {from} not registered"
             )));
         }
         let message = SwarmMessage::new(
@@ -329,14 +325,12 @@ impl AgentCommunicationHub {
                 match rx {
                     Some(rx) => Ok(AgentMessageReceiver::new(rx)),
                     None => Err(KodError::InvalidState(format!(
-                        "Receiver already taken for agent {}",
-                        agent_id
+                        "Receiver already taken for agent {agent_id}"
                     ))),
                 }
             }
             None => Err(KodError::InvalidState(format!(
-                "Agent {} not registered",
-                agent_id
+                "Agent {agent_id} not registered"
             ))),
         }
     }
@@ -555,8 +549,7 @@ mod tests {
         assert_eq!(
             a_hist.len(),
             MAX_HISTORY_PER_AGENT,
-            "sender history should be capped at {}",
-            MAX_HISTORY_PER_AGENT
+            "sender history should be capped at {MAX_HISTORY_PER_AGENT}"
         );
         // The kept entries are the most recent, so the last one is
         // the most recent send.

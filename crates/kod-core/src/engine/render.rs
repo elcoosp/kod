@@ -479,7 +479,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .map(shorten_path)
             .unwrap_or_else(|| name.to_string());
         let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
-        return format!("{}:\n{}", path, body);
+        return format!("{path}:\n{body}");
     }
 
     // git_diff: the patch itself, not the JSON envelope around it. The TUI
@@ -527,7 +527,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .map(shorten_path)
             .unwrap_or_else(|| name.to_string());
         let size = v.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0);
-        return format!("{} · binary ({} bytes) — not shown as text", path, size);
+        return format!("{path} · binary ({size} bytes) — not shown as text");
     }
 
     // read_file: path + size + short preview only. The full content still
@@ -577,7 +577,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .and_then(|p| p.as_str())
             .map(shorten_path)
             .unwrap_or_else(|| name.to_string());
-        return format!("{} · is a file, not a directory", path);
+        return format!("{path} · is a file, not a directory");
     }
 
     // list_files: {path, files:[...]} → count + names.
@@ -683,8 +683,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
 
         if timed_out {
             out.push_str(&format!(
-                "\n[command timed out after {}s — killed]",
-                timeout_secs
+                "\n[command timed out after {timeout_secs}s — killed]"
             ));
         }
         if truncated {
@@ -1129,8 +1128,7 @@ mod render_proptests {
             let line = format!("GOAL MET{tail}");
             assert!(
                 line_is_goal_marker(&line),
-                "{:?} should match (structural separator after marker)",
-                line,
+                "{line:?} should match (structural separator after marker)",
             );
         }
     }
@@ -1146,8 +1144,7 @@ mod render_proptests {
             }
             assert!(
                 !line_is_goal_marker(&line),
-                "{:?} should NOT match (no structural separator after marker)",
-                line,
+                "{line:?} should NOT match (no structural separator after marker)",
             );
         }
     }
@@ -1177,8 +1174,7 @@ mod render_proptests {
         for s in ["中文", "中文中文中", "中文中文中文中文"] {
             assert!(
                 !line_is_goal_marker(s),
-                "{:?} should not be a goal marker",
-                s
+                "{s:?} should not be a goal marker"
             );
         }
     }

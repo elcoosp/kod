@@ -645,7 +645,7 @@ mod round_trip_properties {
                 hunk_lines.push(format!(" {}", lines[i - 1]));
             }
             hunk_lines.push(format!("-{}", lines[i]));
-            hunk_lines.push(format!("+{}", replacement));
+            hunk_lines.push(format!("+{replacement}"));
             if i + 1 < lines.len() {
                 hunk_lines.push(format!(" {}", lines[i + 1]));
             }

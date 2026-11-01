@@ -199,8 +199,7 @@ auto_lsp = false
             skills_dir = skills_dir.display(),
         );
         eprintln!(
-            "test: writing config.toml pointing at mock on port {}",
-            port
+            "test: writing config.toml pointing at mock on port {port}"
         );
         std::fs::write(self.config_dir.join("config.toml"), config).expect("write config.toml");
     }
@@ -403,8 +402,7 @@ impl TuiSession {
             if start.elapsed() > timeout {
                 let mut msg = String::new();
                 msg.push_str(&format!(
-                    "timed out after {:?} waiting for {needle:?}\n",
-                    timeout
+                    "timed out after {timeout:?} waiting for {needle:?}\n"
                 ));
                 msg.push_str("--- raw screen ---\n");
                 for (i, line) in text.lines().enumerate() {

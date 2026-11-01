@@ -185,7 +185,7 @@ fn expand_one_at_ref(
         (text, false)
     };
     let notice = if truncated {
-        format!("\n[truncated at {} bytes]", max_bytes)
+        format!("\n[truncated at {max_bytes} bytes]")
     } else {
         String::new()
     };

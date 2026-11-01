@@ -421,8 +421,7 @@ impl KodEngine {
         }
         if elided > 0 {
             filtered.push_str(&format!(
-                "\n… ({} lines of context-only hunks elided by Jev)",
-                elided,
+                "\n… ({elided} lines of context-only hunks elided by Jev)",
             ));
         }
 

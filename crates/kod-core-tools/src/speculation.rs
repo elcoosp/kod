@@ -574,7 +574,7 @@ mod speculation_proptests {
         /// Round-trip through well-formed JSON with a safe path.
         #[test]
         fn prop_simple_round_trip(s in safe_path()) {
-            let json = format!(r#"{{"path":"{}"}}"#, s);
+            let json = format!(r#"{{"path":"{s}"}}"#);
             prop_assert_eq!(extract_path_from_partial(&json), Some(s));
         }
 
@@ -583,7 +583,7 @@ mod speculation_proptests {
         /// a partial path is not a candidate.
         #[test]
         fn prop_incomplete_value_is_none(s in "[a-zA-Z0-9/_.-]{1,60}") {
-            let json = format!(r#"{{"path":"{}"#, s);
+            let json = format!(r#"{{"path":"{s}"#);
             prop_assert_eq!(extract_path_from_partial(&json), None);
         }
 
@@ -593,7 +593,7 @@ mod speculation_proptests {
         fn prop_non_string_path_is_none(
             v in prop::sample::select(vec!["123", "null", "[1]", "true", "{}"]),
         ) {
-            let json = format!(r#"{{"path":{}}}"#, v);
+            let json = format!(r#"{{"path":{v}}}"#);
             prop_assert_eq!(extract_path_from_partial(&json), None);
         }
 
@@ -601,7 +601,7 @@ mod speculation_proptests {
         /// quote. The fast path (valid JSON) handles this correctly.
         #[test]
         fn prop_escaped_quote_round_trip(a in safe_path(), b in safe_path()) {
-            let json = format!(r#"{{"path":"{}a\"b{}"}}"#, a, b);
+            let json = format!(r#"{{"path":"{a}a\"b{b}"}}"#);
             let expected = format!("{a}a\"b{b}");
             prop_assert_eq!(extract_path_from_partial(&json), Some(expected));
         }
@@ -615,7 +615,7 @@ mod speculation_proptests {
             s in safe_path(),
             garbage in "[a-zA-Z ]{1,20}",
         ) {
-            let json = format!(r#"{{"path":"{}"}} {}"#, s, garbage);
+            let json = format!(r#"{{"path":"{s}"}} {garbage}"#);
             prop_assert_eq!(extract_path_from_partial(&json), Some(s));
         }
 
@@ -624,7 +624,7 @@ mod speculation_proptests {
         /// just top level.
         #[test]
         fn prop_nested_path_is_found(s in safe_path()) {
-            let json = format!(r#"{{"outer":{{"path":"{}"}}}}"#, s);
+            let json = format!(r#"{{"outer":{{"path":"{s}"}}}}"#);
             prop_assert_eq!(extract_path_from_partial(&json), Some(s));
         }
     }

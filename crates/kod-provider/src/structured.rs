@@ -297,7 +297,7 @@ mod structured_extract_proptests {
             pre in arb_prose(),
             post in arb_prose(),
         ) {
-            let text = format!("{}{}{}", pre, v, post);
+            let text = format!("{pre}{v}{post}");
             let got = extract_json(&text);
             prop_assert_eq!(got, Some(v), "text={:?}", text);
         }
@@ -309,7 +309,7 @@ mod structured_extract_proptests {
             pre in arb_prose(),
             post in arb_prose(),
         ) {
-            let text = format!("{}{}{}", pre, v, post);
+            let text = format!("{pre}{v}{post}");
             let got = extract_json(&text);
             prop_assert_eq!(got, Some(v), "text={:?}", text);
         }
@@ -318,7 +318,7 @@ mod structured_extract_proptests {
         /// body is `{"k":v}` with no surrounding prose.
         #[test]
         fn prop_fenced_object_round_trips(v in arb_object()) {
-            let text = format!("Here you go:\n```json\n{}\n```\n", v);
+            let text = format!("Here you go:\n```json\n{v}\n```\n");
             let got = extract_json(&text);
             prop_assert_eq!(got, Some(v), "text={:?}", text);
         }

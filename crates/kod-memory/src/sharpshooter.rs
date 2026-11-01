@@ -776,7 +776,7 @@ mod sharpshooter_proptests {
             evidence in "[a-zA-Z ]{1,20}",
             suffix in "[a-zA-Z ]{0,20}",
         ) {
-            let prompt = format!("{}{}{}", prefix, evidence, suffix);
+            let prompt = format!("{prefix}{evidence}{suffix}");
             // No additional assumption — evidence.trim() could still
             // be non-empty; if all-whitespace, the function correctly
             // returns false.
@@ -928,7 +928,7 @@ mod sharpshooter_proptests {
                 .join("\n");
             let once = truncate_to_ceiling(&text);
             let twice = truncate_to_ceiling(&once);
-            assert_eq!(once, twice, "truncate not idempotent for {} lines", n);
+            assert_eq!(once, twice, "truncate not idempotent for {n} lines");
         }
     }
 
@@ -941,8 +941,7 @@ mod sharpshooter_proptests {
             let parsed = parse_reply(reply, 4);
             assert!(
                 parsed.is_empty(),
-                "reply {:?} should parse to nothing",
-                reply
+                "reply {reply:?} should parse to nothing"
             );
         }
     }

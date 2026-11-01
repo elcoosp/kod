@@ -127,14 +127,13 @@ impl TaskCoordinator {
         let mut tasks = self.tasks.write().await;
         let task = tasks
             .get_mut(task_id)
-            .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
+            .ok_or_else(|| KodError::InvalidState(format!("Task {task_id} not found")))?;
         match task.status {
             TaskStatus::Pending => {}
             other => {
                 return Err(KodError::InvalidState(format!(
-                    "Task {} cannot be assigned: status is {:?}. \
-                     Unassign first to move in-progress work, or use a new task.",
-                    task_id, other
+                    "Task {task_id} cannot be assigned: status is {other:?}. \
+                     Unassign first to move in-progress work, or use a new task."
                 )));
             }
         }
@@ -207,16 +206,15 @@ impl TaskCoordinator {
             let mut tasks = self.tasks.write().await;
             let task = tasks
                 .get_mut(task_id)
-                .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
+                .ok_or_else(|| KodError::InvalidState(format!("Task {task_id} not found")))?;
             let from = task.status;
             if from == status {
                 return Ok(TaskFinish::AlreadyInState);
             }
             if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
                 return Err(KodError::InvalidState(format!(
-                    "Task {} is already {:?}; refusing to transition to {:?}. \
-                     Create a new task if the work needs redoing.",
-                    task_id, from, status
+                    "Task {task_id} is already {from:?}; refusing to transition to {status:?}. \
+                     Create a new task if the work needs redoing."
                 )));
             }
             task.status = status;
@@ -260,13 +258,12 @@ impl TaskCoordinator {
             let mut tasks = self.tasks.write().await;
             let task = tasks
                 .get_mut(task_id)
-                .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
+                .ok_or_else(|| KodError::InvalidState(format!("Task {task_id} not found")))?;
             let from = task.status;
             if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
                 return Err(KodError::InvalidState(format!(
-                    "Task {} is already {:?}; refusing to unassign. Create a new task \
-                     if the work needs redoing.",
-                    task_id, from
+                    "Task {task_id} is already {from:?}; refusing to unassign. Create a new task \
+                     if the work needs redoing."
                 )));
             }
             if from == TaskStatus::Pending {

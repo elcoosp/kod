@@ -452,7 +452,7 @@ async fn contract_stream_completion_text(_provider: &Arc<dyn LlmProvider>) {
             }
         }
     }
-    assert!(saw_error.is_none(), "unexpected error: {:?}", saw_error);
+    assert!(saw_error.is_none(), "unexpected error: {saw_error:?}");
     assert!(saw_done, "stream must terminate with `Done`");
     assert_eq!(
         saw_text, "hello world",

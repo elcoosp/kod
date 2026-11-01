@@ -1145,8 +1145,7 @@ impl SwarmRunner {
             timeout_secs: u64,
         ) {
             let reason = format!(
-                "overall run timeout ({}s) reached; this agent did not complete",
-                timeout_secs,
+                "overall run timeout ({timeout_secs}s) reached; this agent did not complete",
             );
             for &idx in indices {
                 if let Some(h) = handles.get(idx) {
@@ -1165,7 +1164,7 @@ impl SwarmRunner {
                 .send(SwarmEvent::AgentFailed {
                     id: kod_types::AgentId::new(),
                     name: "(run)".to_string(),
-                    error: format!("overall run timeout ({}s) reached", timeout_secs,),
+                    error: format!("overall run timeout ({timeout_secs}s) reached",),
                 })
                 .await;
         }
@@ -2229,24 +2228,20 @@ impl SwarmRunner {
         let repo_context = self.probe_repo(goal).await;
         let repo_block = match &repo_context {
             Some(s) if !s.is_empty() => format!(
-                "\nWorking directory context:\n{}\n\nReference the \
+                "\nWorking directory context:\n{s}\n\nReference the \
                  concrete files above where a subtask touches them, \
-                 instead of naming files you have not seen.\n",
-                s
+                 instead of naming files you have not seen.\n"
             ),
             _ => String::new(),
         };
         let prompt = format!(
             "You are decomposing a task for a team of AI agents.\n\n\
-             Goal: {goal}\n{repo}\
+             Goal: {goal}\n{repo_block}\
              \nYour previous attempt had a problem:\n\n{hint}\n\n\
              Produce a new decomposition with the same JSON shape: \
              \"name\", \"description\", \"capability\", \
              \"expected_writes\". This time, no two subtasks may \
              share a path prefix in their write sets.\n",
-            goal = goal,
-            repo = repo_block,
-            hint = hint,
         );
         let text = self
             .provider
@@ -2278,10 +2273,9 @@ impl SwarmRunner {
         let repo_context = self.probe_repo(goal).await;
         let repo_block = match &repo_context {
             Some(s) if !s.is_empty() => format!(
-                "\nWorking directory context:\n{}\n\nReference the \
+                "\nWorking directory context:\n{s}\n\nReference the \
                  concrete files above where a subtask touches them, \
-                 instead of naming files you have not seen.\n",
-                s
+                 instead of naming files you have not seen.\n"
             ),
             _ => String::new(),
         };
@@ -2897,8 +2891,8 @@ mod tests {
         let mut seen: Vec<&str> = Vec::new();
         for cap in caps {
             let p = role_preamble(cap);
-            assert!(!p.is_empty(), "{:?} has an empty preamble", cap);
-            assert!(!seen.contains(&p), "{:?} shares its preamble", cap);
+            assert!(!p.is_empty(), "{cap:?} has an empty preamble");
+            assert!(!seen.contains(&p), "{cap:?} shares its preamble");
             seen.push(p);
         }
     }

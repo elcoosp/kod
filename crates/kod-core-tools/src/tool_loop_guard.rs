@@ -785,9 +785,7 @@ mod tool_loop_guard_proptests {
                 let verdict = guard.observe_round(calls, &no_results());
                 assert!(
                     verdict.is_none(),
-                    "threshold={} fired on alternating round {}",
-                    threshold,
-                    i,
+                    "threshold={threshold} fired on alternating round {i}",
                 );
             }
         }

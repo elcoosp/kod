@@ -62,7 +62,7 @@ async fn spawn_release_mock(body: Value) -> String {
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    format!("http://{}/releases/latest", addr)
+    format!("http://{addr}/releases/latest")
 }
 
 /// A release tag that is *newer* than the crate's current version. The
@@ -133,7 +133,7 @@ async fn update_with_server_error_is_err() {
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    let _guard = UpdateUrlEnv::set(&format!("http://{}/releases/latest", addr));
+    let _guard = UpdateUrlEnv::set(&format!("http://{addr}/releases/latest"));
     let err = run_update()
         .await
         .expect_err("a 500 from the release endpoint must be an error");

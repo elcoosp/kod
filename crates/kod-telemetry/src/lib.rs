@@ -438,7 +438,7 @@ mod parse_headers_proptests {
         /// A single `key=value` parses to exactly that pair, trimmed.
         #[test]
         fn prop_single_pair_round_trips(k in arb_key(), v in arb_value()) {
-            let raw = format!("{}={}", k, v);
+            let raw = format!("{k}={v}");
             let got = parse_headers(Some(&raw));
             prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
             let (gk, gv) = (&got[0].0, &got[0].1);
@@ -465,12 +465,12 @@ mod parse_headers_proptests {
             mid in "[a-zA-Z0-9]{1,8}",
             tail in "[a-zA-Z0-9]{1,8}",
         ) {
-            let raw = format!("{}={}={}", k, mid, tail);
+            let raw = format!("{k}={mid}={tail}");
             let got = parse_headers(Some(&raw));
             prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
             let (gk, gv) = (&got[0].0, &got[0].1);
             prop_assert_eq!(gk.as_str(), k.as_str());
-            let expected = format!("{}={}", mid, tail);
+            let expected = format!("{mid}={tail}");
             prop_assert_eq!(gv.as_str(), expected.as_str(), "raw={:?}", raw);
         }
 
@@ -478,7 +478,7 @@ mod parse_headers_proptests {
         /// multi-value header format.
         #[test]
         fn prop_duplicate_keys_preserved(k in arb_key(), a in arb_value(), b in arb_value()) {
-            let raw = format!("{}={},{}={}", k, a, k, b);
+            let raw = format!("{k}={a},{k}={b}");
             let got = parse_headers(Some(&raw));
             prop_assert_eq!(got.len(), 2, "raw={:?}", raw);
             prop_assert_eq!(got[0].0.as_str(), k.as_str());
@@ -495,7 +495,7 @@ mod parse_headers_proptests {
             junk in "[a-zA-Z0-9]{1,10}",
         ) {
             prop_assume!(!junk.contains('='));
-            let raw = format!("{}={},{}", good_k, good_v, junk);
+            let raw = format!("{good_k}={good_v},{junk}");
             let got = parse_headers(Some(&raw));
             prop_assert_eq!(got.len(), 1, "raw={:?} got={:?}", raw, got);
             prop_assert_eq!(got[0].0.as_str(), good_k.as_str());
@@ -504,7 +504,7 @@ mod parse_headers_proptests {
         /// Whitespace around either half is trimmed.
         #[test]
         fn prop_whitespace_is_trimmed(k in arb_key(), v in arb_value()) {
-            let raw = format!("   {}   =   {}   ", k, v);
+            let raw = format!("   {k}   =   {v}   ");
             let got = parse_headers(Some(&raw));
             prop_assert_eq!(got.len(), 1, "raw={:?}", raw);
             let (gk, gv) = (&got[0].0, &got[0].1);

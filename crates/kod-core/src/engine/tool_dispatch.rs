@@ -522,8 +522,7 @@ impl KodEngine {
                     answers.insert(
                         i,
                         format!(
-                            "(no answer within {}s — the user is away)",
-                            AWAIT_APPROVAL_SECS
+                            "(no answer within {AWAIT_APPROVAL_SECS}s — the user is away)"
                         ),
                     );
                 }
@@ -1946,7 +1945,7 @@ impl KodEngine {
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        block.push_str(&format!("`{}`: no diagnostics on this file.\n", source,));
+                        block.push_str(&format!("`{source}`: no diagnostics on this file.\n",));
                     } else {
                         block.push_str(&format!(
                             "`{}` reported {} diagnostic(s) on this file:\n\n",

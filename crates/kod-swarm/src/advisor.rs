@@ -981,7 +981,7 @@ mod normalize_non_ascii_proptests {
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric())
                 .collect();
-            assert_eq!(normalize(s), expected, "input {:?}", s);
+            assert_eq!(normalize(s), expected, "input {s:?}");
         }
     }
 }

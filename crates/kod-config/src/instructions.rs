@@ -831,7 +831,7 @@ mod instructions_proptests {
             let body = &sections[0].body;
             prop_assert!(body.contains("before"), "lost 'before': {:?}", body);
             prop_assert!(body.contains("after"), "lost 'after': {:?}", body);
-            let directive_line = format!("::: when task={}", guard);
+            let directive_line = format!("::: when task={guard}");
             prop_assert!(
                 body.contains(&directive_line),
                 "directive line did not survive as text: {:?}", body,
@@ -842,7 +842,7 @@ mod instructions_proptests {
         /// one section with `When::TaskType(X)`.
         #[test]
         fn prop_task_fence_guards_a_block(guard in "[a-zA-Z]{1,8}") {
-            let src = format!("::: when task={}\nhello\n:::\n", guard);
+            let src = format!("::: when task={guard}\nhello\n:::\n");
             let sections = parse_agents_md(&src, &from());
             prop_assert_eq!(sections.len(), 1, "src={:?}", src);
             match &sections[0].when {
@@ -856,12 +856,12 @@ mod instructions_proptests {
         /// `When::Lang`.
         #[test]
         fn prop_path_and_lang_fences(guard in "[a-z/]{1,20}") {
-            let path_src = format!("::: when path={}\nbody\n:::\n", guard);
+            let path_src = format!("::: when path={guard}\nbody\n:::\n");
             let ps = parse_agents_md(&path_src, &from());
             prop_assert_eq!(ps.len(), 1);
             prop_assert!(matches!(&ps[0].when, When::Path(p) if p == &guard),
                 "expected Path({}), got {:?}", guard, ps[0].when);
-            let lang_src = format!("::: when lang={}\nbody\n:::\n", guard);
+            let lang_src = format!("::: when lang={guard}\nbody\n:::\n");
             let ls = parse_agents_md(&lang_src, &from());
             prop_assert_eq!(ls.len(), 1);
             prop_assert!(matches!(&ls[0].when, When::Lang(p) if p == &guard),
@@ -915,8 +915,7 @@ mod instructions_proptests {
         assert!(body.contains("after"));
         assert!(
             !body.contains("::: unknown"),
-            "unknown directive was NOT dropped: {:?}",
-            body,
+            "unknown directive was NOT dropped: {body:?}",
         );
     }
 

@@ -71,8 +71,7 @@ fn empty_sse_body() -> String {
 /// One text delta followed by the terminator.
 fn text_sse_body(text: &str) -> String {
     format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\ndata: [DONE]\n\n",
-        text,
+        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\ndata: [DONE]\n\n",
     )
 }
 

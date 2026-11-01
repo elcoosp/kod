@@ -255,7 +255,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
         // panic.
         let Some((tag, text)) = line.split_at_checked(1) else {
             return Err(KodError::InvalidParameters {
-                reason: format!("diff line does not start on a char boundary: {:?}", line,),
+                reason: format!("diff line does not start on a char boundary: {line:?}",),
             });
         };
         let text = text.to_string();
@@ -285,7 +285,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
             }
             _ => {
                 return Err(KodError::InvalidParameters {
-                    reason: format!("unrecognized diff line: {:?}", line),
+                    reason: format!("unrecognized diff line: {line:?}"),
                 });
             }
         }
@@ -373,8 +373,7 @@ mod tests {
         let result = apply_unified_diff(original, patch).unwrap();
         assert!(
             !result.ends_with('\n'),
-            "patch carried the marker; result should not end with a newline: {:?}",
-            result,
+            "patch carried the marker; result should not end with a newline: {result:?}",
         );
     }
 
@@ -387,8 +386,7 @@ mod tests {
         let result = apply_unified_diff(original, patch).unwrap();
         assert!(
             result.ends_with('\n'),
-            "no marker: trailing newline must be preserved: {:?}",
-            result,
+            "no marker: trailing newline must be preserved: {result:?}",
         );
     }
 

@@ -58,7 +58,7 @@ impl MockLlm {
             let _ = axum::serve(listener, router).await;
         });
         Self {
-            base_url: format!("http://{}", addr),
+            base_url: format!("http://{addr}"),
             hits,
         }
     }

@@ -632,7 +632,7 @@ mod secret_sources_proptests {
             secret in arb_secret_like(),
             noise in arb_text(),
         ) {
-            let text = format!("{} {}", noise, secret);
+            let text = format!("{noise} {secret}");
             for d in scan_vendors(&text) {
                 let p = vendor_patterns()
                     .iter()
@@ -673,7 +673,7 @@ mod secret_sources_proptests {
             secret in arb_secret_like(),
             noise in arb_text(),
         ) {
-            let text = format!("{} {}", noise, secret);
+            let text = format!("{noise} {secret}");
             let discovered = scan_text(&text);
             let values: Vec<String> = discovered.iter().map(|d| d.value.clone()).collect();
             let v = SecretVault::with_key([11u8; 32]);

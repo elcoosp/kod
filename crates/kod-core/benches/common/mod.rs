@@ -34,8 +34,8 @@ impl BenchEnvironment {
         for i in 0..count {
             let skill_content = format!(
                 r#"---
-name: skill-{}
-description: Benchmark skill number {}
+name: skill-{i}
+description: Benchmark skill number {i}
 version: 1.0.0
 category: benchmark
 tags:
@@ -44,17 +44,16 @@ tags:
 capabilities:
   - benchmarking
 triggers:
-  - "benchmark {}"
+  - "benchmark {i}"
 ---
 
 ## Instructions
 
-Benchmark skill {} for performance testing.
-"#,
-                i, i, i, i
+Benchmark skill {i} for performance testing.
+"#
             );
 
-            let file_name = format!("skill-{}.md", i);
+            let file_name = format!("skill-{i}.md");
             fs::write(self.skills_dir.join(file_name), skill_content).unwrap();
         }
     }

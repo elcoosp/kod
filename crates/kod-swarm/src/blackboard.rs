@@ -397,8 +397,7 @@ mod render_block_proptests {
         let out = b.render_prompt_block("team", 10, 200);
         assert!(
             out.contains("- team:"),
-            "short ASCII entry should appear: {:?}",
-            out
+            "short ASCII entry should appear: {out:?}"
         );
     }
 

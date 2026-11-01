@@ -162,7 +162,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
             let entry = MemoryEntry {
                 id: kod_types::MemoryId::new(),
                 memory_type: MemoryType::ShortTerm,
-                content: format!("Memory entry {}", i),
+                content: format!("Memory entry {i}"),
                 timestamp: OffsetDateTime::now_utc(),
                 relevance: 1.0,
                 metadata: Default::default(),

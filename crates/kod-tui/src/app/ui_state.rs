@@ -305,7 +305,7 @@ impl KodApp {
             // Some terminals do not implement it and ignore the
             // sequence.
             let msg = format!("kod: turn completed in {}s", elapsed.as_secs());
-            eprint!("\x1b]9;{}\x07", msg); // tripwire:allow — OSC 9
+            eprint!("\x1b]9;{msg}\x07"); // tripwire:allow — OSC 9
         }
         Some(elapsed)
     }
@@ -1105,7 +1105,7 @@ mod duration_differential {
         for ms in [999u64, 1_000, 59_999, 60_000, 3_599_999] {
             let tui = KodApp::format_friendly_duration(Duration::from_millis(ms));
             let engine = kod_core::engine::format_duration_ms(ms);
-            assert_eq!(tui, engine, "boundary {}ms diverged", ms);
+            assert_eq!(tui, engine, "boundary {ms}ms diverged");
         }
     }
 

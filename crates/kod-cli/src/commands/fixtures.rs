@@ -190,10 +190,10 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
     }
 
     if divergent == 0 {
-        eprintln!("✓ replay clean: {} round(s) matched", cmp_len,);
+        eprintln!("✓ replay clean: {cmp_len} round(s) matched",);
         Ok(0)
     } else {
-        eprintln!("✗ replay diverged on {} round(s)", divergent);
+        eprintln!("✗ replay diverged on {divergent} round(s)");
         Ok(1)
     }
 }

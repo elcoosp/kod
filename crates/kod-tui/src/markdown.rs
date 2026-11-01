@@ -846,7 +846,7 @@ mod tests {
         let out = render(src, 20, &theme());
         for line in &out {
             let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-            assert!(w <= 20, "line too wide: {:?}", line);
+            assert!(w <= 20, "line too wide: {line:?}");
         }
         // All words preserved.
         let text = rendered_text(&out);
@@ -1106,7 +1106,7 @@ mod tests {
         let out = render(src, 15, &theme());
         for line in &out {
             let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-            assert!(w <= 15, "line too wide: {:?}", line);
+            assert!(w <= 15, "line too wide: {line:?}");
         }
         let text = rendered_text(&out);
         // The word is broken mid-way but every character survives.
@@ -1126,8 +1126,7 @@ mod tests {
         let first_span = second.spans.first().expect("span").content.clone();
         assert!(
             first_span.starts_with("  "),
-            "continuation should be indented: {:?}",
-            first_span
+            "continuation should be indented: {first_span:?}"
         );
     }
 

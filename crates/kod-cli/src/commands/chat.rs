@@ -265,9 +265,9 @@ pub async fn run_chat(
     // same inventory the TUI session sees.
     let skills_dirs = config.skills_dirs()?;
     match engine.load_skills_from_dirs(&skills_dirs).await {
-        Ok(n) if n > 0 => println!("Loaded {} skill file(s)", n),
+        Ok(n) if n > 0 => println!("Loaded {n} skill file(s)"),
         Ok(_) => {}
-        Err(e) => eprintln!("Could not load skills: {}", e),
+        Err(e) => eprintln!("Could not load skills: {e}"),
     }
     if config.skills.enable_hot_reload {
         for dir in &skills_dirs {
@@ -289,12 +289,11 @@ pub async fn run_chat(
         .clone()
         .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
     println!(
-        "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
-        model_name
+        "KOD Chat (model: {model_name}) - Type 'quit' or Ctrl+C to exit"
     );
     if let Some(sys) = &system_prompt {
         let preview = kod_types::strutil::truncate_with_ellipsis(sys, 120, "…");
-        println!("System prompt override: {}", preview);
+        println!("System prompt override: {preview}");
     }
     println!();
 
@@ -485,7 +484,7 @@ pub async fn run_chat(
                     println!("── question ──");
                     println!("{}", request.question);
                     if let Some(hint) = &request.placeholder {
-                        println!("(e.g. {})", hint);
+                        println!("(e.g. {hint})");
                     }
                     print!("> ");
                     let _ = io::stdout().flush();
@@ -665,12 +664,12 @@ pub async fn run_chat(
                     && !text.trim().is_empty()
                 {
                     println!();
-                    println!("{}", text);
+                    println!("{text}");
                     println!();
                 }
             }
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
             }
         }
     }
@@ -753,7 +752,7 @@ pub async fn run_agent_remote(
                     .and_then(|t| t.as_str())
                     .unwrap_or("");
                 if !text.trim().is_empty() {
-                    println!("Agent {}: {}", name, text);
+                    println!("Agent {name}: {text}");
                 }
                 return Ok(());
             }
@@ -797,10 +796,10 @@ pub async fn run_agent(
         ..Default::default()
     };
 
-    println!("Starting agent '{}' with goal: {}", name, goal);
+    println!("Starting agent '{name}' with goal: {goal}");
     let text = run_agent_inner(goal, &config, opts).await?;
     if let Some(text) = text {
-        println!("Agent {}: {}", name, text);
+        println!("Agent {name}: {text}");
     }
     Ok(())
 }

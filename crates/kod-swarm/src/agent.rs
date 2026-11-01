@@ -63,7 +63,7 @@ impl std::str::FromStr for Capability {
             "research" => Ok(Capability::Research),
             "debugging" => Ok(Capability::Debugging),
             "refactoring" => Ok(Capability::Refactoring),
-            _ => Err(KodError::InvalidState(format!("Unknown capability: {}", s))),
+            _ => Err(KodError::InvalidState(format!("Unknown capability: {s}"))),
         }
     }
 }
@@ -209,11 +209,11 @@ impl Agent {
         // instantaneous, which is the honest description of the work.
         self.state
             .send(AgentState::Starting)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {e:?}")))?;
 
         self.state
             .send(AgentState::Running)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {e:?}")))?;
 
         self.record_heartbeat();
 
@@ -231,7 +231,7 @@ impl Agent {
 
         self.state
             .send(AgentState::Paused)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {e:?}")))?;
 
         Ok(())
     }
@@ -247,7 +247,7 @@ impl Agent {
 
         self.state
             .send(AgentState::Running)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {e:?}")))?;
 
         self.record_heartbeat();
 
@@ -266,11 +266,11 @@ impl Agent {
                 // shutdown step is added; today the transition is
                 // instantaneous.
                 self.state.send(AgentState::Stopping).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                    KodError::InvalidState(format!("Failed to update state: {e:?}"))
                 })?;
 
                 self.state.send(AgentState::Stopped).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                    KodError::InvalidState(format!("Failed to update state: {e:?}"))
                 })?;
             }
             AgentState::Stopped => return Ok(()),

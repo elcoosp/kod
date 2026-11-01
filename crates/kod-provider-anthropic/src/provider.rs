@@ -1765,7 +1765,7 @@ mod parse_response_proptests {
             let got = parse_response(&v).expect("parse");
             let u = match got {
                 GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
-                other => panic!("expected Text, got {:?}", other),
+                other => panic!("expected Text, got {other:?}"),
             };
             let expected_prompt = input + read.unwrap_or(0) + creation.unwrap_or(0);
             prop_assert_eq!(u.prompt_tokens, expected_prompt as usize);
@@ -1797,7 +1797,7 @@ mod parse_response_proptests {
             let got = parse_response(&v).expect("parse");
             let u = match got {
                 GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
-                other => panic!("expected Text, got {:?}", other),
+                other => panic!("expected Text, got {other:?}"),
             };
             if let Some(h) = u.cache_creation_1h_tokens {
                 let cap = creation.unwrap_or(0);

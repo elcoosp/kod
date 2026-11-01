@@ -301,9 +301,9 @@ mod hygiene_proptests {
             body in "[a-z ]{0,30}",
             post in "[a-z ]{0,20}",
         ) {
-            let text = format!("{}{}{}{}{}", pre, OPEN, body, CLOSE, post);
+            let text = format!("{pre}{OPEN}{body}{CLOSE}{post}");
             let out = strip_memory_tags(&text);
-            let expected = format!("{}{}", pre, post);
+            let expected = format!("{pre}{post}");
             prop_assert_eq!(out, expected);
         }
 
@@ -315,7 +315,7 @@ mod hygiene_proptests {
             pre in "[a-z ]{0,20}",
             body in "[a-z ]{0,30}",
         ) {
-            let text = format!("{}{}{}", pre, OPEN, body);
+            let text = format!("{pre}{OPEN}{body}");
             let out = strip_memory_tags(&text);
             prop_assert_eq!(out, pre);
         }
@@ -373,8 +373,7 @@ mod hygiene_proptests {
         for p in ["ok", "done", "n/a", "na", "...", "…", "nothing", ""] {
             assert!(
                 !has_substantive_content(p),
-                "{:?} should not be substantive",
-                p
+                "{p:?} should not be substantive"
             );
         }
     }

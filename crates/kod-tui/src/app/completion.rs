@@ -183,7 +183,7 @@ impl KodApp {
             if name.starts_with('.') && !prefix.starts_with('.') {
                 continue;
             }
-            let mut candidate = format!("{}{}", dir_part, name);
+            let mut candidate = format!("{dir_part}{name}");
             // Directory detection needs a stat; do it on the candidate
             // path (the name alone has no type).
             if std::path::Path::new(&candidate).is_dir() {
@@ -289,7 +289,7 @@ impl KodApp {
         };
         let at = token.starts_with('@');
         let mut replacement = if at && !selected.starts_with('@') {
-            format!("@{}", selected)
+            format!("@{selected}")
         } else {
             selected
         };

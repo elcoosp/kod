@@ -449,7 +449,7 @@ mod query_syntax_proptests {
             key in known_key(),
             value in nonempty_value(),
         ) {
-            let q = format!("-{}:{}", key, value);
+            let q = format!("-{key}:{value}");
             let parsed = parse(&q);
             let canon = canonical(key);
             let positive = positive_field(&parsed, canon);
@@ -476,7 +476,7 @@ mod query_syntax_proptests {
             key in known_key(),
             value in nonempty_value(),
         ) {
-            let q = format!("{}:{}", key, value);
+            let q = format!("{key}:{value}");
             let parsed = parse(&q);
             let canon = canonical(key);
             let positive = positive_field(&parsed, canon);
@@ -494,7 +494,7 @@ mod query_syntax_proptests {
             scheme in "[a-z]{2,6}",
             host in "[a-z]{2,10}",
         ) {
-            let url = format!("{}://{}", scheme, host);
+            let url = format!("{scheme}://{host}");
             let parsed = parse(&url);
             prop_assert!(parsed.site.is_none(), "URL became site: {:?}", url);
             prop_assert!(parsed.filetype.is_none(), "URL became filetype: {:?}", url);
@@ -513,7 +513,7 @@ mod query_syntax_proptests {
         /// stripped.
         #[test]
         fn prop_negated_term_goes_to_excluded(term in "[a-z]{2,10}") {
-            let q = format!("-{}", term);
+            let q = format!("-{term}");
             let parsed = parse(&q);
             prop_assert!(parsed.terms.is_empty(), "negated term leaked into terms: {:?}", parsed.terms);
             prop_assert_eq!(parsed.excluded.len(), 1);
@@ -537,7 +537,7 @@ mod query_syntax_proptests {
         /// surrounding quotes stripped.
         #[test]
         fn prop_quoted_phrase_is_one_entry(content in "[a-zA-Z ]{0,20}") {
-            let q = format!("\"{}\"", content);
+            let q = format!("\"{content}\"");
             let parsed = parse(&q);
             prop_assert_eq!(parsed.phrases.len(), 1, "phrase not captured as one: {:?}", parsed);
             let first = parsed.phrases[0].as_str();

@@ -14,8 +14,8 @@ fn main() {
     let build_time = chrono::Utc::now().format("%Y-%m-%d_%H:%M:%S");
 
     // Set environment variables
-    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
-    println!("cargo:rustc-env=BUILD_TIME={}", build_time);
+    println!("cargo:rustc-env=GIT_HASH={git_hash}");
+    println!("cargo:rustc-env=BUILD_TIME={build_time}");
 
     // Rerun if git HEAD changes
     println!("cargo:rerun-if-changed=.git/HEAD");

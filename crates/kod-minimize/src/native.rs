@@ -172,7 +172,7 @@ fn pytest_json(text: &str) -> String {
             _ => {}
         }
     }
-    out.push_str(&format!("{} failed, {} passed\n", failed, passed,));
+    out.push_str(&format!("{failed} failed, {passed} passed\n",));
     out
 }
 

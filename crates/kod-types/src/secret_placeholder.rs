@@ -992,8 +992,7 @@ mod secret_vault_state_machine {
             assert_eq!(
                 a.placeholder_for(s),
                 b.placeholder_for(s),
-                "placeholder for {:?} depends on order",
-                s,
+                "placeholder for {s:?} depends on order",
             );
         }
         assert_eq!(
@@ -1038,8 +1037,8 @@ mod secret_vault_state_machine {
         let _ = v.register("sk-b");
         let text = "x sk-a y sk-b z";
         let obf = v.obfuscate(text);
-        assert!(!obf.contains("sk-a"), "sk-a survived: {:?}", obf);
-        assert!(!obf.contains("sk-b"), "sk-b survived: {:?}", obf);
+        assert!(!obf.contains("sk-a"), "sk-a survived: {obf:?}");
+        assert!(!obf.contains("sk-b"), "sk-b survived: {obf:?}");
         let (deobf, _) = v.deobfuscate(&obf);
         assert_eq!(deobf, text);
     }

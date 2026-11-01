@@ -43,7 +43,7 @@ impl LongTermMemory {
     pub fn new(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                KodError::MemoryStorage(format!("Failed to create db directory: {}", e))
+                KodError::MemoryStorage(format!("Failed to create db directory: {e}"))
             })?;
         }
 
@@ -56,23 +56,23 @@ impl LongTermMemory {
                         path.display(), e
                     ))
                 } else {
-                    KodError::MemoryDatabase(format!("Failed to open database: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open database: {e}"))
                 }
             })?;
 
         let txn = db
             .begin_write()
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to start transaction: {}", e)))?;
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to start transaction: {e}")))?;
 
         txn.open_table(MEMORY_TABLE)
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {e}")))?;
         // F2i-10: create the index table on first open so a fresh db
         // has it; an existing db gets it the first time `store` writes.
         txn.open_table(HASH_INDEX_TABLE)
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {e}")))?;
 
         txn.commit()
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
 
         let db = Arc::new(db);
         // T1-C12: one-time migration. If the hash index is empty but
@@ -105,7 +105,7 @@ impl LongTermMemory {
         let db = Arc::clone(&self.db);
         tokio::task::spawn_blocking(move || f(&db))
             .await
-            .map_err(|e| KodError::MemoryDatabase(format!("spawn_blocking join failed: {}", e)))?
+            .map_err(|e| KodError::MemoryDatabase(format!("spawn_blocking join failed: {e}")))?
     }
 
     /// F2i-10: one byte standing in for `MemoryType`, so the index key
@@ -138,7 +138,7 @@ impl LongTermMemory {
         let key = Self::index_key(hash, memory_type);
         self.blocking(move |db| {
             let txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start read transaction: {e}"))
             })?;
             let table = match txn.open_table(HASH_INDEX_TABLE) {
                 Ok(t) => t,
@@ -147,7 +147,7 @@ impl LongTermMemory {
             };
             let Some(v) = table
                 .get(key.as_slice())
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to get: {}", e)))?
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to get: {e}")))?
             else {
                 return Ok(None);
             };
@@ -183,7 +183,7 @@ impl LongTermMemory {
         {
             let read_txn = db
                 .begin_read()
-                .map_err(|e| KodError::MemoryDatabase(format!("migration read txn: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("migration read txn: {e}")))?;
             let idx_table = match read_txn.open_table(HASH_INDEX_TABLE) {
                 Ok(t) => t,
                 Err(_) => return Ok(()), // no index table yet — nothing to migrate
@@ -191,7 +191,7 @@ impl LongTermMemory {
             let idx_len = idx_table.len().unwrap_or(0);
             let mem_table = read_txn
                 .open_table(MEMORY_TABLE)
-                .map_err(|e| KodError::MemoryDatabase(format!("migration mem table: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("migration mem table: {e}")))?;
             let mem_len = mem_table.len().unwrap_or(0);
             drop(idx_table);
             drop(mem_table);
@@ -205,18 +205,18 @@ impl LongTermMemory {
             );
             let write_txn = db
                 .begin_write()
-                .map_err(|e| KodError::MemoryDatabase(format!("migration write txn: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("migration write txn: {e}")))?;
             let mut inserted = 0usize;
             {
                 let mem = write_txn
                     .open_table(MEMORY_TABLE)
-                    .map_err(|e| KodError::MemoryDatabase(format!("migration open mem: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration open mem: {e}")))?;
                 let mut idx = write_txn
                     .open_table(HASH_INDEX_TABLE)
-                    .map_err(|e| KodError::MemoryDatabase(format!("migration open idx: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration open idx: {e}")))?;
                 let iter = mem
                     .iter()
-                    .map_err(|e| KodError::MemoryDatabase(format!("migration iter: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration iter: {e}")))?;
                 for entry in iter {
                     let Ok((_k, v)) = entry else { continue };
                     let Ok(e) = serde_json::from_slice::<MemoryEntry>(v.value()) else {
@@ -235,7 +235,7 @@ impl LongTermMemory {
             }
             write_txn
                 .commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("migration commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("migration commit: {e}")))?;
             tracing::info!(inserted, "content-hash index migrated");
             Ok(())
         }
@@ -258,11 +258,11 @@ impl LongTermMemory {
 
         self.blocking(move |db| {
             let txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 // Read the old entry *first* so a content or type change
                 // can retire the old index key. Without this, an update
@@ -274,7 +274,7 @@ impl LongTermMemory {
                 let old_idx_key = table
                     .get(key.as_slice())
                     .map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to get old entry: {}", e))
+                        KodError::MemoryDatabase(format!("Failed to get old entry: {e}"))
                     })?
                     .and_then(|v| serde_json::from_slice::<MemoryEntry>(v.value()).ok())
                     .map(|old| {
@@ -285,9 +285,9 @@ impl LongTermMemory {
                     });
                 table
                     .insert(key.as_slice(), value.as_slice())
-                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {e}")))?;
                 let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 if let Some(old) = old_idx_key
                     && old.as_slice() != idx_key.as_slice()
@@ -295,10 +295,10 @@ impl LongTermMemory {
                     let _ = idx.remove(old.as_slice());
                 }
                 idx.insert(idx_key.as_slice(), idx_val.as_slice())
-                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {e}")))?;
             }
             txn.commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
             Ok(())
         })
         .await
@@ -327,22 +327,22 @@ impl LongTermMemory {
 
         self.blocking(move |db| {
             let txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 for (key, value) in &prepared {
                     table
                         .insert(key.as_slice(), value.as_slice())
                         .map_err(|e| {
-                            KodError::MemoryDatabase(format!("Failed to insert: {}", e))
+                            KodError::MemoryDatabase(format!("Failed to insert: {e}"))
                         })?;
                 }
             }
             txn.commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
             Ok(())
         })
         .await
@@ -353,11 +353,11 @@ impl LongTermMemory {
         let key = id.as_uuid().as_bytes().to_vec();
         self.blocking(move |db| {
             let txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start read transaction: {e}"))
             })?;
             let table = txn
                 .open_table(MEMORY_TABLE)
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {e}")))?;
             match table.get(key.as_slice()) {
                 Ok(Some(value)) => {
                     let entry: MemoryEntry = serde_json::from_slice(value.value())
@@ -365,7 +365,7 @@ impl LongTermMemory {
                     Ok(Some(entry))
                 }
                 Ok(None) => Ok(None),
-                Err(e) => Err(KodError::MemoryDatabase(format!("Failed to get: {}", e))),
+                Err(e) => Err(KodError::MemoryDatabase(format!("Failed to get: {e}"))),
             }
         })
         .await
@@ -381,11 +381,11 @@ impl LongTermMemory {
         let key = id.as_uuid().as_bytes().to_vec();
         self.blocking(move |db| {
             let txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 // Read the entry first so its index key can be
                 // retired. Without this, a removed entry left its
@@ -396,7 +396,7 @@ impl LongTermMemory {
                 let old_idx_key = table
                     .get(key.as_slice())
                     .map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to get old entry: {}", e))
+                        KodError::MemoryDatabase(format!("Failed to get old entry: {e}"))
                     })?
                     .and_then(|v| serde_json::from_slice::<MemoryEntry>(v.value()).ok())
                     .map(|old| {
@@ -407,16 +407,16 @@ impl LongTermMemory {
                     });
                 table
                     .remove(key.as_slice())
-                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to remove: {}", e)))?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to remove: {e}")))?;
                 if let Some(old) = old_idx_key {
                     let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                        KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                     })?;
                     let _ = idx.remove(old.as_slice());
                 }
             }
             txn.commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
             Ok(())
         })
         .await
@@ -440,11 +440,11 @@ impl LongTermMemory {
             .collect();
         self.blocking(move |db| {
             let txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 // Read every entry's index key first, then remove from
                 // both tables. Same rationale as `remove`: a batch
@@ -467,7 +467,7 @@ impl LongTermMemory {
                 }
                 if !idx_keys.is_empty() {
                     let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                        KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                     })?;
                     for k in &idx_keys {
                         let _ = idx.remove(k.as_slice());
@@ -475,7 +475,7 @@ impl LongTermMemory {
                 }
             }
             txn.commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
             Ok(keys.len())
         })
         .await
@@ -485,15 +485,15 @@ impl LongTermMemory {
     pub async fn get_all(&self) -> Result<Vec<MemoryEntry>> {
         self.blocking(|db| {
             let txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start read transaction: {e}"))
             })?;
             let table = txn
                 .open_table(MEMORY_TABLE)
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {e}")))?;
             let mut entries = Vec::new();
             for entry in table
                 .iter()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {e}")))?
             {
                 match entry {
                     Ok((_, value)) => match serde_json::from_slice::<MemoryEntry>(value.value()) {
@@ -611,13 +611,13 @@ impl LongTermMemory {
         // every entry.
         self.blocking(|db| {
             let txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             let table = txn
                 .open_table(MEMORY_TABLE)
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {e}")))?;
             let n = table.len().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to read table len: {}", e))
+                KodError::MemoryDatabase(format!("Failed to read table len: {e}"))
             })?;
             Ok(n as usize)
         })
@@ -656,15 +656,15 @@ impl LongTermMemory {
     pub async fn clear(&self) -> Result<()> {
         self.blocking(|db| {
             let txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {e}"))
             })?;
             {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    KodError::MemoryDatabase(format!("Failed to open table: {e}"))
                 })?;
                 let keys: Vec<Vec<u8>> = table
                     .iter()
-                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {e}")))?
                     .filter_map(|entry| match entry {
                         Ok((key, _)) => Some(key.value().to_vec()),
                         Err(e) => {
@@ -675,12 +675,12 @@ impl LongTermMemory {
                     .collect();
                 for key in keys {
                     table.remove(key.as_slice()).map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to remove: {}", e))
+                        KodError::MemoryDatabase(format!("Failed to remove: {e}"))
                     })?;
                 }
             }
             txn.commit()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {e}")))?;
             Ok(())
         })
         .await

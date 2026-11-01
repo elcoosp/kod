@@ -70,7 +70,7 @@ fn describe_path_error(path: &std::path::Path, err: &std::io::Error) -> String {
                      its contents, or read a specific file inside it.",
                 )
             } else {
-                format!("{}: {p}", err)
+                format!("{err}: {p}")
             }
         }
     }
@@ -800,7 +800,7 @@ impl Tool for WriteFileTool {
                 }
             };
             use std::io::Write;
-            if let Err(e) = write!(file, "{}", content) {
+            if let Err(e) = write!(file, "{content}") {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
             // BUG-D-12: every other write path persists durably; the
@@ -1888,7 +1888,7 @@ impl Tool for GrepTool {
         // This site runs per tool call (up to dozens per turn on a
         // grep-heavy session).
         let pattern_to_compile = if case_insensitive {
-            format!("(?i){}", pattern)
+            format!("(?i){pattern}")
         } else {
             pattern.to_string()
         };
@@ -1896,8 +1896,7 @@ impl Tool for GrepTool {
             Ok(r) => r,
             Err(e) => {
                 return Ok(ToolResult::Error(format!(
-                    "invalid regex {:?}: {}",
-                    pattern, e
+                    "invalid regex {pattern:?}: {e}"
                 )));
             }
         };
@@ -2952,7 +2951,7 @@ mod tests {
                 let body = v["content"].as_str().unwrap();
                 assert_eq!(body.len(), MAX_READ_BYTES);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -2987,7 +2986,7 @@ mod tests {
             ToolResult::Error(msg) => {
                 assert!(msg.contains("blocker"), "error should name the path: {msg}");
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected ToolResult::Error, got {other:?}"),
         }
     }
 
@@ -3019,7 +3018,7 @@ mod tests {
                     "hex preview should start with the PNG signature: {hex}"
                 );
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3039,7 +3038,7 @@ mod tests {
                 assert_eq!(v["binary"], false);
                 assert_eq!(v["content"], "fn main() {}\n");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3061,7 +3060,7 @@ mod tests {
                 assert_eq!(v["binary"], false);
                 assert!(v["content"].as_str().unwrap().contains("café"));
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3090,7 +3089,7 @@ mod tests {
                     "message should suggest the fix: {msg}"
                 );
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected ToolResult::Error, got {other:?}"),
         }
     }
 
@@ -3115,7 +3114,7 @@ mod tests {
                     "message should name the path: {msg}"
                 );
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected ToolResult::Error, got {other:?}"),
         }
     }
 
@@ -3182,7 +3181,7 @@ mod tests {
                 assert_eq!(v["truncated"], false);
                 assert_eq!(v["content"], "hello world");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3206,7 +3205,7 @@ mod tests {
                 // so the returned length is exactly the cap.
                 assert_eq!(out.len(), MAX_CMD_OUTPUT_BYTES);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3259,7 +3258,7 @@ mod tests {
                 // Nothing on stdout — sleep produces no output.
                 assert_eq!(v["stdout"], "");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3306,7 +3305,7 @@ mod tests {
                 assert_eq!(v["job_id"], "job-1");
                 assert_eq!(v["timed_out"], true);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
         // The hook received the command text.
         let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
@@ -3337,7 +3336,7 @@ mod tests {
                 assert_eq!(v["timed_out"], true, "{v}");
                 assert_ne!(v["background"], true, "no adopter: no background flag: {v}");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3356,7 +3355,7 @@ mod tests {
                 assert_eq!(v["stdout"], "hello\n");
                 assert_eq!(v["exit_code"], 0);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3385,10 +3384,10 @@ mod tests {
         match result {
             ToolResult::Success(v) => {
                 let hits = v["results"].as_array().unwrap();
-                assert_eq!(hits.len(), 1, "got {:?}", hits);
+                assert_eq!(hits.len(), 1, "got {hits:?}");
                 assert_eq!(hits[0]["text"], "needle");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3413,9 +3412,9 @@ mod tests {
         match result {
             ToolResult::Success(v) => {
                 let hits = v["results"].as_array().unwrap();
-                assert_eq!(hits.len(), 2, "got {:?}", hits);
+                assert_eq!(hits.len(), 2, "got {hits:?}");
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3436,7 +3435,7 @@ mod tests {
             ToolResult::Success(v) => {
                 assert_eq!(v["results"].as_array().unwrap().len(), 1);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
 
         let params = serde_json::json!({
@@ -3449,7 +3448,7 @@ mod tests {
             ToolResult::Success(v) => {
                 assert_eq!(v["results"].as_array().unwrap().len(), 3);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3483,7 +3482,7 @@ mod tests {
                 assert_eq!(skipped.len(), 1, "huge.log should be skipped");
                 assert!(skipped[0].as_str().unwrap().ends_with("huge.log"));
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3509,7 +3508,7 @@ mod tests {
                     "nothing should be skipped at this size"
                 );
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3527,7 +3526,7 @@ mod tests {
             ToolResult::Error(msg) => {
                 assert!(msg.contains("invalid regex"), "got: {msg}");
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected ToolResult::Error, got {other:?}"),
         }
     }
 
@@ -3554,7 +3553,7 @@ mod tests {
                 assert_eq!(v["total"], 1);
                 assert_eq!(v["truncated"], false);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3577,7 +3576,7 @@ mod tests {
                 assert_eq!(v["files"].as_array().unwrap().len(), 2);
                 assert_eq!(v["total"], 2);
             }
-            other => panic!("expected success, got {:?}", other),
+            other => panic!("expected success, got {other:?}"),
         }
     }
 
@@ -3599,7 +3598,7 @@ mod tests {
                 );
                 assert!(msg.contains("does-not-exist"));
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected ToolResult::Error, got {other:?}"),
         }
     }
 }

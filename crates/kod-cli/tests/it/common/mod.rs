@@ -69,7 +69,7 @@ Output for {} test.
             category,
             triggers
                 .iter()
-                .map(|t| format!("  - \"{}\"", t))
+                .map(|t| format!("  - \"{t}\""))
                 .collect::<Vec<_>>()
                 .join("\n"),
             name,
@@ -77,7 +77,7 @@ Output for {} test.
             name,
         );
 
-        let file_name = format!("{}.md", name);
+        let file_name = format!("{name}.md");
         fs::write(self.skills_dir.join(file_name), skill_content).unwrap();
     }
 
@@ -139,8 +139,7 @@ pub fn run_kod_command(args: &[&str], working_dir: &Path) -> Result<String, Stri
 #[allow(dead_code)]
 pub fn create_mock_response(prompt: &str) -> String {
     format!(
-        "Mock response for: {}\n\nThis is a test response that simulates an LLM output.",
-        prompt
+        "Mock response for: {prompt}\n\nThis is a test response that simulates an LLM output."
     )
 }
 

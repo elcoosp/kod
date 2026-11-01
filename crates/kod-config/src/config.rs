@@ -496,10 +496,10 @@ impl KodConfig {
     /// Load configuration from a specific path
     pub fn load_from(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| KodError::Config(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| KodError::Config(format!("Failed to read config file: {e}")))?;
 
         let config: KodConfig = toml::from_str(&content)
-            .map_err(|e| KodError::Config(format!("Failed to parse config: {}", e)))?;
+            .map_err(|e| KodError::Config(format!("Failed to parse config: {e}")))?;
 
         Ok(config)
     }
@@ -508,11 +508,11 @@ impl KodConfig {
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| KodError::Config(format!("Failed to create config dir: {}", e)))?;
+                .map_err(|e| KodError::Config(format!("Failed to create config dir: {e}")))?;
         }
 
         let content = toml::to_string_pretty(self)
-            .map_err(|e| KodError::Config(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| KodError::Config(format!("Failed to serialize config: {e}")))?;
 
         // Atomic write: a crash/ENOSPC mid-write previously truncated
         // the user's config.toml. tmp + fsync + rename.
@@ -532,13 +532,13 @@ impl KodConfig {
         {
             use std::io::Write as _;
             let mut f = std::fs::File::create(&tmp)
-                .map_err(|e| KodError::Config(format!("Failed to create temp config: {}", e)))?;
+                .map_err(|e| KodError::Config(format!("Failed to create temp config: {e}")))?;
             f.write_all(content.as_bytes())
                 .and_then(|_| f.sync_all())
-                .map_err(|e| KodError::Config(format!("Failed to write temp config: {}", e)))?;
+                .map_err(|e| KodError::Config(format!("Failed to write temp config: {e}")))?;
         }
         std::fs::rename(&tmp, path)
-            .map_err(|e| KodError::Config(format!("Failed to commit config: {}", e)))?;
+            .map_err(|e| KodError::Config(format!("Failed to commit config: {e}")))?;
 
         Ok(())
     }
@@ -590,8 +590,7 @@ impl KodConfig {
             crate::MemoryScope::Project => {
                 let cwd = std::env::current_dir().map_err(|e| {
                     KodError::Config(format!(
-                        "Could not determine working directory for project-scoped memory: {}",
-                        e
+                        "Could not determine working directory for project-scoped memory: {e}"
                     ))
                 })?;
                 Ok(cwd.join(".kod").join("memory.redb"))
@@ -637,7 +636,7 @@ impl KodConfig {
         let home = dirs::home_dir()
             .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
         let cwd = std::env::current_dir().map_err(|e| {
-            KodError::Config(format!("Could not determine working directory: {}", e))
+            KodError::Config(format!("Could not determine working directory: {e}"))
         })?;
         // Delta §14.2: include the common foreign skill directories
         // so a user who already curates `.claude/skills` (or
@@ -1270,8 +1269,7 @@ mod recover_sections_proptests {
         let r = KodConfig::recover_sections(&path).expect("parse error is swallowed");
         assert!(
             r.is_none(),
-            "syntactically invalid TOML must return Ok(None), got {:?}",
-            r,
+            "syntactically invalid TOML must return Ok(None), got {r:?}",
         );
     }
 

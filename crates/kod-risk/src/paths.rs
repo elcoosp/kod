@@ -551,14 +551,14 @@ mod paths_proptests {
 
         #[test]
         fn prop_ssh_is_never_safe(suffix in "[a-z]{0,8}") {
-            let raw = format!("~/.ssh/{}", suffix);
+            let raw = format!("~/.ssh/{suffix}");
             let (d, why) = classify(&raw, &ctx());
             prop_assert_ne!(d, PathDanger::Safe, "{:?} classified Safe ({})", raw, why);
         }
 
         #[test]
         fn prop_etc_with_traversal_is_never_safe(prefix in "(\\.\\.?/){0,4}") {
-            let raw = format!("/tmp/{}etc/passwd", prefix);
+            let raw = format!("/tmp/{prefix}etc/passwd");
             let (d, why) = classify(&raw, &ctx());
             prop_assert_ne!(d, PathDanger::Safe, "{:?} classified Safe ({})", raw, why);
         }

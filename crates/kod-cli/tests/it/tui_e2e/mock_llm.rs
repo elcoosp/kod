@@ -502,10 +502,10 @@ async fn log_request(
     // Content-Length matters for the SSE POST: a chunked or truncated
     // body would explain a hang without a corresponding log line.
     if let Some(cl) = headers.get(axum::http::header::CONTENT_LENGTH) {
-        eprintln!("mock:   content-length: {:?}", cl);
+        eprintln!("mock:   content-length: {cl:?}");
     }
     if let Some(ct) = headers.get(axum::http::header::CONTENT_TYPE) {
-        eprintln!("mock:   content-type: {:?}", ct);
+        eprintln!("mock:   content-type: {ct:?}");
     }
     let mut resp = next.run(req).await;
     // Force the connection closed after every response. reqwest's

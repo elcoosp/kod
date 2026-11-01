@@ -422,7 +422,7 @@ fn sanitize_in_place(
     // 6. Recurse by role.
     let keys: Vec<String> = obj.keys().cloned().collect();
     for key in keys {
-        let child_path = format!("{path}/{}", key);
+        let child_path = format!("{path}/{key}");
         match role_of(&key) {
             KeywordRole::Subschema => {
                 if let Some(v) = obj.get_mut(&key) {

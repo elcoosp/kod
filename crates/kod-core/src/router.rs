@@ -1348,7 +1348,7 @@ impl TaskRouter {
                 let listed: Vec<String> = names
                     .iter()
                     .take(MAX_INVENTORY)
-                    .map(|(n, d)| format!("- {}: {}", n, d))
+                    .map(|(n, d)| format!("- {n}: {d}"))
                     .collect();
                 let more = if names.len() > MAX_INVENTORY {
                     format!(
@@ -1439,13 +1439,12 @@ impl TaskRouter {
                             } else {
                                 out.to_string()
                             };
-                            prompt.push_str(&format!("Output:\n{}\n\n", shown));
+                            prompt.push_str(&format!("Output:\n{shown}\n\n"));
                         }
                         let extra = skill.examples.len().saturating_sub(MAX_SKILL_EXAMPLES);
                         if extra > 0 {
                             prompt.push_str(&format!(
-                                "…and {} more example(s) in the skill file.\n\n",
-                                extra
+                                "…and {extra} more example(s) in the skill file.\n\n"
                             ));
                         }
                     }
@@ -1483,8 +1482,7 @@ impl TaskRouter {
 
         // Add user input
         prompt.push_str(&format!(
-            "## Conversation so far\n\n{}\n\n## User Request\n\n{}",
-            history, input
+            "## Conversation so far\n\n{history}\n\n## User Request\n\n{input}"
         ));
 
         Ok(prompt)

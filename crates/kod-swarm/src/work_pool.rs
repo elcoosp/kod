@@ -936,8 +936,7 @@ mod take_batch_proptests {
         let result = pool.take_batch(&agent_id);
         assert!(
             result.is_none(),
-            "zero budget returned {:?}; expected None (nothing can be taken)",
-            result,
+            "zero budget returned {result:?}; expected None (nothing can be taken)",
         );
     }
 

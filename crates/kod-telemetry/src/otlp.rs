@@ -659,7 +659,7 @@ mod otlp_proptests {
         let payload = turn_payload(&cfg, &r);
         let mut keys = BTreeSet::new();
         collect_attribute_keys(&payload, &mut keys);
-        assert_eq!(keys.len(), 11, "expected 11 attributes, got {:?}", keys);
+        assert_eq!(keys.len(), 11, "expected 11 attributes, got {keys:?}");
     }
 
     /// Control: the tool payload always has exactly three
@@ -681,6 +681,6 @@ mod otlp_proptests {
         let payload = tool_payload(&cfg, &r);
         let mut keys = BTreeSet::new();
         collect_attribute_keys(&payload, &mut keys);
-        assert_eq!(keys.len(), 3, "expected 3 attributes, got {:?}", keys);
+        assert_eq!(keys.len(), 3, "expected 3 attributes, got {keys:?}");
     }
 }

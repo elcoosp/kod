@@ -119,7 +119,7 @@ impl std::fmt::Display for RejectReason {
                 // `r#type` cannot appear inside a format string (raw
                 // identifiers are not supported there); pass it as a
                 // positional argument.
-                write!(f, "`{}:` commit touches `{path}`", r#type)
+                write!(f, "`{type}:` commit touches `{path}`")
             }
         }
     }
@@ -504,8 +504,7 @@ mod score_change_proptests {
             assert_eq!(
                 kw.trim(),
                 *kw,
-                "keyword {:?} has leading/trailing whitespace",
-                kw,
+                "keyword {kw:?} has leading/trailing whitespace",
             );
         }
     }
@@ -516,7 +515,7 @@ mod score_change_proptests {
     #[test]
     fn control_all_weights_positive() {
         for (kw, w) in PRIORITY_WEIGHTS {
-            assert!(*w > 0, "keyword {:?} has non-positive weight {}", kw, w);
+            assert!(*w > 0, "keyword {kw:?} has non-positive weight {w}");
         }
     }
 
@@ -547,11 +546,7 @@ mod score_change_proptests {
                     let inner_score = score_change(inner);
                     assert!(
                         outer_score > inner_score,
-                        "superset {:?} scored {} (not > than subset {:?} = {})",
-                        outer,
-                        outer_score,
-                        inner,
-                        inner_score,
+                        "superset {outer:?} scored {outer_score} (not > than subset {inner:?} = {inner_score})",
                     );
                     found = true;
                 }
@@ -681,8 +676,7 @@ mod validate_proptests {
             assert_eq!(
                 validate(&p),
                 Err(RejectReason::NoPaths),
-                "type {:?} with empty changed_paths must return NoPaths, not panic or mismatch",
-                t,
+                "type {t:?} with empty changed_paths must return NoPaths, not panic or mismatch",
             );
         }
         assert!(

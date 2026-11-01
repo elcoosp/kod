@@ -34,7 +34,7 @@ pub async fn run_doctor(json: bool) -> Result<()> {
         let value = report.to_json();
         let pretty = serde_json::to_string_pretty(&value)
             .map_err(|e| KodError::Serialization(e.to_string()))?;
-        println!("{}", pretty);
+        println!("{pretty}");
         if report.has_failures() {
             return Err(kod_error::KodError::Internal(
                 "admin: fatal check failed".to_string(),
@@ -141,7 +141,7 @@ pub async fn run_init(force: bool) -> Result<()> {
         println!("  {:<18} {}", p.name, p.description);
         println!("    model:    {}", p.model);
         if let Some(cmd) = p.install_command {
-            println!("    install:  {}", cmd);
+            println!("    install:  {cmd}");
         }
     }
     println!();
@@ -250,9 +250,9 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
     }
     for m in &shown {
         if m.id.as_str() == config.llm.default_endpoint().model {
-            println!("  - {}  (current)", m);
+            println!("  - {m}  (current)");
         } else {
-            println!("  - {}", m);
+            println!("  - {m}");
         }
     }
     Ok(())
@@ -270,8 +270,8 @@ pub async fn run_update() -> Result<()> {
     let url = std::env::var("KOD_UPDATE_URL")
         .unwrap_or_else(|_| format!("https://api.github.com/repos/{repo}/releases/latest"));
 
-    println!("Current: v{}", current);
-    println!("Checking {} …", url);
+    println!("Current: v{current}");
+    println!("Checking {url} …");
 
     let client = reqwest::Client::builder()
         .user_agent(concat!("kod/", env!("CARGO_PKG_VERSION")))
@@ -322,14 +322,14 @@ pub async fn run_update() -> Result<()> {
 
     if versions_equal(current, tag_clean) || version_is_older(tag_clean, current) {
         println!();
-        println!("You are on the latest release (v{}).", current);
+        println!("You are on the latest release (v{current}).");
         return Ok(());
     }
 
     println!();
-    println!("A newer release is available: {} → {}", current, tag_clean);
+    println!("A newer release is available: {current} → {tag_clean}");
     if !html_url.is_empty() {
-        println!("Release notes: {}", html_url);
+        println!("Release notes: {html_url}");
     }
     println!();
     println!("To update, reinstall from source:");
@@ -359,7 +359,7 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
                     .collect();
                 let s = serde_json::to_string_pretty(&arr)
                     .map_err(|e| KodError::Serialization(e.to_string()))?;
-                println!("{}", s);
+                println!("{s}");
             } else {
                 println!("Built-in profiles:\n");
                 for p in kod_config::profiles::PRESETS {
@@ -368,7 +368,7 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
                     println!("    base_url:       {}", p.base_url);
                     println!("    context_window: {}", p.context_window);
                     if let Some(cmd) = p.install_command {
-                        println!("    install:        {}", cmd);
+                        println!("    install:        {cmd}");
                     }
                     println!();
                 }
@@ -444,7 +444,7 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
             if let Some(cmd) = profile.install_command {
                 println!();
                 println!("Next step (if not already installed):");
-                println!("  {}", cmd);
+                println!("  {cmd}");
             }
             Ok(())
         }
@@ -525,8 +525,8 @@ pub async fn run_policy(action: PolicyAction) -> Result<()> {
             let parsed = parse_kv_args(&args)?;
             let empty_denies = std::collections::HashSet::new();
             let decision = policy.decide(&tool, &parsed, &cwd, &empty_denies);
-            println!("tool:    {}", tool);
-            println!("args:    {}", parsed);
+            println!("tool:    {tool}");
+            println!("args:    {parsed}");
             println!("outcome: {:?}", decision.outcome);
             println!("rule:    {}", decision.rule);
             println!("source:  {:?}", decision.source);
@@ -593,7 +593,7 @@ pub async fn run_tests() -> Result<()> {
     {
         let (registry, _default_model, _routing) = kod_core::build_registry(&config.llm, None)?;
         let endpoint_names = registry.names();
-        println!("  Provider setup: OK (endpoints={:?})", endpoint_names);
+        println!("  Provider setup: OK (endpoints={endpoint_names:?})");
     }
 
     // Test 4: Skill loading across all standard directories
@@ -623,12 +623,12 @@ pub async fn run_map(max_chars: usize) -> Result<()> {
     let cwd = match std::env::var_os("KOD_MAP_ROOT") {
         Some(root) if !root.is_empty() => std::path::PathBuf::from(root),
         _ => std::env::current_dir().map_err(|e| {
-            KodError::Config(format!("Could not determine working directory: {}", e))
+            KodError::Config(format!("Could not determine working directory: {e}"))
         })?,
     };
     let map = kod_core_quality::repomap::build_repo_map(&cwd);
     let rendered = map.render(max_chars);
-    print!("{}", rendered);
+    print!("{rendered}");
     eprintln!(
         "{} files, {} symbols, {} chars (budget {})",
         map.file_count(),
@@ -800,7 +800,7 @@ pub async fn run_sandbox_check() -> Result<()> {
         Err(e) => {
             println!("Status:   unavailable");
             println!();
-            println!("{}", e);
+            println!("{e}");
             println!();
             #[cfg(target_os = "linux")]
             {
@@ -893,18 +893,18 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
         });
         let s = serde_json::to_string_pretty(&value)
             .map_err(|e| KodError::Serialization(e.to_string()))?;
-        println!("{}", s);
+        println!("{s}");
     } else {
         if !created.is_empty() {
             println!("Created:");
             for p in &created {
-                println!("  ✓ {}", p);
+                println!("  ✓ {p}");
             }
         }
         if !failed.is_empty() {
             println!("Failures:");
             for (p, e) in &failed {
-                println!("  ✗ {} — {}", p, e);
+                println!("  ✗ {p} — {e}");
             }
         }
         if created.is_empty() && failed.is_empty() {
@@ -1038,7 +1038,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                 println!("  {:<16} {}", d.name, d.description);
             }
             for (name, desc) in CORE_ONLY {
-                println!("  {:<16} {}", name, desc);
+                println!("  {name:<16} {desc}");
             }
             Ok(())
         }
@@ -1049,8 +1049,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
             // claiming it does not exist.
             if let Some((n, desc)) = CORE_ONLY.iter().find(|(n, _)| *n == name) {
                 println!(
-                    "{}: {}\n\nengine-scoped: registered by KodEngine::start, not by `kod tools`.\nRun `kod tools list` to see the full inventory.",
-                    n, desc
+                    "{n}: {desc}\n\nengine-scoped: registered by KodEngine::start, not by `kod tools`.\nRun `kod tools list` to see the full inventory."
                 );
                 return Ok(());
             }
@@ -1074,11 +1073,11 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                     });
                     let s = serde_json::to_string_pretty(&json)
                         .map_err(|e| KodError::Serialization(e.to_string()))?;
-                    println!("{}", s);
+                    println!("{s}");
                     Ok(())
                 }
                 None => {
-                    eprintln!("No tool named {:?}. Try `kod tools`.", name);
+                    eprintln!("No tool named {name:?}. Try `kod tools`.");
                     return Err(kod_error::KodError::Internal(
                         "admin: fatal check failed".to_string(),
                     ));

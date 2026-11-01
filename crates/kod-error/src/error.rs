@@ -392,15 +392,15 @@ impl KodError {
     /// Get a user-friendly error message
     pub fn user_message(&self) -> String {
         match self {
-            KodError::Provider(msg) => format!("The AI provider encountered an issue: {}", msg),
+            KodError::Provider(msg) => format!("The AI provider encountered an issue: {msg}"),
             KodError::SkillNotFound { skill_id } => {
-                format!("The skill '{}' could not be found", skill_id)
+                format!("The skill '{skill_id}' could not be found")
             }
             KodError::AgentNotFound { agent_id } => {
-                format!("The agent '{}' is not available", agent_id)
+                format!("The agent '{agent_id}' is not available")
             }
             KodError::PermissionDenied { action, reason } => {
-                format!("Permission denied for '{}': {}", action, reason)
+                format!("Permission denied for '{action}': {reason}")
             }
             _ => self.to_string(),
         }

@@ -62,8 +62,7 @@ impl AgentSwarm {
         let mut agents = self.agents.write().await;
         if agents.contains_key(&agent_id) {
             return Err(KodError::InvalidState(format!(
-                "Agent {} already in swarm",
-                agent_id
+                "Agent {agent_id} already in swarm"
             )));
         }
         agents.insert(agent_id.clone(), agent);
@@ -98,8 +97,7 @@ impl AgentSwarm {
                 Some(a) => a,
                 None => {
                     return Err(KodError::InvalidState(format!(
-                        "Agent {} not in swarm",
-                        agent_id
+                        "Agent {agent_id} not in swarm"
                     )));
                 }
             }
@@ -167,7 +165,7 @@ impl AgentSwarm {
         let agent = self
             .get_agent(agent_id)
             .await
-            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
         agent.start().await
     }
 
@@ -176,7 +174,7 @@ impl AgentSwarm {
         let agent = self
             .get_agent(agent_id)
             .await
-            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
         agent.pause().await
     }
 
@@ -185,7 +183,7 @@ impl AgentSwarm {
         let agent = self
             .get_agent(agent_id)
             .await
-            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
         agent.resume().await
     }
 
@@ -194,7 +192,7 @@ impl AgentSwarm {
         let agent = self
             .get_agent(agent_id)
             .await
-            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
         agent.stop().await
     }
 

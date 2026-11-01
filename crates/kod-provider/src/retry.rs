@@ -867,7 +867,7 @@ mod text_hint_proptests {
         /// the numbers or units it contains.
         #[test]
         fn prop_no_cue_returns_none(prefix in "[a-zA-Z ]{0,20}", n in 1u64..1000, unit in prop::sample::select(UNITS_SECS)) {
-            let text = format!("{}{}{}", prefix, n, unit);
+            let text = format!("{prefix}{n}{unit}");
             // Ensure the string cannot accidentally contain a cue.
             prop_assume!(
                 !text.to_ascii_lowercase().contains("try again in")
@@ -892,7 +892,7 @@ mod text_hint_proptests {
             n in 1u64..1000,
             unit in prop::sample::select(UNITS_SECS),
         ) {
-            let lower = format!("retry after {} {}", n, unit);
+            let lower = format!("retry after {n} {unit}");
             let upper = lower.to_ascii_uppercase();
             let mixed = lower
                 .chars()
@@ -910,7 +910,7 @@ mod text_hint_proptests {
             n in 0u64..100_000,
             unit in prop::sample::select(UNITS_SECS),
         ) {
-            let text = format!("{}{} {}", cue, n, unit);
+            let text = format!("{cue}{n} {unit}");
             prop_assert_eq!(
                 text_hint_secs(&text),
                 Some(n),
@@ -921,14 +921,14 @@ mod text_hint_proptests {
         /// Minutes multiply by 60.
         #[test]
         fn prop_minutes_multiply(n in 0u64..10_000, unit in prop::sample::select(UNITS_MINS)) {
-            let text = format!("retry after {} {}", n, unit);
+            let text = format!("retry after {n} {unit}");
             prop_assert_eq!(text_hint_secs(&text), Some(n.saturating_mul(60)));
         }
 
         /// Hours multiply by 3600.
         #[test]
         fn prop_hours_multiply(n in 0u64..10_000, unit in prop::sample::select(UNITS_HOURS)) {
-            let text = format!("retry after {} {}", n, unit);
+            let text = format!("retry after {n} {unit}");
             prop_assert_eq!(text_hint_secs(&text), Some(n.saturating_mul(3600)));
         }
 
@@ -946,7 +946,7 @@ mod text_hint_proptests {
         /// digits immediately after the cue, modulo whitespace and `~`).
         #[test]
         fn prop_no_digits_after_cue_returns_none(filler in "[a-zA-Z ]{1,20}") {
-            let text = format!("retry after {}", filler);
+            let text = format!("retry after {filler}");
             // Filler starts with a letter, so no digits follow the cue.
             prop_assume!(filler.chars().next().map(|c| !c.is_ascii_digit()).unwrap_or(true));
             prop_assert_eq!(text_hint_secs(&text), None);

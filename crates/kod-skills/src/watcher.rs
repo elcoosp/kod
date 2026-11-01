@@ -110,11 +110,11 @@ impl SkillWatcher {
                 }
             },
         )
-        .map_err(|e| KodError::Internal(format!("Failed to create watcher: {}", e)))?;
+        .map_err(|e| KodError::Internal(format!("Failed to create watcher: {e}")))?;
 
         watcher
             .watch(watch_dir, RecursiveMode::Recursive)
-            .map_err(|e| KodError::Internal(format!("Failed to watch directory: {}", e)))?;
+            .map_err(|e| KodError::Internal(format!("Failed to watch directory: {e}")))?;
 
         Ok((
             Self {

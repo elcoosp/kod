@@ -313,7 +313,7 @@ mod behavioral_proptests {
             suffix in "[a-z]{1,5}",
         ) {
             for cue in ["ugh", "ffs", "nah"] {
-                let text = format!("{}{}{}", prefix, cue, suffix);
+                let text = format!("{prefix}{cue}{suffix}");
                 let lower = text.to_ascii_lowercase();
                 prop_assert_eq!(
                     count_cue(&lower, cue),
@@ -333,7 +333,7 @@ mod behavioral_proptests {
             post in "[^a-zA-Z0-9]{1,3}",
         ) {
             for cue in ["ugh", "ffs", "nah"] {
-                let text = format!("{}{}{}", pre, cue, post);
+                let text = format!("{pre}{cue}{post}");
                 let lower = text.to_ascii_lowercase();
                 prop_assert_eq!(
                     count_cue(&lower, cue),
@@ -373,7 +373,7 @@ mod behavioral_proptests {
             run in "[A-Z]{0,10}",
             suffix in "[a-z ]{0,10}",
         ) {
-            let line = format!("{}{}{}", prefix, run, suffix);
+            let line = format!("{prefix}{run}{suffix}");
             let want = line
                 .chars()
                 .scan(0usize, |acc, c| {
@@ -389,8 +389,8 @@ mod behavioral_proptests {
     #[test]
     fn ugh_does_not_fire_inside_common_words() {
         for word in ["enough", "rough", "tough", "laugh", "through"] {
-            let s = analyze(&format!("that is {}", word));
-            assert_eq!(s.anguish, 0, "{:?} should NOT score anguish", word);
+            let s = analyze(&format!("that is {word}"));
+            assert_eq!(s.anguish, 0, "{word:?} should NOT score anguish");
         }
     }
 
@@ -400,7 +400,7 @@ mod behavioral_proptests {
     fn ugh_alone_still_fires() {
         for text in ["ugh", "ugh!", "ugh.", "ugh,", "well ugh then"] {
             let s = analyze(text);
-            assert_eq!(s.anguish, 1, "{:?} should score anguish", text);
+            assert_eq!(s.anguish, 1, "{text:?} should score anguish");
         }
     }
 
@@ -409,7 +409,7 @@ mod behavioral_proptests {
     fn ffs_does_not_fire_inside_ffs_words() {
         for word in ["offs", "staffs", "offsets"] {
             let s = analyze(word);
-            assert_eq!(s.anguish, 0, "{:?} should NOT score anguish", word);
+            assert_eq!(s.anguish, 0, "{word:?} should NOT score anguish");
         }
     }
 
@@ -418,7 +418,7 @@ mod behavioral_proptests {
     fn ffs_alone_still_fires() {
         for text in ["ffs", "ffs!", "ffs.", "oh ffs"] {
             let s = analyze(text);
-            assert_eq!(s.anguish, 1, "{:?} should score anguish", text);
+            assert_eq!(s.anguish, 1, "{text:?} should score anguish");
         }
     }
 

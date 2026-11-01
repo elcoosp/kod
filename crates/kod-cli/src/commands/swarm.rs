@@ -99,12 +99,12 @@ pub async fn run_swarm_remote(
                                     .join(", ")
                             })
                             .unwrap_or_default();
-                        println!("  \u{26a0} {} \u{2014} written by {}", file, agents);
+                        println!("  \u{26a0} {file} \u{2014} written by {agents}");
                     }
                 }
 
                 println!("\n================ merged ================\n");
-                println!("{}", merged);
+                println!("{merged}");
                 if !merged_by_model {
                     println!(
                         "\n(merged by concatenation \u{2014} LLM synthesis was disabled or failed)"
@@ -179,8 +179,8 @@ pub async fn run_swarm_inner(
         let skills_dirs = config.skills_dirs()?;
         match engine.load_skills_from_dirs(&skills_dirs).await {
             Ok(0) => {}
-            Ok(n) => println!("Loaded {} skill file(s)", n),
-            Err(e) => eprintln!("Could not load skills: {}", e),
+            Ok(n) => println!("Loaded {n} skill file(s)"),
+            Err(e) => eprintln!("Could not load skills: {e}"),
         }
         if config.skills.enable_hot_reload {
             for dir in &skills_dirs {
@@ -241,14 +241,14 @@ pub async fn run_swarm_inner(
                     );
                 }
                 SwarmEvent::AgentChunk { text, .. } => {
-                    print!("{}", text);
+                    print!("{text}");
                     let _ = io::stdout().flush();
                 }
                 SwarmEvent::AgentCompleted { name, .. } => {
-                    println!("\n── {} done\n", name);
+                    println!("\n── {name} done\n");
                 }
                 SwarmEvent::AgentFailed { name, error, .. } => {
-                    eprintln!("\n── {} failed: {}\n", name, error);
+                    eprintln!("\n── {name} failed: {error}\n");
                 }
                 SwarmEvent::ConflictDetected { file, agents } => {
                     // Surface the conflict live so a user watching the
@@ -265,8 +265,7 @@ pub async fn run_swarm_inner(
                     previous_error,
                 } => {
                     println!(
-                        "\n── {} retrying ({}/{}): {} ──\n",
-                        name, attempt, max_attempts, previous_error,
+                        "\n── {name} retrying ({attempt}/{max_attempts}): {previous_error} ──\n",
                     );
                 }
                 SwarmEvent::Merging => {
@@ -294,8 +293,7 @@ pub async fn run_swarm_inner(
                         .collect::<Vec<_>>()
                         .join(", ");
                     eprintln!(
-                        "\n⚠ {} wrote outside its declared scope: {}\n",
-                        agent_name, list,
+                        "\n⚠ {agent_name} wrote outside its declared scope: {list}\n",
                     );
                 }
                 SwarmEvent::WorktreesMerged {
@@ -316,7 +314,7 @@ pub async fn run_swarm_inner(
                             println!("   ⚠ conflict: {}", f.display());
                         }
                         for (branch, err) in &failed {
-                            println!("   ✗ {}: {}", branch, err);
+                            println!("   ✗ {branch}: {err}");
                         }
                         println!();
                     }
@@ -399,18 +397,18 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
         }
         "agent_chunk" => {
             if let Some(text) = data.get("text").and_then(|x| x.as_str()) {
-                print!("{}", text);
+                print!("{text}");
                 let _ = std::io::stdout().flush();
             }
         }
         "agent_completed" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-            println!("\n\u{2500}\u{2500} {} done\n", name);
+            println!("\n\u{2500}\u{2500} {name} done\n");
         }
         "agent_failed" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
             let error = data.get("error").and_then(|x| x.as_str()).unwrap_or("");
-            eprintln!("\n\u{2500}\u{2500} {} failed: {}\n", name, error);
+            eprintln!("\n\u{2500}\u{2500} {name} failed: {error}\n");
         }
         "agent_retrying" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
@@ -424,8 +422,7 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
                 .and_then(|x| x.as_str())
                 .unwrap_or("");
             println!(
-                "\n\u{2500}\u{2500} {} retrying ({}/{}): {} \u{2500}\u{2500}\n",
-                name, attempt, max, prev
+                "\n\u{2500}\u{2500} {name} retrying ({attempt}/{max}): {prev} \u{2500}\u{2500}\n"
             );
         }
         "conflict_detected" => {
@@ -440,7 +437,7 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
                         .join(", ")
                 })
                 .unwrap_or_default();
-            eprintln!("\n\u{26a0} conflict: {} written by {}\n", file, agents);
+            eprintln!("\n\u{26a0} conflict: {file} written by {agents}\n");
         }
         "merging" => {
             println!("\n\u{2500}\u{2500} merging results \u{2500}\u{2500}\n");
@@ -453,8 +450,7 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
             let path = data.get("path").and_then(|x| x.as_str()).unwrap_or("");
             let branch = data.get("branch").and_then(|x| x.as_str()).unwrap_or("");
             println!(
-                "\u{2500}\u{2500} {}: worktree {} (branch {})",
-                agent, path, branch
+                "\u{2500}\u{2500} {agent}: worktree {path} (branch {branch})"
             );
         }
         "worktrees_merged" => {
@@ -475,13 +471,11 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
                 .unwrap_or(0);
             if conflicted == 0 && failed == 0 {
                 println!(
-                    "\n\u{2500}\u{2500} worktrees merged: {} ok \u{2500}\u{2500}\n",
-                    merged
+                    "\n\u{2500}\u{2500} worktrees merged: {merged} ok \u{2500}\u{2500}\n"
                 );
             } else {
                 println!(
-                    "\n\u{2500}\u{2500} worktrees merged: {} ok, {} conflict(s), {} failed \u{2500}\u{2500}\n",
-                    merged, conflicted, failed
+                    "\n\u{2500}\u{2500} worktrees merged: {merged} ok, {conflicted} conflict(s), {failed} failed \u{2500}\u{2500}\n"
                 );
             }
         }

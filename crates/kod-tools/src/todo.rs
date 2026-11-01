@@ -343,8 +343,7 @@ impl Tool for TodoTool {
                     "cancelled" => TodoStatus::Cancelled,
                     other => {
                         return Ok(ToolResult::Error(format!(
-                            "unknown status {:?}; expected one of pending, in_progress, completed, cancelled",
-                            other
+                            "unknown status {other:?}; expected one of pending, in_progress, completed, cancelled"
                         )));
                     }
                 };
@@ -382,7 +381,7 @@ impl Tool for TodoTool {
                             "status": status_str,
                         })))
                     }
-                    None => Ok(ToolResult::Error(format!("no todo with id {}", id))),
+                    None => Ok(ToolResult::Error(format!("no todo with id {id}"))),
                 }
             }
             "unblock" => {
@@ -403,7 +402,7 @@ impl Tool for TodoTool {
                             "cleared": cleared,
                         })))
                     }
-                    None => Ok(ToolResult::Error(format!("no todo with id {}", id))),
+                    None => Ok(ToolResult::Error(format!("no todo with id {id}"))),
                 }
             }
             "list" => {
@@ -444,8 +443,7 @@ impl Tool for TodoTool {
                 })))
             }
             other => Ok(ToolResult::Error(format!(
-                "unknown action {:?}; expected add, update, list, or clear",
-                other
+                "unknown action {other:?}; expected add, update, list, or clear"
             ))),
         }
     }

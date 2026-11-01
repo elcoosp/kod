@@ -64,7 +64,7 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                 })
                 .collect();
             if matching.is_empty() {
-                println!("No entries match {:?} (id prefix or tag).", key);
+                println!("No entries match {key:?} (id prefix or tag).");
             } else {
                 // Bug-hunt: the pre-fix shape used `let _ = manager.remove(...)`
                 // and printed the number of matches as if every removal had
@@ -109,7 +109,7 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             let s = serde_json::to_string_pretty(&arr)
                 .map_err(|e| KodError::Serialization(e.to_string()))?;
             if dest.as_os_str() == "-" {
-                println!("{}", s);
+                println!("{s}");
             } else {
                 if let Some(parent) = dest.parent()
                     && !parent.as_os_str().is_empty()
@@ -186,7 +186,7 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
         MemoryAction::Search { query } => {
             let hits = manager.search(&query).await?;
             if hits.is_empty() {
-                println!("No entries match {:?}.", query);
+                println!("No entries match {query:?}.");
                 return Ok(());
             }
             println!("{} match(es) for {:?}:", hits.len(), query);
@@ -344,8 +344,8 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     _ => p,
                 });
             }
-            println!("Session logs: {}", count);
-            println!("Total size:   {} bytes", total_bytes);
+            println!("Session logs: {count}");
+            println!("Total size:   {total_bytes} bytes");
             if let (Some(e), Some(n)) = (&earliest, &newest) {
                 println!("Oldest:       {}", e.display());
                 println!("Newest:       {}", n.display());
@@ -506,14 +506,13 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                 "markdown" | "md" | "" => render_session_markdown(&messages),
                 other => {
                     return Err(KodError::Config(format!(
-                        "Unknown format {:?}. Use `markdown` or `json`.",
-                        other
+                        "Unknown format {other:?}. Use `markdown` or `json`."
                     )));
                 }
             };
 
             if dest.as_os_str() == "-" {
-                print!("{}", rendered);
+                print!("{rendered}");
             } else {
                 if let Some(parent) = dest.parent()
                     && !parent.as_os_str().is_empty()
@@ -578,7 +577,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
         );
         for (i, (name, args, _result, ms, holder)) in tool_calls.iter().enumerate() {
             println!("{:>3}. [{}] {} ({})", i + 1, holder, name, args);
-            println!("     took {}ms", ms);
+            println!("     took {ms}ms");
         }
         return Ok(());
     }
@@ -670,7 +669,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
     let mut mismatched = 0usize;
     for (i, (name, args, recorded, _ms, holder)) in tool_calls.iter().enumerate() {
         println!("\n[{}/{}] [{}] {}", i + 1, tool_calls.len(), holder, name);
-        println!("     args: {}", args);
+        println!("     args: {args}");
         match engine.run_tool(name, args.clone()).await {
             Ok(result) => {
                 let fresh = match &result {
@@ -686,20 +685,20 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
                 } else {
                     mismatched += 1;
                     println!("     result: DIFFERS from recorded");
-                    println!("       recorded: {}", recorded);
-                    println!("       fresh:    {}", fresh);
+                    println!("       recorded: {recorded}");
+                    println!("       fresh:    {fresh}");
                 }
             }
             Err(e) => {
                 mismatched += 1;
-                println!("     error: {}", e);
+                println!("     error: {e}");
             }
         }
     }
 
     engine.shutdown().await?;
     println!();
-    println!("{} matched, {} differed", matched, mismatched);
+    println!("{matched} matched, {mismatched} differed");
     Ok(())
 }
 
@@ -766,7 +765,7 @@ pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
                     s.tool,
                     s.path.display()
                 );
-                println!("             taken {}", when);
+                println!("             taken {when}");
             }
             if all.len() > shown.len() {
                 println!();
@@ -787,7 +786,7 @@ pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
             if n == 0 {
                 println!("No checkpoints to clear.");
             } else {
-                println!("Cleared {} checkpoint(s).", n);
+                println!("Cleared {n} checkpoint(s).");
             }
             Ok(())
         }
@@ -831,7 +830,7 @@ pub(super) fn render_session_markdown(messages: &[kod_tui::app::Message]) -> Str
             MessageRole::System => ("## sys", false),
             MessageRole::Tool => ("## tool", true),
             MessageRole::Agent(id) => {
-                out.push_str(&format!("## agent {}\n\n", id));
+                out.push_str(&format!("## agent {id}\n\n"));
                 out.push_str(&m.content);
                 out.push_str("\n\n");
                 continue;

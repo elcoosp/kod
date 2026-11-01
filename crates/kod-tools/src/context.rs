@@ -536,8 +536,7 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     // broad deny.
     profile.push_str("(deny file-write*)\n");
     profile.push_str(&format!(
-        "(allow file-write* (subpath \"{wd}\"))\n",
-        wd = wd_str
+        "(allow file-write* (subpath \"{wd_str}\"))\n"
     ));
     // stdout / stderr / /dev/null writes go through the file-write*
     // operation. Without this allow, an `echo hello` inside the
@@ -1432,7 +1431,7 @@ impl ToolContext {
         if !self.permissions.network_access {
             return Err(KodError::PermissionDenied {
                 action: "network".to_string(),
-                reason: format!("Network access not permitted: {}", url),
+                reason: format!("Network access not permitted: {url}"),
             });
         }
         Ok(())
@@ -1509,7 +1508,7 @@ impl ToolContext {
                 return fail_closed;
             }
         }
-        if !has_wildcard && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern)) {
+        if !has_wildcard && let Ok(g) = globset::Glob::new(&format!("{pattern}/**")) {
             builder.add(g);
         }
         match builder.build() {
@@ -2069,7 +2068,7 @@ mod context_proptests {
     /// A malformed glob, constructed rather than filtered: an
     /// unclosed character class `[` is rejected by `globset::Glob::new`.
     fn malformed_pattern() -> impl Strategy<Value = String> {
-        "[a-z]{1,12}".prop_map(|s| format!("{}[", s))
+        "[a-z]{1,12}".prop_map(|s| format!("{s}["))
     }
 
     proptest! {

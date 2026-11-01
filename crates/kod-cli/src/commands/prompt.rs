@@ -248,7 +248,7 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
             {
                 continue;
             }
-            print!("{}", chunk);
+            print!("{chunk}");
             let _ = std::io::stdout().flush();
         }
     });

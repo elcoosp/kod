@@ -142,11 +142,11 @@ async fn test_full_engine_pipeline() {
 
         match response {
             Ok(resp) => {
-                assert_eq!(resp.task_type, expected_type, "Failed for input: {}", input);
+                assert_eq!(resp.task_type, expected_type, "Failed for input: {input}");
             }
             Err(e) => {
                 // Some may fail without LLM provider, but task type should be classified
-                panic!("Engine failed for input '{}': {:?}", input, e);
+                panic!("Engine failed for input '{input}': {e:?}");
             }
         }
     }

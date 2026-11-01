@@ -190,7 +190,7 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
         if dry_run {
             let s = toml::to_string_pretty(&fresh)
                 .map_err(|e| KodError::Serialization(e.to_string()))?;
-            print!("{}", s);
+            print!("{s}");
             return Ok(());
         }
         fresh.save_to(&path)?;
@@ -223,7 +223,7 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
             "# dry run: would back up {} and write the config below",
             path.display()
         );
-        print!("{}", migrated);
+        print!("{migrated}");
         return Ok(());
     }
 
@@ -444,7 +444,7 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
     if let Some(cmd) = profile.install_command {
         println!();
         println!("Next step (if not already installed):");
-        println!("  {}", cmd);
+        println!("  {cmd}");
     }
     Ok(())
 }
@@ -459,7 +459,7 @@ pub async fn run_config_show_raw() -> Result<()> {
         });
     }
     let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
-    print!("{}", content);
+    print!("{content}");
     if !content.ends_with('\n') {
         println!();
     }
@@ -470,7 +470,7 @@ pub async fn run_config_show_raw() -> Result<()> {
 pub async fn run_config_show_merged() -> Result<()> {
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
-    print!("{}", s);
+    print!("{s}");
     if !s.ends_with('\n') {
         println!();
     }
@@ -482,7 +482,7 @@ pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
     if dest.as_os_str() == "-" {
-        print!("{}", s);
+        print!("{s}");
         if !s.ends_with('\n') {
             println!();
         }

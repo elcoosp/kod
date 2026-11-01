@@ -111,7 +111,7 @@ where
                     attempt += 1;
                 }
                 crate::web_retry::Next::Return => {
-                    return Err(format!("returned HTTP {}: {}", status, body_preview,));
+                    return Err(format!("returned HTTP {status}: {body_preview}",));
                 }
             },
         }
@@ -199,10 +199,10 @@ impl WebFetchTool {
         for hop in 0..=MAX_REDIRECTS {
             let host = current
                 .host_str()
-                .ok_or_else(|| format!("URL {} has no host", current))?
+                .ok_or_else(|| format!("URL {current} has no host"))?
                 .to_string();
             if let Some(reason) = block_private_host(&host) {
-                return Err(format!("refusing to fetch {}: {}", current, reason));
+                return Err(format!("refusing to fetch {current}: {reason}"));
             }
             // SEC-B-02: re-check the operator's allow-list on EVERY
             // hop. The initial check in `execute` runs once on the
@@ -210,13 +210,12 @@ impl WebFetchTool {
             // public host bypasses `allowed_domains` entirely.
             if !allowed_domains.is_empty() && !domain_allowed(&host, allowed_domains) {
                 return Err(format!(
-                    "redirect target {} is outside the policy allow-list {:?}",
-                    current, allowed_domains
+                    "redirect target {current} is outside the policy allow-list {allowed_domains:?}"
                 ));
             }
             let port = current
                 .port_or_known_default()
-                .ok_or_else(|| format!("URL {} has no known port", current))?;
+                .ok_or_else(|| format!("URL {current} has no known port"))?;
             let host_owned = host.clone();
             let lookup = tokio::task::spawn_blocking(move || {
                 use std::net::ToSocketAddrs;
@@ -259,7 +258,7 @@ impl WebFetchTool {
                 .get(current.clone())
                 .send()
                 .await
-                .map_err(|e| format!("request failed for {}: {}", current, e))?;
+                .map_err(|e| format!("request failed for {current}: {e}"))?;
             let status = response.status();
             if !status.is_redirection() {
                 return Ok(response);
@@ -331,8 +330,7 @@ impl Tool for WebFetchTool {
             Ok(u) => u,
             Err(e) => {
                 return Ok(ToolResult::Error(format!(
-                    "invalid URL {:?}: {} — expected an absolute http:// or https:// URL",
-                    url_str, e
+                    "invalid URL {url_str:?}: {e} — expected an absolute http:// or https:// URL"
                 )));
             }
         };
@@ -345,8 +343,7 @@ impl Tool for WebFetchTool {
         if let Some(host) = url.host_str() {
             if let Some(reason) = block_private_host(host) {
                 return Ok(ToolResult::Error(format!(
-                    "refusing to fetch {}: {}",
-                    url, reason
+                    "refusing to fetch {url}: {reason}"
                 )));
             }
             // Resolve the host and check every returned address too.
@@ -444,7 +441,7 @@ impl Tool for WebFetchTool {
         {
             Ok(r) => r,
             Err(msg) => {
-                return Ok(ToolResult::Error(format!("{} {}", url, msg)));
+                return Ok(ToolResult::Error(format!("{url} {msg}")));
             }
         };
 
@@ -474,9 +471,8 @@ impl Tool for WebFetchTool {
             || mime.ends_with("+xml");
         if !is_text {
             return Ok(ToolResult::Error(format!(
-                "{} returned content-type {:?}, which is not text. web_fetch is \
-                 for HTML, JSON, and plain text.",
-                url, mime
+                "{url} returned content-type {mime:?}, which is not text. web_fetch is \
+                 for HTML, JSON, and plain text."
             )));
         }
 
@@ -1001,8 +997,7 @@ mod tests {
             let ip: IpAddr = bad.parse().unwrap();
             assert!(
                 block_private_ip(ip).is_some(),
-                "expected {} to be blocked",
-                bad
+                "expected {bad} to be blocked"
             );
         }
         for good in ["1.1.1.1", "8.8.8.8", "2606:4700::1"] {
@@ -1079,7 +1074,7 @@ mod tests {
         let html = "a\n\n\n\n\nb";
         let text = html_to_text(html);
         // At most one blank line survives between non-blank lines.
-        assert!(!text.contains("\n\n\n"), "too many blank lines: {:?}", text);
+        assert!(!text.contains("\n\n\n"), "too many blank lines: {text:?}");
     }
 
     #[tokio::test]

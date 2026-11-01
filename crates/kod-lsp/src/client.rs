@@ -863,7 +863,7 @@ fn path_to_uri(p: &Path) -> String {
             let mut buf = [0u8; 4];
             for b in ch.encode_utf8(&mut buf).as_bytes() {
                 out.push('%');
-                out.push_str(&format!("{:02X}", b));
+                out.push_str(&format!("{b:02X}"));
             }
         }
     }

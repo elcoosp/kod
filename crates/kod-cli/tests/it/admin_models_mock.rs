@@ -75,7 +75,7 @@ async fn spawn_mock(models: Vec<String>) -> String {
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    format!("http://{}", addr)
+    format!("http://{addr}")
 }
 
 /// A config.toml pointing at `base_url` with `model = "test-model"`.

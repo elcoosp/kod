@@ -162,7 +162,7 @@ pub fn render_brief(brief: &ContextBrief) -> String {
         out.push_str("## Write scope\n\n");
         out.push_str("Your writes must stay within these globs:\n");
         for g in &brief.expected_writes {
-            out.push_str(&format!("- `{}`\n", g));
+            out.push_str(&format!("- `{g}`\n"));
         }
         out.push('\n');
     }

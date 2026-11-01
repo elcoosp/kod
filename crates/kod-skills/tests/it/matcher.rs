@@ -12,7 +12,7 @@ fn create_test_skill(
         id: SkillId::new(),
         metadata: SkillMetadata {
             name: name.to_string(),
-            description: format!("Skill for {}", name),
+            description: format!("Skill for {name}"),
             version: "1.0.0".to_string(),
             author: None,
             category: "test".to_string(),
@@ -157,7 +157,7 @@ async fn test_limit_results() {
     // Add multiple skills
     for i in 0..5 {
         let skill = create_test_skill(
-            &format!("skill-{}", i),
+            &format!("skill-{i}"),
             vec!["test"],
             vec!["testing"],
             vec!["test"],

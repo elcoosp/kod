@@ -720,7 +720,7 @@ mod stream_guard_proptests {
         fn prop_prose_resets_header_run(a in 0usize..35, b in 0usize..35) {
             let block_a: String = std::iter::repeat_n("## heading\n", a).collect();
             let block_b: String = std::iter::repeat_n("## heading\n", b).collect();
-            let text = format!("{}\nplain prose line\n\n{}", block_a, block_b);
+            let text = format!("{block_a}\nplain prose line\n\n{block_b}");
             let fired = detect_header_runaway(text.as_bytes());
             prop_assert!(!fired, "fired with {} + prose + {} headings", a, b);
         }
@@ -736,7 +736,7 @@ mod stream_guard_proptests {
     fn period_three_long_enough_fires() {
         let tail = "abc".repeat(70);
         let result = detect_exact_cycle(tail.as_bytes());
-        assert_eq!(result, Some(3), "expected period 3, got {:?}", result);
+        assert_eq!(result, Some(3), "expected period 3, got {result:?}");
     }
 
     #[test]
@@ -745,6 +745,6 @@ mod stream_guard_proptests {
         assert!(tail.len() > 180);
         tail[150] = b'X';
         let result = detect_exact_cycle(&tail);
-        assert_eq!(result, None, "near-periodic tail fired: {:?}", result);
+        assert_eq!(result, None, "near-periodic tail fired: {result:?}");
     }
 }

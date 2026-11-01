@@ -269,8 +269,7 @@ impl TuiLoop {
                 s.code()
             ))),
             Err(e) => Err(KodError::Internal(format!(
-                "could not launch editor {:?}: {e}",
-                editor
+                "could not launch editor {editor:?}: {e}"
             ))),
         }
     }
@@ -659,7 +658,7 @@ impl TuiLoop {
 
     async fn init_terminal_inner(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()
-            .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {}", e)))?;
+            .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {e}")))?;
 
         // Mouse capture ON by default: the wheel scrolls the chat
         // (with capture off the wheel never reaches the app, so on
@@ -682,7 +681,7 @@ impl TuiLoop {
 
         let backend = CrosstermBackend::new(std::io::stdout());
         let mut terminal = Terminal::new(backend)
-            .map_err(|e| KodError::Internal(format!("Failed to create terminal: {}", e)))?;
+            .map_err(|e| KodError::Internal(format!("Failed to create terminal: {e}")))?;
 
         // Hide the terminal's own cursor. InputWidget draws an inline
         // `▌` at the current position, and leaving the real cursor
@@ -716,7 +715,7 @@ impl TuiLoop {
         if let Some(terminal) = &mut self.terminal {
             terminal
                 .show_cursor()
-                .map_err(|e| KodError::Internal(format!("Failed to show cursor: {}", e)))?;
+                .map_err(|e| KodError::Internal(format!("Failed to show cursor: {e}")))?;
         }
 
         crossterm::execute!(
@@ -728,7 +727,7 @@ impl TuiLoop {
         .map_err(|e| KodError::Internal(format!("Failed to leave alternate screen: {e}")))?;
 
         crossterm::terminal::disable_raw_mode()
-            .map_err(|e| KodError::Internal(format!("Failed to disable raw mode: {}", e)))?;
+            .map_err(|e| KodError::Internal(format!("Failed to disable raw mode: {e}")))?;
 
         self.terminal = None;
 
@@ -1053,7 +1052,7 @@ impl TuiLoop {
                         QuestionWidget::new().render(&self.app, size, f.buffer_mut());
                     }
                 })
-                .map_err(|e| KodError::Internal(format!("Failed to draw: {}", e)))?;
+                .map_err(|e| KodError::Internal(format!("Failed to draw: {e}")))?;
         }
 
         Ok(())
@@ -1364,7 +1363,7 @@ impl TuiLoop {
                 self.app.add_message(crate::app::Message {
                     id: kod_types::MessageId::new(),
                     role: kod_types::MessageRole::Agent(kod_types::AgentId::new()),
-                    content: format!("[{}] {}", agent_name, message),
+                    content: format!("[{agent_name}] {message}"),
                     timestamp: chrono::Utc::now(),
                     metadata: Default::default(),
                     sequence: 0,
@@ -2108,8 +2107,7 @@ impl TuiLoop {
                         } => Event::AgentMessage(
                             "swarm".to_string(),
                             format!(
-                                "{} retrying ({}/{}): {}",
-                                name, attempt, max_attempts, previous_error,
+                                "{name} retrying ({attempt}/{max_attempts}): {previous_error}",
                             ),
                         ),
                         kod_core::SwarmEvent::Merging => Event::SwarmMerging,
@@ -2354,13 +2352,12 @@ impl TuiLoop {
                                     }
                                 }
                             }
-                            let text = body.unwrap_or_else(|| format!("(description) {}", d));
+                            let text = body.unwrap_or_else(|| format!("(description) {d}"));
                             self.app
-                                .push_system_message(&format!("Skill {}\n\n{}", n, text,));
+                                .push_system_message(&format!("Skill {n}\n\n{text}",));
                         }
                         None => self.app.push_system_message(&format!(
-                            "No skill named {:?}. Run /skills to list.",
-                            name,
+                            "No skill named {name:?}. Run /skills to list.",
                         )),
                     }
                     return Ok(());
@@ -2517,10 +2514,9 @@ impl TuiLoop {
                             .push_system_message(&format!("Theme {prev} → {name}"));
                     } else {
                         self.app.push_system_message(&format!(
-                            "Unknown theme '{}'. Known themes: dark, light. \
+                            "Unknown theme '{name}'. Known themes: dark, light. \
                              Fell back to dark. (Custom themes come from ~/.config/kod/theme.toml \
-                             or a project-local .kod-theme.toml.)",
-                            name
+                             or a project-local .kod-theme.toml.)"
                         ));
                     }
                 }
@@ -2626,18 +2622,17 @@ impl TuiLoop {
                         "Token accounting\n\
                          \n\
                          Window (approx):\n\
-                           used:  {} tokens\n\
-                           limit: {} tokens\n\
-                           fill:  {:.1}%\n\
-                           label: {}\n\
+                           used:  {used} tokens\n\
+                           limit: {limit} tokens\n\
+                           fill:  {pct:.1}%\n\
+                           label: {label}\n\
                          \n\
                          Session totals (from provider usage):\n\
-                           input:  {} tokens\n\
-                           output: {} tokens\n\
-                           total:  {} tokens\n\
+                           input:  {inp} tokens\n\
+                           output: {out} tokens\n\
+                           total:  {total} tokens\n\
                          \n\
-                         Elapsed: {}",
-                        used, limit, pct, label, inp, out, total, elapsed_label,
+                         Elapsed: {elapsed_label}",
                     );
 
                     // Per-section allocation from the most recent prompt.
@@ -2896,7 +2891,7 @@ impl TuiLoop {
                         } else {
                             match manager.search(&query).await {
                                 Ok(hits) if hits.is_empty() => self.app.push_system_message(
-                                    &format!("No memory entries match {:?}.", query),
+                                    &format!("No memory entries match {query:?}."),
                                 ),
                                 Ok(hits) => {
                                     let mut msg = format!(
@@ -2914,7 +2909,7 @@ impl TuiLoop {
                                         } else {
                                             one.to_string()
                                         };
-                                        msg.push_str(&format!("  {}  {}\n", short, shown));
+                                        msg.push_str(&format!("  {short}  {shown}\n"));
                                     }
                                     self.app.push_system_message(msg.trim_end());
                                 }
@@ -2945,8 +2940,7 @@ impl TuiLoop {
                                     }
                                 }
                                 None => self.app.push_system_message(&format!(
-                                    "No memory entry with id prefix {:?}.",
-                                    prefix
+                                    "No memory entry with id prefix {prefix:?}."
                                 )),
                             },
                             Err(e) => self.app.push_system_message(&format!(
@@ -2990,7 +2984,7 @@ impl TuiLoop {
                                     } else {
                                         one.to_string()
                                     };
-                                    msg.push_str(&format!("  {}  {}\n", short, shown));
+                                    msg.push_str(&format!("  {short}  {shown}\n"));
                                 }
                                 if all.len() > 30 {
                                     msg.push_str(&format!("… and {} more.", all.len() - 30));
@@ -3105,9 +3099,8 @@ impl TuiLoop {
                                     ));
                                 } else {
                                     self.app.push_system_message(&format!(
-                                        "Rule {} disappeared before it could \
+                                        "Rule {n} disappeared before it could \
                                          be removed (raced another caller).",
-                                        n,
                                     ));
                                 }
                             }
@@ -3143,9 +3136,8 @@ impl TuiLoop {
                     }
                     Some(other) => {
                         self.app.push_system_message(&format!(
-                            "Unknown /policy subcommand {:?}. Try `/policy` or \
+                            "Unknown /policy subcommand {other:?}. Try `/policy` or \
                              `/policy forget <n>`.",
-                            other,
                         ));
                     }
                 }
@@ -3223,7 +3215,7 @@ impl TuiLoop {
                     Ok(r) => r,
                     Err(e) => {
                         self.app
-                            .push_system_message(&format!("Invalid regex {:?}: {}", pattern, e,));
+                            .push_system_message(&format!("Invalid regex {pattern:?}: {e}",));
                         return Ok(());
                     }
                 };
@@ -3249,7 +3241,7 @@ impl TuiLoop {
                     .collect();
                 if hits.is_empty() {
                     self.app
-                        .push_system_message(&format!("No messages match {:?}.", pattern,));
+                        .push_system_message(&format!("No messages match {pattern:?}.",));
                     return Ok(());
                 }
                 let mut msg = format!("{} message(s) match {:?}:\n", hits.len(), pattern,);
@@ -3264,7 +3256,7 @@ impl TuiLoop {
                     } else {
                         first_line.to_string()
                     };
-                    msg.push_str(&format!("  {:>4}. [{}] {}\n", n, role, shown,));
+                    msg.push_str(&format!("  {n:>4}. [{role}] {shown}\n",));
                 }
                 if hits.len() > 30 {
                     msg.push_str(&format!(
@@ -3297,21 +3289,21 @@ impl TuiLoop {
                 let warning = self.app.context_warning().unwrap_or("");
                 let mut msg = String::new();
                 msg.push_str("Context window\n");
-                msg.push_str(&format!("  approx used:  {} tokens\n", used));
-                msg.push_str(&format!("  limit:        {} tokens\n", limit));
-                msg.push_str(&format!("  fill:         {:.1}%\n", pct));
+                msg.push_str(&format!("  approx used:  {used} tokens\n"));
+                msg.push_str(&format!("  limit:        {limit} tokens\n"));
+                msg.push_str(&format!("  fill:         {pct:.1}%\n"));
                 msg.push_str(&format!("  label:        {}\n", self.app.context_label()));
                 if !warning.is_empty() {
-                    msg.push_str(&format!("  warning:      {}\n", warning));
+                    msg.push_str(&format!("  warning:      {warning}\n"));
                 }
                 msg.push_str("\nSession totals (from provider usage)\n");
-                msg.push_str(&format!("  input:        {} tokens\n", inp));
-                msg.push_str(&format!("  output:       {} tokens\n", out));
-                msg.push_str(&format!("  total:        {} tokens\n", total));
+                msg.push_str(&format!("  input:        {inp} tokens\n"));
+                msg.push_str(&format!("  output:       {out} tokens\n"));
+                msg.push_str(&format!("  total:        {total} tokens\n"));
                 msg.push_str("\nMessage counts\n");
-                msg.push_str(&format!("  total:        {}\n", msg_count));
-                msg.push_str(&format!("  assistant:    {}\n", assistant_count));
-                msg.push_str(&format!("  tool:         {}\n", tool_count));
+                msg.push_str(&format!("  total:        {msg_count}\n"));
+                msg.push_str(&format!("  assistant:    {assistant_count}\n"));
+                msg.push_str(&format!("  tool:         {tool_count}\n"));
                 msg.push_str(&format!(
                     "\nAuto-compact fires at {}% of the window.\n",
                     4 * 100 / 5
@@ -3338,7 +3330,7 @@ impl TuiLoop {
                 };
                 let Ok(n) = idx_str.parse::<usize>() else {
                     self.app
-                        .push_system_message(&format!("Not a number: {:?}", idx_str,));
+                        .push_system_message(&format!("Not a number: {idx_str:?}",));
                     return Ok(());
                 };
                 if n == 0 {
@@ -3569,12 +3561,11 @@ impl TuiLoop {
                                     0.0
                                 };
                                 self.app.push_system_message(&format!(
-                                    "Memory retrieval ({} events)\n  \
-                                     with references: {} ({:.0}%)\n  \
-                                     empty: {}\n\n\
+                                    "Memory retrieval ({total} events)\n  \
+                                     with references: {with_refs} ({rate:.0}%)\n  \
+                                     empty: {empty}\n\n\
                                      (references are classified by Jev; a \
                                      follow-up pass fills this in.)",
-                                    total, with_refs, rate, empty,
                                 ));
                             }
                             Err(e) => {
@@ -3588,7 +3579,7 @@ impl TuiLoop {
                         let n = self.app.attached_files().len();
                         self.app.clear_attachments();
                         self.app
-                            .push_system_message(&format!("Cleared {} attachment(s).", n));
+                            .push_system_message(&format!("Cleared {n} attachment(s)."));
                     }
                     Some(path_str) => {
                         let path = std::path::PathBuf::from(path_str);
@@ -3721,10 +3712,9 @@ impl TuiLoop {
                 let label = parts
                     .next()
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("branch-{}", n));
+                    .unwrap_or_else(|| format!("branch-{n}"));
                 self.app.push_system_message(&format!(
-                    "⤵ branch point: {} ({} messages so far). Use /save <path> to capture this state.",
-                    label, n,
+                    "⤵ branch point: {label} ({n} messages so far). Use /save <path> to capture this state.",
                 ));
             }
             "/system" => {
@@ -3740,8 +3730,7 @@ impl TuiLoop {
                             let shown =
                                 kod_types::strutil::truncate_with_ellipsis(s, 300, "…");
                             self.app.push_system_message(&format!(
-                                "Active system prompt override:\n\n{}\n\nUse /system clear to remove it.",
-                                shown,
+                                "Active system prompt override:\n\n{shown}\n\nUse /system clear to remove it.",
                             ));
                         }
                         None => self.app.push_system_message(
@@ -3752,8 +3741,7 @@ impl TuiLoop {
                     self.app.set_session_system_prompt(rest.to_string());
                     let shown = kod_types::strutil::truncate_with_ellipsis(rest, 80, "…");
                     self.app.push_system_message(&format!(
-                        "System prompt override set: {}\nPrepended to every subsequent prompt.",
-                        shown,
+                        "System prompt override set: {shown}\nPrepended to every subsequent prompt.",
                     ));
                 }
             }
@@ -3776,8 +3764,7 @@ impl TuiLoop {
                 let prompt = format!(
                     "Summarize the following coding session in 4-6 bullet points. \
                      Capture: what was asked, what was done, any files touched, \
-                     and any open questions or blockers. Be terse.\n\n{}",
-                    transcript,
+                     and any open questions or blockers. Be terse.\n\n{transcript}",
                 );
                 self.app.begin_generation();
                 let event_tx = self.event_handler.sender();
@@ -3816,11 +3803,11 @@ impl TuiLoop {
 
                 let mut msg = String::new();
                 msg.push_str("Session summary\n");
-                msg.push_str(&format!("  model:         {}\n", model));
-                msg.push_str(&format!("  skills:        {}\n", skills));
-                msg.push_str(&format!("  messages:      {}\n", msgs));
-                msg.push_str(&format!("  context:       {}\n", ctx));
-                msg.push_str(&format!("  theme:         {}\n", theme));
+                msg.push_str(&format!("  model:         {model}\n"));
+                msg.push_str(&format!("  skills:        {skills}\n"));
+                msg.push_str(&format!("  messages:      {msgs}\n"));
+                msg.push_str(&format!("  context:       {ctx}\n"));
+                msg.push_str(&format!("  theme:         {theme}\n"));
                 msg.push_str(&format!(
                     "  tool output:   {}\n",
                     if tools_on { "shown" } else { "hidden" }
@@ -3837,18 +3824,18 @@ impl TuiLoop {
                         "(default)"
                     }
                 ));
-                msg.push_str(&format!("  attachments:   {}\n", attached));
+                msg.push_str(&format!("  attachments:   {attached}\n"));
                 if let Some(g) = goal {
                     let shown: String = if g.chars().count() > 60 {
                         g.chars().take(60).collect::<String>() + "…"
                     } else {
                         g
                     };
-                    msg.push_str(&format!("  goal:          {}\n", shown));
+                    msg.push_str(&format!("  goal:          {shown}\n"));
                 }
                 msg.push_str("\nPaths\n");
-                msg.push_str(&format!("  config:  {}\n", config_path));
-                msg.push_str(&format!("  session: {}\n", session_path));
+                msg.push_str(&format!("  config:  {config_path}\n"));
+                msg.push_str(&format!("  session: {session_path}\n"));
                 self.app.push_system_message(msg.trim_end());
             }
             "/clearall" => {
@@ -3899,7 +3886,7 @@ impl TuiLoop {
                 }
 
                 let mut msg = String::from("Session statistics\n");
-                msg.push_str(&format!("  elapsed:         {}\n", elapsed));
+                msg.push_str(&format!("  elapsed:         {elapsed}\n"));
                 msg.push_str(&format!("  total messages:  {}\n", msgs.len()));
                 msg.push_str(&format!(
                     "  input tokens:    {}\n",
@@ -3915,14 +3902,14 @@ impl TuiLoop {
                 ));
                 msg.push_str("\nMessages by role\n");
                 for (r, n) in per_role.iter() {
-                    msg.push_str(&format!("  {:<6} {}\n", r, n));
+                    msg.push_str(&format!("  {r:<6} {n}\n"));
                 }
                 if !tool_by_name.is_empty() {
                     msg.push_str("\nTool calls this session\n");
                     let mut rows: Vec<(&String, &usize)> = tool_by_name.iter().collect();
                     rows.sort_by(|a, b| b.1.cmp(a.1));
                     for (name, n) in rows {
-                        msg.push_str(&format!("  {:<20} {}\n", name, n));
+                        msg.push_str(&format!("  {name:<20} {n}\n"));
                     }
                 }
 
@@ -3948,7 +3935,7 @@ impl TuiLoop {
                         let total: usize = by_rule.values().sum();
                         msg.push_str(&format!("\nSecrets redacted this session: {total}\n",));
                         for (rule, n) in &by_rule {
-                            msg.push_str(&format!("  {:<24} {}\n", rule, n));
+                            msg.push_str(&format!("  {rule:<24} {n}\n"));
                         }
                     }
                 }
@@ -3980,7 +3967,7 @@ impl TuiLoop {
                             msg.push_str(&format!("  error rate:      {:.1}%\n", r * 100.0));
                         }
                         if let Some(t) = agg.avg_ttft_ms() {
-                            msg.push_str(&format!("  avg TTFT:        {:.0} ms\n", t));
+                            msg.push_str(&format!("  avg TTFT:        {t:.0} ms\n"));
                         }
                         if let Some(r) = agg.cache_rate() {
                             msg.push_str(&format!("  cache hit rate:  {:.1}%\n", r * 100.0));
@@ -4537,14 +4524,14 @@ impl TuiLoop {
                 if !snapshot.is_empty() {
                     msg.push_str("  endpoint             cached tokens  last used\n");
                     for (ep, tokens, turn) in &snapshot {
-                        msg.push_str(&format!("  {:<20} {:>13}  {}\n", ep, tokens, turn));
+                        msg.push_str(&format!("  {ep:<20} {tokens:>13}  {turn}\n"));
                     }
                 }
                 if !unhealthy.is_empty() {
                     msg.push_str("\n  Unhealthy (circuit open):\n");
                     for (ep, fails, err) in &unhealthy {
                         let e = err.as_deref().unwrap_or("(no error)");
-                        msg.push_str(&format!("  {:<20} {} fails  {}\n", ep, fails, e));
+                        msg.push_str(&format!("  {ep:<20} {fails} fails  {e}\n"));
                     }
                 }
                 self.app.push_system_message(msg.trim_end());
@@ -4564,7 +4551,7 @@ impl TuiLoop {
                         }
                         let mut msg = String::from("Per-tool counts (this turn / this session)\n");
                         for (name, turn, session) in &snap {
-                            msg.push_str(&format!("  {:<20} {:>6} / {}\n", name, turn, session,));
+                            msg.push_str(&format!("  {name:<20} {turn:>6} / {session}\n",));
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
@@ -4835,7 +4822,7 @@ impl TuiLoop {
                                 let mut msg = format!("Jev decisions this session: {total}\n",);
                                 for (src, n) in by_source.iter() {
                                     let pct = (*n as f64 / total as f64) * 100.0;
-                                    msg.push_str(&format!("  {:<10} {n:>4}  ({pct:.0}%)\n", src,));
+                                    msg.push_str(&format!("  {src:<10} {n:>4}  ({pct:.0}%)\n",));
                                 }
                                 msg.push_str(&format!(
                                     "\nCache hits:      {cached} ({}%)\n",
@@ -4853,7 +4840,7 @@ impl TuiLoop {
                                 let mut rows: Vec<(&String, &usize)> = by_purpose.iter().collect();
                                 rows.sort_by(|a, b| b.1.cmp(a.1));
                                 for (p, n) in rows {
-                                    msg.push_str(&format!("  {:<20} {n}\n", p));
+                                    msg.push_str(&format!("  {p:<20} {n}\n"));
                                 }
                                 self.app.push_system_message(msg.trim_end());
                             }
@@ -4928,7 +4915,7 @@ impl TuiLoop {
                                 let mut msg = String::from("Jev thresholds (name = value)\n");
                                 for name in kod_config::JevThresholds::NAMES {
                                     if let Some(v) = t.get(name) {
-                                        msg.push_str(&format!("  {:<24} {:.2}\n", name, v));
+                                        msg.push_str(&format!("  {name:<24} {v:.2}\n"));
                                     }
                                 }
                                 msg.push_str(
@@ -5394,7 +5381,7 @@ impl TuiLoop {
                     lines.push(format!("  {:<18} {}", p.name, p.description));
                     lines.push(format!("    model:    {}", p.model));
                     if let Some(cmd) = p.install_command {
-                        lines.push(format!("    install:  {}", cmd));
+                        lines.push(format!("    install:  {cmd}"));
                     }
                 }
                 lines.push(String::new());
@@ -5496,8 +5483,7 @@ impl TuiLoop {
                             })
                             .unwrap_or_default();
                         self.app.push_system_message(&format!(
-                            "Unknown command: {} — try /help.{}",
-                            cmd, hint,
+                            "Unknown command: {cmd} — try /help.{hint}",
                         ));
                     }
                 }
@@ -5538,14 +5524,13 @@ impl TuiLoop {
         self.app.set_model_name(name);
         if unknown {
             self.app.push_system_message(&format!(
-                "Switched to '{}' — not in the server's last model list. \
+                "Switched to '{name}' — not in the server's last model list. \
                  If the next prompt fails, run `/model` (no args) to see what the \
-                 server has, or `ollama pull {}` to fetch it.",
-                name, name
+                 server has, or `ollama pull {name}` to fetch it."
             ));
         } else {
             self.app
-                .push_system_message(&format!("Switched model to {}", name));
+                .push_system_message(&format!("Switched model to {name}"));
         }
         Ok(())
     }
@@ -6045,7 +6030,7 @@ impl TuiLoop {
                                 && let Ok(n) = cp.clear()
                             {
                                 self.app
-                                    .push_system_message(&format!("Cleared {} checkpoint(s).", n,));
+                                    .push_system_message(&format!("Cleared {n} checkpoint(s).",));
                             }
                             self.app.push_system_message(
                                 "Cleared all: chat, engine history, long-term memory, checkpoints.",
@@ -9349,8 +9334,7 @@ mod duration_parser_proptests {
         let r = parse_overnight_duration(&huge);
         assert!(
             r.is_none(),
-            "i64::MAX hours is beyond Duration; expected None, got {:?}",
-            r,
+            "i64::MAX hours is beyond Duration; expected None, got {r:?}",
         );
     }
 
@@ -9360,7 +9344,7 @@ mod duration_parser_proptests {
     fn prop_overnight_compound_h_overflow_does_not_panic() {
         let huge = format!("{}h", i64::MAX);
         let r = parse_overnight_duration(&huge);
-        assert!(r.is_none(), "expected None for overflow, got {:?}", r);
+        assert!(r.is_none(), "expected None for overflow, got {r:?}");
     }
 
     /// **The bug, minute branch.** `i64::MAX` minutes overflows.
@@ -9368,7 +9352,7 @@ mod duration_parser_proptests {
     fn prop_overnight_compound_m_overflow_does_not_panic() {
         let huge = format!("{}m", i64::MAX);
         let r = parse_overnight_duration(&huge);
-        assert!(r.is_none(), "expected None for overflow, got {:?}", r);
+        assert!(r.is_none(), "expected None for overflow, got {r:?}");
     }
 }
 

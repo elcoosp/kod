@@ -124,7 +124,7 @@ impl Tool for SearchFilesTool {
         }
 
         let folded = if case_insensitive {
-            format!("(?i){}", pattern)
+            format!("(?i){pattern}")
         } else {
             pattern.to_string()
         };
@@ -132,8 +132,7 @@ impl Tool for SearchFilesTool {
             Ok(r) => r,
             Err(e) => {
                 return Ok(ToolResult::Error(format!(
-                    "invalid regex {:?}: {}",
-                    pattern, e
+                    "invalid regex {pattern:?}: {e}"
                 )));
             }
         };
@@ -219,7 +218,7 @@ impl Tool for SearchFilesTool {
                             let marker = if start + j == idx { '>' } else { ' ' };
                             let truncated_line: String = if l.chars().count() > MAX_LINE_CHARS {
                                 let s: String = l.chars().take(MAX_LINE_CHARS).collect();
-                                format!("{}…", s)
+                                format!("{s}…")
                             } else {
                                 l.to_string()
                             };
@@ -228,8 +227,7 @@ impl Tool for SearchFilesTool {
                                 None => truncated_line,
                             };
                             block.push_str(&format!(
-                                "{} {:>5} | {}\n",
-                                marker, real_line, truncated_line
+                                "{marker} {real_line:>5} | {truncated_line}\n"
                             ));
                         }
                         hits.push(serde_json::json!({

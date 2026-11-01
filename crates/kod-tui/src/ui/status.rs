@@ -63,7 +63,7 @@ impl StatusWidget {
         if !search_label.is_empty() {
             Widget::render(
                 Line::from(vec![Span::styled(
-                    format!("{} ", search_label),
+                    format!("{search_label} "),
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),
@@ -140,7 +140,7 @@ impl StatusWidget {
             }
             // Streaming rate. Only appears once the second chunk lands.
             if let Some(rate) = app.tokens_per_sec() {
-                spans.push(Span::styled(format!(" · {:.0} tok/s", rate), dim));
+                spans.push(Span::styled(format!(" · {rate:.0} tok/s"), dim));
             }
             spans.push(Span::styled(" · Esc cancels", dim));
             Widget::render(Line::from(spans), area, buf);

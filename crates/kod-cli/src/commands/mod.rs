@@ -449,7 +449,7 @@ impl Cli {
                 socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     if *remote {
                         run_chat_remote(socket.clone()).await
@@ -473,7 +473,7 @@ impl Cli {
                 socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     if *remote {
                         run_agent_remote(name.clone(), goal.clone(), socket.clone()).await
@@ -491,7 +491,7 @@ impl Cli {
                 socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     if *remote {
                         run_swarm_remote(goal.clone(), *agents, *merge, socket.clone()).await
@@ -502,7 +502,7 @@ impl Cli {
             }
             Some(Command::Skills { action, json }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         None | Some(SkillsAction::List) => run_skills_list(*json).await,
@@ -528,17 +528,17 @@ impl Cli {
             }
             Some(Command::ValidateSkills) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_skills_validate().await })
             }
             Some(Command::ValidateSkillsStrict) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_skills_validate_strict().await })
             }
             Some(Command::Config { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         None => run_config_display().await,
@@ -559,22 +559,22 @@ impl Cli {
             }
             Some(Command::Test) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_tests().await })
             }
             Some(Command::Map { max_chars }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_map(*max_chars).await })
             }
             Some(Command::Replay { path, execute, yes }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_replay(path.clone(), *execute, *yes).await })
             }
             Some(Command::Profile { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_profile(action.clone()).await })
             }
             Some(Command::Prompt {
@@ -586,7 +586,7 @@ impl Cli {
                 socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     if *remote {
                         run_prompt_remote(prompt.clone(), socket.clone()).await
@@ -602,14 +602,14 @@ impl Cli {
                 preset,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     run_tui(model.clone(), *no_resume, *sandbox, preset.clone()).await
                 })
             }
             Some(Command::Doctor { json, fix }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     if *fix {
                         run_doctor_fix(*json).await
@@ -620,17 +620,17 @@ impl Cli {
             }
             Some(Command::Init { force }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_init(*force).await })
             }
             Some(Command::Models { filter }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_models(filter.clone()).await })
             }
             Some(Command::Sessions { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_sessions(action.clone()).await })
             }
             Some(Command::Completions { shell }) => {
@@ -641,27 +641,27 @@ impl Cli {
             }
             Some(Command::Checkpoint { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_checkpoint(action.clone()).await })
             }
             Some(Command::Update) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_update().await })
             }
             Some(Command::Run { prompt, model }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_streaming_prompt(prompt.clone(), model.clone()).await })
             }
             Some(Command::Serve { stop, socket }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_serve(*stop, socket.clone()).await })
             }
             Some(Command::Acp { preset }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_acp(preset.clone()).await })
             }
             Some(Command::SandboxExec { profile, cmd }) => {
@@ -673,7 +673,7 @@ impl Cli {
             }
             Some(Command::Jev { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         JevAction::Status => run_jev_status().await,
@@ -687,7 +687,7 @@ impl Cli {
             }
             Some(Command::Budget { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         BudgetAction::Show { log } => run_budget_show(log.clone()).await,
@@ -696,7 +696,7 @@ impl Cli {
             }
             Some(Command::Limits { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         LimitsAction::Show => run_limits_show().await,
@@ -705,7 +705,7 @@ impl Cli {
             }
             Some(Command::Plan { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         PlanAction::Show { state } => run_plan_show(state.clone()).await,
@@ -715,7 +715,7 @@ impl Cli {
             }
             Some(Command::Decisions { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         DecisionsAction::Show { state, limit } => {
@@ -727,7 +727,7 @@ impl Cli {
             }
             Some(Command::Trace { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         TraceAction::List { limit, path } => {
@@ -743,7 +743,7 @@ impl Cli {
             }
             Some(Command::Fixture { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         FixtureAction::Save { name, turns, force } => {
@@ -773,7 +773,7 @@ impl Cli {
                 details,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     crate::commands::run_commit_check(
                         type_.clone(),
@@ -790,19 +790,19 @@ impl Cli {
                 array_size,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     crate::commands::run_if_bench(model.clone(), *turns, *array_size).await
                 })
             }
             Some(Command::Memory { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_memory(action.clone()).await })
             }
             Some(Command::Theme { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         ThemeAction::List => {
@@ -836,7 +836,7 @@ impl Cli {
                             });
                             let s = serde_json::to_string_pretty(&json)
                                 .map_err(|e| KodError::Serialization(e.to_string()))?;
-                            println!("{}", s);
+                            println!("{s}");
                             Ok(())
                         }
                     }
@@ -844,12 +844,12 @@ impl Cli {
             }
             Some(Command::Tools { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_tools(action.clone()).await })
             }
             Some(Command::Sandbox { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
                         SandboxAction::Check => run_sandbox_check().await,
@@ -858,7 +858,7 @@ impl Cli {
             }
             Some(Command::Policy { action }) => {
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async { run_policy(action.clone()).await })
             }
             None => {

@@ -499,7 +499,7 @@ mod tool_quota_proptests {
         let c = counts_after("t", 8);
         let q = quota(0, 10, 0);
         let v = check(&c, "t", Some(&q), None);
-        assert!(matches!(v, QuotaVerdict::Soft { .. }), "got {:?}", v);
+        assert!(matches!(v, QuotaVerdict::Soft { .. }), "got {v:?}");
     }
 
     /// Control: below 80%, Ok (not Soft).
@@ -508,7 +508,7 @@ mod tool_quota_proptests {
         let c = counts_after("t", 7);
         let q = quota(0, 10, 0);
         let v = check(&c, "t", Some(&q), None);
-        assert!(matches!(v, QuotaVerdict::Ok), "got {:?}", v);
+        assert!(matches!(v, QuotaVerdict::Ok), "got {v:?}");
     }
 
     /// Control: at the cap, Hard (not Soft). The hard check fires
@@ -518,7 +518,7 @@ mod tool_quota_proptests {
         let c = counts_after("t", 10);
         let q = quota(0, 10, 0);
         let v = check(&c, "t", Some(&q), None);
-        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {:?}", v);
+        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {v:?}");
     }
 
     /// Control: `per_turn` cap is independent of `per_session`.
@@ -529,6 +529,6 @@ mod tool_quota_proptests {
         let c = counts_after("t", 5);
         let q = quota(100, 5, 0);
         let v = check(&c, "t", Some(&q), None);
-        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {:?}", v);
+        assert!(matches!(v, QuotaVerdict::Hard { .. }), "got {v:?}");
     }
 }

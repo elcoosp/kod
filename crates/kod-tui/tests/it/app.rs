@@ -165,7 +165,7 @@ fn test_scroll_position() {
         app.add_message(Message {
             id: MessageId::new(),
             role: MessageRole::User,
-            content: format!("Message {}", i),
+            content: format!("Message {i}"),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
             sequence: 0,
@@ -213,7 +213,7 @@ fn test_context_label_and_manual_compact() {
     assert!(app.context_label().contains("ctx"));
     // 30 messages -> compact_now keeps the newest 20 + 1 notice.
     for i in 0..30 {
-        app.push_assistant_message(&format!("msg {}", i));
+        app.push_assistant_message(&format!("msg {i}"));
     }
     app.compact_now();
     assert!(app.messages().len() <= 22);

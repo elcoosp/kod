@@ -813,8 +813,7 @@ mod extract_citations_proptests {
         let cites = extract_citations("src/a.rs:100-5");
         assert!(
             cites.is_empty(),
-            "malformed range 100-5 must not produce a citation, got {:?}",
-            cites,
+            "malformed range 100-5 must not produce a citation, got {cites:?}",
         );
     }
 
@@ -825,8 +824,7 @@ mod extract_citations_proptests {
         let cites = extract_citations("src/a.rs:42-0");
         assert!(
             cites.is_empty(),
-            "range ending at 0 must not produce a citation, got {:?}",
-            cites,
+            "range ending at 0 must not produce a citation, got {cites:?}",
         );
     }
 

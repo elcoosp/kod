@@ -40,7 +40,7 @@ impl TraceWriter {
         let line =
             serde_json::to_string(trace).map_err(|e| KodError::Serialization(e.to_string()))?;
         let mut w = self.writer.lock().unwrap();
-        writeln!(w, "{}", line).map_err(KodError::Io)?;
+        writeln!(w, "{line}").map_err(KodError::Io)?;
         w.flush().map_err(KodError::Io)?;
         Ok(())
     }

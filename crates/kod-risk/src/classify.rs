@@ -2060,7 +2060,7 @@ mod tokenize_proptests {
             a in "[a-z]{1,8}",
             b in "[a-z]{1,8}",
         ) {
-            let s = format!("{}|{}", a, b);
+            let s = format!("{a}|{b}");
             prop_assert_eq!(
                 tokenize(&s),
                 vec![a.clone(), "|".to_string(), b.clone()],
@@ -2073,7 +2073,7 @@ mod tokenize_proptests {
             a in "[a-z]{1,8}",
             b in "[a-z]{1,8}",
         ) {
-            let s = format!("{} && {}", a, b);
+            let s = format!("{a} && {b}");
             prop_assert_eq!(
                 tokenize(&s),
                 vec![a.clone(), "&&".to_string(), b.clone()],
@@ -2086,7 +2086,7 @@ mod tokenize_proptests {
             a in "[a-z]{1,8}",
             b in "[a-z]{1,8}",
         ) {
-            let s = format!("{} || {}", a, b);
+            let s = format!("{a} || {b}");
             prop_assert_eq!(
                 tokenize(&s),
                 vec![a.clone(), "||".to_string(), b.clone()],
@@ -2117,8 +2117,7 @@ mod tokenize_proptests {
         let toks = tokenize("cat <<EOF\nbody");
         assert!(
             toks.iter().any(|t| t == "__kod_heredoc_unterminated__"),
-            "got {:?}",
-            toks,
+            "got {toks:?}",
         );
     }
 }

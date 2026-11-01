@@ -186,7 +186,7 @@ async fn test_permission_denied() {
         KodError::PermissionDenied { action, .. } => {
             assert_eq!(action, "read");
         }
-        e => panic!("Expected PermissionDenied, got: {:?}", e),
+        e => panic!("Expected PermissionDenied, got: {e:?}"),
     }
 }
 

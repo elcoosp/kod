@@ -34,7 +34,7 @@ impl SkillParser {
     pub fn parse_file(&self, path: &Path) -> Result<Skill> {
         let content = std::fs::read_to_string(path).map_err(|e| KodError::SkillParseError {
             path: path.display().to_string(),
-            reason: format!("Failed to read file: {}", e),
+            reason: format!("Failed to read file: {e}"),
         })?;
 
         let source_name = path.display().to_string();
@@ -103,7 +103,7 @@ impl SkillParser {
         let metadata: SkillMetadata =
             serde_yaml::from_str(yaml_str.trim()).map_err(|e| KodError::SkillParseError {
                 path: source.to_string(),
-                reason: format!("Invalid YAML: {}", e),
+                reason: format!("Invalid YAML: {e}"),
             })?;
 
         Ok((metadata, body))
@@ -202,7 +202,7 @@ impl SkillParser {
         // finds the real `input`.
         //
         // T5-C31: double quotes first, then single.
-        let pattern = format!("{}=\"", attr);
+        let pattern = format!("{attr}=\"");
         let mut search_at = 0;
         while let Some(found) = tag[search_at..].find(&pattern) {
             let idx = search_at + found;
@@ -214,7 +214,7 @@ impl SkillParser {
             }
             search_at = idx + pattern.len();
         }
-        let pattern = format!("{}='", attr);
+        let pattern = format!("{attr}='");
         let mut search_at = 0;
         loop {
             let Some(found) = tag[search_at..].find(&pattern) else {

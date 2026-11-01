@@ -65,7 +65,7 @@ impl EngineContext {
 
         // Add system prompt if present
         if let Some(system) = &self.system_prompt {
-            prompt.push_str(&format!("## System\n\n{}\n\n", system));
+            prompt.push_str(&format!("## System\n\n{system}\n\n"));
         }
 
         // Delta §12.5: recalled memory is prompt scaffolding, not a
@@ -112,7 +112,7 @@ impl EngineContext {
         if !self.tools_available.is_empty() {
             prompt.push_str("## Available Tools\n\n");
             for tool in &self.tools_available {
-                prompt.push_str(&format!("- {}\n", tool));
+                prompt.push_str(&format!("- {tool}\n"));
             }
             prompt.push('\n');
         }

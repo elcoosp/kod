@@ -944,9 +944,9 @@ impl Engine {
 "#;
         let symbols = extract_rust(src);
         let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"Engine"), "got: {:?}", names);
-        assert!(names.contains(&"State"), "got: {:?}", names);
-        assert!(names.contains(&"run"), "got: {:?}", names);
+        assert!(names.contains(&"Engine"), "got: {names:?}");
+        assert!(names.contains(&"State"), "got: {names:?}");
+        assert!(names.contains(&"run"), "got: {names:?}");
     }
 
     #[test]
@@ -968,11 +968,11 @@ pub struct Engine;
 "#;
         let symbols = extract_rust(src);
         let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"production"), "got: {:?}", names);
-        assert!(names.contains(&"Engine"), "got: {:?}", names);
-        assert!(!names.contains(&"unit_test"), "got: {:?}", names);
-        assert!(!names.contains(&"async_test"), "got: {:?}", names);
-        assert!(!names.contains(&"attributed_test"), "got: {:?}", names);
+        assert!(names.contains(&"production"), "got: {names:?}");
+        assert!(names.contains(&"Engine"), "got: {names:?}");
+        assert!(!names.contains(&"unit_test"), "got: {names:?}");
+        assert!(!names.contains(&"async_test"), "got: {names:?}");
+        assert!(!names.contains(&"attributed_test"), "got: {names:?}");
     }
 
     /// Regression target for D5-L4: the repomap sorts by PageRank, not

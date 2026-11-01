@@ -26,7 +26,7 @@ pub async fn run_skills_list(json: bool) -> Result<()> {
             .collect();
         let out = serde_json::to_string_pretty(&arr)
             .map_err(|e| KodError::Serialization(e.to_string()))?;
-        println!("{}", out);
+        println!("{out}");
         return Ok(());
     }
 
@@ -136,8 +136,7 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(KodError::Config(format!(
-            "invalid skill name {:?}: use lowercase letters, digits, and hyphens only",
-            trimmed
+            "invalid skill name {trimmed:?}: use lowercase letters, digits, and hyphens only"
         )));
     }
 
@@ -292,8 +291,7 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
             s.code()
         ))),
         Err(e) => Err(KodError::Internal(format!(
-            "could not launch {:?}: {}",
-            editor, e
+            "could not launch {editor:?}: {e}"
         ))),
     }
 }
@@ -309,7 +307,7 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
         }
     };
     let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
-    print!("{}", content);
+    print!("{content}");
     if !content.ends_with('\n') {
         println!();
     }
@@ -396,7 +394,7 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
     let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
 
     if dest.as_os_str() == "-" {
-        print!("{}", content);
+        print!("{content}");
         if !content.ends_with('\n') {
             println!();
         }
@@ -495,7 +493,7 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
     }
 
     if hits.is_empty() {
-        println!("No skills match {:?}.", query);
+        println!("No skills match {query:?}.");
         return Ok(());
     }
 
@@ -582,8 +580,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
         || new_name.is_empty()
     {
         return Err(KodError::Config(format!(
-            "invalid new name {:?}: lowercase letters, digits, and hyphens only",
-            new_name
+            "invalid new name {new_name:?}: lowercase letters, digits, and hyphens only"
         )));
     }
 
@@ -616,7 +613,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     for line in content.lines() {
         if !rewrote && line.trim_start().starts_with("name:") {
             let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            out.push_str(&format!("{}name: {}\n", indent, new_name));
+            out.push_str(&format!("{indent}name: {new_name}\n"));
             rewrote = true;
         } else {
             out.push_str(line);
@@ -632,7 +629,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
 
     std::fs::write(&dest, out.as_bytes()).map_err(KodError::Io)?;
     println!("Copied {} to {}", src.display(), dest.display());
-    println!("Run `kod skills show {}` to inspect.", new_name);
+    println!("Run `kod skills show {new_name}` to inspect.");
     Ok(())
 }
 
@@ -651,8 +648,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(KodError::Config(format!(
-            "invalid new name {:?}: lowercase letters, digits, and hyphens only",
-            new_name
+            "invalid new name {new_name:?}: lowercase letters, digits, and hyphens only"
         )));
     }
     let src = match find_skill_path(name).await? {

@@ -459,8 +459,7 @@ mod decisions_proptests {
             let block = log.render_prompt_block(1);
             assert!(
                 block.contains(&format!("[{expected_tag}]")),
-                "kind {:?} should render as [{expected_tag}], got: {block}",
-                kind,
+                "kind {kind:?} should render as [{expected_tag}], got: {block}",
             );
         }
     }
@@ -521,6 +520,6 @@ mod decisions_proptests {
             "c".to_string(),
             DecisionAuthor::User,
         );
-        assert!(c > b, "next_id reused a dropped id: c={} b={}", c, b);
+        assert!(c > b, "next_id reused a dropped id: c={c} b={b}");
     }
 }

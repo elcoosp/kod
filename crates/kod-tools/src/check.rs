@@ -457,8 +457,7 @@ impl CheckTool {
         let mut child = cmd.spawn().map_err(|e| KodError::ToolExecution {
             tool_name: "check".to_string(),
             reason: format!(
-                "could not run `{}`: {}. Is the toolchain on PATH?",
-                program, e
+                "could not run `{program}`: {e}. Is the toolchain on PATH?"
             ),
         })?;
         // Drain both pipes CONCURRENTLY with the wait. A child that
@@ -490,7 +489,7 @@ impl CheckTool {
             Ok((Err(e), _, _)) => {
                 return Err(KodError::ToolExecution {
                     tool_name: "check".to_string(),
-                    reason: format!("`{}` could not be waited on: {e}", program),
+                    reason: format!("`{program}` could not be waited on: {e}"),
                 });
             }
             Err(_) => {
@@ -508,7 +507,7 @@ impl CheckTool {
                 let _ = child.wait().await;
                 return Err(KodError::ToolExecution {
                     tool_name: "check".to_string(),
-                    reason: format!("`{}` did not finish within {}s", program, timeout_secs),
+                    reason: format!("`{program}` did not finish within {timeout_secs}s"),
                 });
             }
         };
@@ -1056,8 +1055,7 @@ mod proptests {
             assert_eq!(
                 parse_rust_line(case),
                 None,
-                "parser accepted a zero position in {:?}",
-                case,
+                "parser accepted a zero position in {case:?}",
             );
         }
     }
@@ -1075,8 +1073,7 @@ mod proptests {
             assert_eq!(
                 parse_tsc_line(case),
                 None,
-                "tsc parser accepted a zero position in {:?}",
-                case,
+                "tsc parser accepted a zero position in {case:?}",
             );
         }
     }
@@ -1129,8 +1126,8 @@ mod location_parser_differential {
             col in arb_pos(),
             msg in "[a-zA-Z ]{0,20}",
         ) {
-            let bare = format!("{}:{}:{}", file, line, col);
-            let with_msg = format!("{}:{}:{}: {}", file, line, col, msg);
+            let bare = format!("{file}:{line}:{col}");
+            let with_msg = format!("{file}:{line}:{col}: {msg}");
             let from_bare = parse_location_colon(&bare);
             let from_prefix = parse_location_colon_prefix(&with_msg);
             let expected = Some((file.clone(), line, col));
@@ -1148,8 +1145,8 @@ mod location_parser_differential {
             a in "[a-zA-Z]{0,10}",
             b in "[a-zA-Z]{0,10}",
         ) {
-            let t1 = format!("{}:{}:{}: {}", file, line, col, a);
-            let t2 = format!("{}:{}:{}: {}", file, line, col, b);
+            let t1 = format!("{file}:{line}:{col}: {a}");
+            let t2 = format!("{file}:{line}:{col}: {b}");
             prop_assert_eq!(
                 parse_location_colon_prefix(&t1),
                 parse_location_colon_prefix(&t2),

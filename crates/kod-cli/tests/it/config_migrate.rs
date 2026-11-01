@@ -92,8 +92,7 @@ fn migrate_brings_a_v1_config_to_v2_with_a_backup() {
     assert_eq!(
         backups.len(),
         1,
-        "exactly one backup must be written; found {:?}",
-        backups,
+        "exactly one backup must be written; found {backups:?}",
     );
     let backup_bytes = std::fs::read_to_string(&backups[0]).unwrap();
     assert_eq!(

@@ -476,7 +476,7 @@ mod stopwords_proptests {
         // pin. The failure of prop_no_stopwords_in_output (if any)
         // will name the actual input and token, and the fix will
         // be chosen from that.
-        eprintln!("tokens(\"thes\") = {:?}", out);
+        eprintln!("tokens(\"thes\") = {out:?}");
     }
 
     /// Control: a well-known content word survives. If the fix
@@ -486,6 +486,6 @@ mod stopwords_proptests {
     #[test]
     fn control_content_word_survives() {
         let out = tokens("parser");
-        assert_eq!(out, vec!["parser".to_string()], "got {:?}", out);
+        assert_eq!(out, vec!["parser".to_string()], "got {out:?}");
     }
 }

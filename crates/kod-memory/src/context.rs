@@ -79,7 +79,7 @@ impl Context {
 
         // Add system prompt if provided
         if let Some(system) = &self.system_prompt {
-            prompt.push_str(&format!("## System\n\n{}\n\n", system));
+            prompt.push_str(&format!("## System\n\n{system}\n\n"));
         }
 
         // Add user input

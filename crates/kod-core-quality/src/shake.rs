@@ -1416,7 +1416,7 @@ mod shake_parser_proptests {
             lead in "[^a-zA-Z_<]",
             tail in "[a-zA-Z0-9]{0,20}",
         ) {
-            let content = format!("<{}{}>", lead, tail);
+            let content = format!("<{lead}{tail}>");
             prop_assert!(
                 parse_open_tag(&content, 0).is_none(),
                 "bad lead {:?} accepted: {:?}", lead, content,
@@ -1430,7 +1430,7 @@ mod shake_parser_proptests {
             name in arb_tag_name(),
             ws in "[ \t]{1,3}",
         ) {
-            let content = format!("<{} {}>", name, ws);
+            let content = format!("<{name} {ws}>");
             // The whitespace here separates `<name ` from `>`; the
             // parser must stop at the whitespace and reject.
             prop_assert!(
@@ -1448,12 +1448,12 @@ mod shake_parser_proptests {
             name in arb_tag_name(),
             suffix in "[a-zA-Z0-9 ]{0,20}",
         ) {
-            let content = format!("{}\n</{}>{}\n", prefix, name, suffix);
+            let content = format!("{prefix}\n</{name}>{suffix}\n");
             let Some(end) = find_close_tag(&content, 0, &name) else {
                 prop_assert!(false, "expected Some on {:?} for name {:?}", content, name);
                 return Ok(());
             };
-            let needle = format!("</{}>", name);
+            let needle = format!("</{name}>");
             prop_assert_eq!(
                 &content[end - needle.len()..end],
                 needle.as_str(),
@@ -1475,7 +1475,7 @@ mod shake_parser_proptests {
             prefix in "[a-zA-Z0-9 ]{0,40}",
             name in arb_tag_name(),
         ) {
-            let content = format!("{}\n<{}>body</other>\n", prefix, name);
+            let content = format!("{prefix}\n<{name}>body</other>\n");
             prop_assert!(
                 find_close_tag(&content, 0, &name).is_none(),
                 "found a close-tag that is not </{}>: {:?}", name, content,
