@@ -64,8 +64,12 @@ const NAME_KEYWORDS: &[&str] = &[
 /// if none is present in the text, the regex cannot match and the
 /// scan skips it.
 pub struct VendorPattern {
+    /// The vendor's name (used in the placeholder marker).
     pub name: &'static str,
+    /// The regex matched against candidate text.
     pub regex: Regex,
+    /// Literal substrings that must be present before the regex is
+    /// tried — a fast pre-filter.
     pub literal_prefixes: &'static [&'static str],
 }
 
@@ -153,7 +157,9 @@ fn pattern(
 /// A discovered secret value + where it came from.
 #[derive(Debug, Clone)]
 pub struct Discovered {
+    /// The discovered secret value.
     pub value: String,
+    /// Where the secret was found.
     pub source: SecretSource,
     /// For a vendor match, the pattern name (`"anthropic"`). For an
     /// env var, the variable name. For a connection URL, the scheme.

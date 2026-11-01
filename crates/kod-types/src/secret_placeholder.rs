@@ -125,7 +125,9 @@ pub enum SecretSource {
 /// for a report; the vault does not keep provenance itself.
 #[derive(Debug, Clone)]
 pub struct RegisteredSecret {
+    /// The placeholder assigned to this secret.
     pub placeholder: String,
+    /// Where the secret was found.
     pub source: SecretSource,
 }
 
@@ -282,6 +284,7 @@ impl SecretVault {
         self.inner.forward.read().map(|g| g.len()).unwrap_or(0)
     }
 
+    /// True when no secrets are registered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

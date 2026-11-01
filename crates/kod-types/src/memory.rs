@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Which memory store an entry belongs to.
 pub enum MemoryType {
+    /// Session-scoped working memory.
     ShortTerm,
+    /// Persistent long-term memory.
     LongTerm,
     /// A session-scoped episode: a fact extracted from a transcript
     /// (D2.4, extraction channel), tagged with the session it came
@@ -19,12 +22,19 @@ pub enum MemoryType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One memory entry.
 pub struct MemoryEntry {
+    /// The entry's unique id.
     pub id: MemoryId,
+    /// Which store this entry belongs to.
     pub memory_type: MemoryType,
+    /// The entry's content text.
     pub content: String,
+    /// When the entry was created.
     pub timestamp: OffsetDateTime,
+    /// Retrieval relevance score.
     pub relevance: f32,
+    /// Structured metadata (session, tags, confidence, etc.).
     pub metadata: MemoryMetadata,
     /// Set when a later entry replaces this one. A superseded entry is
     /// kept on disk — deleting it loses the audit trail — but excluded
@@ -50,9 +60,13 @@ impl MemoryEntry {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Structured metadata attached to a memory entry.
 pub struct MemoryMetadata {
+    /// The session this entry was created in.
     pub session_id: Option<SessionId>,
+    /// Free-form tags for filtering.
     pub tags: Vec<String>,
+    /// Embedding vector, when semantic search is enabled.
     pub embedding: Option<Vec<f32>>,
     /// FNV-1a hash of the canonical working directory. Used by the
     /// hybrid retrieval to scope a "global" memory store per project
@@ -79,9 +93,13 @@ pub struct MemoryMetadata {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// The memory context assembled for one turn.
 pub struct MemoryContext {
+    /// Working-memory entries.
     pub working_memory: Vec<MemoryEntry>,
+    /// Long-term-memory entries.
     pub long_term: Vec<MemoryEntry>,
+    /// Total token count of the assembled context.
     pub total_tokens: usize,
 }
 

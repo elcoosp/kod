@@ -4,10 +4,14 @@ use crate::ids::{AgentId, MessageId};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+/// One message in a chat transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// The message's unique id.
     pub id: MessageId,
+    /// The role that produced the message.
     pub role: MessageRole,
+    /// The message body.
     pub content: String,
     /// Tool calls issued by an `Assistant` message. Empty for every
     /// other role. Populated when the model responds with tool calls;
@@ -20,7 +24,9 @@ pub struct ChatMessage {
     /// transcripts written before the field existed.
     #[serde(default)]
     pub tool_call_id: Option<String>,
+    /// When the message was created.
     pub timestamp: OffsetDateTime,
+    /// Structured metadata (skills, tools, timings, pin state).
     pub metadata: MessageMetadata,
 }
 
@@ -59,12 +65,18 @@ impl ChatMessage {
     }
 }
 
+/// The role a message is from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageRole {
+    /// The user.
     User,
+    /// The assistant (model).
     Assistant,
+    /// The system prompt.
     System,
+    /// A tool result.
     Tool,
+    /// A named agent (used in swarm transcripts).
     Agent(AgentId),
 }
 
@@ -86,11 +98,17 @@ pub struct RasterizedImage {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+/// Structured metadata attached to every message.
 pub struct MessageMetadata {
+    /// The skill that was applied to this message, if any.
     pub skill_applied: Option<String>,
+    /// Tools called while producing this message.
     pub tools_used: Vec<String>,
+    /// The agent that produced the message, when applicable.
     pub agent_id: Option<AgentId>,
+    /// Provider-reported thinking time in milliseconds.
     pub thinking_time_ms: Option<u64>,
+    /// Token count reported for this message.
     pub token_count: Option<usize>,
     /// When true, the engine never drops this turn from the rendered
     /// history, even when the budget is exhausted. Set by the TUI's
@@ -135,78 +153,139 @@ pub struct MessageMetadata {
     pub useless: bool,
 }
 
+/// One message between agents in a swarm.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMessage {
+    /// The message's unique id.
     pub id: MessageId,
+    /// The sending agent.
     pub from: AgentId,
+    /// The destination.
     pub to: MessageDestination,
+    /// The message payload.
     pub content: AgentMessageContent,
+    /// When the message was created.
     pub timestamp: OffsetDateTime,
 }
 
+/// Where a message is going.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageDestination {
+    /// A direct message to one agent.
     Agent(AgentId),
+    /// Broadcast to every agent.
     Broadcast,
+    /// The swarm coordinator.
     Coordinator,
 }
 
+/// The payload of an agent-to-agent message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentMessageContent {
+    /// Assign a task to the recipient.
     TaskAssignment {
+        /// Human-readable task description.
         description: String,
+        /// Task priority.
         priority: Priority,
     },
+    /// Report progress on a task.
     ProgressUpdate {
+        /// Current status.
         status: TaskStatus,
+        /// Human-readable details.
         details: String,
     },
+    /// Request help from a peer.
     HelpRequest {
+        /// The question being asked.
         question: String,
+        /// Context the peer needs.
         context: String,
     },
+    /// Share knowledge with peers.
     KnowledgeShare {
+        /// The information being shared.
         information: String,
+        /// Tags for filtering.
         tags: Vec<String>,
     },
+    /// Coordinate an action across the swarm.
     Coordination {
+        /// The coordination action.
         action: CoordinationAction,
     },
+    /// Claim exclusive access to a file.
     FileClaim {
+        /// The file being claimed.
         path: String,
+        /// How long the claim lasts.
         duration_secs: u64,
     },
+    /// Release a previously-claimed file.
     FileRelease {
+        /// The file being released.
         path: String,
     },
+    /// Deliver a task result to the coordinator.
     ResultDelivery {
+        /// The result body.
         result: String,
     },
 }
 
+/// The priority of a task or message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Priority {
+    /// Low priority.
     Low,
+    /// Medium priority (the normal case).
     Medium,
+    /// High priority.
     High,
+    /// Critical; blocks other work.
     Critical,
 }
 
+/// The lifecycle status of a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskStatus {
+    /// Not yet started.
     Pending,
+    /// Currently in progress.
     InProgress,
+    /// Blocked on an external dependency.
     Blocked,
+    /// Finished successfully.
     Completed,
+    /// Failed.
     Failed,
 }
 
+/// A swarm coordination action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CoordinationAction {
+    /// Request a sync with peers.
     RequestingSync,
-    ProposingChange { file: String, description: String },
-    AcknowledgingChange { file: String },
-    ConflictDetected { file: String, description: String },
+    /// Propose a file change to peers.
+    ProposingChange {
+        /// The file being proposed for change.
+        file: String,
+        /// The nature of the change.
+        description: String,
+    },
+    /// Acknowledge a proposed change.
+    AcknowledgingChange {
+        /// The file whose change is acknowledged.
+        file: String,
+    },
+    /// Report a conflict on a file.
+    ConflictDetected {
+        /// The conflicting file.
+        file: String,
+        /// A description of the conflict.
+        description: String,
+    },
 }
 
 #[cfg(test)]

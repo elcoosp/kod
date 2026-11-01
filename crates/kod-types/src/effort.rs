@@ -19,10 +19,12 @@ pub enum EffortLevel {
     None,
     /// A little: a short chain.
     Minimal,
+    /// A short chain of thought.
     Low,
     /// The default. A model that thinks briefly.
     #[default]
     Medium,
+    /// A longer chain for a harder problem.
     High,
     /// Above high: for a hard problem where the answer matters more
     /// than the latency.
@@ -74,6 +76,7 @@ impl EffortLevel {
         }
     }
 
+    /// The lowercase string label for this effort level.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",

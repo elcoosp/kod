@@ -9,6 +9,7 @@ use std::fmt;
 macro_rules! define_id {
     ($name:ident, $prefix:literal) => {
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        #[doc = concat!("Typed identifier `", stringify!($name), "`. See the module docs for the type-to-prefix mapping.")]
         pub struct $name(pub uuid::Uuid);
 
         impl $name {

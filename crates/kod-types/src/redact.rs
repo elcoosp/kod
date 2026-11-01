@@ -35,16 +35,22 @@ use std::sync::OnceLock;
 /// entirely), and `name` appears in the replacement marker.
 #[derive(Debug, Clone)]
 pub struct RedactRule {
+    /// The rule's display name.
     pub name: String,
+    /// The compiled regex.
     pub pattern: Regex,
+    /// Characters to preserve at the start of a match.
     pub head: usize,
+    /// Characters to preserve at the end of a match.
     pub tail: usize,
 }
 
 /// A single redaction event, for logging.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Redaction {
+    /// The name of the rule that fired.
     pub rule: String,
+    /// Number of matches the rule made.
     pub count: usize,
 }
 
@@ -257,6 +263,7 @@ impl Redactor {
         out
     }
 
+    /// Number of rules this redactor holds.
     pub fn rule_count(&self) -> usize {
         self.rules.len()
     }

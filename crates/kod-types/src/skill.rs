@@ -4,56 +4,102 @@ use crate::ids::SkillId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// A loaded skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
+    /// The skill's unique id.
     pub id: SkillId,
+    /// Parsed frontmatter metadata.
     pub metadata: SkillMetadata,
+    /// The skill's instruction body.
     pub instructions: String,
+    /// Example input/output pairs.
     pub examples: Vec<SkillExample>,
+    /// Optional constraints the model must respect.
     pub constraints: Option<String>,
+    /// The full markdown body (frontmatter stripped).
     pub content: String,
+    /// The file the skill was loaded from.
     pub path: PathBuf,
 }
 
+/// The frontmatter block at the top of a skill file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
+    /// The skill's name.
     pub name: String,
+    /// A one-line description.
     pub description: String,
+    /// Semantic version string.
     #[serde(default)]
     pub version: String,
+    /// Optional author.
     pub author: Option<String>,
+    /// The skill's category.
     #[serde(default)]
     pub category: String,
+    /// Free-form tags.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Capabilities the skill provides.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Requirements the environment must satisfy.
     #[serde(default)]
     pub requirements: Vec<String>,
+    /// Phrases that activate the skill.
     #[serde(default)]
     pub triggers: Vec<String>,
 }
 
+/// One example input/output pair for a skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillExample {
+    /// The example input.
     pub input: String,
+    /// The expected output.
     pub output: String,
 }
 
+/// A skill matched against the current turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMatch {
+    /// The matched skill.
     pub skill: Skill,
+    /// The overall relevance score.
     pub score: f32,
+    /// The individual reasons the skill matched.
     pub match_reasons: Vec<MatchReason>,
 }
 
+/// Why a skill matched the current turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MatchReason {
-    TriggerMatch { trigger: String },
-    TagMatch { tag: String },
-    CapabilityMatch { capability: String },
-    NameMatch { name: String },
-    SemanticSimilarity { score: f32 },
+    /// A trigger phrase was present.
+    TriggerMatch {
+        /// The trigger phrase that matched.
+        trigger: String,
+    },
+    /// A tag matched the turn.
+    TagMatch {
+        /// The tag that matched.
+        tag: String,
+    },
+    /// A capability match was found.
+    CapabilityMatch {
+        /// The capability that matched.
+        capability: String,
+    },
+    /// The skill name appeared in the turn.
+    NameMatch {
+        /// The name that matched.
+        name: String,
+    },
+    /// Semantic similarity exceeded the threshold.
+    SemanticSimilarity {
+        /// The similarity score.
+        score: f32,
+    },
 }
 
 #[cfg(test)]

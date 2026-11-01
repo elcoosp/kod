@@ -4,13 +4,20 @@ use crate::ids::ToolId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// One tool's registered definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
+    /// The tool's unique id.
     pub id: ToolId,
+    /// The tool's name (used in calls and in the prompt's tool block).
     pub name: String,
+    /// The tool's description.
     pub description: String,
+    /// The tool's category.
     pub category: ToolCategory,
+    /// JSON Schema for the tool's arguments.
     pub parameters_schema: Value,
+    /// Permissions the tool requires.
     pub permissions: ToolPermissions,
 
     /// Content trust level for this tool's output (Tier 1.1).
@@ -46,17 +53,25 @@ pub enum LoadMode {
 }
 
 impl LoadMode {
+    /// True when the schema is mounted behind xd:// rather than in the
+    /// tools array.
     pub fn is_discoverable(self) -> bool {
         matches!(self, Self::Discoverable)
     }
 }
 
+/// The category a tool belongs to, used by the Jev filter and session log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ToolCategory {
+    /// File-system tools (read, write, edit, list).
     FileSystem,
+    /// Git tools.
     Git,
+    /// Web tools (fetch, search).
     Web,
+    /// Code-analysis tools (check, search_files).
     Code,
+    /// System tools (execute_command, sandbox probes).
     System,
 }
 
@@ -107,29 +122,43 @@ impl ToolCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum GitAccess {
+    /// No git tool runs.
     #[default]
     None,
+    /// Read-only git (status, diff, branch list).
     Read,
+    /// Read plus mutating operations (commit, branch create).
     Write,
 }
 
 impl GitAccess {
+    /// True when this access level permits everything the required
+    /// level does.
     pub fn is_at_least(self, required: GitAccess) -> bool {
         self >= required
     }
 }
 
+/// Permissions a tool requires to run.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolPermissions {
+    /// Reads file contents.
     pub read_files: bool,
+    /// Writes to files.
     pub write_files: bool,
+    /// Runs shell commands.
     pub execute_commands: bool,
+    /// Makes network calls.
     pub network_access: bool,
+    /// Level of git access required.
     pub git_access: GitAccess,
+    /// Path globs the tool may touch.
     pub allowed_paths: Vec<String>,
+    /// Path globs the tool may not touch.
     pub forbidden_paths: Vec<String>,
 }
 
+/// One tool call issued by the model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     /// Wire-level id the provider assigned to this call, when
@@ -140,7 +169,9 @@ pub struct ToolCall {
     /// provider that does not emit ids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// The tool name being called.
     pub tool_name: String,
+    /// The call's arguments, matching the tool's schema.
     pub arguments: Value,
 }
 
@@ -156,21 +187,32 @@ impl ToolCall {
     }
 }
 
+/// What a tool call returned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolResult {
+    /// The call succeeded with this JSON value.
     Success(Value),
+    /// The call failed with this error message.
     Error(String),
+    /// The call needs user confirmation before it can proceed.
     RequiresConfirmation {
+        /// Human-readable description of what the tool will do.
         description: String,
+        /// The callback id to invoke with the user's answer.
         callback_id: String,
     },
 }
 
+/// One tool call and its result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecution {
+    /// The call that was made.
     pub call: ToolCall,
+    /// What the call returned.
     pub result: ToolResult,
+    /// Wall time of the execution in milliseconds.
     pub execution_time_ms: u64,
+    /// When the execution finished.
     pub timestamp: String,
 }
 
