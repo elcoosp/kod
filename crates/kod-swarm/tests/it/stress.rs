@@ -128,14 +128,10 @@ async fn irc_bus_cap_drops_are_accounted_for() {
         writers.push(tokio::spawn(async move {
             let from = format!("w{w}");
             for i in 0..per_sender {
-                match bus
+                if bus
                     .send(from.clone(), "inbox", format!("{w}-{i}"), Delivery::Aside)
-                    .await
-                {
-                    Receipt::DroppedOldest => {
-                        drops.fetch_add(1, Ordering::Relaxed);
-                    }
-                    _ => {}
+                    .await == Receipt::DroppedOldest {
+                    drops.fetch_add(1, Ordering::Relaxed);
                 }
                 if i % 8 == 0 {
                     tokio::task::yield_now().await;

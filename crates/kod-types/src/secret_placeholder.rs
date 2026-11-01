@@ -849,7 +849,7 @@ mod secret_vault_proptests {
         let vault = fixed_vault();
         vault.register("secret-value-1");
         assert_eq!(vault.obfuscate(""), "");
-        assert_eq!(vault.deobfuscate(""), ("".to_string(), 0));
+        assert_eq!(vault.deobfuscate(""), (String::new(), 0));
     }
 
     /// Control: empty vault leaves text unchanged.

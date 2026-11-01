@@ -195,7 +195,7 @@ pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
 
     let ends_with_q = trimmed.ends_with('?');
     let leading_q = QUESTION_WORDS.contains(&first_word);
-    let question_cues: u32 = (ends_with_q as u32) + (leading_q as u32);
+    let question_cues: u32 = u32::from(ends_with_q) + u32::from(leading_q);
     if question_cues > 0 {
         return (QueryIntent::Question, intent_confidence(question_cues));
     }
@@ -310,7 +310,7 @@ pub fn intent_weights(intent: QueryIntent) -> IntentWeights {
 /// uniform prior.
 #[must_use]
 pub fn intent_confidence(matches: u32) -> f64 {
-    0.15f64.mul_add(matches as f64, 0.3).min(1.0)
+    0.15f64.mul_add(f64::from(matches), 0.3).min(1.0)
 }
 
 #[cfg(test)]

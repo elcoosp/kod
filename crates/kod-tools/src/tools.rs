@@ -1178,7 +1178,7 @@ impl Tool for ExecuteCommandTool {
                         Err(_) => stderr_eof = true,
                     }
                 }
-                _ = &mut timeout, if !timed_out => {
+                () = &mut timeout, if !timed_out => {
                     timed_out = true;
                 }
             }

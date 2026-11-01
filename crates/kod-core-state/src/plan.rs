@@ -479,10 +479,10 @@ impl Plan {
             PlanUpdate::Advance => {
                 let prev = self.current;
                 self.advance();
-                if prev != self.current {
-                    format!("Advanced to step {}", self.current + 1)
-                } else {
+                if prev == self.current {
                     "Plan is complete".to_string()
+                } else {
+                    format!("Advanced to step {}", self.current + 1)
                 }
             }
             PlanUpdate::Annotate { step_id, note } => {

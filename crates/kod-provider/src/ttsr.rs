@@ -420,7 +420,7 @@ mod tests {
             InterruptMode::ToolOnly,
             RepeatMode::Once,
         )]);
-        assert!(e.observe_tool("edit", Some("src/a.rs"), "TODO").len() == 1);
+        assert_eq!(e.observe_tool("edit", Some("src/a.rs"), "TODO").len(), 1);
         assert!(e.observe_tool("edit", Some("README.md"), "TODO").is_empty());
         // A missing path does not fire a path-filtered rule.
         assert!(e.observe_tool("edit", None, "TODO").is_empty());

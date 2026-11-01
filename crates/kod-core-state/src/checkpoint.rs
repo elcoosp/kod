@@ -541,7 +541,7 @@ pub fn fnv1a_hex(s: &str) -> String {
     const PRIME: u64 = 0x100000001b3;
     let mut h = OFFSET;
     for b in s.bytes() {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(PRIME);
     }
     format!("{h:016x}")

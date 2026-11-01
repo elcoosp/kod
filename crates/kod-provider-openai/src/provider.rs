@@ -558,7 +558,7 @@ impl OpenAICompatProvider {
 
 #[async_trait]
 impl LlmProvider for OpenAICompatProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "openai-compatible"
     }
 

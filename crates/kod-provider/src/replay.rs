@@ -92,7 +92,7 @@ impl ReplayProvider {
 
 #[async_trait]
 impl LlmProvider for ReplayProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "replay"
     }
 

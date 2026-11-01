@@ -160,7 +160,7 @@ pub fn stable_message_hash(m: &ChatMessage) -> u64 {
     let mut h = OFFSET;
     let mut feed = |bytes: &[u8]| {
         for b in bytes {
-            h ^= *b as u64;
+            h ^= u64::from(*b);
             h = h.wrapping_mul(PRIME);
         }
     };

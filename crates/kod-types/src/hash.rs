@@ -23,11 +23,11 @@ pub const FNV1A_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 /// sequence.
 pub fn fnv1a_64_feed(h: &mut u64, bytes: &[u8]) {
     for b in (bytes.len() as u64).to_le_bytes() {
-        *h ^= b as u64;
+        *h ^= u64::from(b);
         *h = h.wrapping_mul(FNV1A_PRIME);
     }
     for &b in bytes {
-        *h ^= b as u64;
+        *h ^= u64::from(b);
         *h = h.wrapping_mul(FNV1A_PRIME);
     }
 }

@@ -656,11 +656,11 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
                 // A completion. Prefer the unnamed queue; else clear the
                 // oldest id-bearing start of the same name.
                 let cleared_unnamed = if let Some(v) = by_name.get_mut(tool_name) {
-                    if !v.is_empty() {
+                    if v.is_empty() {
+                        false
+                    } else {
                         v.remove(0);
                         true
-                    } else {
-                        false
                     }
                 } else {
                     false
@@ -864,7 +864,7 @@ pub fn rehydrate_turns(entries: &[SessionEntry], holder: &str) -> Vec<kod_types:
         }
 
         let ts =
-            time::OffsetDateTime::from_unix_timestamp_nanos((*timestamp_ms as i128) * 1_000_000)
+            time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(*timestamp_ms) * 1_000_000)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
 
         // A stable call id ties the assistant tool-call message to
@@ -954,7 +954,7 @@ pub fn rehydrate_prose_turns(
         }
 
         let ts =
-            time::OffsetDateTime::from_unix_timestamp_nanos((*timestamp_ms as i128) * 1_000_000)
+            time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(*timestamp_ms) * 1_000_000)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
 
         let args = serde_json::to_string(arguments).unwrap_or_default();
@@ -1421,8 +1421,8 @@ mod coverage_session_paths {
         // mix. pid + counter makes uniqueness a guarantee, and this
         // test pins it.
         if let (Some(a), Some(b)) = (default_session_path(), default_session_path()) {
-            assert!(a.extension().and_then(|s| s.to_str()) == Some("jsonl"));
-            assert!(b.extension().and_then(|s| s.to_str()) == Some("jsonl"));
+            assert_eq!(a.extension().and_then(|s| s.to_str()), Some("jsonl"));
+            assert_eq!(b.extension().and_then(|s| s.to_str()), Some("jsonl"));
             assert_ne!(
                 a, b,
                 "two sessions in the same process must not share a log path",

@@ -512,7 +512,7 @@ pub fn hash_short(v: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(v).unwrap_or_default();
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")

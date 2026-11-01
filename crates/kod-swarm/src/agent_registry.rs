@@ -113,7 +113,7 @@ impl AgentRef {
         // method cannot walk the registry without a reference to it,
         // so it is documented as "immediate depth" only; callers that
         // need the true depth use `AgentRegistry::depth_of`.
-        if self.parent.is_some() { 1 } else { 0 }
+        u32::from(self.parent.is_some())
     }
 }
 

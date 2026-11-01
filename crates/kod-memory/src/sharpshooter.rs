@@ -120,11 +120,7 @@ impl Friction {
             3
         } else if self.corrective {
             2
-        } else if self.subtle {
-            1
-        } else {
-            0
-        }
+        } else { u8::from(self.subtle) }
     }
 }
 

@@ -1517,7 +1517,7 @@ mod coverage_wire_builders {
         let mut req = base_req();
         req.options.temperature = Some(0.7);
         let body = build_messages_body(&req);
-        assert_eq!(body["temperature"], 0.7f32 as f64);
+        assert_eq!(body["temperature"], f64::from(0.7f32));
     }
 
     #[test]
@@ -1532,7 +1532,7 @@ mod coverage_wire_builders {
         let mut req = base_req();
         req.options.top_p = Some(0.9);
         let body = build_messages_body(&req);
-        assert_eq!(body["top_p"], 0.9f32 as f64);
+        assert_eq!(body["top_p"], f64::from(0.9f32));
     }
 
     #[test]

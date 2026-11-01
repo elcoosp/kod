@@ -546,7 +546,7 @@ impl KodConfig {
             let mut f = std::fs::File::create(&tmp)
                 .map_err(|e| KodError::Config(format!("Failed to create temp config: {e}")))?;
             f.write_all(content.as_bytes())
-                .and_then(|_| f.sync_all())
+                .and_then(|()| f.sync_all())
                 .map_err(|e| KodError::Config(format!("Failed to write temp config: {e}")))?;
         }
         std::fs::rename(&tmp, path)

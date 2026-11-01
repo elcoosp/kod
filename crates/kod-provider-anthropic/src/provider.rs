@@ -281,7 +281,7 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "anthropic"
     }
 

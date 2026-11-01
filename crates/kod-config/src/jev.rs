@@ -203,10 +203,10 @@ impl JevThresholds {
     /// The value is clamped into `[0.0, 1.0]` and NaN is coerced to
     /// `0.5` so a bad input cannot make every decision fail.
     pub fn set(&mut self, name: &str, value: f32) -> bool {
-        let v = if !value.is_finite() {
-            0.5
-        } else {
+        let v = if value.is_finite() {
             value.clamp(0.0, 1.0)
+        } else {
+            0.5
         };
         match name {
             "task_classify_min" => self.task_classify_min = v,
@@ -224,10 +224,10 @@ impl JevThresholds {
     /// not make every decision fail (or succeed).
     pub fn clamp(&mut self) {
         fn c(x: &mut f32) {
-            if !x.is_finite() {
-                *x = 0.5;
-            } else {
+            if x.is_finite() {
                 *x = x.clamp(0.0, 1.0);
+            } else {
+                *x = 0.5;
             }
         }
         c(&mut self.task_classify_min);

@@ -161,7 +161,7 @@ pub struct Op {
 pub fn tag_of(text: &str) -> Tag {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.as_bytes() {
-        h ^= *b as u64;
+        h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     // Fold the high and low halves so a change anywhere moves the tag.
@@ -323,7 +323,7 @@ fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
     let crlf = crlf_count > lf_count;
     // Sort ops by start, descending, so earlier line numbers stay
     // valid as later edits shift the buffer. Appends go last.
-    let mut indexed: Vec<(usize, &Op)> = ops.iter().enumerate().map(|(i, o)| (i, o)).collect();
+    let mut indexed: Vec<(usize, &Op)> = ops.iter().enumerate().collect();
     indexed.sort_by_key(|e| std::cmp::Reverse(e.1.start));
 
     let mut lines: Vec<String> = text.lines().map(std::string::ToString::to_string).collect();

@@ -136,7 +136,7 @@ impl RetryPolicy {
         // into the (nanos, tid, pid) seed without disturbing the
         // existing bit layout.
         let mut state =
-            nanos ^ tid ^ (std::process::id() as u64) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            nanos ^ tid ^ u64::from(std::process::id()) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         state = state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
@@ -148,7 +148,7 @@ impl RetryPolicy {
         // — after `* 2 - 1` — was ALWAYS NEGATIVE, in [-1, 0).
         // Fixed by taking the top 32 bits and dividing by `2^32`.
         let top32 = (state >> 32) as u32;
-        ((top32 as f64) / (u32::MAX as f64 + 1.0)).mul_add(2.0, -1.0)
+        (f64::from(top32) / (f64::from(u32::MAX) + 1.0)).mul_add(2.0, -1.0)
     }
 }
 
@@ -367,7 +367,7 @@ mod tests {
             StdArc::new(std::sync::Mutex::new(Vec::new()));
         let s2 = sleeps.clone();
         let policy = RetryPolicy {
-            max_rate_limit_wait: Duration::from_secs(1500),
+            max_rate_limit_wait: Duration::from_mins(25),
             sleep_fn: StdArc::new(move |d: Duration| {
                 s2.lock().unwrap().push(d);
                 Box::pin(async {})
@@ -391,7 +391,7 @@ mod tests {
         .await;
         assert_eq!(result.unwrap(), 7);
         let s = sleeps.lock().unwrap();
-        assert_eq!(s[0], Duration::from_secs(1200), "first hint slept in full");
+        assert_eq!(s[0], Duration::from_mins(20), "first hint slept in full");
         assert_eq!(
             *s.last().unwrap(),
             Duration::ZERO,
@@ -954,7 +954,7 @@ mod text_hint_proptests {
         fn prop_no_digits_after_cue_returns_none(filler in "[a-zA-Z ]{1,20}") {
             let text = format!("retry after {filler}");
             // Filler starts with a letter, so no digits follow the cue.
-            prop_assume!(filler.chars().next().map_or(true, |c| !c.is_ascii_digit()));
+            prop_assume!(filler.chars().next().is_none_or(|c| !c.is_ascii_digit()));
             prop_assert_eq!(text_hint_secs(&text), None);
         }
     }
@@ -1041,7 +1041,7 @@ mod extract_retry_hints_proptests {
         #[test]
         fn prop_cap_declined_consistent_with_delay(headers in prop::collection::vec(arbitrary_header(), 0..=3)) {
             let r = extract_retry_hints(None, &headers, "");
-            let expected = r.delay.map_or(false, |d| d > HINT_CAP);
+            let expected = r.delay.is_some_and(|d| d > HINT_CAP);
             prop_assert_eq!(
                 r.cap_declined, expected,
                 "cap_declined={} but delay={:?} vs HINT_CAP={:?}",

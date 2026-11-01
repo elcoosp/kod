@@ -394,7 +394,7 @@ pub fn shannon_entropy(s: &str) -> f64 {
         if c == 0 {
             continue;
         }
-        let p = c as f64 / len;
+        let p = f64::from(c) / len;
         h = p.mul_add(-p.log2(), h);
     }
     h

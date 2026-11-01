@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn presets_have_unique_names() {
         let mut names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
-        names.sort();
+        names.sort_unstable();
         let mut deduped = names.clone();
         deduped.dedup();
         assert_eq!(names, deduped, "profile names must be unique");

@@ -33,7 +33,7 @@ struct PanicEmbedder;
 
 #[async_trait]
 impl EmbeddingClient for PanicEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "panic"
     }
     fn dims(&self) -> usize {

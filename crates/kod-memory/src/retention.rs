@@ -60,7 +60,7 @@ impl PrefixHash {
         let mut h = self.0;
         let mut feed = |b: &[u8]| {
             for &byte in b {
-                h ^= byte as u64;
+                h ^= u64::from(byte);
                 h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
         };

@@ -43,7 +43,7 @@ use crate::types::McpToolDef;
 /// How long a cached tool list stays valid. 30 days: long enough that
 /// a daily driver sees the cache hit every day, short enough that a
 /// forgotten stale entry cleans itself up within a month.
-pub const DEFAULT_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+pub const DEFAULT_TTL: Duration = Duration::from_hours(720);
 
 /// Bug-hunt post-v0.1.9 (P3): tolerance for an entry whose
 /// `cached_at_unix_nanos` is in the future. Real cache writes stamp
@@ -140,7 +140,7 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
         return None;
     }
     let age_nanos = now_nanos.saturating_sub(entry.cached_at_unix_nanos);
-    if Duration::from_nanos(age_nanos.min(u64::MAX as u128) as u64) > ttl {
+    if Duration::from_nanos(age_nanos.min(u128::from(u64::MAX)) as u64) > ttl {
         let _ = std::fs::remove_file(&path);
         return None;
     }

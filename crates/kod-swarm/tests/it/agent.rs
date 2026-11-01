@@ -100,7 +100,7 @@ async fn test_agent_is_idle_timeout() {
     assert!(!agent.is_timed_out(Duration::from_secs(60)));
 
     // Simulate old heartbeat by not updating
-    agent.set_last_heartbeat_for_test(std::time::Instant::now() - Duration::from_secs(120));
+    agent.set_last_heartbeat_for_test(std::time::Instant::now().checked_sub(Duration::from_secs(120)).unwrap());
     assert!(agent.is_timed_out(Duration::from_secs(60)));
 }
 

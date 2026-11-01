@@ -563,7 +563,7 @@ impl MemoryManager {
                         crate::veracity::Veracity::Stated.base_confidence() as f32
                     });
                     let raised = crate::veracity::raise_confidence(
-                        current as f64,
+                        f64::from(current),
                         crate::veracity::Veracity::Stated.weight(),
                     ) as f32;
                     if raised > current + f32::EPSILON {
@@ -1212,7 +1212,7 @@ impl MemoryManager {
                 .collect();
             let candidates: Vec<(String, f64)> = pool
                 .iter()
-                .map(|(s, e)| (e.id.as_uuid().to_string(), *s as f64))
+                .map(|(s, e)| (e.id.as_uuid().to_string(), f64::from(*s)))
                 .collect();
             let jaccard = |a: &str, b: &str| -> f64 {
                 let ta: std::collections::HashSet<&str> = a.split_whitespace().collect();
@@ -1348,7 +1348,7 @@ impl MemoryManager {
 
         // --- Pass 1: archive old episodic entries. ---
         let now = OffsetDateTime::now_utc();
-        let cutoff = now - time::Duration::days(ARCHIVE_AFTER_DAYS as i64);
+        let cutoff = now - time::Duration::days(i64::from(ARCHIVE_AFTER_DAYS));
         let mut archived = 0usize;
         let mut remaining: Vec<MemoryEntry> = Vec::with_capacity(all.len());
         let mut to_archive: Vec<MemoryId> = Vec::new();
@@ -2705,7 +2705,7 @@ mod contradiction_resolution_tests {
         struct PanicEmbedder;
         #[async_trait]
         impl crate::embedding::EmbeddingClient for PanicEmbedder {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "panic"
             }
             fn dims(&self) -> usize {

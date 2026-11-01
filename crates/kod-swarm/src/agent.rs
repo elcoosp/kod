@@ -156,7 +156,7 @@ impl Agent {
 
     /// Get all capabilities
     pub fn capabilities(&self) -> Vec<Capability> {
-        self.capabilities.iter().cloned().collect()
+        self.capabilities.iter().copied().collect()
     }
 
     /// Get model name.

@@ -129,15 +129,15 @@ impl ConflictStore {
 fn stable_id(path: &std::path::Path, start: usize, body: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in path.to_string_lossy().as_bytes() {
-        h ^= *b as u64;
+        h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     for b in start.to_le_bytes() {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     for b in body.as_bytes() {
-        h ^= *b as u64;
+        h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{:08x}", (h ^ (h >> 32)) as u32)

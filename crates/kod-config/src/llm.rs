@@ -720,7 +720,7 @@ mod tests {
     fn validate_falls_back_on_empty_strings() {
         let mut c = LlmConfig::default();
         c.endpoints[0].base_url = "   ".to_string();
-        c.endpoints[0].model = "".to_string();
+        c.endpoints[0].model = String::new();
         c.validate();
         assert!(!c.endpoints[0].base_url.trim().is_empty());
         assert!(!c.endpoints[0].model.is_empty());

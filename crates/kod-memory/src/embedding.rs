@@ -43,7 +43,7 @@ pub struct NoEmbedder;
 
 #[async_trait]
 impl EmbeddingClient for NoEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "none"
     }
     fn dims(&self) -> usize {
@@ -100,7 +100,7 @@ impl OllamaEmbedder {
 
 #[async_trait]
 impl EmbeddingClient for OllamaEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ollama"
     }
     fn dims(&self) -> usize {
@@ -199,7 +199,7 @@ impl OpenAIEmbedder {
 
 #[async_trait]
 impl EmbeddingClient for OpenAIEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "openai"
     }
     fn dims(&self) -> usize {

@@ -46,7 +46,7 @@ mod tests {
         let max = scaled_idle_timeout(base, EffortLevel::Max);
         assert!(high > medium);
         assert!(max > high);
-        assert_eq!(max, Duration::from_secs(720));
+        assert_eq!(max, Duration::from_mins(12));
     }
 
     #[test]

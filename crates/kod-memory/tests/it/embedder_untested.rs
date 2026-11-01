@@ -29,7 +29,7 @@ struct FakeEmbedder {
 
 #[async_trait]
 impl EmbeddingClient for FakeEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fake"
     }
     fn dims(&self) -> usize {

@@ -176,7 +176,7 @@ impl CleanseScheduler {
             .pending
             .keys()
             .filter(|f| {
-                !claimed.contains(f) && self.owned.get(*f).map_or(true, |o| o.released)
+                !claimed.contains(f) && self.owned.get(*f).is_none_or(|o| o.released)
             })
             .cloned()
             .collect();

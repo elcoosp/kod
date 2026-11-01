@@ -41,7 +41,7 @@ impl StubEmbedder {
 
 #[async_trait]
 impl EmbeddingClient for StubEmbedder {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stub"
     }
     fn dims(&self) -> usize {
@@ -290,7 +290,7 @@ async fn consolidate_waits_for_pending_embeds() {
 
     #[async_trait]
     impl EmbeddingClient for SlowEmbedder {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "slow-stub"
         }
         fn dims(&self) -> usize {

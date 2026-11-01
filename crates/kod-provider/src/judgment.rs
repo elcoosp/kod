@@ -494,7 +494,7 @@ fn earliest_whole_word(haystack: &str, needle: &str) -> Option<usize> {
             haystack[..i]
                 .chars()
                 .next_back()
-                .map_or(true, |c| !is_word_char(c))
+                .is_none_or(|c| !is_word_char(c))
         };
         let after = i + needle_len;
         let after_ok = if after >= haystack.len() {
@@ -503,7 +503,7 @@ fn earliest_whole_word(haystack: &str, needle: &str) -> Option<usize> {
             haystack[after..]
                 .chars()
                 .next()
-                .map_or(true, |c| !is_word_char(c))
+                .is_none_or(|c| !is_word_char(c))
         };
         if before_ok && after_ok {
             return Some(i);
@@ -731,7 +731,7 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for ScriptedJudge {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "scripted-judge"
         }
         async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
@@ -1018,7 +1018,7 @@ mod tests {
         let qs = vec![yes_no("a"), choice_abcd("b")];
         let a = parse_response("a: yes\nb: c", &qs);
         let mut collected: Vec<(&str, &str)> = a.iter().collect();
-        collected.sort();
+        collected.sort_unstable();
         assert_eq!(collected, vec![("a", "yes"), ("b", "c")]);
     }
 
@@ -1124,7 +1124,7 @@ mod tests {
         struct AlwaysFails;
         #[async_trait]
         impl LlmProvider for AlwaysFails {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "fails"
             }
             async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
@@ -1173,7 +1173,7 @@ mod tests {
         }
         #[async_trait]
         impl LlmProvider for CaptureOptions {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "capture"
             }
             async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
