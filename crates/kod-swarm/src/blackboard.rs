@@ -31,12 +31,19 @@ pub enum AuthorKind {
 /// One entry on the blackboard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlackboardEntry {
+    /// The entry's key.
     pub key: String,
+    /// The entry's value as JSON.
     pub value: serde_json::Value,
+    /// The id of the agent that wrote it.
     pub author: String,
+    /// The kind of the author.
     pub author_kind: AuthorKind,
+    /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
+    /// Last update time in milliseconds since the Unix epoch.
     pub updated_at_ms: u64,
+    /// Free-form tags for filtering.
     #[serde(default)]
     pub tags: Vec<String>,
     /// Prior values, newest first. Bounded to 16 to keep the map
@@ -59,6 +66,7 @@ impl std::fmt::Debug for Blackboard {
 }
 
 impl Blackboard {
+    /// Empty blackboard.
     pub fn new() -> Self {
         Self::default()
     }
@@ -135,6 +143,7 @@ impl Blackboard {
         self.inner.read().len()
     }
 
+    /// True when the blackboard holds no entries.
     pub fn is_empty(&self) -> bool {
         self.inner.read().is_empty()
     }

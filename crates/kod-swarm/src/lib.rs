@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Agent swarm system for coordinated multi-agent collaboration.
 //!
 //! This crate handles agent lifecycle, direct messaging, shared workspace

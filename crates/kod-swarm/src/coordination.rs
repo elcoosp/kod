@@ -10,17 +10,24 @@ use tokio::sync::RwLock;
 /// A task to be assigned to an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
+    /// The task's unique id.
     pub id: TaskId,
+    /// The human-readable task description.
     pub description: String,
+    /// Relative priority.
     pub priority: kod_types::Priority,
+    /// Current lifecycle status.
     pub status: TaskStatus,
+    /// The agent assigned to it, if any.
     pub assigned_to: Option<AgentId>,
+    /// Tasks that must complete first.
     pub dependencies: Vec<TaskId>,
 }
 
 use kod_types::TaskStatus;
 
 impl Task {
+    /// Build a new pending task.
     pub fn new(description: String, priority: kod_types::Priority) -> Self {
         Self {
             id: TaskId::new(),
@@ -36,9 +43,13 @@ impl Task {
 /// Assignment of a task to an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskAssignment {
+    /// The task that was assigned.
     pub task_id: TaskId,
+    /// The agent it was assigned to.
     pub agent_id: AgentId,
+    /// When the assignment happened.
     pub assigned_at: chrono::DateTime<chrono::Utc>,
+    /// Capabilities the assignment required.
     pub capabilities_required: Vec<crate::agent::Capability>,
 }
 
@@ -56,7 +67,10 @@ pub enum TaskFinish {
     /// The task moved from a non-terminal status to the requested
     /// terminal one. `from` is the previous status. The assignee's load
     /// counter was decremented if the task had an assignee.
-    Transitioned { from: TaskStatus },
+    Transitioned {
+        /// The status the task moved from.
+        from: TaskStatus,
+    },
     /// The task was already in the requested terminal status. No state
     /// changed and no counter moved.
     AlreadyInState,
@@ -71,6 +85,7 @@ pub struct TaskCoordinator {
 }
 
 impl TaskCoordinator {
+    /// Empty coordinator.
     pub fn new() -> Self {
         Self::default()
     }

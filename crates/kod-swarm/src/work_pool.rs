@@ -65,6 +65,7 @@ pub struct WorkItem {
 }
 
 impl WorkItem {
+    /// Build a work item from an id and payload.
     pub fn new(id: impl Into<String>, payload: serde_json::Value) -> Self {
         Self {
             id: id.into(),
@@ -89,7 +90,9 @@ pub enum SlotState {
 /// One worker slot.
 #[derive(Debug, Clone)]
 pub struct WorkerSlot {
+    /// The agent id assigned to this slot.
     pub agent_id: String,
+    /// The slot's current state.
     pub state: SlotState,
     /// Items queued for this slot's next batch. The current batch's
     /// items are not in here — they moved to the in-flight set when
@@ -103,6 +106,7 @@ pub struct WorkerSlot {
 }
 
 impl WorkerSlot {
+    /// Build a slot for the given agent and context window.
     pub fn new(agent_id: impl Into<String>, context_window: u64) -> Self {
         Self {
             agent_id: agent_id.into(),
@@ -140,7 +144,9 @@ pub enum DispatchPolicy {
 /// A batch ready for one slot.
 #[derive(Debug, Clone)]
 pub struct BatchAssignment {
+    /// The agent the batch is for.
     pub agent_id: String,
+    /// The items in the batch.
     pub items: Vec<WorkItem>,
 }
 
@@ -148,13 +154,22 @@ pub struct BatchAssignment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dispatch {
     /// The item was queued onto an existing slot's next batch.
-    Queued { agent_id: String },
+    Queued {
+        /// The slot the item was queued onto.
+        agent_id: String,
+    },
     /// The item needs a new slot. The caller spawns an agent with
     /// the given id and reports back with `record_spawned`.
-    Spawn { agent_id: String },
+    Spawn {
+        /// The agent id to spawn.
+        agent_id: String,
+    },
     /// The pool is full and no slot can take the item. The caller
     /// waits for a `record_yield` and retries, or rejects the item.
-    Rejected { reason: &'static str },
+    Rejected {
+        /// Why the item was rejected.
+        reason: &'static str,
+    },
 }
 
 /// The pool.
@@ -173,6 +188,7 @@ pub struct WorkPool {
 }
 
 impl WorkPool {
+    /// Build a pool capped at max_agents with a per-batch budget.
     pub fn new(max_agents: usize, batch_budget: usize) -> Self {
         Self {
             policy: DispatchPolicy::Batched,
@@ -184,6 +200,7 @@ impl WorkPool {
         }
     }
 
+    /// Builder: override the dispatch policy.
     pub fn with_policy(mut self, policy: DispatchPolicy) -> Self {
         self.policy = policy;
         self

@@ -57,6 +57,7 @@ use std::sync::Mutex;
 /// `"advise"`). It is carried so a caller can attribute a drain
 /// entry to its source without inspecting the rendered text.
 pub struct QueuedYield {
+    /// The kind of yield (diagnostics, job-result, advise).
     pub kind: String,
     /// Whether `drain_idle` should include this entry. A
     /// `skip_idle_flush` producer is drained only by
@@ -95,6 +96,7 @@ pub struct DrainBatch {
 }
 
 impl DrainBatch {
+    /// True when the batch is empty.
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
@@ -122,6 +124,7 @@ pub struct YieldQueue {
 }
 
 impl YieldQueue {
+    /// Empty queue with idle flush enabled.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(VecDeque::new()),
@@ -151,10 +154,12 @@ impl YieldQueue {
 
     /// How many entries are queued (stale or not — staleness is
     /// only known at drain).
+    /// Number of queued yields.
     pub fn len(&self) -> usize {
         self.inner.lock().map(|q| q.len()).unwrap_or(0)
     }
 
+    /// True when the queue is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

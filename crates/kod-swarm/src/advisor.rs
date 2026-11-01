@@ -81,6 +81,7 @@ pub enum Severity {
 }
 
 impl Severity {
+    /// The lowercase string label for this severity.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Nit => "nit",
@@ -93,11 +94,14 @@ impl Severity {
 /// One proposed advice.
 #[derive(Debug, Clone)]
 pub struct Advice {
+    /// The advice text.
     pub note: String,
+    /// How severe the advice is.
     pub severity: Severity,
 }
 
 impl Advice {
+    /// Build an advice item from a note and severity.
     pub fn new(note: impl Into<String>, severity: Severity) -> Self {
         Self {
             note: note.into(),

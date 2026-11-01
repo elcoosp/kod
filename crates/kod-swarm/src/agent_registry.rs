@@ -47,8 +47,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
+    /// The top-level agent that coordinates the swarm.
     Main,
+    /// A sub-agent spawned for one task.
     Sub,
+    /// A read-only advisor agent.
     Advisor,
 }
 
@@ -80,8 +83,11 @@ pub struct AgentHistory {
 /// One registered agent.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentRef {
+    /// The agent's unique id.
     pub id: String,
+    /// The kind of agent.
     pub kind: AgentKind,
+    /// The agent's lifecycle state.
     pub lifecycle: Lifecycle,
     /// The transcript file the agent's session is (or was) backed
     /// by. `None` for an agent that never persisted.
@@ -118,7 +124,12 @@ pub enum RegistryError {
     /// The agent is `Dead`; a tombstone refuses every operation.
     Tombstoned,
     /// A park or revive was requested with a stale generation.
-    StaleGeneration { expected: u64, got: u64 },
+    StaleGeneration {
+        /// The generation the caller expected.
+        expected: u64,
+        /// The generation the registry actually holds.
+        got: u64,
+    },
 }
 
 impl std::fmt::Display for RegistryError {
@@ -145,6 +156,7 @@ pub struct AgentRegistry {
 }
 
 impl AgentRegistry {
+    /// Empty registry.
     pub fn new() -> Self {
         Self {
             agents: HashMap::new(),
@@ -152,6 +164,7 @@ impl AgentRegistry {
         }
     }
 
+    /// Builder: set the park TTL in milliseconds.
     pub fn with_park_ttl(mut self, ms: u128) -> Self {
         self.park_after_ms = Some(ms);
         self

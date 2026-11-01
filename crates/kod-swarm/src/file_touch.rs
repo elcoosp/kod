@@ -25,13 +25,17 @@ use std::sync::RwLock;
 use std::time::Instant;
 use tokio::sync::broadcast;
 
+/// Agent id type alias (a stable string identifier).
 pub type AgentId = String;
 
 /// What kind of file operation happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileOp {
+    /// A read.
     Read,
+    /// A full-file write.
     Write,
+    /// An in-place edit.
     Edit,
 }
 
@@ -46,9 +50,11 @@ impl FileOp {
 /// One observed file operation, published by the tool layer.
 #[derive(Debug, Clone)]
 pub struct FileTouch {
+    /// The agent that performed the operation.
     pub agent_id: AgentId,
     /// Repo-relative, already normalized by the tool layer.
     pub path: PathBuf,
+    /// The kind of file operation.
     pub op: FileOp,
     /// Human-scannable summary, e.g. `"edited lines 18-25"`. `None`
     /// for reads and for callers that did not compute one.
@@ -57,12 +63,14 @@ pub struct FileTouch {
     /// field every tool schema carries (P3-d). Shown in the conflict
     /// notice so a peer sees *why*, not just *what*.
     pub intent: Option<String>,
+    /// When the operation was observed.
     pub at: Instant,
 }
 
 /// A touch event on the swarm bus.
 #[derive(Debug, Clone)]
 pub enum SwarmBusEvent {
+    /// A file-touch event was published.
     FileTouch(FileTouch),
 }
 
@@ -87,10 +95,12 @@ impl FileTouchBus {
 
     /// Publish a touch. Fire-and-forget: an error means "no
     /// subscribers," which is the normal state outside a swarm run.
+    /// Publish a touch event to all subscribers.
     pub fn publish(&self, touch: FileTouch) {
         let _ = self.tx.send(SwarmBusEvent::FileTouch(touch));
     }
 
+    /// Subscribe to touch events.
     pub fn subscribe(&self) -> broadcast::Receiver<SwarmBusEvent> {
         self.tx.subscribe()
     }
@@ -106,8 +116,11 @@ impl Default for FileTouchBus {
 /// touched.
 #[derive(Debug, Clone)]
 pub struct PeerConflict {
+    /// The peer agent that made the conflicting change.
     pub peer: AgentId,
+    /// The kind of operation the peer performed.
     pub op: FileOp,
+    /// Optional summary of the operation.
     pub summary: Option<String>,
 }
 
@@ -123,6 +136,7 @@ pub struct FileTouchService {
 }
 
 impl FileTouchService {
+    /// Empty service.
     pub fn new() -> Self {
         Self::default()
     }

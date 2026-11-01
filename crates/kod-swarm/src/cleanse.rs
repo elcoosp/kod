@@ -40,7 +40,9 @@ use std::collections::HashMap;
 /// One diagnostic for a file. The scheduler does not interpret it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// 1-based line the diagnostic refers to.
     pub line: u32,
+    /// The diagnostic message.
     pub message: String,
 }
 
@@ -53,6 +55,7 @@ pub const DEFAULT_BATCH_BUDGET: usize = 32;
 /// A worker's claim on a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerEntry {
+    /// The worker that owns this file's cleanses.
     pub worker: String,
     /// Diagnostics currently held for this file.
     pub held: usize,
@@ -82,6 +85,7 @@ pub struct CleanseScheduler {
 }
 
 impl CleanseScheduler {
+    /// Scheduler capped at max_agents concurrent cleanses.
     pub fn new(max_agents: usize) -> Self {
         Self {
             pending: HashMap::new(),

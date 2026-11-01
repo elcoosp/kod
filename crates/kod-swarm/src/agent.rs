@@ -10,17 +10,26 @@ use tokio::sync::watch;
 /// Capabilities that an agent can have
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Capability {
+    /// Writes new code.
     Coding,
+    /// Writes or runs tests.
     Testing,
+    /// Writes docs.
     Documentation,
+    /// Reviews others' code.
     CodeReview,
+    /// Plans multi-step work.
     Planning,
+    /// Researches the codebase or external context.
     Research,
+    /// Finds and fixes bugs.
     Debugging,
+    /// Restructures existing code.
     Refactoring,
 }
 
 impl Capability {
+    /// The lowercase string label for this capability.
     pub fn as_str(&self) -> &'static str {
         match self {
             Capability::Coding => "coding",
@@ -60,23 +69,35 @@ impl std::str::FromStr for Capability {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The lifecycle state of an agent.
 pub enum AgentState {
+    /// Nothing has been requested; the agent is idle.
     #[default]
     Idle,
+    /// The agent is starting up.
     Starting,
+    /// The agent is running.
     Running,
+    /// The agent is paused.
     Paused,
+    /// The agent is stopping.
     Stopping,
+    /// The agent has stopped cleanly.
     Stopped,
+    /// The agent failed.
     Failed,
 }
 
 /// Model configuration for the agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
+    /// The model id sent on the wire.
     pub model_name: String,
+    /// The provider name.
     pub provider: String,
+    /// Sampling temperature.
     pub temperature: f32,
+    /// Maximum output tokens per call.
     pub max_tokens: usize,
 }
 
@@ -306,6 +327,7 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
+    /// Start building an agent with the given name.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

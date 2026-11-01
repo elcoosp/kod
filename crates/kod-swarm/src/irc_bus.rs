@@ -102,9 +102,13 @@ pub enum Receipt {
 /// A message on the bus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BusMessage {
+    /// The sender's agent id.
     pub from: String,
+    /// The destination (agent id, or a broadcast address).
     pub to: String,
+    /// The message body.
     pub body: String,
+    /// Delivery semantics for this message.
     pub delivery: Delivery,
     /// `Some(id)` when this message is a *reply* to a send that set
     /// `await:true` with that correlation id.
@@ -198,6 +202,7 @@ struct Inner {
 }
 
 impl IrcBus {
+    /// Empty bus.
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(Mutex::new(Inner {

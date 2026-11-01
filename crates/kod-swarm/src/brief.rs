@@ -15,17 +15,24 @@ use std::path::PathBuf;
 /// What a parent hands a subagent.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextBrief {
+    /// The goal of the sub-agent's task.
     pub goal: String,
+    /// Constraints the agent must respect.
     #[serde(default)]
     pub constraints: Vec<String>,
+    /// Decisions already made that the agent should honor.
     #[serde(default)]
     pub relevant_decisions: Vec<String>,
+    /// Digests of files the agent may need.
     #[serde(default)]
     pub file_digests: Vec<FileDigest>,
+    /// The repo-map slice relevant to the task.
     #[serde(default)]
     pub repomap_slice: String,
+    /// Files the agent is expected to write.
     #[serde(default)]
     pub expected_writes: Vec<String>,
+    /// Token budget for the brief.
     #[serde(default)]
     pub token_budget: u32,
     /// Delta §11.10: the parent's approved plan, rendered as
@@ -36,10 +43,14 @@ pub struct ContextBrief {
     pub plan_text: String,
 }
 
+/// A condensed view of one file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileDigest {
+    /// The file path.
     pub path: PathBuf,
+    /// A one-paragraph summary of the file.
     pub summary: String,
+    /// The file's line count.
     #[serde(default)]
     pub line_count: u32,
 }
@@ -47,13 +58,18 @@ pub struct FileDigest {
 /// What a subagent hands back.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentReport {
+    /// One-paragraph summary of what the agent did.
     pub summary: String,
+    /// Facts the agent learned.
     #[serde(default)]
     pub facts_learned: Vec<String>,
+    /// Files the agent touched.
     #[serde(default)]
     pub files_touched: Vec<PathBuf>,
+    /// Decisions the agent proposes to record.
     #[serde(default)]
     pub decisions_proposed: Vec<String>,
+    /// Questions the agent could not resolve.
     #[serde(default)]
     pub open_questions: Vec<String>,
 }

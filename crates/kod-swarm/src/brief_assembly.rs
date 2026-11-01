@@ -12,10 +12,15 @@ use super::brief::{ContextBrief, FileDigest, SubagentReport};
 /// Inputs the assembler needs from the parent.
 #[derive(Debug, Clone, Default)]
 pub struct ParentContext {
+    /// Decisions the parent has already made.
     pub decisions: Vec<String>,
+    /// Per-file summaries from the parent's session.
     pub file_summaries: Vec<(PathBuf, String, u32)>,
+    /// Rendered repo-map text for the project.
     pub repomap_text: String,
+    /// Files the child is expected to write.
     pub expected_writes: Vec<String>,
+    /// Token budget for the brief.
     pub token_budget: u32,
     /// Delta §11.10: the parent session's rendered plan, if any.
     /// Empty when the parent has no plan or the caller deliberately
@@ -87,9 +92,13 @@ pub fn assemble_brief(
 /// destinations.
 #[derive(Debug, Clone, Default)]
 pub struct MergePlan {
+    /// Decisions to record in the parent's blackboard.
     pub decisions_to_record: Vec<String>,
+    /// Steer notes to queue for the parent's next turn.
     pub steers_to_queue: Vec<String>,
+    /// Files the child touched that violate its boundary.
     pub boundary_violations: Vec<PathBuf>,
+    /// One-line summary for the parent.
     pub summary_line: String,
 }
 

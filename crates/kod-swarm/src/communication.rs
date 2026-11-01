@@ -28,15 +28,22 @@ const MAX_HISTORY_PER_AGENT: usize = 100;
 /// A message with routing information and priority
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwarmMessage {
+    /// The message's unique id.
     pub id: uuid::Uuid,
+    /// The sending agent.
     pub from: AgentId,
+    /// The destination (broadcast, direct, or topic).
     pub to: MessageDestination,
+    /// The message body.
     pub content: MessageContent,
+    /// Priority relative to other queued messages.
     pub priority: Priority,
+    /// When the message was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SwarmMessage {
+    /// Build a new message with a fresh id and current timestamp.
     pub fn new(
         from: AgentId,
         to: MessageDestination,
@@ -59,17 +66,20 @@ pub use kod_types::MessageDestination;
 
 /// Receiver for agent messages — wraps an UnboundedReceiver that can be cloned
 #[derive(Clone)]
+/// Receiver for one agent's incoming messages.
 pub struct AgentMessageReceiver {
     inner: Arc<Mutex<Option<mpsc::UnboundedReceiver<SwarmMessage>>>>,
 }
 
 impl AgentMessageReceiver {
+    /// Wrap an unbounded receiver in an agent-friendly handle.
     pub fn new(rx: mpsc::UnboundedReceiver<SwarmMessage>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Some(rx))),
         }
     }
 
+    /// Await the next message, or None if the sender has hung up.
     pub async fn recv(&self) -> Option<SwarmMessage> {
         let mut guard = self.inner.lock().await;
         if let Some(ref mut rx) = *guard {
@@ -101,6 +111,7 @@ impl Default for AgentCommunicationHub {
 }
 
 impl AgentCommunicationHub {
+    /// Empty communication hub.
     pub fn new() -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
@@ -108,6 +119,7 @@ impl AgentCommunicationHub {
         }
     }
 
+    /// Register an agent so it can send and receive messages.
     pub async fn register_agent(&self, agent_id: AgentId) -> Result<()> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut agents = self.agents.write().await;
@@ -181,6 +193,7 @@ impl AgentCommunicationHub {
         out
     }
 
+    /// Send a direct message from one agent to another.
     pub async fn send_direct(
         &self,
         from: &AgentId,
@@ -293,18 +306,21 @@ impl AgentCommunicationHub {
         .await
     }
 
+    /// Mark an agent offline so broadcasts skip it.
     pub async fn set_agent_offline(&self, agent_id: &AgentId) {
         if let Some(info) = self.agents.write().await.get_mut(agent_id) {
             info.online = false;
         }
     }
 
+    /// Mark an agent online so broadcasts reach it.
     pub async fn set_agent_online(&self, agent_id: &AgentId) {
         if let Some(info) = self.agents.write().await.get_mut(agent_id) {
             info.online = true;
         }
     }
 
+    /// Take the receiver for an agent, preventing a second take.
     pub async fn get_agent_receiver(&self, agent_id: &AgentId) -> Result<AgentMessageReceiver> {
         let mut agents = self.agents.write().await;
         match agents.get_mut(agent_id) {

@@ -26,8 +26,11 @@
 /// The status an agent reports for its own subtask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReportStatus {
+    /// The subtask completed successfully.
     Done,
+    /// The subtask failed.
     Failed,
+    /// The subtask is blocked on something external.
     Blocked,
     /// The block was absent or its status attribute was unrecognised.
     /// The report is still returned — with the raw text as its
@@ -47,6 +50,7 @@ impl ReportStatus {
         }
     }
 
+    /// The lowercase string label for this status.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Done => "done",
@@ -60,6 +64,7 @@ impl ReportStatus {
 /// One agent's completion report.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompletionReport {
+    /// The agent's self-reported status.
     pub status: ReportStatus,
     /// What the agent says it did. Always populated — the raw text is
     /// the fallback when the block is absent.
