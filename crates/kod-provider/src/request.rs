@@ -33,11 +33,14 @@ use crate::traits::GenerationOptions;
 /// the fallback chain both key on it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelRef {
+    /// The endpoint name this model belongs to.
     pub endpoint: String,
+    /// The wire model id.
     pub model: String,
 }
 
 impl ModelRef {
+    /// Build a reference from an endpoint name and model id.
     pub fn new(endpoint: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
@@ -60,6 +63,7 @@ impl ModelRef {
 /// does not support explicit caching simply renders `text` in order.
 #[derive(Debug, Clone)]
 pub struct SystemSegment {
+    /// The segment's rendered text.
     pub text: String,
     /// `true` when the segment is part of the invariant prefix across
     /// turns in a session. A provider with explicit cache support
@@ -75,10 +79,12 @@ pub struct SystemSegment {
 /// prefix is byte-stable across turns.
 #[derive(Debug, Clone, Default)]
 pub struct SystemPrompt {
+    /// The ordered segments of the system prompt.
     pub segments: Vec<SystemSegment>,
 }
 
 impl SystemPrompt {
+    /// Empty system prompt.
     pub fn new() -> Self {
         Self::default()
     }
@@ -103,6 +109,7 @@ impl SystemPrompt {
             .join("\n\n")
     }
 
+    /// True when the prompt has no segments.
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
@@ -118,17 +125,24 @@ impl SystemPrompt {
 /// the marker is what the local transcript holds.
 #[derive(Debug, Clone)]
 pub struct ImageFrame {
+    /// Base64-encoded PNG bytes (no data-URL prefix).
     pub png_base64: String,
+    /// The image's MIME type.
     pub media_type: String,
 }
 
 /// A complete, provider-agnostic completion request.
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
+    /// The system prompt segments.
     pub system: SystemPrompt,
+    /// The conversation messages.
     pub messages: Vec<ChatMessage>,
+    /// Tools the model may call.
     pub tools: Vec<ToolDefinition>,
+    /// Per-request generation options.
     pub options: GenerationOptions,
+    /// The endpoint and model to route to.
     pub model: ModelRef,
     /// P0 cache control: when `true` (the default), a provider with
     /// explicit caching (Anthropic) places a cache breakpoint at the
@@ -223,10 +237,15 @@ impl CompletionRequest {
 /// without probing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProviderCapabilities {
+    /// The provider supports tool/function calling.
     pub tools: bool,
+    /// The provider accepts image inputs.
     pub vision: bool,
+    /// The provider supports JSON mode.
     pub json_mode: bool,
+    /// The kind of prompt caching the provider supports.
     pub prompt_cache: PromptCacheKind,
+    /// The provider exposes an embeddings endpoint.
     pub embeddings: bool,
     /// `true` when the provider emits live `Text` chunks during a tool
     /// call. Some OpenAI-compatible servers buffer tool-call rounds and
@@ -284,7 +303,9 @@ pub enum PromptCacheKind {
 /// USD per million tokens for input and output.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModelPricing {
+    /// USD per million input tokens.
     pub input_per_mtok_usd: f64,
+    /// USD per million output tokens.
     pub output_per_mtok_usd: f64,
     /// USD per million tokens read from the provider's KV cache.
     ///

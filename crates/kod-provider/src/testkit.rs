@@ -65,7 +65,12 @@ pub enum Script {
     /// Answer with tool calls.
     Calls(Vec<ToolCall>),
     /// Answer with both text and tool calls.
-    Mixed { text: String, calls: Vec<ToolCall> },
+    Mixed {
+        /// The response text.
+        text: String,
+        /// The tool calls.
+        calls: Vec<ToolCall>,
+    },
     /// Answer with an error.
     Error(String),
 }

@@ -26,9 +26,13 @@ pub type SleepFn = dyn Fn(Duration) -> SleepFuture + Send + Sync + 'static;
 /// Retry configuration. Defaults: 3 attempts, 250 ms base, 8 s cap, ±25 % jitter.
 #[derive(Clone)]
 pub struct RetryPolicy {
+    /// Maximum number of attempts (including the first).
     pub max_attempts: u32,
+    /// Base delay between attempts.
     pub base_delay: Duration,
+    /// Maximum delay between attempts.
     pub max_delay: Duration,
+    /// Jitter fraction applied to each delay.
     pub jitter_fraction: f64,
     /// Longest provider-suggested rate-limit window the loop may sleep
     /// out in full. `ZERO` (default) preserves the legacy behavior: any

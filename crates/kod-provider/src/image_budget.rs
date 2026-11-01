@@ -52,7 +52,9 @@ const PNG_BASE64_PREFIX: &str = "iVBORw0KGgo";
 /// A budget policy. `Default` is the module's constants.
 #[derive(Debug, Clone, Copy)]
 pub struct ImageBudgetPolicy {
+    /// Maximum image frames per request.
     pub max_frames: usize,
+    /// Maximum bytes per frame.
     pub max_bytes_per_frame: usize,
 }
 
@@ -68,15 +70,20 @@ impl Default for ImageBudgetPolicy {
 /// What [`apply_image_budget`] did to a frame vec.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BudgetReport {
+    /// Frames dropped because they were not decodable.
     pub dropped_undecodable: usize,
+    /// Frames dropped for exceeding max_bytes_per_frame.
     pub dropped_oversize: usize,
+    /// Frames dropped for exceeding max_frames.
     pub dropped_over_cap: usize,
 }
 
 impl BudgetReport {
+    /// True when at least one frame was dropped.
     pub fn any_dropped(&self) -> bool {
         self.total_dropped() > 0
     }
+    /// Total frames dropped across all reasons.
     pub fn total_dropped(&self) -> usize {
         self.dropped_undecodable + self.dropped_oversize + self.dropped_over_cap
     }

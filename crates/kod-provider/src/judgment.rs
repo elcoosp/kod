@@ -99,7 +99,9 @@ impl Default for JudgmentOptions {
 pub enum Question {
     /// A yes/no question.
     YesNo {
+        /// Stable id for this question.
         id: String,
+        /// The question text shown to the model.
         text: String,
         /// Descriptions of what `yes` and `no` mean. The model
         /// reads these to decide.
@@ -107,14 +109,18 @@ pub enum Question {
     },
     /// A choice among named alternatives.
     Choice {
+        /// Stable id for this question.
         id: String,
+        /// The question text shown to the model.
         text: String,
         /// `(label, description)`. Order preserved for rendering.
         criteria: Vec<(String, String)>,
     },
     /// A score on an ordered rubric.
     Score {
+        /// Stable id for this question.
         id: String,
+        /// The question text shown to the model.
         text: String,
         /// `(label, description)`, ordered weakest to strongest.
         levels: Vec<(String, String)>,
@@ -372,6 +378,7 @@ impl Answers {
         self.values.len()
     }
 
+    /// True when no answers were collected.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -554,6 +561,7 @@ pub struct JudgmentClient {
 }
 
 impl JudgmentClient {
+    /// Build a judgment client over a provider and model.
     pub fn new(provider: Arc<dyn LlmProvider>, model: ModelRef, options: JudgmentOptions) -> Self {
         Self {
             provider,

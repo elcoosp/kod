@@ -109,6 +109,7 @@ pub struct AttemptTracker {
 }
 
 impl AttemptTracker {
+    /// Tracker with no committed chunks seen.
     pub fn new() -> Self {
         Self::default()
     }
@@ -157,6 +158,7 @@ pub struct EmptyCompletionRetry {
 }
 
 impl EmptyCompletionRetry {
+    /// Fresh retry state with zero attempts.
     pub fn new() -> Self {
         Self::default()
     }

@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! LLM provider abstraction layer.
 //!
 //! This crate defines the traits and types that all LLM providers must implement.

@@ -25,7 +25,9 @@ use std::sync::Arc;
 /// matrix the router/engine reads to adapt (streaming tool calls,
 /// prompt-cache hints, pricing).
 pub struct EndpointEntry {
+    /// The provider instance for this endpoint.
     pub provider: Arc<dyn LlmProvider>,
+    /// Capability matrix the router and engine read.
     pub capabilities: ProviderCapabilities,
     /// The endpoint's model name (the `model` field of `EndpointConfig`).
     /// Stored here so `resolve_chain_for_task` can build `ModelRef`s
@@ -45,6 +47,7 @@ impl Default for ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    /// Empty registry.
     pub fn new() -> Self {
         Self {
             endpoints: HashMap::new(),
@@ -109,6 +112,7 @@ impl ProviderRegistry {
         names
     }
 
+    /// True when an endpoint with this name is registered.
     pub fn has(&self, endpoint: &str) -> bool {
         self.endpoints.contains_key(endpoint)
     }
@@ -121,10 +125,12 @@ impl ProviderRegistry {
         self.names().into_iter().next()
     }
 
+    /// True when no endpoints are registered.
     pub fn is_empty(&self) -> bool {
         self.endpoints.is_empty()
     }
 
+    /// Number of registered endpoints.
     pub fn len(&self) -> usize {
         self.endpoints.len()
     }

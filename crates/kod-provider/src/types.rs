@@ -28,10 +28,14 @@ pub enum CacheConvention {
     Subset,
 }
 
+/// Token counts for one provider call.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenUsage {
+    /// Input/prompt token count.
     pub prompt_tokens: usize,
+    /// Output/completion token count.
     pub completion_tokens: usize,
+    /// Total token count as reported by the provider.
     pub total_tokens: usize,
     /// Tokens served from the provider's KV cache (Anthropic
     /// `cache_read_input_tokens`). `None` means the provider did not
@@ -124,24 +128,36 @@ impl TokenUsage {
     }
 }
 
+/// A complete (non-streamed) model response.
 #[derive(Debug, Clone)]
 pub enum GenerationResponse {
+    /// Plain text response.
     Text {
+        /// The response text.
         content: String,
+        /// Usage reported by the provider.
         usage: Option<TokenUsage>,
     },
+    /// Tool calls only.
     ToolCalls {
+        /// The tool calls.
         calls: Vec<ToolCall>,
+        /// Usage reported by the provider.
         usage: Option<TokenUsage>,
     },
+    /// Both text and tool calls.
     Mixed {
+        /// The response text.
         content: String,
+        /// The tool calls.
         calls: Vec<ToolCall>,
+        /// Usage reported by the provider.
         usage: Option<TokenUsage>,
     },
 }
 
 impl GenerationResponse {
+    /// The usage reported by the provider, if any.
     pub fn usage(&self) -> Option<&TokenUsage> {
         match self {
             GenerationResponse::Text { usage, .. } => usage.as_ref(),
@@ -151,8 +167,10 @@ impl GenerationResponse {
     }
 }
 
+/// One incremental chunk from a streaming response.
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
+    /// A text fragment.
     Text(String),
     /// The provider has begun describing a tool call.
     ///
@@ -160,18 +178,26 @@ pub enum StreamChunk {
     /// (OpenAI SSE numbers them; a provider that emits calls one at
     /// a time uses `index: 0`). `id` is the wire-level id when the
     /// provider reports one — `None` otherwise.
+    /// A tool call has started.
     ToolCallStart {
+        /// Index distinguishing concurrent calls in one response.
         index: usize,
+        /// The wire-level tool-call id, when reported.
         id: Option<String>,
+        /// The tool name.
         name: String,
     },
     /// A fragment of the arguments JSON for the call at `index`. A
     /// provider that emits the full arguments in one chunk sends a
     /// single delta; a provider that streams them sends several.
+    /// A fragment of the arguments JSON for the call at index.
     ToolCallDelta {
+        /// The call index this fragment belongs to.
         index: usize,
+        /// The argument fragment.
         arguments: String,
     },
+    /// Usage was reported for the call so far.
     Usage(TokenUsage),
     /// H-P6: the provider's stop reason, when it reports one. The
     /// engine pre-fix had no way to learn a response was truncated
@@ -180,7 +206,9 @@ pub enum StreamChunk {
     /// `_` arm of the SSE parser. Distinct from `Done` (the stream
     /// is over) because the reason is a *property* of the finish,
     /// not the finish itself.
+    /// The provider's stop reason, when reported.
     StopReason(String),
+    /// The stream has finished.
     Done,
 }
 

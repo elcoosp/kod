@@ -21,15 +21,22 @@ use std::sync::Mutex;
 /// One round to replay.
 #[derive(Debug, Clone)]
 pub struct ReplayRound {
+    /// Text the fixture returns for this round.
     pub text: String,
+    /// Tool calls the fixture returns for this round.
     pub tool_calls: Vec<ReplayToolCall>,
+    /// Usage the fixture reports for this round.
     pub usage: Option<TokenUsage>,
 }
 
+/// One recorded tool call in a replay fixture.
 #[derive(Debug, Clone)]
 pub struct ReplayToolCall {
+    /// The wire-level id, when the fixture recorded one.
     pub id: Option<String>,
+    /// The tool name.
     pub name: String,
+    /// The tool arguments as JSON.
     pub arguments: serde_json::Value,
 }
 
@@ -44,6 +51,7 @@ pub struct ReplayProvider {
 }
 
 impl ReplayProvider {
+    /// Build a replay provider from a fixed round sequence.
     pub fn new(rounds: Vec<ReplayRound>) -> Self {
         Self {
             rounds,

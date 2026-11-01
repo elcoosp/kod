@@ -106,6 +106,7 @@ impl std::fmt::Display for ModelInfo {
     }
 }
 
+/// The provider contract every LLM backend implements.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Get the provider name
@@ -255,6 +256,9 @@ pub trait LlmProvider: Send + Sync {
         })
     }
 
+    /// Streaming variant of generate_with_tools. The default impl
+    /// drives the non-streaming path and replays it as one Text or
+    /// ToolCall chunk sequence.
     fn stream_with_tools<'a>(
         &'a self,
         prompt: &'a str,
@@ -323,12 +327,18 @@ impl ToolChoice {
     }
 }
 
+/// Per-request generation options.
 #[derive(Debug, Clone, Default)]
 pub struct GenerationOptions {
+    /// Override the default model.
     pub model: Option<String>,
+    /// Output token cap.
     pub max_tokens: Option<usize>,
+    /// Sampling temperature.
     pub temperature: Option<f32>,
+    /// Nucleus sampling p.
     pub top_p: Option<f32>,
+    /// Stop sequences.
     pub stop_sequences: Vec<String>,
     /// How much reasoning the request asks for. `None` means the
     /// caller expressed no preference — a provider that bounds its

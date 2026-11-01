@@ -124,10 +124,12 @@ pub struct StreamGuard {
 }
 
 impl StreamGuard {
+    /// Guard with the default config.
     pub fn new() -> Self {
         Self::with_config(StreamGuardConfig::default())
     }
 
+    /// Guard with a caller-supplied config.
     pub fn with_config(config: StreamGuardConfig) -> Self {
         Self {
             tail: Vec::with_capacity(config.tail_capacity),

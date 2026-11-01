@@ -55,7 +55,9 @@ pub enum RuleScope {
     /// tool name (a regex); `path_pattern` matches the file path when
     /// the caller can extract one from the partial arguments.
     Tool {
+        /// Regex matched against the tool name.
         tool_pattern: String,
+        /// Regex matched against the file path, when available.
         path_pattern: Option<String>,
     },
 }
@@ -85,13 +87,17 @@ pub enum RepeatMode {
 /// One rule.
 #[derive(Debug, Clone)]
 pub struct Rule {
+    /// Stable id for this rule.
     pub id: String,
     /// The pattern matched against the streamed text. A regex.
     pub pattern: String,
     /// What the caller injects when the rule fires.
     pub correction: String,
+    /// What parts of the stream the rule matches against.
     pub scope: RuleScope,
+    /// How the rule interrupts.
     pub interrupt: InterruptMode,
+    /// Whether the rule may fire again.
     pub repeat: RepeatMode,
 }
 
@@ -110,7 +116,9 @@ struct CompiledRule {
 /// A rule fired.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FiredRule {
+    /// The id of the rule that fired.
     pub id: String,
+    /// The correction text the caller injects.
     pub correction: String,
     /// Whether the caller should abort the stream.
     pub interrupt: bool,
