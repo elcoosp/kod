@@ -263,6 +263,7 @@ impl KodEngine {
         (task_type, refined_skills)
     }
 
+    /// Run one non-streaming turn for a transcript key.
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
         // H-E5: the non-streaming path never set `current_request`,
         // so the request-keyed Jev helpers (task classification,

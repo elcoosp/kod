@@ -26,18 +26,23 @@ pub enum CheckStatus {
 /// One diagnostic result.
 #[derive(Debug, Clone)]
 pub struct Check {
+    /// The check's name.
     pub name: String,
+    /// The check's status.
     pub status: CheckStatus,
+    /// A human-readable message.
     pub message: String,
 }
 
 /// The full set of results from one `kod doctor` run.
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticReport {
+    /// The checks that ran.
     pub checks: Vec<Check>,
 }
 
 impl DiagnosticReport {
+    /// Add a check result.
     pub fn push(&mut self, name: &str, status: CheckStatus, message: impl Into<String>) {
         self.checks.push(Check {
             name: name.to_string(),

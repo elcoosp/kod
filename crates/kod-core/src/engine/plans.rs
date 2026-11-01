@@ -170,6 +170,7 @@ impl KodEngine {
             .unwrap_or_default()
     }
 
+    /// The decision log for a transcript key.
     pub async fn decisions_for(&self, key: &str) -> kod_core_state::decisions::DecisionLog {
         self.decision_logs
             .read()

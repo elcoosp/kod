@@ -17,12 +17,16 @@ use kod_types::ToolCall;
 /// Outcome of a hook.
 #[derive(Debug, Clone)]
 pub struct HookOutcome {
+    /// The hook command's exit code.
     pub exit_code: i32,
+    /// The hook's stdout.
     pub stdout: String,
+    /// The hook's stderr.
     pub stderr: String,
 }
 
 impl HookOutcome {
+    /// True when the hook exited successfully.
     pub fn ok(&self) -> bool {
         self.exit_code == 0
     }
@@ -35,6 +39,7 @@ pub struct HookRunner {
 }
 
 impl HookRunner {
+    /// Build a hook runner over the given config.
     pub fn new(config: HooksConfig) -> Self {
         Self { config }
     }
@@ -47,6 +52,7 @@ impl HookRunner {
         }
     }
 
+    /// True when hooks are enabled.
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
             && (!self.config.pre_tool_use.is_empty() || !self.config.post_tool_use.is_empty())

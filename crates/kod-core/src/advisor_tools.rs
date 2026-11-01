@@ -81,11 +81,13 @@ pub trait AdvisorSink: Send + Sync {
 /// Both are leaves — neither refers back to the engine — so no cycle
 /// exists and no `Weak` is needed.
 pub struct SteerQueueSink {
+    /// Per-agent queue of pending steers.
     pub steers: Arc<
         tokio::sync::RwLock<
             std::collections::HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>,
         >,
     >,
+    /// Whether a turn is currently running.
     pub is_running: Arc<tokio::sync::RwLock<bool>>,
 }
 
@@ -134,6 +136,7 @@ pub struct AdviseTool {
 }
 
 impl AdviseTool {
+    /// Build the advise tool.
     pub fn new(guard: Arc<parking_lot::Mutex<EmissionGuard>>, sink: Arc<dyn AdvisorSink>) -> Self {
         Self {
             guard,

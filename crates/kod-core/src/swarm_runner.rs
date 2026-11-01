@@ -48,7 +48,9 @@ use tokio::sync::mpsc;
 /// One decomposed piece of the user's goal.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Subtask {
+    /// The subtask name.
     pub name: String,
+    /// The subtask description.
     pub description: String,
     /// Path globs the subtask is expected to write (D4.2). Read by
     /// the runner to detect overlapping claims before spawning and
@@ -92,8 +94,11 @@ pub enum SwarmEvent {
     Decomposed(Vec<Subtask>),
     /// Agent started on its subtask.
     AgentStarted {
+        /// The agent id.
         id: AgentId,
+        /// The agent name.
         name: String,
+        /// The subtask name.
         subtask: String,
         /// Display string of the endpoint+model the agent runs
         /// against (`endpoint/model`). Set from
@@ -107,58 +112,85 @@ pub enum SwarmEvent {
     /// runner (a tool-start marker from the engine is rendered as
     /// `  [tool: read_file]`, not forwarded raw).
     AgentChunk {
+        /// The agent id.
         id: AgentId,
+        /// The agent name.
         name: String,
+        /// The chunk text.
         text: String,
     },
     /// Agent finished with this result.
     AgentCompleted {
+        /// The agent id.
         id: AgentId,
+        /// The agent name.
         name: String,
+        /// The agent result.
         result: String,
     },
     /// Agent failed; the swarm continues with the others.
     AgentFailed {
+        /// The agent id.
         id: AgentId,
+        /// The agent name.
         name: String,
+        /// The error message.
         error: String,
     },
     /// Agent timed out or errored and is being restarted (D4-D6).
     /// Emitted between the failure and the next `AgentStarted` for the
     /// same id, so a live UI can show "agent-1 retrying (2/2): …".
     AgentRetrying {
+        /// The agent id.
         id: AgentId,
+        /// The agent name.
         name: String,
+        /// The attempt number.
         attempt: u32,
+        /// The maximum number of attempts.
         max_attempts: u32,
+        /// The previous failure error.
         previous_error: String,
     },
     /// Two agents wrote to the same file. Emitted after all agents
     /// finish, before the merge call, so a live UI can show the
     /// conflict while it is still actionable.
-    ConflictDetected { file: String, agents: Vec<String> },
+    ConflictDetected {
+        /// The conflicting file path.
+        file: String,
+        /// The agent names that wrote to it.
+        agents: Vec<String>,
+    },
     /// All agents done; the runner is now calling the model to merge.
     Merging,
     /// A per-agent git worktree was created (D4-D2). Emitted before
     /// `AgentStarted` for the same agent so a live UI can show the
     /// isolated workspace the agent will work in.
     WorktreeCreated {
+        /// The agent name.
         agent_name: String,
+        /// The worktree path.
         path: std::path::PathBuf,
+        /// The branch name.
         branch: String,
     },
     /// The worktrees were merged back into the base branch. Emitted
     /// after every agent finishes and before the LLM merge step, so
     /// the caller can see the deterministic git result first.
     WorktreesMerged {
+        /// Branches that merged cleanly.
         merged: Vec<String>,
+        /// Files with merge conflicts.
         conflicted: Vec<std::path::PathBuf>,
+        /// Branches that failed to merge.
         failed: Vec<(String, String)>,
     },
     /// P5: a subagent wrote a file outside its declared
     /// `expected_writes` globs. Emitted after the report is parsed.
     BoundaryViolation {
+        /// The agent that violated its boundary.
         agent_name: String,
+        /// Files written outside the boundary.
         paths: Vec<std::path::PathBuf>,
     },
 }
@@ -170,29 +202,40 @@ pub enum SwarmEvent {
 /// that wants to surface it live reads `SwarmEvent::ConflictDetected`.
 #[derive(Debug, Clone)]
 pub struct FileConflict {
+    /// The conflicting file path.
     pub file: String,
+    /// The agent names that wrote to the file.
     pub agents: Vec<String>,
 }
 
 /// One agent's terminal outcome.
 #[derive(Debug, Clone)]
 pub struct AgentResult {
+    /// The agent id.
     pub id: AgentId,
+    /// The agent name.
     pub name: String,
+    /// The subtask name.
     pub subtask: String,
+    /// The agent outcome.
     pub outcome: AgentOutcome,
 }
 
 #[derive(Debug, Clone)]
+/// One agent terminal outcome.
 pub enum AgentOutcome {
+    /// The agent completed with this result.
     Completed(String),
+    /// The agent failed with this error.
     Failed(String),
 }
 
 /// Full swarm response.
 #[derive(Debug, Clone)]
 pub struct SwarmResponse {
+    /// The decomposed subtasks.
     pub subtasks: Vec<Subtask>,
+    /// Per-agent results.
     pub per_agent: Vec<AgentResult>,
     /// Files written by two or more agents. The merge step is asked
     /// to reconcile them; the caller decides whether to warn, retry,
@@ -306,6 +349,7 @@ impl SwarmRunner {
         self
     }
 
+    /// Builder: set the isolation strategy.
     pub fn with_isolation(mut self, isolation: kod_config::Isolation) -> Self {
         self.isolation = isolation;
         self
@@ -322,6 +366,7 @@ impl SwarmRunner {
         self
     }
 
+    /// Build a swarm runner from a config.
     pub async fn from_config(
         engine: Arc<KodEngine>,
         config: &kod_config::SwarmConfig,
@@ -362,6 +407,7 @@ impl SwarmRunner {
         self
     }
 
+    /// The configured maximum agent count.
     pub fn max_agents(&self) -> usize {
         self.max_agents
     }

@@ -126,6 +126,7 @@ fn read_for_judge(
 
 /// The `jfind` tool.
 pub struct JfindTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     judge: Arc<dyn Judge>,
     /// Whether the judge is Jev-backed (semantic) or the lexical

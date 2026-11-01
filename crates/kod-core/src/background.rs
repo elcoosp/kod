@@ -48,6 +48,7 @@ pub fn is_read_only(tool: &str) -> bool {
     READ_ONLY_TOOLS.contains(&tool)
 }
 
+/// A background job's id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u64);
 
@@ -64,13 +65,21 @@ impl std::fmt::Display for JobId {
 pub enum JobKind {
     /// Cross-model review of a completed turn.
     Review {
+        /// The turn being reviewed.
         subject: kod_core_state::trace::TurnId,
+        /// The endpoint chosen for the cross-model pass.
         endpoint: kod_provider::ModelRef,
     },
     /// An eval run against a recorded transcript.
-    Eval { transcript: PathBuf },
+    Eval {
+        /// The recorded transcript to evaluate.
+        transcript: PathBuf,
+    },
     /// Generate prose documentation for a module.
-    Docs { path: PathBuf },
+    Docs {
+        /// The module path to generate docs for.
+        path: PathBuf,
+    },
     /// A shell command running in the background (P2-d). `command` is
     /// truncated for display; the spool path is where the output goes.
     Shell {
@@ -104,19 +113,29 @@ impl JobKind {
 /// The state of one job.
 #[derive(Debug, Clone)]
 pub struct JobState {
+    /// The job kind.
     pub kind: JobKind,
+    /// When the job started.
     pub started_at: Instant,
+    /// The current status.
     pub status: JobStatus,
 }
 
+/// The lifecycle status of a job.
 #[derive(Debug, Clone)]
 pub enum JobStatus {
     /// The job is running.
     Running,
     /// The job produced a summary.
-    Completed { summary: String },
+    Completed {
+        /// A human-readable summary.
+        summary: String,
+    },
     /// The job failed.
-    Failed { error: String },
+    Failed {
+        /// The failure error message.
+        error: String,
+    },
 }
 
 /// The runner. Holds every job's state and a semaphore that caps
@@ -153,6 +172,7 @@ impl BackgroundJobRunner {
         }
     }
 
+    /// The configured concurrency cap.
     pub fn max_concurrent(&self) -> usize {
         self.max_concurrent
     }
@@ -237,6 +257,7 @@ impl BackgroundJobRunner {
         });
     }
 
+    /// Snapshot every job's state.
     pub fn snapshot(&self) -> Vec<(JobId, JobState)> {
         let mut out: Vec<(JobId, JobState)> = self
             .jobs

@@ -75,13 +75,16 @@ fn base_definition(name: &str, description: &str, schema: Value) -> ToolDefiniti
 // swarm_note
 // ---------------------------------------------------------------------------
 
+/// The swarm-note tool.
 pub struct SwarmNoteTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     hub: Arc<AgentCommunicationHub>,
     agent: AgentId,
 }
 
 impl SwarmNoteTool {
+    /// Build the swarm-note tool.
     pub fn new(hub: Arc<AgentCommunicationHub>, agent: AgentId) -> Self {
         Self {
             definition: base_definition(
@@ -163,13 +166,16 @@ impl Tool for SwarmNoteTool {
 // swarm_read
 // ---------------------------------------------------------------------------
 
+/// The swarm-read tool.
 pub struct SwarmReadTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     hub: Arc<AgentCommunicationHub>,
     agent: AgentId,
 }
 
 impl SwarmReadTool {
+    /// Build the swarm-read tool.
     pub fn new(hub: Arc<AgentCommunicationHub>, agent: AgentId) -> Self {
         Self {
             definition: base_definition(

@@ -50,6 +50,7 @@ pub struct MemoryHandler {
 }
 
 impl MemoryHandler {
+    /// Build the memory handler.
     pub fn new(router: Arc<TaskRouter>) -> Self {
         Self { router }
     }

@@ -114,7 +114,9 @@ pub const DEFAULT_KEEP_RECENT_TOKENS: u64 = 20_000;
 /// through.
 #[derive(Clone)]
 pub struct ProviderHandle {
+    /// The provider instance.
     pub provider: std::sync::Arc<dyn kod_provider::LlmProvider>,
+    /// Generation options for provider calls.
     pub options: kod_provider::GenerationOptions,
     /// The model to name in a request built from this handle. The
     /// `native_compact` call needs a `CompletionRequest`, and a
@@ -134,6 +136,7 @@ impl std::fmt::Debug for ProviderHandle {
     }
 }
 
+/// The context a compaction method reasons about.
 pub struct CompactionContext<'a> {
     /// The transcript, in send order.
     pub transcript: &'a [ChatMessage],
@@ -195,7 +198,12 @@ pub enum CompactionPlan {
     Prune(PrunePlan),
     /// A summary string that replaces the first `covers_through + 1`
     /// messages.
-    Summary { covers_through: usize, text: String },
+    Summary {
+        /// Index of the last message covered by the summary.
+        covers_through: usize,
+        /// The summary text.
+        text: String,
+    },
     /// Delta §4.5: rasterize the older half of the transcript into a
     /// PNG and attach it as an image on the next request. The
     /// transcript's older half is *replaced* by a short marker
@@ -207,8 +215,11 @@ pub enum CompactionPlan {
     /// of original lines that went into the frame, for the marker
     /// text and for telemetry.
     Image {
+        /// Index of the last message covered by the image.
         covers_through: usize,
+        /// Base64-encoded PNG bytes (no data-URL prefix).
         png_base64: String,
+        /// Count of original lines that went into the frame.
         source_lines: usize,
     },
     /// A summary produced by provider-native compaction. Same drain
@@ -222,13 +233,17 @@ pub enum CompactionPlan {
     /// and making that a distinct variant means the apply step is
     /// explicit about which one it is looking at.
     NativeSummary {
+        /// Index of the last message covered by the summary.
         covers_through: usize,
+        /// The summary text.
         text: String,
+        /// Opaque provider-native encrypted content token.
         encrypted_content: String,
     },
 }
 
 impl CompactionPlan {
+    /// True when the plan produces no mutations.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Shake(p) => p.is_empty(),
@@ -364,14 +379,17 @@ impl CompactionDispatcher {
     }
 
     /// The number of methods registered.
+    /// The number of registered methods.
     pub fn len(&self) -> usize {
         self.methods.len()
     }
 
+    /// True when no methods are registered.
     pub fn is_empty(&self) -> bool {
         self.methods.is_empty()
     }
 
+    /// The registered methods' names, in preference order.
     /// The registered methods' names, in preference order.
     pub fn method_names(&self) -> Vec<&'static str> {
         self.methods.iter().map(|m| m.name()).collect()
@@ -436,6 +454,7 @@ pub struct ShakeMethod {
 }
 
 impl ShakeMethod {
+    /// Build a shake method over the given config.
     pub fn new(config: ShakeConfig) -> Self {
         Self { config }
     }
@@ -493,6 +512,7 @@ pub struct PruneMethod {
 }
 
 impl PruneMethod {
+    /// Build a prune method over the given config.
     pub fn new(config: kod_core_quality::prune::PruneConfig) -> Self {
         Self { config }
     }
@@ -583,6 +603,7 @@ pub struct RemoteMethod;
 pub const MIN_REMOTE_MESSAGES: usize = 4;
 
 impl RemoteMethod {
+    /// Build a remote-compaction method.
     pub fn new() -> Self {
         Self
     }
@@ -706,6 +727,7 @@ pub const FRAME_TOKEN_ESTIMATE: u64 = 5_024;
 pub const SAVINGS_MARGIN: f64 = 0.9;
 
 impl SnapcompactMethod {
+    /// Build a snapcompact method.
     pub fn new() -> Self {
         Self
     }
@@ -832,6 +854,7 @@ pub struct HandoffMethod;
 pub const MIN_HANDOFF_MESSAGES: usize = 4;
 
 impl HandoffMethod {
+    /// Build a handoff method.
     pub fn new() -> Self {
         Self
     }
@@ -945,6 +968,7 @@ impl CompactionMethod for HandoffMethod {
 pub struct SoftMethod;
 
 impl SoftMethod {
+    /// Build a soft-summarize method (stub).
     pub fn stub() -> Self {
         Self
     }

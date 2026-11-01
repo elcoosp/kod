@@ -440,6 +440,7 @@ pub(crate) fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String
     )
 }
 
+/// One-line summary of a tool result.
 pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     match result {
         ToolResult::Success(v) => summarize_success(name, v),

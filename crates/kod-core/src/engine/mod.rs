@@ -103,6 +103,7 @@ async fn push_background_interrupt(
 // preserved byte-for-byte via `ChatMessage::render_text`, guarded by
 // `crates/kod-core/tests/characterization_history.rs`.
 
+/// The engine.
 pub struct KodEngine {
     router: Arc<TaskRouter>,
     /// Named-endpoint map (A4b). When `Some`, `resolve_provider` reads

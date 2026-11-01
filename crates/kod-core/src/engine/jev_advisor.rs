@@ -14,6 +14,7 @@ use kod_provider::ModelRef;
 use kod_types::{ToolCall, ToolDefinition, ToolResult};
 
 impl KodEngine {
+    /// Classify a chunk with Jev.
     pub async fn classify_chunk_with_jev(&self, holder: &str, buffer_tail: &str) -> Option<String> {
         let jev = self.jev_client()?;
         let request = self.current_request(holder).await.unwrap_or_default();
@@ -823,6 +824,7 @@ impl KodEngine {
         out
     }
 
+    /// Extract handoff facts with Jev.
     pub async fn extract_handoff_facts_with_jev(&self, transcript: &str) -> Vec<String> {
         const MAX_MESSAGES: usize = 40;
         let Some(jev) = self.jev_client() else {
@@ -1016,6 +1018,7 @@ impl KodEngine {
         out
     }
 
+    /// Detect phase changes with Jev.
     pub async fn detect_phase_change_with_jev(&self, holder: &str) -> Option<(String, String)> {
         const PHASE_WINDOW: usize = 6;
         let jev = self.jev_client()?;
@@ -1213,6 +1216,7 @@ impl KodEngine {
         Some(ToolResult::Success(new_v))
     }
 
+    /// Pick an endpoint with Jev.
     pub async fn pick_endpoint_with_jev(&self, task_key: &str) -> Option<ModelRef> {
         let jev = self.jev_client()?;
         let registry = self.registry.read().await.clone()?;
@@ -1407,6 +1411,7 @@ impl KodEngine {
         Some(ctx)
     }
 
+    /// Filter memory entries with Jev.
     pub async fn filter_memory_entries_with_jev(
         &self,
         entries: Vec<(String, String)>,

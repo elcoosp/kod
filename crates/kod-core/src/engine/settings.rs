@@ -447,7 +447,9 @@ impl KodEngine {
 /// Transitional until D1 replaces this with per-endpoint config.
 #[derive(Debug, Clone, Default)]
 pub struct GenerationDefaults {
+    /// Sampling temperature.
     pub temperature: Option<f32>,
+    /// Output token cap.
     pub max_tokens: Option<usize>,
 }
 

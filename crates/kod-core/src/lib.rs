@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! Core engine for KOD - coordinates all subsystems.
 //!
 //! This crate integrates skills, memory, tools, and LLM providers

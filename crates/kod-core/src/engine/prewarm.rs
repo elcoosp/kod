@@ -33,6 +33,7 @@ impl KodEngine {
         }
     }
 
+    /// Prewarm the provider cache for the given key.
     pub async fn prewarm(&self, key: &str) {
         // WS-C: policy gate first (defense in depth — the TUI checks
         // `prewarm_enabled` before spawning, but direct callers land

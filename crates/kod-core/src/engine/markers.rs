@@ -255,10 +255,12 @@ pub fn parse_usage_marker(chunk: &str) -> Option<(usize, usize)> {
 /// to "thinking…" so a slow reinjection doesn't look like a stuck tool.
 pub const THINKING_MARKER: &str = "\0kod-thinking\0";
 
+/// The thinking-marker string.
 pub fn thinking_marker() -> String {
     THINKING_MARKER.to_string()
 }
 
+/// True when the chunk is a thinking marker.
 pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
 }

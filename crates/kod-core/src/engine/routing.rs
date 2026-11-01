@@ -92,6 +92,7 @@ impl KodEngine {
         (self.config_window, max_out)
     }
 
+    /// Install the provider registry.
     pub async fn set_registry(
         &self,
         registry: Arc<ProviderRegistry>,

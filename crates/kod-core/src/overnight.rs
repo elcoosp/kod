@@ -52,6 +52,7 @@ impl Phase {
 /// The parameters of an overnight run.
 #[derive(Debug, Clone)]
 pub struct OvernightManifest {
+    /// The overnight mission statement.
     pub mission: String,
     /// When the user wants to see the result. The run must be done
     /// (report written, artifacts on disk) by then.
@@ -131,8 +132,11 @@ impl OvernightManifest {
 
 /// One subtask's outcome, as a card a person reads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One task in the overnight manifest.
 pub struct TaskCard {
+    /// The task name.
     pub name: String,
+    /// Human-readable description.
     pub description: String,
     /// What the agent says it did.
     pub summary: String,
@@ -152,8 +156,11 @@ pub struct TaskCard {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// The status of a task card.
 pub enum CardStatus {
+    /// The task completed.
     Done,
+    /// The task failed.
     Failed,
 }
 

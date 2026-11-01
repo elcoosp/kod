@@ -28,13 +28,21 @@ fn truncate_chars(s: &str, max: usize) -> &str {
 /// Types of tasks that can be routed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TaskType {
+    /// A simple task.
     Simple,
+    /// A code-modification task.
     CodeModification,
+    /// A debugging task.
     Debugging,
+    /// A research task.
     Research,
+    /// A testing task.
     Testing,
+    /// A documentation task.
     Documentation,
+    /// A complex task.
     Complex,
+    /// A multi-step task.
     MultiStep,
 }
 
@@ -90,8 +98,11 @@ impl TaskType {
 /// Configuration for the task router
 #[derive(Clone)]
 pub struct RouterConfig {
+    /// Whether memory is enabled for this router.
     pub enable_memory: bool,
+    /// Maximum skills per query.
     pub max_skills_per_query: usize,
+    /// The router's working directory.
     pub working_dir: PathBuf,
     /// The model's context window, in tokens. Used to size the memory
     /// manager's per-prompt context budget so a long-running session
@@ -187,13 +198,16 @@ impl Default for RouterConfig {
 /// Response from task processing
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TaskResponse {
+    /// The classified task type.
     pub task_type: TaskType,
     /// Model-generated reply text. `None` when produced by
     /// [`TaskRouter::process_input`] — the router classifies and
     /// describes, it does not generate. The engine fills this with
     /// the provider's reply.
     pub text: Option<String>,
+    /// Tool calls the model produced.
     pub tool_calls: Vec<ToolCall>,
+    /// Results of the tool calls.
     pub tool_results: Vec<ToolResult>,
     /// Names of the skills whose instructions were injected into the
     /// prompt. Empty when no skill matched.
@@ -266,6 +280,7 @@ pub struct PromptPlan {
 /// One ordered slice of the system prompt. See [`PromptPlan`].
 #[derive(Debug, Clone)]
 pub struct SystemSegment {
+    /// The segment's rendered text.
     pub text: String,
     /// `true` when this segment is part of the byte-stable invariant
     /// prefix across turns of a session. A provider with explicit cache
@@ -381,17 +396,24 @@ pub struct TaskRouter {
     repo_map_cache: crate::router::RepoMapCache,
 }
 
+/// The inputs to a prompt-build call.
 pub struct PromptRequest<'a> {
+    /// The user input.
     pub input: &'a str,
+    /// The classified task type.
     pub task_type: &'a TaskType,
+    /// The rendered history block.
     pub history: &'a str,
+    /// Retrieved memory context.
     pub memory_context: Option<MemoryContext>,
+    /// Budget allocation, when set.
     pub budget: Option<&'a kod_core_state::budget::Allocation>,
+    /// Active skill names.
     pub skill_names: Option<&'a [String]>,
 }
 
 impl TaskRouter {
-    /// Create a new task router
+    /// Create a new task router.
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let memory_manager = if config.enable_memory {
             // The manager's own default is a fixed 4096-token budget.
@@ -532,10 +554,12 @@ impl TaskRouter {
     /// M-43: the router's live `MemoryManager`, when memory is enabled.
     /// The TUI routes every `/memory` operation through this rather
     /// than opening a second redb handle (which locks).
+    /// The router's live memory manager, when memory is enabled.
     pub fn memory_manager(&self) -> Option<&MemoryManager> {
         self.memory_manager.as_ref()
     }
 
+    /// Search long-term memory for a query.
     pub async fn search_long_term(&self, query: &str, k: usize) -> Vec<kod_types::MemoryEntry> {
         let Some(manager) = &self.memory_manager else {
             return Vec::new();
@@ -1466,6 +1490,7 @@ impl TaskRouter {
         Ok(prompt)
     }
 
+    /// Build a prompt with budget and skill inputs.
     pub async fn build_prompt_with_budget_and_skills(
         &self,
         input: &str,
@@ -1566,6 +1591,7 @@ impl TaskRouter {
         Ok(PromptPlan::from_rendered(&rendered))
     }
 
+    /// Build a prompt plan with skill inputs.
     pub async fn build_prompt_plan_with_skills(
         &self,
         input: &str,

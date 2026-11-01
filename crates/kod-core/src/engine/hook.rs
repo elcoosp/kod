@@ -5,6 +5,7 @@
 use super::*;
 
 impl KodEngine {
+    /// Build the background spawner hook.
     pub fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
         // SEC-A-02: the background spawn must apply the same sandbox
         // and env-strip the foreground does.

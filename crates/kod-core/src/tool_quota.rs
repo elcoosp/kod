@@ -33,6 +33,7 @@ impl Default for ToolCounts {
 }
 
 impl ToolCounts {
+    /// Empty counters.
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(Mutex::new(ToolCountsInner {
@@ -70,10 +71,12 @@ impl ToolCounts {
         g.per_command.clear();
     }
 
+    /// Per-turn cap for a tool (0 = no cap).
     pub fn per_turn(&self, tool: &str) -> usize {
         self.inner.lock().per_turn.get(tool).copied().unwrap_or(0)
     }
 
+    /// Per-session cap for a tool.
     pub fn per_session(&self, tool: &str) -> usize {
         self.inner
             .lock()
@@ -83,6 +86,7 @@ impl ToolCounts {
             .unwrap_or(0)
     }
 
+    /// Per-command cap for a tool.
     pub fn per_command(&self, tool: &str, command: &str) -> usize {
         self.inner
             .lock()
@@ -114,9 +118,15 @@ pub enum QuotaVerdict {
     /// Within every limit.
     Ok,
     /// Approaching the cap; the tool should still run.
-    Soft { reason: String },
+    Soft {
+        /// Why the cap is approaching.
+        reason: String,
+    },
     /// At or over a hard cap; the tool must not run.
-    Hard { reason: String },
+    Hard {
+        /// Why the cap was hit.
+        reason: String,
+    },
 }
 
 /// Check the quota for a tool. `quota` is the resolved

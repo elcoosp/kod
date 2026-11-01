@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 /// One round's captured request + response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFixture {
+    /// The round sequence number.
     pub seq: u32,
     /// The user's input that triggered this round (Tier 1.5). Replay
     /// re-feeds this to a fresh engine so the same shape of request
@@ -39,10 +40,15 @@ pub struct RoundFixture {
 /// human-readable diffs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestSummary {
+    /// Character count of the system prompt.
     pub system_chars: usize,
+    /// Number of conversation messages.
     pub message_count: usize,
+    /// Tool names present in the request.
     pub tool_names: Vec<String>,
+    /// The model name.
     pub model: String,
+    /// The endpoint name.
     pub endpoint: String,
 }
 
@@ -96,9 +102,12 @@ impl RequestSummary {
 /// What the model returned for one round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseFixture {
+    /// The response text.
     pub text: String,
     #[serde(default)]
+    /// Tool calls the model produced.
     pub tool_calls: Vec<ToolCallFixture>,
+    /// Token usage reported by the provider.
     #[serde(default)]
     pub usage: Option<UsageFixture>,
     /// Tool results that follow this round's tool calls (Tier 1.5).
@@ -111,6 +120,7 @@ pub struct ResponseFixture {
 
 /// One tool result captured from a trace round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One tool result captured from a trace round.
 pub struct ToolResultFixture {
     /// The call this result answers; matches `ToolCallFixture.name`.
     pub tool_name: String,
@@ -122,29 +132,41 @@ pub struct ToolResultFixture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// One captured tool call.
 pub struct ToolCallFixture {
+    /// The wire-level call id, when reported.
     pub id: Option<String>,
+    /// The tool name.
     pub name: String,
+    /// The call arguments, as JSON.
     pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Token usage for a round.
 pub struct UsageFixture {
+    /// Input token count.
     pub prompt_tokens: usize,
+    /// Output token count.
     pub completion_tokens: usize,
 }
 
 /// A complete fixture: one session, many rounds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// A complete captured session.
 pub struct Fixture {
+    /// The fixture's name.
     pub name: String,
+    /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
+    /// The engine version that created the fixture.
     pub engine_version: String,
     /// Rounds in playback order.
     pub rounds: Vec<RoundFixture>,
 }
 
 impl Fixture {
+    /// Start a fresh fixture with the given name.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

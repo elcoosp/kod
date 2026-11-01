@@ -125,7 +125,9 @@ pub enum ColdReviveVerdict {
     /// `added` are tools the current process has that the log did
     /// not name. Both sorted for a stable log line.
     SurfaceDrifted {
+        /// Tools that disappeared from the surface.
         missing: Vec<String>,
+        /// Tools that appeared on the surface.
         added: Vec<String>,
     },
 }
@@ -140,7 +142,10 @@ pub enum ColdReviveVerdict {
 pub enum ColdReviveOutcome {
     /// The surface matched and `n` messages were appended to the
     /// transcript keyed by the holder.
-    Revived { messages_appended: usize },
+    Revived {
+        /// Number of messages appended during the revive.
+        messages_appended: usize,
+    },
     /// The persisted session carried no `SessionInit` for the holder.
     /// Nothing was compared, nothing was revived.
     NoInitEntry,
@@ -149,7 +154,9 @@ pub enum ColdReviveOutcome {
     /// added) — but a caller that has decided the drift is safe can
     /// retry with `force = true`.
     RefusedDrifted {
+        /// Tools that disappeared from the surface.
         missing: Vec<String>,
+        /// Tools that appeared on the surface.
         added: Vec<String>,
     },
 }

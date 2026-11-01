@@ -36,6 +36,7 @@ pub struct ApprovalRequest {
 /// consumer can present them as one batch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApprovalBatch {
+    /// The requests awaiting approval.
     pub items: Vec<ApprovalRequest>,
 }
 
@@ -47,8 +48,10 @@ pub enum ApprovalDecision {
     /// Run the call with these arguments substituted for the model's
     /// (Tier 2.3). The approval overlay's "edit" action sends this.
     ApproveWith {
+        /// The modified arguments.
         arguments: serde_json::Value,
     },
+    /// Reject the call.
     Deny,
     /// Same as `Deny` in this version; the variant exists so that
     /// adding a "remember my choice" set later does not change the

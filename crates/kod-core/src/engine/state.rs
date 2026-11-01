@@ -240,6 +240,7 @@ impl KodEngine {
         }
     }
 
+    /// The cost tracker.
     pub fn cost_tracker(&self) -> &kod_core_state::cost::CostTracker {
         &self.cost_tracker
     }
@@ -253,6 +254,7 @@ impl KodEngine {
         }
     }
 
+    /// Install the read-protection rules.
     pub fn set_read_protection(&self, rp: kod_config::ReadProtection) {
         if let Ok(mut slot) = self.read_protection.write() {
             *slot = Some(rp);
@@ -873,6 +875,7 @@ impl KodEngine {
         self.redactor.clone()
     }
 
+    /// Set the sandbox mode.
     pub fn set_sandbox_mode(&self, mode: kod_tools::context::SandboxMode) {
         use std::sync::atomic::Ordering;
         let v = match mode {

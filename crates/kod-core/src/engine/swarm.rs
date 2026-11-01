@@ -126,6 +126,7 @@ impl KodEngine {
         })
     }
 
+    /// The swarm's blackboard.
     pub fn blackboard(&self) -> &kod_swarm::Blackboard {
         &self.blackboard
     }

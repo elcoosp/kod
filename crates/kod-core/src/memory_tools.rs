@@ -24,11 +24,13 @@ use std::sync::Arc;
 
 /// `memory_save` — record a durable fact for later recall.
 pub struct MemorySaveTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     router: Arc<crate::router::TaskRouter>,
 }
 
 impl MemorySaveTool {
+    /// Build the memory-save tool.
     pub fn new(router: Arc<crate::router::TaskRouter>) -> Self {
         Self {
             definition: ToolDefinition {
@@ -120,11 +122,13 @@ impl Tool for MemorySaveTool {
 
 /// `memory_search` — retrieve the top-k entries for a query.
 pub struct MemorySearchTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     router: Arc<crate::router::TaskRouter>,
 }
 
 impl MemorySearchTool {
+    /// Build the memory-search tool.
     pub fn new(router: Arc<crate::router::TaskRouter>) -> Self {
         Self {
             definition: ToolDefinition {

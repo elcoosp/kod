@@ -38,6 +38,7 @@ use kod_tools::{Tool, ToolContext};
 
 /// The hub tool.
 pub struct HubTool {
+    /// The tool's registered definition.
     pub definition: ToolDefinition,
     hub: Arc<AgentCommunicationHub>,
     agent: AgentId,
@@ -45,6 +46,7 @@ pub struct HubTool {
 }
 
 impl HubTool {
+    /// Build the hub tool.
     pub fn new(
         hub: Arc<AgentCommunicationHub>,
         agent: AgentId,

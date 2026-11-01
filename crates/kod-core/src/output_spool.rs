@@ -46,6 +46,7 @@ impl OutputSpool {
         })
     }
 
+    /// The spool file path.
     pub fn path(&self) -> &Path {
         &self.path
     }

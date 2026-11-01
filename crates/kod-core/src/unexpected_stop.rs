@@ -128,6 +128,7 @@ pub struct UnexpectedStopClassifier {
 }
 
 impl UnexpectedStopClassifier {
+    /// Build a classifier over a judgment client.
     pub fn new(client: JudgmentClient) -> Self {
         Self { client }
     }

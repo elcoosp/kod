@@ -56,6 +56,7 @@ pub const PREVIEW: usize = 4_000;
 /// One finished job's result, queued for delivery.
 #[derive(Debug, Clone)]
 pub struct AsyncResult {
+    /// The background job's id.
     pub job_id: u64,
     /// The transcript the result belongs to.
     pub owner_id: String,
@@ -105,6 +106,7 @@ pub struct AsyncDelivery {
 }
 
 impl AsyncDelivery {
+    /// Empty delivery registry.
     pub fn new() -> Self {
         Self {
             queues: HashMap::new(),

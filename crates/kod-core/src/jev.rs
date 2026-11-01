@@ -107,12 +107,16 @@ impl<T> Decision<T> {
 #[derive(Debug, thiserror::Error)]
 pub enum JevError {
     #[error("jev is not enabled")]
+    /// Jev integration is not enabled.
     Disabled,
     #[error("typesafe sdk: {0}")]
+    /// The underlying SDK failed.
     Sdk(String),
     #[error("malformed typesafe response: {0}")]
+    /// The response could not be parsed.
     Malformed(String),
     #[error("jev cache lock was poisoned")]
+    /// The decision cache lock was poisoned.
     CachePoisoned,
 }
 
@@ -155,25 +159,34 @@ pub struct JevClient {
 /// test double.
 #[async_trait::async_trait]
 pub trait JevDecider: Send + Sync {
+    /// The configured thresholds.
     fn thresholds(&self) -> &kod_config::JevThresholds;
+    /// The configured Jev config.
     fn config(&self) -> &kod_config::JevConfig;
+    /// The reasoning timeout.
     fn reasoning_timeout(&self) -> std::time::Duration;
+    /// Clear the decision cache.
     fn clear_cache(&self);
+    /// Current cache entry count.
     fn cache_len(&self) -> usize;
+    /// Whether caching is enabled.
     fn cache_enabled(&self) -> bool;
 
+    /// Evaluate a yes/no question.
     async fn evaluate_yes_no(
         &self,
         state: &Value,
         question: &str,
     ) -> Result<Decision<bool>, JevError>;
 
+    /// Evaluate a batch of yes/no questions.
     async fn evaluate_yes_no_batch(
         &self,
         state: &Value,
         questions: &[(String, String)],
     ) -> Result<Vec<(String, f32)>, JevError>;
 
+    /// Evaluate a score against an ordered rubric.
     async fn evaluate_score(
         &self,
         state: &Value,
@@ -181,6 +194,7 @@ pub trait JevDecider: Send + Sync {
         levels: &[&str],
     ) -> Result<Decision<String>, JevError>;
 
+    /// Evaluate a choice among options.
     async fn evaluate_choice(
         &self,
         state: &Value,
@@ -723,6 +737,7 @@ pub struct RedactingJevDecider {
 }
 
 impl RedactingJevDecider {
+    /// Build a redacting decider over an inner decider.
     pub fn new(
         inner: std::sync::Arc<dyn JevDecider>,
         vault: std::sync::Arc<

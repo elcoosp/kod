@@ -50,6 +50,7 @@ pub enum ToolStatus {
 }
 
 impl ToolStatus {
+    /// The lowercase string label for this status.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ok => "ok",
@@ -74,6 +75,7 @@ pub enum CostUnavailable {
 }
 
 impl CostUnavailable {
+    /// The lowercase string label for this reason.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::NoUsage => "no-usage",
@@ -86,15 +88,22 @@ impl CostUnavailable {
 /// Per-tool counters.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolCounts {
+    /// Successful calls.
     pub ok: u64,
+    /// Failed calls.
     pub error: u64,
+    /// Blocked calls.
     pub blocked: u64,
+    /// Skipped calls.
     pub skipped: u64,
+    /// Timed-out calls.
     pub timeout: u64,
+    /// Aborted calls.
     pub aborted: u64,
 }
 
 impl ToolCounts {
+    /// Record one tool call's status.
     pub fn record(&mut self, status: ToolStatus) {
         match status {
             ToolStatus::Ok => self.ok += 1,
@@ -106,6 +115,7 @@ impl ToolCounts {
         }
     }
 
+    /// Total tool calls recorded.
     pub fn total(&self) -> u64 {
         self.ok + self.error + self.blocked + self.skipped + self.timeout + self.aborted
     }
@@ -134,6 +144,7 @@ pub struct RunCollector {
 }
 
 impl RunCollector {
+    /// Empty collector.
     pub fn new() -> Self {
         Self::default()
     }
