@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 //! OpenAI-compatible LLM provider backed by `adk-model`.
 //!
 //! A single code path for every OpenAI-spec chat-completions endpoint:

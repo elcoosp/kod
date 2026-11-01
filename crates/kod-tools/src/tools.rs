@@ -5,7 +5,7 @@ use crate::{Tool, ToolContext};
 // ripgrep fast path to call `.search()` on the backend.
 #[allow(unused_imports)]
 use crate::relevance::SearchBackend;
-pub(crate) use crate::shared::{atomic_write, kill_child_tree, next_temp_seq};
+pub(crate) use crate::shared::{atomic_write, kill_child_tree};
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use regex::Regex;

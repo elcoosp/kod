@@ -1,6 +1,6 @@
 # KOD Architecture
 
-_Last verified 2026-10-28 at `6754937e`. 26 crates. When this file and
+_Last verified 2026-11-01 at `23fcab01`. 26 crates. When this file and
 the workspace disagree, the workspace is right — update this file._
 
 ## Overview

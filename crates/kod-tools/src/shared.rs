@@ -4,9 +4,6 @@
 //! which uses `atomic_write`) can move its own impl to a module
 //! without dragging these helpers along.
 
-use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 /// Monotonic process-local counter used to break ties between
 /// concurrent atomic-replace writers in the same process. Same shape
 /// as the helpers in `kod-core-state`, `kod-config`, `kod-mcp`, and

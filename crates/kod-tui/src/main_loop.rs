@@ -7792,7 +7792,6 @@ mod tests {
     /// `/review` with an engine but no assistant turn yet must report
     /// the second guard, not attempt to spawn a job against nothing.
     /// This is what a user hits if they `/review` on the very first
-
     /// Dispatching a plain prompt must record it as `last_prompt`, so
     /// `/retry` and the `r` key have something to resend. Regression:
     /// before this, last_prompt was only set by retry_generation

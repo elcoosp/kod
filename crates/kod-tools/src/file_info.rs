@@ -9,9 +9,7 @@ use serde_json::Value;
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{
-    GitAccess, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, TrustLevel,
-};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 
 /// Get file information
 /// The file-info tool.
