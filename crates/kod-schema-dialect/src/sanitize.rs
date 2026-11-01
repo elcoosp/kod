@@ -24,6 +24,7 @@ pub enum KeywordRole {
 }
 
 /// Classify a keyword by the role of its value.
+#[must_use]
 pub fn role_of(keyword: &str) -> KeywordRole {
     match keyword {
         "items"
@@ -169,6 +170,7 @@ pub const ALL_KEYWORDS: &[&str] = &[
 /// provider merely ignores costs nothing, while a keyword removed that
 /// it *needed* produces a schema that matches the wrong shape. The
 /// lists hold what each provider is documented to accept.
+#[must_use]
 pub fn spec_for_provider(provider: &str) -> DialectSpec {
     match provider {
         "anthropic" => DialectSpec {
@@ -259,6 +261,7 @@ pub fn spec_for_provider(provider: &str) -> DialectSpec {
 /// when removal is safe — never from a position where the keyword *is*
 /// the schema (`not`, the sole member of a combiner), because dropping
 /// it would widen the schema to accept anything.
+#[must_use]
 pub fn sanitize(schema: &Value, spec: &DialectSpec) -> (Value, Vec<AppliedTransform>) {
     let mut out = schema.clone();
     let mut applied = Vec::new();

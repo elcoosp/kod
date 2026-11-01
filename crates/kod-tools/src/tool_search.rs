@@ -34,6 +34,7 @@ pub struct ToolInventory {
 
 impl ToolInventory {
     /// Build an inventory from a list of definitions.
+    #[must_use]
     pub fn from_definitions(defs: Vec<ToolDefinition>) -> Self {
         Self { definitions: defs }
     }

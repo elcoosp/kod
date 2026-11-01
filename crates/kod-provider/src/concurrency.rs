@@ -138,6 +138,7 @@ pub struct ConcurrencyPermit {
 
 impl ProviderConcurrency {
     /// A fresh counter with `cap` as its initial limit. `0` = no cap.
+    #[must_use]
     pub fn new(cap: usize) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -148,12 +149,14 @@ impl ProviderConcurrency {
     }
 
     /// The current cap. `0` means unbounded.
+    #[must_use]
     pub fn cap(&self) -> usize {
         lock_recover(&self.inner.state).cap
     }
 
     /// The current number of held permits. May exceed [`Self::cap`]
     /// after a resize-down, until the overshoot drains.
+    #[must_use]
     pub fn in_flight(&self) -> usize {
         lock_recover(&self.inner.state).in_flight
     }
@@ -200,6 +203,7 @@ impl ProviderConcurrency {
     /// A caller that wants "use a slot if available, else do
     /// something else" uses this. A caller that wants "wait for a
     /// slot" uses [`Self::acquire`].
+    #[must_use]
     pub fn try_acquire(&self) -> Option<ConcurrencyPermit> {
         let mut s = lock_recover(&self.inner.state);
         if s.can_acquire() {

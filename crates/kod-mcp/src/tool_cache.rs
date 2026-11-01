@@ -70,6 +70,7 @@ struct CacheEntry {
 /// A stable cache key for one server spec. Same bytes in → same hex
 /// out; a different command, argument order, or env value → a
 /// different key.
+#[must_use]
 pub fn cache_key(command: &str, args: &[String], env: &BTreeMap<String, String>) -> String {
     #[derive(Serialize)]
     struct Canonical<'a> {
@@ -101,6 +102,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The cache root. `None` when the platform has no cache dir — the
 /// cache is then a no-op (read returns `None`, write is skipped).
+#[must_use]
 pub fn cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|d| d.join("kod").join("mcp"))
 }
@@ -111,12 +113,14 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// permission error on delete still returns `None` for the read).
 /// Any parse error also returns `None` — a corrupt entry is discarded
 /// and the caller falls back to the wire.
+#[must_use]
 pub fn read(key: &str, ttl: Duration) -> Option<Vec<McpToolDef>> {
     read_from(&cache_dir()?, key, ttl)
 }
 
 /// [`read`] against an explicit directory. Split out so tests do not
 /// touch the process-global `XDG_CACHE_HOME`.
+#[must_use]
 pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>> {
     let path = dir.join(format!("{key}.json"));
     let data = std::fs::read_to_string(&path).ok()?;

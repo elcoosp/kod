@@ -48,6 +48,7 @@ impl Default for ProviderRegistry {
 
 impl ProviderRegistry {
     /// Empty registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             endpoints: HashMap::new(),
@@ -77,6 +78,7 @@ impl ProviderRegistry {
     }
 
     /// The default model name configured for an endpoint.
+    #[must_use]
     pub fn default_model(&self, endpoint: &str) -> Option<String> {
         self.endpoints
             .get(endpoint)
@@ -100,12 +102,14 @@ impl ProviderRegistry {
     }
 
     /// Capabilities for an endpoint name, if registered.
+    #[must_use]
     pub fn capabilities(&self, endpoint: &str) -> Option<ProviderCapabilities> {
         self.endpoints.get(endpoint).map(|e| e.capabilities)
     }
 
     /// Every registered endpoint name, sorted (stable order for
     /// `/model` completion and error messages).
+    #[must_use]
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.endpoints.keys().cloned().collect();
         names.sort();
@@ -113,6 +117,7 @@ impl ProviderRegistry {
     }
 
     /// True when an endpoint with this name is registered.
+    #[must_use]
     pub fn has(&self, endpoint: &str) -> bool {
         self.endpoints.contains_key(endpoint)
     }
@@ -121,16 +126,19 @@ impl ProviderRegistry {
     /// fallback for a caller that has no explicit routing decision
     /// (a v1 config synthesises a single "default" endpoint, so this
     /// returns it).
+    #[must_use]
     pub fn default_endpoint(&self) -> Option<String> {
         self.names().into_iter().next()
     }
 
     /// True when no endpoints are registered.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.endpoints.is_empty()
     }
 
     /// Number of registered endpoints.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.endpoints.len()
     }

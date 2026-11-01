@@ -135,6 +135,7 @@ impl SecretVault {
     /// A vault with a freshly generated random key. Used when no key
     /// file exists yet; `with_key_file` is what the engine
     /// actually calls.
+    #[must_use]
     pub fn with_random_key() -> Self {
         // `kod-types` deliberately does not depend on a crypto RNG
         // crate. The seed comes from `std::collections::hash_map::
@@ -153,6 +154,7 @@ impl SecretVault {
 
     /// A vault with an explicit key. For tests and for a caller that
     /// manages key material itself.
+    #[must_use]
     pub fn with_key(key: [u8; 32]) -> Self {
         Self {
             inner: Arc::new(VaultInner {
@@ -215,6 +217,7 @@ impl SecretVault {
 
     /// The placeholder for `secret`. Deterministic — the same secret
     /// always produces the same placeholder for this vault's key.
+    #[must_use]
     pub fn placeholder_for(&self, secret: &str) -> String {
         let mut mac =
             HmacSha256::new_from_slice(&self.inner.key).expect("HMAC accepts any key length");
@@ -279,11 +282,13 @@ impl SecretVault {
     }
 
     /// How many secrets are registered.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.inner.forward.read().map_or(0, |g| g.len())
     }
 
     /// True when no secrets are registered.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -305,6 +310,7 @@ impl SecretVault {
     /// When two registered secrets share a prefix, the longer one is
     /// substituted first. Otherwise a shorter secret would eat part
     /// of a longer one and the longer one would never match.
+    #[must_use]
     pub fn obfuscate(&self, text: &str) -> String {
         // F2c-12: read the cached longest-first vector; build it once
         // if absent. `Arc` clone is a refcount bump, not a map copy —
@@ -352,6 +358,7 @@ impl SecretVault {
     /// a placeholder shape (there is no reason to, but a hostile or
     /// confused prompt might) does not get a raw secret it did not
     /// have.
+    #[must_use]
     pub fn deobfuscate(&self, text: &str) -> (String, usize) {
         let reverse = match self.inner.reverse.read() {
             Ok(g) => g,
@@ -375,6 +382,7 @@ impl SecretVault {
     /// Whether `text` contains any registered placeholder. A caller
     /// about to hand a tool argument to a subprocess can use this as
     /// a fast pre-check before paying for [`Self::deobfuscate`].
+    #[must_use]
     pub fn contains_placeholder(&self, text: &str) -> bool {
         match self.inner.reverse.read() {
             Ok(g) => g.keys().any(|p| text.contains(p)),

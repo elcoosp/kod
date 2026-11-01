@@ -64,6 +64,7 @@ impl MockLlm {
     }
 
     /// Number of `POST /v1/chat/completions` requests served so far.
+    #[must_use]
     pub fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }

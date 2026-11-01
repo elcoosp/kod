@@ -19,6 +19,7 @@ pub struct TestEnvironment {
 #[allow(dead_code)]
 impl TestEnvironment {
     /// Create a new test environment
+    #[must_use]
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
         let working_dir = temp_dir.path().to_path_buf();
@@ -82,6 +83,7 @@ Output for {} test.
     }
 
     /// Create a test config file
+    #[must_use]
     pub fn create_config(&self, model: &str) -> PathBuf {
         let config_path = self.working_dir.join("config.toml");
 
@@ -95,6 +97,7 @@ Output for {} test.
     }
 
     /// Verify database exists
+    #[must_use]
     pub fn verify_db_exists(&self) -> bool {
         self.db_path.exists()
     }
@@ -137,6 +140,7 @@ pub fn run_kod_command(args: &[&str], working_dir: &Path) -> Result<String, Stri
 
 /// Create a mock LLM response for testing
 #[allow(dead_code)]
+#[must_use]
 pub fn create_mock_response(prompt: &str) -> String {
     format!(
         "Mock response for: {prompt}\n\nThis is a test response that simulates an LLM output."

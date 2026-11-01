@@ -349,6 +349,7 @@ impl SessionRecorder {
     /// Replace the redactor. A caller that wants a stricter or
     /// looser rule set builds one and installs it here; the field is
     /// used for every subsequent `record`.
+    #[must_use]
     pub fn with_redactor(mut self, redactor: kod_types::redact::Redactor) -> Self {
         self.redactor = redactor;
         self
@@ -596,6 +597,7 @@ pub fn session_init_for(
 /// Matching is by `(holder, call_id)` when the start carried an id,
 /// else by `(holder, tool_name)` with first-in-first-out pairing so
 /// two starts of the same name are matched in order.
+#[must_use]
 pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String> {
     use std::collections::HashMap;
     // M-21: a ToolCall completion carries no call_id, so a start
@@ -672,6 +674,7 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
 
 /// The default session-log path under the user's home directory,
 /// with a timestamp suffix.
+#[must_use]
 pub fn default_session_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ts = std::time::SystemTime::now()
@@ -715,6 +718,7 @@ pub const MAX_SESSION_FILES: usize = 1000;
 /// as the checkpoint and plan sweeps.
 ///
 /// Best-effort and idempotent. Call from the shutdown path.
+#[must_use]
 pub fn sweep_old_session_logs() -> usize {
     let Some(home) = dirs::home_dir() else {
         return 0;
@@ -818,6 +822,7 @@ pub enum RehydrationMode {
 /// `timestamp_ms`; a value that cannot be represented as an
 /// `OffsetDateTime` falls back to the Unix epoch rather than
 /// dropping the turn.
+#[must_use]
 pub fn rehydrate_turns(entries: &[SessionEntry], holder: &str) -> Vec<kod_types::ChatMessage> {
     use kod_types::{ChatMessage, MessageId, MessageRole};
 
@@ -904,6 +909,7 @@ fn render_result_text(result: &serde_json::Value) -> String {
 ///
 /// Each recorded `ToolCall` entry becomes one User-role message
 /// summarising the call and its result. Pure and deterministic.
+#[must_use]
 pub fn rehydrate_prose_turns(
     entries: &[SessionEntry],
     holder: &str,

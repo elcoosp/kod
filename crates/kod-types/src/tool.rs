@@ -55,6 +55,7 @@ pub enum LoadMode {
 impl LoadMode {
     /// True when the schema is mounted behind xd:// rather than in the
     /// tools array.
+    #[must_use]
     pub fn is_discoverable(self) -> bool {
         matches!(self, Self::Discoverable)
     }
@@ -78,6 +79,7 @@ pub enum ToolCategory {
 impl ToolCategory {
     /// Canonical lowercase label used by the Jev filter and by the
     /// session log. Stable across builds.
+    #[must_use]
     pub fn as_label(self) -> &'static str {
         match self {
             ToolCategory::FileSystem => "filesystem",
@@ -90,6 +92,7 @@ impl ToolCategory {
 
     /// Every label, in a stable order. The Jev filter builds one
     /// yes/no question per label, so this list is the wire contract.
+    #[must_use]
     pub fn all_labels() -> &'static [&'static str] {
         &["filesystem", "git", "web", "code", "system"]
     }
@@ -97,6 +100,7 @@ impl ToolCategory {
     /// Inverse of [`ToolCategory::as_label`]. `None` for an unknown
     /// string so a Jev answer we do not know does not silently
     /// become a category.
+    #[must_use]
     pub fn from_label(s: &str) -> Option<Self> {
         match s {
             "filesystem" => Some(ToolCategory::FileSystem),
@@ -134,6 +138,7 @@ pub enum GitAccess {
 impl GitAccess {
     /// True when this access level permits everything the required
     /// level does.
+    #[must_use]
     pub fn is_at_least(self, required: GitAccess) -> bool {
         self >= required
     }

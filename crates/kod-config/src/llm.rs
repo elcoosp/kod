@@ -85,6 +85,7 @@ impl LlmConfig {
     /// `LlmConfig { endpoints: vec![], .. }`) gets a static default
     /// endpoint — the same shape as `LlmConfig::default()` — rather
     /// than a panic or a fallible accessor.
+    #[must_use]
     pub fn default_endpoint(&self) -> &EndpointConfig {
         static FALLBACK: std::sync::OnceLock<EndpointConfig> = std::sync::OnceLock::new();
         self.endpoints.first().unwrap_or_else(|| {
@@ -356,6 +357,7 @@ impl LlmConfig {
     /// The endpoint a task type routes to, honouring the routing
     /// table when present and falling back to the default endpoint's
     /// name otherwise.
+    #[must_use]
     pub fn route_for_task(&self, task_key: &str) -> String {
         if let Some(routing) = &self.routing
             && let Some(target) = routing.by_task.get(task_key)
@@ -403,6 +405,7 @@ pub enum ProviderKind {
 ///
 /// Matching is by `starts_with` on the lowercased model name, longest
 /// prefix first, so `gpt-4o` is not shadowed by `gpt-4`.
+#[must_use]
 pub fn family_context_window(model: &str) -> Option<usize> {
     const TABLE: &[(&str, usize)] = &[
         ("claude-3", 200_000),

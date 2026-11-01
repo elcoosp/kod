@@ -209,6 +209,7 @@ pub enum KodError {
 /// wastes the budget on a permanent error. When in doubt, leave it
 /// out; a missed retry costs one failure, a spurious retry costs the
 /// whole retry budget on something that will never succeed.
+#[must_use]
 pub fn is_transient_transport_error(msg: &str) -> bool {
     let m = msg.to_lowercase();
     // Multi-character prose patterns: substring matching is the
@@ -291,6 +292,7 @@ impl KodError {
     /// the wait. A caller that wants to log them does so before
     /// constructing the error (the earlier signature accepted and
     /// discarded them, which was worse than not accepting them).
+    #[must_use]
     pub fn rate_limited(retry_after: Option<std::time::Duration>) -> Self {
         let secs = retry_after.map_or(30, |d| d.as_secs());
         KodError::RateLimited {
@@ -301,6 +303,7 @@ impl KodError {
     /// Construct a `ServerBusy` from an HTTP 503 overload response.
     /// Defaults to the tab-bridge overload cooldown (10 min) when the
     /// server sent no parseable hint.
+    #[must_use]
     pub fn server_busy(retry_after: Option<std::time::Duration>) -> Self {
         let secs = retry_after.map_or(600, |d| d.as_secs());
         KodError::ServerBusy {
@@ -310,6 +313,7 @@ impl KodError {
 
     /// True when `body` names a provider overload ("server busy, please
     /// try again later" and neighbours), as opposed to a generic 5xx.
+    #[must_use]
     pub fn is_server_busy_body(body: &str) -> bool {
         let l = body.to_lowercase();
         l.contains("server_busy")
@@ -321,6 +325,7 @@ impl KodError {
     }
 
     /// Classify an HTTP error status + body into the closest typed variant.
+    #[must_use]
     pub fn provider_status(status: u16, body: &str) -> Self {
         Self::provider_status_with_hint(status, body, None)
     }
@@ -328,6 +333,7 @@ impl KodError {
     /// Same as [`KodError::provider_status`], but a parsed retry hint
     /// (from `Retry-After` or a body-text cue) overrides the 30 s
     /// default on 429.
+    #[must_use]
     pub fn provider_status_with_hint(
         status: u16,
         body: &str,
@@ -366,6 +372,7 @@ impl KodError {
 
     /// True iff a retry of the same request has a real chance of success.
     /// 401/403/404/422 are permanent — retrying only wastes the user's time.
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
             KodError::RateLimited { .. }
@@ -378,6 +385,7 @@ impl KodError {
     }
 
     /// Check if this error is recoverable (can retry)
+    #[must_use]
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
@@ -390,6 +398,7 @@ impl KodError {
     }
 
     /// Get a user-friendly error message
+    #[must_use]
     pub fn user_message(&self) -> String {
         match self {
             KodError::Provider(msg) => format!("The AI provider encountered an issue: {msg}"),

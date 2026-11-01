@@ -54,6 +54,7 @@ impl MemoryEntry {
     /// A superseded entry is not: it was replaced on purpose. A
     /// contradicted one is — surfacing both sides of a disagreement
     /// is the point.
+    #[must_use]
     pub fn is_active(&self) -> bool {
         self.superseded_by.is_none()
     }

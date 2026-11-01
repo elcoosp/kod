@@ -54,6 +54,7 @@ impl RepoMap {
     /// PageRank descending with a lexical tie-break. The budget goes
     /// to the files that matter, not to whichever happens to sort
     /// first alphabetically.
+    #[must_use]
     pub fn render(&self, max_chars: usize) -> String {
         // Sort: rank desc, then path asc.
         let mut files: Vec<(&PathBuf, &Vec<Symbol>)> = self.entries.iter().collect();
@@ -88,11 +89,13 @@ impl RepoMap {
     }
 
     /// Number of files the map covers.
+    #[must_use]
     pub fn file_count(&self) -> usize {
         self.entries.len()
     }
 
     /// Total symbols across every file.
+    #[must_use]
     pub fn symbol_count(&self) -> usize {
         self.entries.values().map(|v| v.len()).sum()
     }
@@ -135,6 +138,7 @@ pub const MAX_REPO_FILES: usize = 100_000;
 /// repomap is a hint to the model, not a correctness requirement —
 /// an empty map costs nothing, while a surprise walk costs a stalled
 /// prompt.
+#[must_use]
 pub fn looks_like_a_repo(root: &Path) -> bool {
     const MARKERS: &[&str] = &[
         // Version control. A working directory containing any of

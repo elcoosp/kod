@@ -98,6 +98,7 @@ impl RetryConfig {
     /// is the fallback when no class-specific entry exists. If
     /// neither exists, the result is empty and the caller falls back
     /// to its existing single-endpoint behaviour.
+    #[must_use]
     pub fn resolve(&self, failed: &str, class: &str) -> Vec<String> {
         let chain = self
             .fallback_chains

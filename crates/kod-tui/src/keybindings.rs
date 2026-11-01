@@ -48,6 +48,7 @@ pub enum KeyAction {
 }
 
 /// Default single-char bindings, also rendered by the help overlay.
+#[must_use]
 pub fn default_bindings() -> HashMap<char, KeyAction> {
     [
         ('i', KeyAction::Insert),
@@ -81,6 +82,7 @@ struct KeysFile {
 
 /// Load user overrides over the defaults. Unknown action names and
 /// multi-char keys are ignored (first char wins for single-char values).
+#[must_use]
 pub fn load_bindings() -> HashMap<char, KeyAction> {
     let paths = [
         std::path::PathBuf::from(".kod-keys.toml"),
@@ -143,6 +145,7 @@ fn parse_action(name: &str) -> Option<KeyAction> {
 }
 
 /// One-line cheat sheet for the help overlay and `/help` text.
+#[must_use]
 pub fn cheat_sheet() -> &'static [(&'static str, &'static str)] {
     &[
         ("i / Esc", "type / back to commands"),

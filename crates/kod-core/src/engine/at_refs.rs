@@ -25,6 +25,7 @@
 /// is truncated with a marker. The total number of files per prompt
 /// caps at `MAX_AT_REFS` so a user who pastes a wall of @-tokens
 /// cannot blow the context window on one turn.
+#[must_use]
 pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> String {
     expand_at_references_with_policy(input, working_dir, None)
 }
@@ -38,6 +39,7 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
 /// is model-visible, so a `@.env` token shipped the file verbatim —
 /// and the `@`-tokens are not only user-typed: `process.rs` expands the
 /// Jev-clarified input too.
+#[must_use]
 pub fn expand_at_references_with_policy(
     input: &str,
     working_dir: &std::path::Path,

@@ -38,6 +38,7 @@ pub struct Stream {
 
 impl Stream {
     /// Consume the stream, returning its owned halves.
+    #[must_use]
     pub fn into_split(
         self,
     ) -> (

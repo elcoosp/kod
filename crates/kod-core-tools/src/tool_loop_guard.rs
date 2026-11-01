@@ -111,6 +111,7 @@ impl Default for ToolLoopGuard {
 
 impl ToolLoopGuard {
     /// A guard with [`DEFAULT_LOOP_THRESHOLD`].
+    #[must_use]
     pub fn new() -> Self {
         Self::with_threshold(DEFAULT_LOOP_THRESHOLD)
     }
@@ -118,6 +119,7 @@ impl ToolLoopGuard {
     /// A guard with a custom threshold. Clamped to `>= 2`: a
     /// threshold of 1 would fire on the first round, which is
     /// never a loop.
+    #[must_use]
     pub fn with_threshold(threshold: usize) -> Self {
         let threshold = threshold.max(2);
         Self {
@@ -127,12 +129,14 @@ impl ToolLoopGuard {
     }
 
     /// The configured threshold.
+    #[must_use]
     pub fn threshold(&self) -> usize {
         self.threshold
     }
 
     /// Rounds observed since the last emit or reset. For tests and a
     /// UI readout.
+    #[must_use]
     pub fn rounds_seen(&self) -> usize {
         self.recent.len()
     }

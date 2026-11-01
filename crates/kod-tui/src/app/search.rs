@@ -31,11 +31,13 @@ impl KodApp {
     }
 
     /// The current search query.
+    #[must_use]
     pub fn search_query(&self) -> Option<&str> {
         self.search_query.as_deref()
     }
 
     /// Indices of messages containing the query (case-insensitive).
+    #[must_use]
     pub fn search_matches(&self) -> Vec<usize> {
         let q = match &self.search_query {
             Some(q) => q.to_lowercase(),
@@ -79,6 +81,7 @@ impl KodApp {
     }
 
     /// The current match position, if any.
+    #[must_use]
     pub fn current_search_pos(&self) -> Option<(usize, usize)> {
         let n = self.search_matches().len();
         if n == 0 {
@@ -106,6 +109,7 @@ impl KodApp {
     /// query): during editing there are no matches yet and no
     /// match-position to report, but the bar is on screen and every
     /// keystroke is the user's query.
+    #[must_use]
     pub fn is_editing_search(&self) -> bool {
         self.search_editing && self.search_query.is_some()
     }
@@ -143,11 +147,13 @@ impl KodApp {
     }
 
     /// True while a search query is active (status bar + highlighting).
+    #[must_use]
     pub fn is_searching(&self) -> bool {
         self.search_query.as_deref().is_some_and(|q| !q.is_empty())
     }
 
     /// Active search text (empty when no search).
+    #[must_use]
     pub fn search_query_text(&self) -> &str {
         self.search_query.as_deref().unwrap_or("")
     }
@@ -167,6 +173,7 @@ impl KodApp {
     /// searched still showed "no matches" the moment a search state
     /// existed. The enum below names the states; the widget matches on
     /// it and the label is derived here, once.
+    #[must_use]
     pub fn search_status(&self) -> SearchStatus {
         match self.search_query.as_deref() {
             None => SearchStatus::Inactive,
@@ -194,6 +201,7 @@ impl KodApp {
     /// cannot reach it directly; this exposes exactly what the widget
     /// needs (the id of the match to center) without exposing the
     /// index arithmetic.
+    #[must_use]
     pub fn search_target_message_id(&self) -> Option<&kod_types::MessageId> {
         let matches = self.search_matches();
         if matches.is_empty() {
@@ -206,6 +214,7 @@ impl KodApp {
 
     /// Display string for the status bar. Built here so the widget does
     /// not re-implement the match on `SearchStatus` and drift.
+    #[must_use]
     pub fn search_status_label(&self) -> String {
         match self.search_status() {
             SearchStatus::Inactive => String::new(),

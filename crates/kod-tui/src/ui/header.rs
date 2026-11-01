@@ -16,6 +16,7 @@ pub struct HeaderWidget;
 
 impl HeaderWidget {
     /// Build the header widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

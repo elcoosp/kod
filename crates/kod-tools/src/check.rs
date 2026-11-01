@@ -71,6 +71,7 @@ impl ProjectKind {
     /// with both `Cargo.toml` and `package.json` (a Rust project with a
     /// TypeScript SDK, say) is treated as Rust — the outer language is
     /// the one the user is most likely asking about.
+    #[must_use]
     pub fn detect(dir: &Path) -> Option<Self> {
         if dir.join("Cargo.toml").is_file() {
             Some(ProjectKind::Cargo)
@@ -86,6 +87,7 @@ impl ProjectKind {
     }
 
     /// The tool name that reports diagnostics for this project kind.
+    #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
             ProjectKind::Cargo => "cargo",
@@ -96,6 +98,7 @@ impl ProjectKind {
     }
 
     /// The command to run: `(program, args)`.
+    #[must_use]
     pub fn command(&self) -> (&'static str, Vec<&'static str>) {
         match self {
             // `--message-format=short` gives one diagnostic per line:
@@ -114,6 +117,7 @@ impl ProjectKind {
     /// Parse a single line of the tool's output into a diagnostic, or
     /// `None` when the line is not a diagnostic (a header, a summary, a
     /// blank line).
+    #[must_use]
     pub fn parse_line(&self, line: &str) -> Option<Diagnostic> {
         match self {
             ProjectKind::Cargo => parse_rust_line(line),
@@ -381,6 +385,7 @@ pub struct CheckTool {
 
 impl CheckTool {
     /// Build the check tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -578,6 +583,7 @@ pub struct CheckOutcome {
 
 impl CheckOutcome {
     /// Render as the JSON value the tool returns and the model reads.
+    #[must_use]
     pub fn to_json(&self) -> Value {
         let diags: Vec<Value> = self
             .diagnostics

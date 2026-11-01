@@ -61,6 +61,7 @@ pub struct RenderCache {
 
 impl RenderCache {
     /// Empty render cache.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -166,11 +167,13 @@ impl RenderCache {
     }
 
     /// Current number of cached entries. For tests and diagnostics.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// True when the cache holds no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -179,6 +182,7 @@ impl RenderCache {
 /// Stable content hash used by the cache. `DefaultHasher` is fine
 /// here: the value is never persisted, never compared across
 /// processes, and a collision only costs a re-measure.
+#[must_use]
 pub fn hash_content(s: &str) -> u64 {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);

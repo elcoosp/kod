@@ -64,6 +64,7 @@ impl EffortLevel {
     /// the default changes nothing. Above it the multiplier grows;
     /// below it shrinks, so a `None`-effort request fails fast rather
     /// than waiting out a timeout sized for a thinking model.
+    #[must_use]
     pub fn timeout_multiplier(self) -> f32 {
         match self {
             Self::None => 0.5,
@@ -77,6 +78,7 @@ impl EffortLevel {
     }
 
     /// The lowercase string label for this effort level.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",

@@ -117,6 +117,7 @@ impl MockProvider {
     }
 
     /// Override the reported capabilities.
+    #[must_use]
     pub fn with_capabilities(mut self, capabilities: ProviderCapabilities) -> Self {
         self.capabilities = capabilities;
         self
@@ -544,6 +545,7 @@ async fn contract_stream_completion_error(_provider: &Arc<dyn LlmProvider>) {
 /// data: {…}\n\n
 /// data: [DONE]\n\n
 /// ```
+#[must_use]
 pub fn openai_sse_text_response(content: &str) -> String {
     format!(
         concat!(
@@ -562,6 +564,7 @@ pub fn openai_sse_text_response(content: &str) -> String {
 
 /// A minimal valid Anthropic Messages API SSE body. Used by the
 /// Anthropic provider's `tests/contracts.rs`.
+#[must_use]
 pub fn anthropic_sse_text_response(content: &str) -> String {
     format!(
         concat!(

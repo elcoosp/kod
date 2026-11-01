@@ -39,6 +39,7 @@ pub struct VectorIndex {
 
 impl VectorIndex {
     /// A new empty index sized for `dim`-dimensional vectors.
+    #[must_use]
     pub fn new(dim: usize) -> Self {
         Self {
             entries: Vec::new(),
@@ -49,16 +50,19 @@ impl VectorIndex {
 
     /// Vector length this index accepts. 0 means "unusable"; an index
     /// built with 0 dims is a placeholder and refuses every insert.
+    #[must_use]
     pub fn dim(&self) -> usize {
         self.dim
     }
 
     /// Number of stored vectors.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// True when no vectors are stored.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

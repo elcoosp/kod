@@ -29,6 +29,7 @@ pub struct ParentContext {
 }
 
 /// Build a `ContextBrief` for a subtask.
+#[must_use]
 pub fn assemble_brief(
     goal: &str,
     role_preamble: &str,
@@ -103,6 +104,7 @@ pub struct MergePlan {
 }
 
 /// Compute what a report implies for the parent.
+#[must_use]
 pub fn merge_report(report: &SubagentReport, brief: &ContextBrief) -> MergePlan {
     MergePlan {
         decisions_to_record: report

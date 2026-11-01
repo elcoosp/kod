@@ -44,6 +44,7 @@ pub enum CommandPlan {
 /// because the scan is exhaustive on the operator set; false
 /// positives are possible only for a program whose name is itself a
 /// shell operator (`|foo`), which the grammar forbids.
+#[must_use]
 pub fn classify(cmd: &str) -> CommandPlan {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {

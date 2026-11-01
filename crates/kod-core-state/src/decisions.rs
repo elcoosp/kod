@@ -72,6 +72,7 @@ pub struct DecisionLog {
 
 impl DecisionLog {
     /// Empty log.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,6 +110,7 @@ impl DecisionLog {
     }
 
     /// Most recent N entries, in reverse-chronological order.
+    #[must_use]
     pub fn recent(&self, n: usize) -> Vec<&DecisionRecord> {
         self.entries.iter().rev().take(n).collect()
     }
@@ -116,6 +118,7 @@ impl DecisionLog {
     /// Render the recent decisions as a prompt block. Kept compact —
     /// the model does not need the full text of every decision, just
     /// the durable facts.
+    #[must_use]
     pub fn render_prompt_block(&self, n: usize) -> String {
         if self.entries.is_empty() {
             return String::new();

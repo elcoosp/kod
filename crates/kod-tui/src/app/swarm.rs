@@ -10,11 +10,13 @@ use super::*;
 
 impl KodApp {
     /// All tracked agents.
+    #[must_use]
     pub fn agents(&self) -> Vec<&AgentInfo> {
         self.agents.values().collect()
     }
 
     /// The agent map keyed by name.
+    #[must_use]
     pub fn agents_map(&self) -> &HashMap<String, AgentInfo> {
         &self.agents
     }
@@ -33,6 +35,7 @@ impl KodApp {
     }
 
     /// Look up an agent by name.
+    #[must_use]
     pub fn get_agent(&self, name: &str) -> Option<&AgentInfo> {
         self.agents.get(name)
     }
@@ -53,6 +56,7 @@ impl KodApp {
 
     /// The live swarm-agent views, keyed by id. Read by the agent
     /// panel (D4-D5) and any future status surface.
+    #[must_use]
     pub fn swarm_agents(&self) -> &std::collections::HashMap<kod_types::AgentId, SwarmAgentView> {
         &self.swarm_agents
     }
@@ -61,6 +65,7 @@ impl KodApp {
     /// order, or `None` when there is no such agent. Backs the `@N`
     /// focus syntax in the input box: `@2 do X` finds the second agent
     /// that began work this run and steers it.
+    #[must_use]
     pub fn swarm_agent_by_index(&self, n: usize) -> Option<&kod_types::AgentId> {
         if n == 0 {
             return None;

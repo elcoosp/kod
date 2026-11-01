@@ -46,6 +46,7 @@ pub struct Query {
 impl Query {
     /// Build a query from free text: split on whitespace, keep
     /// alphanumerics, lower-case, drop terms shorter than 3.
+    #[must_use]
     pub fn from_text(text: &str) -> Self {
         let terms = text
             .split_whitespace()
@@ -59,6 +60,7 @@ impl Query {
     }
 
     /// Jaccard similarity with another query, in [0.0, 1.0].
+    #[must_use]
     pub fn jaccard(&self, other: &Query) -> f64 {
         if self.terms.is_empty() && other.terms.is_empty() {
             return 1.0;
@@ -109,11 +111,13 @@ impl Default for LexicalScorer {
 
 impl LexicalScorer {
     /// Scorer with the default half-life and tail window.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Builder: override the always-Full tail window size.
+    #[must_use]
     pub fn with_tail(mut self, n: u32) -> Self {
         self.tail_full_turns = n;
         self
@@ -162,6 +166,7 @@ fn term_overlap(text: &str, terms: &HashSet<String>) -> usize {
 }
 
 /// Render a message at the given Fidelity level. Returns None on Omit.
+#[must_use]
 pub fn render_at(message: &ChatMessage, fidelity: Fidelity) -> Option<String> {
     match fidelity {
         Fidelity::Omit => None,
@@ -258,12 +263,14 @@ pub struct FidelityCache {
 
 impl FidelityCache {
     /// Empty cache.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Look up a turn's cached fidelity. Returns `None` when the
     /// query changed substantially or the content hash differs.
+    #[must_use]
     pub fn lookup(
         &self,
         id: &kod_types::MessageId,

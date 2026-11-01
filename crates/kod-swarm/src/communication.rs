@@ -44,6 +44,7 @@ pub struct SwarmMessage {
 
 impl SwarmMessage {
     /// Build a new message with a fresh id and current timestamp.
+    #[must_use]
     pub fn new(
         from: AgentId,
         to: MessageDestination,
@@ -73,6 +74,7 @@ pub struct AgentMessageReceiver {
 
 impl AgentMessageReceiver {
     /// Wrap an unbounded receiver in an agent-friendly handle.
+    #[must_use]
     pub fn new(rx: mpsc::UnboundedReceiver<SwarmMessage>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Some(rx))),
@@ -112,6 +114,7 @@ impl Default for AgentCommunicationHub {
 
 impl AgentCommunicationHub {
     /// Empty communication hub.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),

@@ -34,6 +34,7 @@ impl Default for ToolCounts {
 
 impl ToolCounts {
     /// Empty counters.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(Mutex::new(ToolCountsInner {
@@ -72,11 +73,13 @@ impl ToolCounts {
     }
 
     /// Per-turn cap for a tool (0 = no cap).
+    #[must_use]
     pub fn per_turn(&self, tool: &str) -> usize {
         self.inner.lock().per_turn.get(tool).copied().unwrap_or(0)
     }
 
     /// Per-session cap for a tool.
+    #[must_use]
     pub fn per_session(&self, tool: &str) -> usize {
         self.inner
             .lock()
@@ -87,6 +90,7 @@ impl ToolCounts {
     }
 
     /// Per-command cap for a tool.
+    #[must_use]
     pub fn per_command(&self, tool: &str, command: &str) -> usize {
         self.inner
             .lock()
@@ -97,6 +101,7 @@ impl ToolCounts {
     }
 
     /// A snapshot of every counter, for `/limits`.
+    #[must_use]
     pub fn snapshot(&self) -> Vec<(String, usize, usize)> {
         let g = self.inner.lock();
         let mut names: Vec<String> = g.per_session.keys().cloned().collect();
@@ -131,6 +136,7 @@ pub enum QuotaVerdict {
 
 /// Check the quota for a tool. `quota` is the resolved
 /// `ToolQuota` (explicit or default entry); `None` means no quota.
+#[must_use]
 pub fn check(
     counts: &ToolCounts,
     tool: &str,

@@ -53,6 +53,7 @@ impl ChatMessage {
     /// Render this message as a single line for a plain-text prompt.
     /// `Assistant` and `Tool` messages may span multiple lines; the
     /// role prefix stays on the first line only.
+    #[must_use]
     pub fn render_text(&self) -> String {
         let prefix = match &self.role {
             MessageRole::User => "User",

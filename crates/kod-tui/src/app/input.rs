@@ -10,6 +10,7 @@ use super::*;
 
 impl KodApp {
     /// The current input mode.
+    #[must_use]
     pub fn input_mode(&self) -> &InputMode {
         &self.input_mode
     }
@@ -20,6 +21,7 @@ impl KodApp {
     }
 
     /// The current input text.
+    #[must_use]
     pub fn input(&self) -> &str {
         &self.input
     }
@@ -49,6 +51,7 @@ impl KodApp {
     }
 
     /// The cursor position, in bytes.
+    #[must_use]
     pub fn cursor_position(&self) -> usize {
         self.cursor_position
     }
@@ -105,6 +108,7 @@ impl KodApp {
     }
 
     /// (line, col) of the cursor for multiline rendering.
+    #[must_use]
     pub fn cursor_line_col(&self) -> (usize, usize) {
         let before = &self.input[..self.cursor_position.min(self.input.len())];
         let line = before.chars().filter(|c| *c == '\n').count();
@@ -116,6 +120,7 @@ impl KodApp {
     /// view builder (paste chips collapse, long lines wrap) plus the
     /// box border, clamped so the box grows with content but never
     /// eats the chat.
+    #[must_use]
     pub fn input_height_rows(&self, total_width: u16) -> u16 {
         let inner = total_width.saturating_sub(2) as usize;
         let rows = self.input_view(inner).rows.len().max(1);
@@ -133,6 +138,7 @@ impl KodApp {
     }
 
     /// True when the input contains a newline.
+    #[must_use]
     pub fn is_multiline_input(&self) -> bool {
         self.input.contains('\n')
     }
@@ -205,6 +211,7 @@ impl KodApp {
     }
 
     /// The input history.
+    #[must_use]
     pub fn input_history(&self) -> &[String] {
         &self.input_history
     }
@@ -446,6 +453,7 @@ impl KodApp {
     /// content cells: paste chips collapse, long lines wrap, and the
     /// cursor maps to (row, cell). Pure — no state touched, safe to
     /// call from both layout and render.
+    #[must_use]
     pub fn input_view(&self, inner_width: usize) -> InputView {
         let wrap_w = inner_width.max(8);
         let input = &self.input;

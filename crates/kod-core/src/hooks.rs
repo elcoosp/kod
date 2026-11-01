@@ -27,6 +27,7 @@ pub struct HookOutcome {
 
 impl HookOutcome {
     /// True when the hook exited successfully.
+    #[must_use]
     pub fn ok(&self) -> bool {
         self.exit_code == 0
     }
@@ -40,12 +41,14 @@ pub struct HookRunner {
 
 impl HookRunner {
     /// Build a hook runner over the given config.
+    #[must_use]
     pub fn new(config: HooksConfig) -> Self {
         Self { config }
     }
 
     /// A disabled runner. Used as the default when no config is
     /// installed — the shape a test or a one-shot CLI invocation wants.
+    #[must_use]
     pub fn disabled() -> Self {
         Self {
             config: HooksConfig::default(),
@@ -53,6 +56,7 @@ impl HookRunner {
     }
 
     /// True when hooks are enabled.
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
             && (!self.config.pre_tool_use.is_empty() || !self.config.post_tool_use.is_empty())

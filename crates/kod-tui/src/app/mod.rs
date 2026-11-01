@@ -203,6 +203,7 @@ pub struct CommandPaletteState {
 
 impl CommandPaletteState {
     /// Empty palette state.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -210,6 +211,7 @@ impl CommandPaletteState {
     /// Filter the palette's entry list by the current query. The
     /// comparison is case-insensitive substring on the label; an
     /// empty query returns the full list.
+    #[must_use]
     pub fn filtered(&self, all: &[CommandPaletteEntry]) -> Vec<CommandPaletteEntry> {
         if self.query.is_empty() {
             return all.to_vec();
@@ -225,6 +227,7 @@ impl CommandPaletteState {
 /// Build the palette's entry list. Slash commands come from
 /// `SLASH_COMMANDS`; the remaining entries surface the cheat-sheet
 /// keys so a user can find them by typing.
+#[must_use]
 pub fn build_palette_entries() -> Vec<CommandPaletteEntry> {
     let mut entries: Vec<CommandPaletteEntry> = SLASH_COMMANDS
         .iter()
@@ -865,6 +868,7 @@ pub struct PendingHunkSelection {
 
 impl PendingHunkSelection {
     /// The currently highlighted index, clamped to the hunk range.
+    #[must_use]
     pub fn current(&self) -> Option<usize> {
         if self.hunks.is_empty() {
             None
@@ -895,6 +899,7 @@ impl PendingHunkSelection {
     }
 
     /// Build the filtered patch string from the selected hunks.
+    #[must_use]
     pub fn build_patch(&self) -> String {
         let mut out = self.header.clone();
         for (i, h) in self.hunks.iter().enumerate() {
@@ -906,6 +911,7 @@ impl PendingHunkSelection {
     }
 
     /// Number of selected hunks.
+    #[must_use]
     pub fn selected_count(&self) -> usize {
         self.selected.iter().filter(|b| **b).count()
     }
@@ -914,6 +920,7 @@ impl PendingHunkSelection {
 /// Split a unified diff into `(header, hunks)`. A hunk begins at a
 /// line starting with `@@`; everything before the first `@@` is the
 /// header. An empty diff yields `("", [])`.
+#[must_use]
 pub fn split_hunks(diff: &str) -> (String, Vec<String>) {
     let mut header = String::new();
     let mut hunks: Vec<String> = Vec::new();
@@ -975,6 +982,7 @@ pub struct PendingApprovalBatch {
 
 impl PendingApprovalBatch {
     /// The currently-shown approval item.
+    #[must_use]
     pub fn current_item(&self) -> Option<&PendingApproval> {
         self.items.get(self.current)
     }
@@ -1016,6 +1024,7 @@ pub struct PendingQuestion {
 
 impl KodApp {
     /// Build an empty app.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mode: AppMode::Normal,
@@ -1102,6 +1111,7 @@ impl KodApp {
 
     // Mode management
     /// The current app mode.
+    #[must_use]
     pub fn mode(&self) -> &AppMode {
         &self.mode
     }

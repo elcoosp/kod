@@ -106,6 +106,7 @@ pub struct AgentRef {
 impl AgentRef {
     /// The agent's depth in the spawn tree. A main agent is 0; a
     /// child of a main agent is 1; a grandchild is 2.
+    #[must_use]
     pub fn depth(&self) -> u32 {
         // T5-C38: the pre-fix shape returned 0 or 1 based on
         // `parent.is_some()`, which lied for any deeper agent. This
@@ -157,6 +158,7 @@ pub struct AgentRegistry {
 
 impl AgentRegistry {
     /// Empty registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             agents: HashMap::new(),
@@ -165,6 +167,7 @@ impl AgentRegistry {
     }
 
     /// Builder: set the park TTL in milliseconds.
+    #[must_use]
     pub fn with_park_ttl(mut self, ms: u128) -> Self {
         self.park_after_ms = Some(ms);
         self
@@ -209,6 +212,7 @@ impl AgentRegistry {
     }
 
     /// Look up a ref.
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<&AgentRef> {
         self.agents.get(id)
     }
@@ -230,6 +234,7 @@ impl AgentRegistry {
     /// The agent's depth in the spawn tree. Walks the parent chain;
     /// a cycle (which a caller cannot produce through this API, but
     /// a corrupted ref could) is treated as depth 0.
+    #[must_use]
     pub fn depth_of(&self, id: &str) -> u32 {
         let mut depth = 0u32;
         let mut cur = id.to_string();
@@ -332,6 +337,7 @@ impl AgentRegistry {
     /// Ids of every agent whose idle time exceeds the TTL. The
     /// caller parks them; the registry does not auto-park because
     /// parking disposes a session and the caller owns that.
+    #[must_use]
     pub fn park_candidates(&self) -> Vec<String> {
         let Some(ttl) = self.park_after_ms else {
             return Vec::new();
@@ -350,6 +356,7 @@ impl AgentRegistry {
     }
 
     /// Every live (non-dead) agent id, sorted.
+    #[must_use]
     pub fn live_ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self
             .agents
@@ -455,6 +462,7 @@ impl AgentRegistry {
     }
 
     /// How many agents are in each state. For a UI readout.
+    #[must_use]
     pub fn counts(&self) -> (usize, usize, usize, usize) {
         let mut idle = 0;
         let mut active = 0;

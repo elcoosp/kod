@@ -8,11 +8,13 @@ use super::*;
 
 impl KodApp {
     /// The command palette state, if open.
+    #[must_use]
     pub fn palette(&self) -> Option<&CommandPaletteState> {
         self.palette.as_ref()
     }
 
     /// True when the command palette is open.
+    #[must_use]
     pub fn is_palette_open(&self) -> bool {
         self.palette.is_some()
     }
@@ -69,6 +71,7 @@ impl KodApp {
     }
 
     /// The palette's currently-filtered entries.
+    #[must_use]
     pub fn palette_candidates(&self) -> Vec<CommandPaletteEntry> {
         match self.palette.as_ref() {
             Some(p) => p.filtered(&build_palette_entries()),
@@ -77,16 +80,19 @@ impl KodApp {
     }
 
     /// The current palette query text.
+    #[must_use]
     pub fn palette_query(&self) -> Option<&str> {
         self.palette.as_ref().map(|p| p.query.as_str())
     }
 
     /// The index of the currently-selected palette item.
+    #[must_use]
     pub fn palette_selected(&self) -> usize {
         self.palette.as_ref().map_or(0, |p| p.selected)
     }
 
     /// The currently-selected entry, if any.
+    #[must_use]
     pub fn palette_selected_entry(&self) -> Option<CommandPaletteEntry> {
         let candidates = self.palette_candidates();
         let idx = self.palette_selected();

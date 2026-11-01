@@ -39,6 +39,7 @@ impl EngineContext {
     }
 
     /// Estimate token count (rough approximation)
+    #[must_use]
     pub fn estimated_tokens(&self) -> usize {
         let total_chars = self.user_input.len()
             + self
@@ -60,6 +61,7 @@ impl EngineContext {
     }
 
     /// Convert to a prompt string for the LLM
+    #[must_use]
     pub fn to_prompt(&self) -> String {
         let mut prompt = String::new();
 
@@ -132,47 +134,55 @@ pub struct EngineContextBuilder {
 
 impl EngineContextBuilder {
     /// Start a builder with defaults.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set user input
+    #[must_use]
     pub fn with_user_input(mut self, input: impl Into<String>) -> Self {
         self.context.user_input = input.into();
         self
     }
 
     /// Set memory context
+    #[must_use]
     pub fn with_memory(mut self, memory: MemoryContext) -> Self {
         self.context.memory_context = memory;
         self
     }
 
     /// Set working directory
+    #[must_use]
     pub fn with_working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.context.working_dir = dir.into();
         self
     }
 
     /// Set system prompt
+    #[must_use]
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.context.system_prompt = Some(prompt.into());
         self
     }
 
     /// Add skills
+    #[must_use]
     pub fn with_skills(mut self, skills: Vec<Skill>) -> Self {
         self.context.skills = skills;
         self
     }
 
     /// Set available tools
+    #[must_use]
     pub fn with_tools(mut self, tools: Vec<String>) -> Self {
         self.context.tools_available = tools;
         self
     }
 
     /// Build the context
+    #[must_use]
     pub fn build(self) -> EngineContext {
         self.context
     }

@@ -76,6 +76,7 @@ pub struct Hover {
 /// Detection is by extension; the caller decides which binary to
 /// spawn. The mapping lives here so `check` and any future editor
 /// integration agree on the same answer.
+#[must_use]
 pub fn language_id_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|s| s.to_str()) {
         Some("rs") => "rust",

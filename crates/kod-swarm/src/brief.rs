@@ -76,6 +76,7 @@ pub struct SubagentReport {
 
 impl SubagentReport {
     /// Files touched outside the brief's `expected_writes` globs.
+    #[must_use]
     pub fn boundary_violations(&self, brief: &ContextBrief) -> Vec<PathBuf> {
         if brief.expected_writes.is_empty() {
             return Vec::new();
@@ -105,6 +106,7 @@ impl SubagentReport {
 /// parseable format. The renderer is free to reformat; a caller
 /// that wants to round-trip parses the subagent's report, not the
 /// brief text.
+#[must_use]
 pub fn render_brief(brief: &ContextBrief) -> String {
     let mut out = String::new();
 
@@ -185,6 +187,7 @@ pub fn render_brief(brief: &ContextBrief) -> String {
 /// JSON object, and falls back to a summary-only report for a
 /// response that is not JSON at all — a subagent's prose is never
 /// lost, only its structure is.
+#[must_use]
 pub fn parse_report(text: &str) -> SubagentReport {
     let trimmed = text.trim();
     // Strip a fenced code block if the model wrapped its JSON.

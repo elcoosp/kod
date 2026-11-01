@@ -80,16 +80,19 @@ pub struct BudgetReport {
 
 impl BudgetReport {
     /// True when at least one frame was dropped.
+    #[must_use]
     pub fn any_dropped(&self) -> bool {
         self.total_dropped() > 0
     }
     /// Total frames dropped across all reasons.
+    #[must_use]
     pub fn total_dropped(&self) -> usize {
         self.dropped_undecodable + self.dropped_oversize + self.dropped_over_cap
     }
 }
 
 /// Cheap PNG base64 check: prefix + length ≡ 0 (mod 4).
+#[must_use]
 pub fn is_likely_png_base64(body: &str) -> bool {
     body.starts_with(PNG_BASE64_PREFIX) && body.len().is_multiple_of(4)
 }

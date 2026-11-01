@@ -867,6 +867,7 @@ fn kind_for_tool(name: &str) -> &'static str {
 /// expects with no adapter. A single-thread runtime is cheap enough
 /// for the fuzz loop and has no scheduling noise.
 #[doc(hidden)]
+#[must_use]
 pub fn read_frame_for_fuzz(data: &[u8]) -> Option<serde_json::Value> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_io()

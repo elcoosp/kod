@@ -82,6 +82,7 @@ pub struct Minimized {
 impl Minimized {
     /// Construct a pass-through result: same content, same size,
     /// no filter.
+    #[must_use]
     pub fn raw(raw: &str) -> Self {
         Self {
             text: raw.to_string(),
@@ -92,6 +93,7 @@ impl Minimized {
     }
 
     /// Whether a def actually rewrote the content.
+    #[must_use]
     pub fn was_rewritten(&self) -> bool {
         self.filter.is_some()
     }
@@ -136,6 +138,7 @@ impl Minimizer {
     /// the defs are `include_str!`-ed and their parse is covered by
     /// the test suite, but defensive skipping means a future bad def
     /// does not brick the crate).
+    #[must_use]
     pub fn with_builtins() -> Self {
         Self::with_builtins_and_config(MinimizeConfig::default())
     }
@@ -159,6 +162,7 @@ impl Minimizer {
 
     /// An empty minimizer. Useful in tests and in a caller that wants
     /// to control the def set.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             defs: Vec::new(),
@@ -168,6 +172,7 @@ impl Minimizer {
 
     /// Register an additional def. Replaces an existing def with the
     /// same id.
+    #[must_use]
     pub fn register(mut self, def: Def) -> Self {
         self.defs.retain(|d| d.id != def.id);
         self.defs.push(def);
@@ -175,6 +180,7 @@ impl Minimizer {
     }
 
     /// The defs this minimizer knows, sorted by id.
+    #[must_use]
     pub fn def_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.defs.iter().map(|d| d.id.clone()).collect();
         ids.sort();
@@ -187,6 +193,7 @@ impl Minimizer {
     /// `only_on_exit` filter. Returns a [`Minimized`] that always
     /// reflects the shape of the result — a caller that wants the
     /// raw bytes back can compare `filter` to `None`.
+    #[must_use]
     pub fn minimize(&self, command: &str, raw: &str, exit_code: i32) -> Minimized {
         // `enabled = false` is the master switch: the caller wants the
         // raw capture back with no rewriting, so downstream code does

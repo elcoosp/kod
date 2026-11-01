@@ -30,6 +30,7 @@ use crate::rust::AstSymbol;
 
 /// Extract symbols for `lang` from `source`, or `None` when the parse
 /// fails (the caller falls back to its regex path).
+#[must_use]
 pub fn symbols(lang: Lang, source: &str) -> Option<Vec<AstSymbol>> {
     let tree = crate::parse_cache::global().parse(lang, source)?;
     let bytes = source.as_bytes();

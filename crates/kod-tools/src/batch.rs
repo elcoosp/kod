@@ -39,6 +39,7 @@ pub struct BatchTool {
 
 impl BatchTool {
     /// Build the batch tool over a weak reference to the registry.
+    #[must_use]
     pub fn new(registry: Weak<ToolRegistry>) -> Self {
         Self {
             definition: ToolDefinition {

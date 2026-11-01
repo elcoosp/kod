@@ -21,6 +21,7 @@ pub struct PlanTool {
 
 impl PlanTool {
     /// Build the plan_update tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

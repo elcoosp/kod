@@ -23,6 +23,7 @@ pub struct SearchFilesTool {
 
 impl SearchFilesTool {
     /// Build the search_files tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

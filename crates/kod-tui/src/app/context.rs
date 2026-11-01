@@ -11,6 +11,7 @@ impl KodApp {
     }
 
     /// The model name shown in the status bar.
+    #[must_use]
     pub fn model_name(&self) -> &str {
         &self.model_name
     }
@@ -95,11 +96,13 @@ impl KodApp {
     }
 
     /// Tokens used in the current context.
+    #[must_use]
     pub fn context_tokens(&self) -> usize {
         self.context_tokens
     }
 
     /// The context window limit in tokens.
+    #[must_use]
     pub fn context_limit(&self) -> usize {
         self.context_limit
     }
@@ -112,17 +115,20 @@ impl KodApp {
     /// `≈ ctx 12.4k/128k · 10%` — human-readable session position.
     /// Short header figures: `12.4k` / `128k`. Same `format_k` as
     /// `context_label` (which stays for `/context` and `/whoami`).
+    #[must_use]
     pub fn context_tokens_k(&self) -> String {
         Self::format_k(self.context_tokens)
     }
 
     /// The context limit formatted as kilotokens.
+    #[must_use]
     pub fn context_limit_k(&self) -> String {
         Self::format_k(self.context_limit)
     }
 
     /// `context_tokens` is an approximation (chars/4) until the provider
     /// returns real `usage` — prefix with ≈ so the header never implies precision.
+    #[must_use]
     pub fn context_label(&self) -> String {
         let pct = self.context_tokens * 100 / self.context_limit.max(1);
         format!(
@@ -214,6 +220,7 @@ impl KodApp {
     }
 
     /// Context meter with teeth: warns past 70%, alarms past 90%.
+    #[must_use]
     pub fn context_warning(&self) -> Option<&'static str> {
         let pct = self.context_tokens * 100 / self.context_limit.max(1);
         if pct >= 90 {
@@ -228,6 +235,7 @@ impl KodApp {
     /// Add a call's USD cost to the session total. Negative and NaN
     /// values are rejected — a broken pricing block should not
     /// corrupt the accumulator.
+    #[must_use]
     pub fn note_session_cost(&mut self, cost_usd: f64) {
         if cost_usd.is_finite() && cost_usd >= 0.0 {
             self.session_cost_usd += cost_usd;
@@ -235,12 +243,14 @@ impl KodApp {
     }
 
     /// Total tokens moved through the model this session.
+    #[must_use]
     pub fn session_total_tokens(&self) -> usize {
         self.session_input_tokens
             .saturating_add(self.session_output_tokens)
     }
 
     /// Wall-clock time since the session started.
+    #[must_use]
     pub fn elapsed_session(&self) -> std::time::Duration {
         self.session_started_at.elapsed()
     }
@@ -248,6 +258,7 @@ impl KodApp {
     /// One-line accounting label for the header: `↑1.2k ↓340 · 5m30s`.
     /// The arrow convention is input/output; the trailing figure is
     /// wall-clock elapsed since the first prompt.
+    #[must_use]
     pub fn accounting_label(&self) -> String {
         let secs = self.elapsed_session().as_secs();
         let time = if secs < 60 {

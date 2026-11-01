@@ -41,6 +41,7 @@ use kod_types::{ChatMessage, MessageRole, ToolDefinition};
 use serde_json::{Value, json};
 
 /// Build the JSON body for `POST /v1/messages`.
+#[must_use]
 pub fn build_messages_body(req: &CompletionRequest) -> Value {
     let mut body = json!({
         "model": req.model.model,
@@ -135,6 +136,7 @@ fn prepend_image_blocks(body: &mut Value, frames: &[kod_provider::request::Image
 ///
 /// Empty prompt → empty array (the API tolerates a missing system
 /// field; an empty array is equivalent and simpler to assert in tests).
+#[must_use]
 pub fn system_blocks(prompt: &SystemPrompt) -> Value {
     if prompt.segments.is_empty() {
         return json!([]);
@@ -171,6 +173,7 @@ pub fn system_blocks(prompt: &SystemPrompt) -> Value {
 /// `Role::Agent(_)` is treated like `Assistant` — the transcript never
 /// contains them (they are display-only in the TUI), and mapping them
 /// to assistant is the least wrong default if one ever leaks in.
+#[must_use]
 pub fn messages_array(messages: &[ChatMessage]) -> Value {
     // Backwards-compatible wrapper. All real callers go through
     // `messages_array_with_cache`; this exists so the existing test
@@ -374,6 +377,7 @@ fn messages_array_impl(messages: &[ChatMessage]) -> Value {
 /// no `stream` key — that is the shape Anthropic's non-streaming
 /// endpoint expects, and silently sending `stream: false` would be
 /// accepted but logged differently by some proxies.
+#[must_use]
 pub fn build_streaming_body(req: &CompletionRequest) -> Value {
     let mut body = build_messages_body(req);
     body["stream"] = json!(true);
@@ -397,6 +401,7 @@ pub const MAX_MESSAGE_BREAKPOINTS: usize = 2;
 /// engine's registry, so the marked prefix is byte-stable across a
 /// session. Subject to the P0-c tool-surface freeze — a tool-array
 /// change is a documented prefix break, not a per-turn event.
+#[must_use]
 pub fn tools_array_with_cache(tools: &[ToolDefinition]) -> Value {
     let mut arr: Vec<Value> = tools
         .iter()
@@ -420,6 +425,7 @@ pub fn tools_array_with_cache(tools: &[ToolDefinition]) -> Value {
 /// tool. Used when the caller has decided prompt caching is off for
 /// this request (older models, or a session where the cache hit rate
 /// would not pay for the marker).
+#[must_use]
 pub fn tools_array(tools: &[ToolDefinition]) -> Value {
     let arr: Vec<Value> = tools
         .iter()
@@ -1950,6 +1956,7 @@ pub use kod_provider::NativeCompaction;
 /// separately so the caller can construct the request with the
 /// standard `anthropic-version` and the beta header together, and
 /// so a test can assert on the pair without mocking a POST.
+#[must_use]
 pub fn build_compaction_body(req: &CompletionRequest) -> Value {
     let mut body = build_messages_body(req);
     body["pause_after_compaction"] = json!(true);
@@ -1976,6 +1983,7 @@ pub fn build_compaction_body(req: &CompletionRequest) -> Value {
 /// compaction request that the API declined (too small, feature
 /// disabled) also returns a normal response with a text block.
 /// The caller decides whether the absence is a bug.
+#[must_use]
 pub fn parse_compaction_block(response: &Value) -> Option<NativeCompaction> {
     let content = response.get("content")?.as_array()?;
     for block in content {

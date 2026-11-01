@@ -64,6 +64,7 @@ fn log_record(time_nanos: u128, body: &str, severity: u8, attrs: Vec<Value>) -> 
 }
 
 /// The full `ExportLogsServiceRequest` for one turn.
+#[must_use]
 pub fn turn_payload(cfg: &TelemetryConfig, r: &TurnRecord) -> Value {
     let mut attrs = Vec::with_capacity(12);
     attrs.push(string_attr("gen_ai.system", &r.system));
@@ -103,6 +104,7 @@ pub fn turn_payload(cfg: &TelemetryConfig, r: &TurnRecord) -> Value {
 }
 
 /// The full `ExportLogsServiceRequest` for one tool call.
+#[must_use]
 pub fn tool_payload(cfg: &TelemetryConfig, r: &ToolRecord) -> Value {
     let attrs = vec![
         string_attr("gen_ai.tool.name", &r.name),

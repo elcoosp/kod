@@ -54,6 +54,7 @@ impl DecayShape {
     /// `age <= 0` is `1.0`. A non-positive `η` or `k` is a caller
     /// error and returns `0.0` rather than dividing by zero or
     /// producing a NaN that would poison the score sum.
+    #[must_use]
     pub fn decay(&self, age_hours: f32) -> f32 {
         if age_hours <= 0.0 {
             return 1.0;
@@ -82,6 +83,7 @@ impl DecayShape {
 /// * `ShortTerm` — the working set. `context` (`k=0.85, η=360`) with a
 ///   shorter scale (`η=168`, one week) so a short-term entry from
 ///   yesterday is already meaningfully faded.
+#[must_use]
 pub fn weibull_shape_for(t: MemoryType) -> DecayShape {
     match t {
         MemoryType::LongTerm => DecayShape {
@@ -116,6 +118,7 @@ fn exponential_shape(half_life_days: f32) -> DecayShape {
 ///
 /// The Weibull counterpart of [`recency`]; `recency` is left alone so
 /// external callers keep the exponential contract.
+#[must_use]
 pub fn decay_at(ts: OffsetDateTime, now: OffsetDateTime, shape: DecayShape) -> f32 {
     let delta = now - ts;
     let secs = delta.whole_seconds().max(0) as f32;
@@ -157,6 +160,7 @@ impl Default for HybridScorer {
 /// Redistribute the semantic weight onto the keyword weight when the
 /// cosine is unavailable. The recency weight is untouched: it applies
 /// regardless of the other two.
+#[must_use]
 pub fn redistribute(w_semantic: f32, w_keyword: f32) -> (f32, f32) {
     if w_semantic == 0.0 {
         return (0.0, w_keyword);
@@ -177,6 +181,7 @@ pub struct QueryTerms {
 impl QueryTerms {
     /// Tokenize the query and precompute its document frequencies
     /// against the candidates.
+    #[must_use]
     pub fn build(query: &str, candidates: &[MemoryEntry]) -> Self {
         let tokens = stopwords::tokens(query);
         let mut df = std::collections::HashMap::new();
@@ -194,6 +199,7 @@ impl QueryTerms {
     }
 
     /// BM25-lite inverse document frequency for one token.
+    #[must_use]
     pub fn idf(&self, token: &str) -> f32 {
         let df = self.df.get(token).copied().unwrap_or(0) as f32;
         (1.0 + (self.n_docs as f32 - df + 0.5) / (df + 0.5)).ln()
@@ -223,6 +229,7 @@ impl HybridScorer {
     /// [`Decay::Exponential`] selects and what the historical tests
     /// assert on. Under the default [`Decay::Weibull`], scoring uses
     /// [`Self::decay_shape_for`] instead; this value is not consulted.
+    #[must_use]
     pub fn half_life_for(&self, memory_type: MemoryType) -> f32 {
         match memory_type {
             MemoryType::LongTerm => self.half_life_days * LONG_TERM_MULTIPLIER,
@@ -239,6 +246,7 @@ impl HybridScorer {
     /// [`Self::score`], and public so a caller building a `/memory`
     /// readout can show the effective `(η, k)` without reimplementing
     /// the selection.
+    #[must_use]
     pub fn decay_shape_for(&self, memory_type: MemoryType) -> DecayShape {
         match self.decay {
             Decay::Exponential => exponential_shape(self.half_life_for(memory_type)),
@@ -250,6 +258,7 @@ impl HybridScorer {
     /// [`Self::score_with_weights`] with the neutral (all-1.0)
     /// weights — the pre-§12.8 shape, kept so callers that have no
     /// intent do not have to name one.
+    #[must_use]
     pub fn score(
         &self,
         query: &QueryTerms,
@@ -274,6 +283,7 @@ impl HybridScorer {
     /// component by `temporal`, and the entry's own relevance by
     /// `importance`. A temporal query therefore leans on keyword
     /// matching and time; a procedural query leans on semantics.
+    #[must_use]
     pub fn score_with_weights(
         &self,
         query: &QueryTerms,
@@ -326,6 +336,7 @@ impl HybridScorer {
     ///
     /// Public so the polyphonic-fusion path in the manager can build
     /// the keyword voice without going through the composite score.
+    #[must_use]
     pub fn keyword_bm25_lite(&self, query: &QueryTerms, entry: &MemoryEntry) -> f32 {
         if query.tokens.is_empty() {
             return 0.0;
@@ -359,6 +370,7 @@ impl HybridScorer {
 }
 
 /// Exponential recency decay: `2^(-Δt / half_life)`.
+#[must_use]
 pub fn recency(ts: OffsetDateTime, now: OffsetDateTime, half_life_days: f32) -> f32 {
     let delta = now - ts;
     let secs = delta.whole_seconds().max(0) as f32;

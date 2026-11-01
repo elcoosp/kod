@@ -70,6 +70,7 @@ impl TokenUsage {
     ///
     /// Saturating: a provider that mis-reports cache fields larger
     /// than the prompt window yields 0 rather than wrapping.
+    #[must_use]
     pub fn uncached_input_tokens(&self) -> usize {
         self.prompt_tokens
             .saturating_sub(self.cache_read_tokens.unwrap_or(0) as usize)
@@ -82,6 +83,7 @@ impl TokenUsage {
     /// metric is unknown, not zero) or when the call had no input
     /// tokens (the ratio is undefined). A caller that prints a hit
     /// rate must show "unknown" for `None` rather than "0%".
+    #[must_use]
     pub fn cache_hit_rate(&self) -> Option<f64> {
         let read = self.cache_read_tokens?;
         if self.prompt_tokens == 0 {
@@ -99,6 +101,7 @@ impl TokenUsage {
     /// Totals are summed independently — a provider that reports a
     /// `total_tokens` that is not `prompt + completion` (some cache
     /// implementations do this) keeps its own arithmetic.
+    #[must_use]
     pub fn merge(&self, other: &TokenUsage) -> TokenUsage {
         TokenUsage {
             prompt_tokens: self.prompt_tokens.saturating_add(other.prompt_tokens),
@@ -158,6 +161,7 @@ pub enum GenerationResponse {
 
 impl GenerationResponse {
     /// The usage reported by the provider, if any.
+    #[must_use]
     pub fn usage(&self) -> Option<&TokenUsage> {
         match self {
             GenerationResponse::Text { usage, .. } => usage.as_ref(),
@@ -214,6 +218,7 @@ pub enum StreamChunk {
 
 /// Expand a collected [`GenerationResponse`] into the chunk sequence
 /// `LlmProvider::stream_with_tools`'s default implementation replays.
+#[must_use]
 pub fn response_chunks(response: GenerationResponse) -> Vec<StreamChunk> {
     let mut chunks = Vec::new();
     match response {

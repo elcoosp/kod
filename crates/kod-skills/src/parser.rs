@@ -20,11 +20,13 @@ impl Default for SkillParser {
 
 impl SkillParser {
     /// Parser in the default (lenient) mode.
+    #[must_use]
     pub fn new() -> Self {
         Self { strict_mode: false }
     }
 
     /// Builder: enable strict mode.
+    #[must_use]
     pub fn strict(mut self) -> Self {
         self.strict_mode = true;
         self

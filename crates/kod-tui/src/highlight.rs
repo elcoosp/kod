@@ -81,6 +81,7 @@ pub fn code_rows(
 }
 
 /// Flat `theme.code` style on the code background.
+#[must_use]
 pub fn code_style(theme: &Theme) -> Style {
     Style::default().fg(theme.code).bg(CODE_BG)
 }
@@ -131,6 +132,7 @@ impl<'a> DiffBody<'a> {
     /// header with a range, or a `---`/`+++` pair). `None` when there is
     /// no diff. A bare `@@` is not enough: prose that *describes* a hunk
     /// must not flip the message into diff rendering.
+    #[must_use]
     pub fn parse(body: &'a str) -> Option<DiffBody<'a>> {
         let all: Vec<&str> = body
             .lines()
@@ -151,6 +153,7 @@ impl<'a> DiffBody<'a> {
 /// code inside each row is coloured per token (the tint carries the
 /// `+`/`-` reading, since tokens no longer do). Rows are truncated, never
 /// wrapped: a wrapped `+` row reads as two rows the patch lacks.
+#[must_use]
 pub fn diff_rows(
     lines: &[&str],
     syntax: Option<&'static SyntaxReference>,

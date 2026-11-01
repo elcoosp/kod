@@ -112,6 +112,7 @@ where
 /// `GCP_*` / `GOOGLE_*` / `AZURE_*` prefixes. `PATH`, `HOME`, `LANG`,
 /// `TMPDIR`, `PWD`, `SHELL`, `TERM`, and the `LC_*` family are
 /// explicitly allowed.
+#[must_use]
 pub fn is_secret_like_env(name: &str) -> bool {
     // Allow-list for the shell's own furniture, checked first so an
     // override below never strips them by accident.
@@ -165,6 +166,7 @@ pub struct ReadFileTool {
 
 impl ReadFileTool {
     /// Build the read_file tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -581,6 +583,7 @@ pub struct WriteFileTool {
 
 impl WriteFileTool {
     /// Build the write_file tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -837,6 +840,7 @@ pub struct ExecuteCommandTool {
 
 impl ExecuteCommandTool {
     /// Build the execute_command tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1363,6 +1367,7 @@ pub struct ListFilesTool {
 
 impl ListFilesTool {
     /// Build the list_files tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1546,6 +1551,7 @@ fn truncate_entry(s: &str, max: usize) -> String {
 /// `node_modules/`, …) never bloats tool results.
 /// Walk `root` honoring ignore files. Public so `jfind` (in
 /// `kod-core`) can feed the same file list the `grep` tool uses.
+#[must_use]
 pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
     // PERF-04: delegate to `gitaware_walk_arc` and clone only at
     // this boundary. Internal hot callers (grep, list_files,
@@ -1558,6 +1564,7 @@ pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::
 /// PERF-04: warm hits are a single refcount bump instead of a full
 /// `Vec<PathBuf>` deep clone. The walk-cache stores the `Arc` once
 /// and every hit pays one atomic increment.
+#[must_use]
 pub fn gitaware_walk_arc(
     root: &std::path::Path,
     recursive: bool,
@@ -1598,6 +1605,7 @@ pub struct PatchFileTool {
 
 impl PatchFileTool {
     /// Build the patch_file tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -1778,6 +1786,7 @@ pub struct GrepTool {
 
 impl GrepTool {
     /// Build the grep tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

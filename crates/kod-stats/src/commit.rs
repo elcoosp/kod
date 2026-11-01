@@ -150,6 +150,7 @@ fn type_path_rule(t: &str) -> &'static [&'static str] {
 ///
 /// The base score is the count of keyword hits; each hit adds its
 /// weight.
+#[must_use]
 pub fn score_change(description: &str) -> i32 {
     let lower = description.to_ascii_lowercase();
     let mut score = 0;
@@ -198,6 +199,7 @@ pub fn validate(proposal: &CommitProposal) -> Result<(), RejectReason> {
 }
 
 /// Format a validated proposal as a conventional-commit message.
+#[must_use]
 pub fn format_message(proposal: &CommitProposal) -> String {
     let header = match &proposal.scope {
         Some(s) => format!("{}({s}): {}", proposal.r#type, proposal.summary.trim()),

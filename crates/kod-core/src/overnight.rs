@@ -44,6 +44,7 @@ impl Phase {
     /// Only `Running` allows it. A prompt asking the model to wind
     /// down is advice; refusing to dispatch is enforcement, and only
     /// the second one actually bounds the run.
+    #[must_use]
     pub fn allows_new_work(self) -> bool {
         matches!(self, Phase::Running)
     }
@@ -116,6 +117,7 @@ impl OvernightManifest {
     ///
     /// The clock alone decides `Running` vs `WindDown`; a caller that
     /// has finished the report passes `report_done` to move past it.
+    #[must_use]
     pub fn phase_at(&self, now: time::OffsetDateTime, report_done: bool) -> Phase {
         if report_done {
             return Phase::Done;
@@ -209,6 +211,7 @@ pub fn build_task_card(
 /// Markdown rather than HTML: the TUI renders it, the session log can
 /// hold it, and a template engine would be one more dependency for a
 /// document whose shape is fixed.
+#[must_use]
 pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String {
     let done = cards
         .iter()

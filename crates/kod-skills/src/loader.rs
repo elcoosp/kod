@@ -166,6 +166,7 @@ impl SkillLoader {
     }
 
     /// Get skills directory path
+    #[must_use]
     pub fn skills_dir(&self) -> &Path {
         &self.skills_dir
     }

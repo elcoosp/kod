@@ -57,6 +57,7 @@ pub enum DecisionSource {
 impl DecisionSource {
     /// The string written to the session log. Kept stable so a log
     /// viewer can branch on it.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             DecisionSource::Jev => "jev",
@@ -679,6 +680,7 @@ fn cache_key(kind: &str, state: &Value, question: &str) -> u64 {
 /// Truncate `s` to `max_chars` characters for a preview, appending an
 /// ellipsis when cut. Counts characters, not bytes, so a multi-byte
 /// UTF-8 sequence never splits.
+#[must_use]
 pub fn preview_chars(s: &str, max_chars: usize) -> String {
     let mut out = String::with_capacity(s.len().min(max_chars * 4));
     for (i, c) in s.chars().enumerate() {
@@ -696,6 +698,7 @@ pub fn preview_chars(s: &str, max_chars: usize) -> String {
 /// field and an optional `metadata` object. Keeping the shape in one
 /// helper means a future change to the convention is one function
 /// edit.
+#[must_use]
 pub fn build_state(text: &str, metadata: &[(&str, &str)]) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("text".into(), Value::String(text.to_string()));

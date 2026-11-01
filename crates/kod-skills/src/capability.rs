@@ -100,6 +100,7 @@ pub struct CapabilityRegistry {
 
 impl CapabilityRegistry {
     /// Empty registry.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -116,6 +117,7 @@ impl CapabilityRegistry {
     ///
     /// `home` and `cwd` are taken as arguments so a test can drive
     /// the layout without touching the real filesystem.
+    #[must_use]
     pub fn default_sources(home: &Path, cwd: &Path) -> Vec<DiscoverySource> {
         vec![
             DiscoverySource::new(
@@ -215,6 +217,7 @@ impl CapabilityRegistry {
     /// duplicate does not take its place), while `filter` is a plain
     /// predicate the caller can apply to the *result*. `suppress` is
     /// the correct primitive for "the user turned this off."
+    #[must_use]
     pub fn discover_with_suppression(
         &self,
         extension: Option<&str>,

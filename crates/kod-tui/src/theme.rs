@@ -41,6 +41,7 @@ pub struct Theme {
 
 impl Theme {
     /// The default dark theme.
+    #[must_use]
     pub fn dark() -> Self {
         Self {
             name: "dark".to_string(),
@@ -60,6 +61,7 @@ impl Theme {
     }
 
     /// The light theme.
+    #[must_use]
     pub fn light() -> Self {
         Self {
             name: "light".to_string(),
@@ -79,6 +81,7 @@ impl Theme {
     }
 
     /// Look up a theme by name (defaulting to dark).
+    #[must_use]
     pub fn from_name(name: &str) -> Self {
         match name.trim().to_ascii_lowercase().as_str() {
             "light" => Self::light(),
@@ -90,6 +93,7 @@ impl Theme {
     /// kod config dir, or a `.kod-theme.toml` in the current project.
     /// Anything unreadable falls back to `dark` — theming must never break
     /// startup.
+    #[must_use]
     pub fn load() -> Self {
         let paths: [std::path::PathBuf; 2] = [
             std::path::PathBuf::from(".kod-theme.toml"),

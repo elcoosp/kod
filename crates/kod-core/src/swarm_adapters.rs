@@ -85,6 +85,7 @@ pub struct SwarmNoteTool {
 
 impl SwarmNoteTool {
     /// Build the swarm-note tool.
+    #[must_use]
     pub fn new(hub: Arc<AgentCommunicationHub>, agent: AgentId) -> Self {
         Self {
             definition: base_definition(
@@ -176,6 +177,7 @@ pub struct SwarmReadTool {
 
 impl SwarmReadTool {
     /// Build the swarm-read tool.
+    #[must_use]
     pub fn new(hub: Arc<AgentCommunicationHub>, agent: AgentId) -> Self {
         Self {
             definition: base_definition(

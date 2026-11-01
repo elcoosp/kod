@@ -195,6 +195,7 @@ pub struct GitStatusTool {
 
 impl GitStatusTool {
     /// Build the git-status tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -317,6 +318,7 @@ pub struct GitDiffTool {
 
 impl GitDiffTool {
     /// Build the git-diff tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -472,6 +474,7 @@ pub struct GitCommitTool {
 
 impl GitCommitTool {
     /// Build the git-commit tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
@@ -623,6 +626,7 @@ pub struct GitBranchTool {
 
 impl GitBranchTool {
     /// Build the git-branch tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

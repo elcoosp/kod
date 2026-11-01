@@ -97,6 +97,7 @@ impl Telemetry {
     /// The disabled handle: every `record_*` returns immediately.
     /// This is what a session that never set `OTEL_EXPORTER_OTLP_ENDPOINT`
     /// uses.
+    #[must_use]
     pub fn disabled() -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -189,11 +190,13 @@ impl Telemetry {
     }
 
     /// Whether the handle is enabled.
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.inner.config.endpoint.is_some()
     }
 
     /// The config this handle was built with.
+    #[must_use]
     pub fn config(&self) -> &TelemetryConfig {
         &self.inner.config
     }

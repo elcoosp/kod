@@ -110,6 +110,7 @@ impl Plan {
     }
 
     /// The current step, if any.
+    #[must_use]
     pub fn current_step(&self) -> Option<&PlanStep> {
         self.steps.get(self.current)
     }
@@ -184,6 +185,7 @@ impl Plan {
     }
 
     /// Fraction of steps that are Done or Skipped.
+    #[must_use]
     pub fn progress(&self) -> f32 {
         if self.steps.is_empty() {
             return 1.0;
@@ -199,6 +201,7 @@ impl Plan {
     /// Render the plan as it appears at the top of the system prompt.
     /// Kept compact — the model does not need the full rationale
     /// every turn.
+    #[must_use]
     pub fn render_prompt_block(&self) -> String {
         let mut out = String::from("## Plan\n\n");
         for s in &self.steps {
@@ -240,6 +243,7 @@ pub const MAX_AUTOSAVE_STEM_CHARS: usize = 32;
 /// when the home dir cannot be determined (a stripped container, a
 /// test without HOME) — the caller treats that as "autosave is not
 /// available" and never fails the plan operation for it.
+#[must_use]
 pub fn plan_dir_for_working_dir(working_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let home = dirs::home_dir()?;
     let canonical =
@@ -268,6 +272,7 @@ pub const MAX_PLAN_DIRS: usize = 1000;
 /// propagated; a root that does not exist is a no-op. Call from the
 /// shutdown path, not per-autosave — the parent readdir is
 /// O(projects) and should not run on every plan write.
+#[must_use]
 pub fn sweep_old_plan_dirs() -> usize {
     let Some(home) = dirs::home_dir() else {
         return 0;
@@ -316,6 +321,7 @@ fn sweep_plan_dirs_at(root: &std::path::Path) -> usize {
 /// lowercase ASCII alnum and `-`, everything else a `-`; collapsed
 /// runs of `-`; leading and trailing `-` stripped; capped at
 /// [`MAX_AUTOSAVE_STEM_CHARS`].
+#[must_use]
 pub fn slugify(text: &str) -> String {
     let mut out = String::new();
     let mut last_dash = false;
@@ -357,6 +363,7 @@ pub fn slugify(text: &str) -> String {
 /// which is the exact form a subagent sees. Returns the path written,
 /// or `None` on any I/O error (best-effort: a failed autosave must
 /// not fail the plan operation).
+#[must_use]
 pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let dir = plan_dir_for_working_dir(working_dir)?;
     // 0700 on the plan directory: it holds every goal, step, and

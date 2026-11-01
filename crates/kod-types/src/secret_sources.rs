@@ -220,6 +220,7 @@ fn name_is_secret_shaped(name: &str) -> bool {
 /// contains none of a pattern's prefixes cannot match, so the
 /// expensive compile-and-run is skipped. On a normal transcript this
 /// is a couple of `str::contains` calls per pattern.
+#[must_use]
 pub fn scan_vendors(text: &str) -> Vec<Discovered> {
     let mut out = Vec::new();
     for p in vendor_patterns() {
@@ -270,6 +271,7 @@ pub fn scan_connection_urls(text: &str) -> Vec<Discovered> {
 /// Scan a text through both the vendor and connection-URL sources,
 /// deduplicating by value. The vendor source wins on a tie — it
 /// carries a more specific origin.
+#[must_use]
 pub fn scan_text(text: &str) -> Vec<Discovered> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -289,6 +291,7 @@ pub fn scan_text(text: &str) -> Vec<Discovered> {
 /// Register every discovered secret with `vault`. Returns the count
 /// of *newly* registered secrets (a value already in the vault is
 /// not re-counted).
+#[must_use]
 pub fn register_discovered(vault: &SecretVault, discovered: Vec<Discovered>) -> usize {
     let pairs: Vec<(String, SecretSource)> = discovered
         .into_iter()

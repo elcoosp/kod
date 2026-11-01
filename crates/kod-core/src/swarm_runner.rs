@@ -339,6 +339,7 @@ impl SwarmRunner {
     /// Set the isolation policy. Consuming builder, chained from
     /// `new`/`from_config`.
     /// Set the coordinator and worker effort levels.
+    #[must_use]
     pub fn with_efforts(
         mut self,
         root: kod_types::effort::EffortLevel,
@@ -350,6 +351,7 @@ impl SwarmRunner {
     }
 
     /// Builder: set the isolation strategy.
+    #[must_use]
     pub fn with_isolation(mut self, isolation: kod_config::Isolation) -> Self {
         self.isolation = isolation;
         self
@@ -361,6 +363,7 @@ impl SwarmRunner {
     /// decide whether a new wave may start, and the caller renders the
     /// report from the cards afterward. Nothing about the dispatch
     /// mechanics changes.
+    #[must_use]
     pub fn with_overnight(mut self, manifest: crate::overnight::OvernightManifest) -> Self {
         self.overnight_manifest = Some(manifest);
         self
@@ -384,30 +387,35 @@ impl SwarmRunner {
     /// the pre-fix path ignored it and used the config-only value.
     /// The clamp is applied by `new`, so this setter stores the raw
     /// request; the effective value is still `[2, 8]`.
+    #[must_use]
     pub fn with_max_agents(mut self, n: usize) -> Self {
         self.max_agents = n.clamp(2, 8);
         self
     }
 
     /// Set the per-agent wall-clock cap in seconds. 0 disables.
+    #[must_use]
     pub fn with_agent_timeout_secs(mut self, secs: u64) -> Self {
         self.agent_timeout_secs = secs;
         self
     }
 
     /// Set the retry budget. 0 means no retries.
+    #[must_use]
     pub fn with_agent_retries(mut self, retries: u32) -> Self {
         self.agent_retries = retries;
         self
     }
 
     /// Set the overall run timeout in seconds. 0 disables it.
+    #[must_use]
     pub fn with_swarm_timeout_secs(mut self, secs: u64) -> Self {
         self.swarm_timeout_secs = secs;
         self
     }
 
     /// The configured maximum agent count.
+    #[must_use]
     pub fn max_agents(&self) -> usize {
         self.max_agents
     }

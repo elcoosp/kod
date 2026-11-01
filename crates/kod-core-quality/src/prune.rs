@@ -183,6 +183,7 @@ impl PrunePlan {
     /// size of each target's body, minus the placeholder's own size,
     /// summed. A blanked message is not removed from the log; its
     /// content shrinks in place.
+    #[must_use]
     pub fn estimated_savings_tokens(&self) -> u64 {
         self.actions
             .iter()
@@ -201,11 +202,13 @@ impl PrunePlan {
     }
 
     /// True when the plan contains no actions.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
 
     /// Number of actions in the plan.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.actions.len()
     }

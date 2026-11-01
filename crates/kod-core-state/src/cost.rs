@@ -72,6 +72,7 @@ impl Default for CostTracker {
 
 impl CostTracker {
     /// Fresh tracker with zero spend.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(CostInner {
@@ -131,6 +132,7 @@ impl CostTracker {
     /// "how much recently," which is what a quota projection needs —
     /// a daily limit exhausted an hour in shows as a large hourly
     /// figure while the session total still looks modest.
+    #[must_use]
     pub fn spend_in(&self, window: std::time::Duration) -> f64 {
         self.inner.window.spend_in(window)
     }
@@ -150,6 +152,7 @@ impl CostTracker {
     }
 
     /// Snapshot the current spend state.
+    #[must_use]
     pub fn snapshot(&self) -> CostSnapshot {
         let session_micro = self.inner.session_micro.load(Ordering::Relaxed);
         let turn_micro = self.inner.turn_micro.load(Ordering::Relaxed);
@@ -184,6 +187,7 @@ impl CostTracker {
 
     /// Poll for a soft warning. Returns the trigger exactly once per
     /// crossing.
+    #[must_use]
     pub fn poll_soft_warning(&self) -> Option<SoftWarningTrigger> {
         let snap = self.snapshot();
         if snap.session_warned {
@@ -204,6 +208,7 @@ impl CostTracker {
     }
 
     /// The configured exhaustion policy.
+    #[must_use]
     pub fn on_exhausted(&self) -> OnExhausted {
         *self.inner.on_exhausted.read()
     }
@@ -374,6 +379,7 @@ pub struct SpendWindow {
 
 impl SpendWindow {
     /// A window holding at most `cap` entries.
+    #[must_use]
     pub fn new(cap: usize) -> Self {
         Self {
             entries: parking_lot::RwLock::new(std::collections::VecDeque::new()),

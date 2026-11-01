@@ -7,6 +7,7 @@ use super::*;
 
 impl KodApp {
     /// The current generation phase.
+    #[must_use]
     pub fn phase(&self) -> &GenPhase {
         &self.phase
     }
@@ -17,6 +18,7 @@ impl KodApp {
 
     /// Short human label: `connecting`, `generating`, `tool: cargo test`, `thinking`.
     /// No timers — elapsed was noisy and duplicated across header/status.
+    #[must_use]
     pub fn phase_label(&self) -> Option<String> {
         if !self.generating {
             return None;
@@ -118,6 +120,7 @@ impl KodApp {
     }
 
     /// The most recent user prompt.
+    #[must_use]
     pub fn last_prompt(&self) -> Option<&str> {
         self.last_prompt.as_deref()
     }
@@ -128,16 +131,19 @@ impl KodApp {
     }
 
     /// True when recent generations keep failing (drives the offline badge).
+    #[must_use]
     pub fn is_offline(&self) -> bool {
         self.fail_count >= 2
     }
 
     /// The current consecutive-failure count.
+    #[must_use]
     pub fn fail_count(&self) -> usize {
         self.fail_count
     }
 
     /// The active theme.
+    #[must_use]
     pub fn theme(&self) -> &Theme {
         &self.theme
     }
@@ -188,6 +194,7 @@ impl KodApp {
     }
 
     /// True when the app should exit.
+    #[must_use]
     pub fn should_quit(&self) -> bool {
         self.should_quit
     }
@@ -203,6 +210,7 @@ impl KodApp {
     }
 
     /// Copy the last assistant reply to the system clipboard (the `y` key).
+    #[must_use]
     pub fn copy_last_to_clipboard(&self) -> bool {
         let Some(text) = self.last_assistant_text() else {
             return false;
@@ -221,6 +229,7 @@ impl KodApp {
     /// treat empty as "unknown — do not warn" rather than "no models
     /// exist", because an empty list is also what a cold provider
     /// returns before the first list_models call.
+    #[must_use]
     pub fn available_models(&self) -> &[String] {
         &self.available_models
     }
@@ -231,6 +240,7 @@ impl KodApp {
     }
 
     /// The loaded skill names.
+    #[must_use]
     pub fn loaded_skills(&self) -> &[String] {
         &self.loaded_skills
     }
@@ -241,6 +251,7 @@ impl KodApp {
     }
 
     /// True when the notification bell is enabled.
+    #[must_use]
     pub fn notify_bell(&self) -> bool {
         self.notify_bell_enabled
     }
@@ -251,6 +262,7 @@ impl KodApp {
     }
 
     /// True when auto-compaction is enabled.
+    #[must_use]
     pub fn autocompact(&self) -> bool {
         self.autocompact_enabled
     }
@@ -266,6 +278,7 @@ impl KodApp {
     }
 
     /// The session system-prompt override, if any.
+    #[must_use]
     pub fn session_system_prompt(&self) -> Option<&str> {
         self.session_system_prompt.as_deref()
     }
@@ -313,6 +326,7 @@ impl KodApp {
     /// Render the current chat as a self-contained HTML document with
     /// inline CSS. No external assets, no scripts — the output is a
     /// single file a user can email or drop in a wiki.
+    #[must_use]
     pub fn export_html(&self) -> String {
         let mut out = String::with_capacity(4096);
         out.push_str("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">");
@@ -359,6 +373,7 @@ impl KodApp {
     /// Render the current chat as Markdown. Same shape the CLI's
     /// `kod sessions export --format markdown` produces, so the two
     /// paths agree.
+    #[must_use]
     pub fn export_markdown(&self) -> String {
         let mut out = String::from("# KOD session\n\n");
         let mut ordered: Vec<&Message> = self.messages.iter().collect();
@@ -414,6 +429,7 @@ impl KodApp {
     }
 
     /// The currently attached files (for display).
+    #[must_use]
     pub fn attached_files(&self) -> &[std::path::PathBuf] {
         &self.attached_files
     }
@@ -425,6 +441,7 @@ impl KodApp {
 
     /// Help overlay visibility. `AppMode::Help` (legacy `h`/`?` path) also
     /// counts so both spellings open the same overlay.
+    #[must_use]
     pub fn show_help(&self) -> bool {
         self.show_help || matches!(self.mode, AppMode::Help)
     }
@@ -442,6 +459,7 @@ impl KodApp {
     }
 
     /// Current spinner glyph (alias the widgets use).
+    #[must_use]
     pub fn spinner_frame(&self) -> &'static str {
         self.spinner()
     }
@@ -449,6 +467,7 @@ impl KodApp {
     /// Friendly wall-clock duration: `340ms`, `1.2s`, `1m05s`,
     /// `2h03m`. Same tiers as the engine's `format_duration_ms`
     /// plus an hour tier (turns and rate-limit waits outgrow minutes).
+    #[must_use]
     pub fn format_friendly_duration(d: std::time::Duration) -> String {
         let ms = d.as_millis().min(u128::from(u64::MAX)) as u64;
         if ms < 1000 {
@@ -467,6 +486,7 @@ impl KodApp {
 
     /// Friendly `12s`/`1m05s` since the generation started (empty when
     /// idle). Rendered in the status strip next to the spinner phase.
+    #[must_use]
     pub fn elapsed_label(&self) -> String {
         match self.spinner_started {
             Some(s) => Self::format_friendly_duration(s.elapsed()),
@@ -480,6 +500,7 @@ impl KodApp {
     /// when the next turn begins. Each reply bubble carries its own
     /// figure too (the `took …` row stamped by `stamp_reply_duration`),
     /// so scrolling back still shows how long an older reply took.
+    #[must_use]
     pub fn last_turn_label(&self) -> String {
         match self.last_turn_duration {
             Some(d) => Self::format_friendly_duration(d),
@@ -488,6 +509,7 @@ impl KodApp {
     }
 
     /// Whether a finished turn's duration is available for the header.
+    #[must_use]
     pub fn has_last_turn_duration(&self) -> bool {
         self.last_turn_duration.is_some()
     }
@@ -547,6 +569,7 @@ impl KodApp {
     /// uses. A local model at ~30 tokens/sec shows ~30; a stalled
     /// stream decays toward 0 as the elapsed time grows without a
     /// fresh chunk. The status widget reads it once per frame.
+    #[must_use]
     pub fn tokens_per_sec(&self) -> Option<f32> {
         let first = self.first_chunk_at?;
         let last = self.last_chunk_at?;
@@ -562,6 +585,7 @@ impl KodApp {
     }
 
     /// Time-to-first-token for the current turn, in ms.
+    #[must_use]
     pub fn ttft_ms(&self) -> Option<u128> {
         let started = self.spinner_started?;
         let first = self.first_chunk_at?;
@@ -569,6 +593,7 @@ impl KodApp {
     }
 
     /// Consecutive generation failures (offline badge + backoff hints).
+    #[must_use]
     pub fn consecutive_failures(&self) -> usize {
         self.fail_count
     }
@@ -580,6 +605,7 @@ impl KodApp {
 
     /// The taint banner last pushed (see `last_taint_note`). `None`
     /// when the round is clean or no banner has been shown.
+    #[must_use]
     pub fn last_taint_note(&self) -> Option<&str> {
         self.last_taint_note.as_deref()
     }
@@ -595,26 +621,31 @@ impl KodApp {
     /// (logs, overlays); it is never rendered near the input — the
     /// user-facing error lives in the chat scroll view (see
     /// `fail_generation`).
+    #[must_use]
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
 
     /// Clear the stored raw error. The transcript keeps its copy.
+    #[must_use]
     pub fn clear_last_error(&mut self) {
         self.last_error = None;
     }
 
     /// Active theme name (`dark` / `light`).
+    #[must_use]
     pub fn theme_name(&self) -> &str {
         &self.theme.name
     }
 
     /// Context fill ratio 0.0–1.0+ (rough estimate, see context_label).
+    #[must_use]
     pub fn context_usage(&self) -> f64 {
         self.context_tokens as f64 / self.context_limit.max(1) as f64
     }
 
     /// Model name for the header (never blank).
+    #[must_use]
     pub fn model_label(&self) -> &str {
         if self.model_name.is_empty() {
             "no model"
@@ -627,6 +658,7 @@ impl KodApp {
     /// header's `net:on` badge (D3-C5). The TUI sets this from the
     /// engine's `network_access_setting()` after init; the default is
     /// off, matching `LlmConfig::network_access = false`.
+    #[must_use]
     pub fn network_access_enabled(&self) -> bool {
         self.network_access_enabled
     }
@@ -635,12 +667,14 @@ impl KodApp {
     /// The effective sandbox label, or empty when no engine has
     /// been initialized yet. Callers should render a badge only
     /// for a non-empty value.
+    #[must_use]
     pub fn sandbox_label(&self) -> &str {
         &self.sandbox_label
     }
 
     /// Set the sandbox label. Called by `TuiLoop::init_engine`
     /// once the engine is up and the resolver's choice is known.
+    #[must_use]
     pub fn set_sandbox_label(&mut self, label: String) {
         self.sandbox_label = label;
     }
@@ -651,11 +685,13 @@ impl KodApp {
     }
 
     /// Total input tokens the provider has reported this session.
+    #[must_use]
     pub fn session_input_tokens(&self) -> usize {
         self.session_input_tokens
     }
 
     /// Total output tokens the provider has reported this session.
+    #[must_use]
     pub fn session_output_tokens(&self) -> usize {
         self.session_output_tokens
     }
@@ -666,6 +702,7 @@ impl KodApp {
     /// so a genuine 0.0 from a free local model is distinguishable
     /// from "pricing not configured" only by the second flag, not
     /// by this number.
+    #[must_use]
     pub fn session_cost_usd(&self) -> f64 {
         self.session_cost_usd
     }
@@ -673,6 +710,7 @@ impl KodApp {
     /// True once at least one reported call has contributed a cost.
     /// The header renders the `$` figure only when this is true, so
     /// an endpoint without pricing never produces a fake `$0.00`.
+    #[must_use]
     pub fn cost_known(&self) -> bool {
         self.session_cost_usd > 0.0
     }
@@ -683,6 +721,7 @@ impl KodApp {
     }
 
     /// The pending batch, if any.
+    #[must_use]
     pub fn pending_batch(&self) -> Option<&PendingApprovalBatch> {
         self.pending_batch.as_ref()
     }
@@ -696,6 +735,7 @@ impl KodApp {
     /// The current item of the pending batch, if any. Provided as a
     /// convenience for the widget, which only ever renders one item
     /// at a time; the batch itself is exposed by `pending_batch()`.
+    #[must_use]
     pub fn pending_approval(&self) -> Option<&PendingApproval> {
         self.pending_batch.as_ref().and_then(|b| b.current_item())
     }
@@ -708,6 +748,7 @@ impl KodApp {
 
     /// True when the approval dialog is up and normal key handling
     /// must be routed to it instead of the input box.
+    #[must_use]
     pub fn is_approving(&self) -> bool {
         self.pending_batch.is_some()
     }
@@ -719,6 +760,7 @@ impl KodApp {
     }
 
     /// The pending question, if any.
+    #[must_use]
     pub fn pending_question(&self) -> Option<&PendingQuestion> {
         self.pending_question.as_ref()
     }
@@ -731,11 +773,13 @@ impl KodApp {
     }
 
     /// True when a question is pending.
+    #[must_use]
     pub fn is_asking(&self) -> bool {
         self.pending_question.is_some()
     }
 
     /// The current text of the question input.
+    #[must_use]
     pub fn question_input(&self) -> &str {
         &self.question_input
     }
@@ -751,6 +795,7 @@ impl KodApp {
     }
 
     /// The pending confirmation prompt, if any.
+    #[must_use]
     pub fn pending_confirm(&self) -> Option<ConfirmKind> {
         self.pending_confirm
     }
@@ -772,11 +817,13 @@ impl KodApp {
     }
 
     /// True when the user is editing an approval argument.
+    #[must_use]
     pub fn is_editing_approval(&self) -> bool {
         self.pending_edit.is_some()
     }
 
     /// The current approval-edit buffer.
+    #[must_use]
     pub fn edit_buffer(&self) -> Option<&str> {
         self.pending_edit.as_ref().map(|e| e.buffer.as_str())
     }
@@ -855,6 +902,7 @@ impl KodApp {
     /// transcript) and `/clearall` (which also wipes memory and
     /// checkpoints). This one is the "reset my terminal to a clean
     /// state" — no data is discarded.
+    #[must_use]
     pub fn reset_transient_state(&mut self) -> usize {
         let mut cleared = 0usize;
         if !self.input.is_empty() {
@@ -900,6 +948,7 @@ impl KodApp {
     }
 
     /// Context-aware hint line for the status bar.
+    #[must_use]
     pub fn hint_line(&self) -> String {
         if matches!(self.input_mode, InputMode::Insert) {
             "Enter send · Ctrl+J newline · Up history · Tab complete · Esc done".to_string()
@@ -918,6 +967,7 @@ impl KodApp {
     }
 
     /// Last assistant reply text (for `y` / `/copy`).
+    #[must_use]
     pub fn last_assistant_text(&self) -> Option<&str> {
         self.messages
             .iter()

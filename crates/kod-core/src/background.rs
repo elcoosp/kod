@@ -44,6 +44,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 ];
 
 /// Whether a tool name is on the read-only whitelist.
+#[must_use]
 pub fn is_read_only(tool: &str) -> bool {
     READ_ONLY_TOOLS.contains(&tool)
 }
@@ -92,6 +93,7 @@ pub enum JobKind {
 
 impl JobKind {
     /// Short label for the `/jobs` surface.
+    #[must_use]
     pub fn label(&self) -> String {
         match self {
             JobKind::Review { subject, endpoint } => {
@@ -162,6 +164,7 @@ impl BackgroundJobRunner {
     /// A runner with a concurrency cap. `2` is the default: two
     /// background jobs can share the CPU and endpoint budget
     /// without starving the interactive session.
+    #[must_use]
     pub fn new(max_concurrent: usize) -> Self {
         let n = max_concurrent.max(1);
         Self {

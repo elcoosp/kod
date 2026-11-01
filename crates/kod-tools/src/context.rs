@@ -75,6 +75,7 @@ pub enum Backend {
 
 impl Backend {
     /// The backend binary name.
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Backend::Bwrap => "bwrap",
@@ -115,6 +116,7 @@ pub struct SandboxResolver {
 impl SandboxResolver {
     /// Probe the host for available primitives. Cheap; safe to call
     /// from a startup path.
+    #[must_use]
     pub fn detect() -> Self {
         // Only the linux/macos arms below push; on other targets the
         // vector is never mutated, so `mut` would warn under
@@ -148,6 +150,7 @@ impl SandboxResolver {
     /// A resolver with no backends (a stripped container, a test). The
     /// `invocation` method returns `None` for `Auto` and errors for
     /// `Require`, matching what a host without primitives would do.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             available: Vec::new(),
@@ -155,12 +158,14 @@ impl SandboxResolver {
     }
 
     /// True when at least one backend is available.
+    #[must_use]
     pub fn has_any(&self) -> bool {
         !self.available.is_empty()
     }
 
     /// The backend that would be used for a call, if any. Useful for
     /// `sandbox: bwrap` badges.
+    #[must_use]
     pub fn backend_name(&self) -> Option<&'static str> {
         self.available.first().map(|b| b.name())
     }
@@ -665,6 +670,7 @@ impl BackgroundSpawnHook {
     }
 
     /// `(command, stall_wake_seconds, holder)` → job id, or `None`.
+    #[must_use]
     pub fn spawn(&self, command: &str, stall: Option<u64>, holder: &str) -> Option<String> {
         (self.inner)(command, stall, holder)
     }
@@ -1062,6 +1068,7 @@ impl ToolContext {
     /// builds one per session and hands the same `Arc` to every tool
     /// context, so a `read_file` in one round is visible to an `edit`
     /// in the next.
+    #[must_use]
     pub fn with_edit_store(
         mut self,
         store: std::sync::Arc<std::sync::Mutex<crate::edit_hashline::EditStore>>,
@@ -1071,6 +1078,7 @@ impl ToolContext {
     }
 
     /// Install a shared lock table and set the writer identity.
+    #[must_use]
     pub fn with_locks(
         mut self,
         table: std::sync::Arc<PathLockTable>,
@@ -1085,6 +1093,7 @@ impl ToolContext {
     /// Both are optional and independent of each other; a caller
     /// that provides only a minimizer gets the rewritten output
     /// with no artifact URL.
+    #[must_use]
     pub fn with_minimizer(
         mut self,
         minimizer: std::sync::Arc<kod_minimize::Minimizer>,
@@ -1099,12 +1108,14 @@ impl ToolContext {
     /// `write_file` will dispatch to a handler when the path carries
     /// a scheme the router knows. The engine calls this once when it
     /// derives a per-call context.
+    #[must_use]
     pub fn with_protocol_router(mut self, router: crate::internal_url::ProtocolRouter) -> Self {
         self.protocol_router = Some(router);
         self
     }
 
     /// Override the lock wait.
+    #[must_use]
     pub fn with_lock_timeout(mut self, d: std::time::Duration) -> Self {
         self.lock_timeout = d;
         self
@@ -1112,18 +1123,21 @@ impl ToolContext {
 
     /// Enable or disable sandboxed shell execution.
     /// F2b-10: set `.git` write protection (default `true`).
+    #[must_use]
     pub fn with_git_history_protected(mut self, protected: bool) -> Self {
         self.git_history_protected = protected;
         self
     }
 
     /// Builder: set the sandbox mode.
+    #[must_use]
     pub fn with_sandbox(mut self, mode: SandboxMode) -> Self {
         self.sandbox = mode;
         self
     }
 
     /// Set permissions
+    #[must_use]
     pub fn with_permissions(mut self, permissions: ToolPermissions) -> Self {
         self.permissions = permissions;
         self
@@ -1132,6 +1146,7 @@ impl ToolContext {
     /// Set timeout
     /// Install a file-touch observer. The swarm runner sets this for
     /// the duration of a run; every other caller leaves it `None`.
+    #[must_use]
     pub fn with_file_touch_hook(mut self, hook: FileTouchHook) -> Self {
         self.on_file_touch = Some(hook);
         self
@@ -1139,6 +1154,7 @@ impl ToolContext {
 
     /// Install a background-command spawner. The engine sets this so
     /// `execute_command` can honor `run_in_background`.
+    #[must_use]
     pub fn with_background_hook(mut self, hook: BackgroundSpawnHook) -> Self {
         self.on_background_command = Some(hook);
         self
@@ -1148,6 +1164,7 @@ impl ToolContext {
     /// this alongside the spawner so `execute_command` can hand a
     /// deadline-exceeded child to the background runner instead of
     /// killing it.
+    #[must_use]
     pub fn with_background_adopt_hook(mut self, hook: BackgroundAdoptHook) -> Self {
         self.on_background_adopt = Some(hook);
         self
@@ -1162,6 +1179,7 @@ impl ToolContext {
     }
 
     /// Builder: set the tool timeout in seconds.
+    #[must_use]
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
         self

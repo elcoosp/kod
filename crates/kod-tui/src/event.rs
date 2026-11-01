@@ -383,6 +383,7 @@ impl Event {
     /// `Tick` (≤100 ms) will pick up the visible state, so a chunk does
     /// not itself force a frame. Every other event (keys, paste,
     /// resize, completion, errors) is worth a fresh frame.
+    #[must_use]
     pub fn requires_render(&self) -> bool {
         !matches!(self, Event::ResponseChunk(_))
     }
@@ -430,6 +431,7 @@ pub struct EventHandler {
 
 impl EventHandler {
     /// Create a new event handler
+    #[must_use]
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel(100);
         Self {

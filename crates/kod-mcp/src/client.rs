@@ -929,6 +929,7 @@ mod t2_c6_regression {
 /// same parse call so the fuzz target exercises the exact code path
 /// without needing a runtime or a real child process.
 #[doc(hidden)]
+#[must_use]
 pub fn parse_line_for_fuzz(line: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(line.trim()).ok()
 }

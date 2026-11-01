@@ -89,11 +89,13 @@ impl MentalModel {
     }
 
     /// Whether the model has been filled.
+    #[must_use]
     pub fn is_rendered(&self) -> bool {
         self.rendered.is_some()
     }
 
     /// The rendered block, or `None` before the first fill.
+    #[must_use]
     pub fn block(&self) -> Option<&str> {
         self.rendered.as_deref()
     }
@@ -122,6 +124,7 @@ pub struct MentalModels {
 
 impl MentalModels {
     /// Empty mental-models set.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -140,6 +143,7 @@ impl MentalModels {
     }
 
     /// The ids of every seeded model, sorted.
+    #[must_use]
     pub fn ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self.models.keys().cloned().collect();
         v.sort();
@@ -147,16 +151,19 @@ impl MentalModels {
     }
 
     /// One model by id.
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<&MentalModel> {
         self.models.get(id)
     }
 
     /// One model by id, mutably — for `fill`.
+    #[must_use]
     pub fn get_mut(&mut self, id: &str) -> Option<&mut MentalModel> {
         self.models.get_mut(id)
     }
 
     /// The current transcript generation.
+    #[must_use]
     pub fn transcript_generation(&self) -> u64 {
         self.transcript_generation
     }
@@ -173,6 +180,7 @@ impl MentalModels {
 
     /// Every model whose trigger says it should refresh at a
     /// boundary.
+    #[must_use]
     pub fn refresh_ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self
             .models
@@ -194,6 +202,7 @@ impl MentalModels {
     ///
     /// The bytes are stable for a given set of rendered blocks, so
     /// the prompt prefix that contains them does not churn.
+    #[must_use]
     pub fn render_block(&self) -> String {
         let mut out = String::new();
         for id in self.ids() {

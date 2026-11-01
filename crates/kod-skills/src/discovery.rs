@@ -34,6 +34,7 @@ pub const SKILL_ENTRYPOINT: &str = "SKILL.md";
 /// A missing or unreadable `root` yields an empty vec rather than an
 /// error: a caller that probes several candidate directories should
 /// not have to special-case the absent ones.
+#[must_use]
 pub fn discover_skill_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if !root.is_dir() {
@@ -47,6 +48,7 @@ pub fn discover_skill_files(root: &Path) -> Vec<PathBuf> {
 /// Whether `path` is a skill file directly under `root` (flat `.md`)
 /// or a `SKILL.md` anywhere. Exposed for callers that already have a
 /// path and want the rule without re-walking — the watcher, for one.
+#[must_use]
 pub fn is_skill_file(root: &Path, path: &Path) -> bool {
     if path.file_name().and_then(|n| n.to_str()) == Some(SKILL_ENTRYPOINT) {
         return true;

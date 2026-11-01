@@ -62,6 +62,7 @@ pub enum DecisionKind {
 
 impl DecisionKind {
     /// The lowercase string label for this kind.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Architecture => "architecture_decision",
@@ -74,6 +75,7 @@ impl DecisionKind {
     }
 
     /// The file a decision of this kind belongs in.
+    #[must_use]
     pub fn target_file(self) -> &'static str {
         match self {
             Self::Architecture | Self::Constraint | Self::RejectedApproach => "architecture.md",
@@ -106,11 +108,13 @@ pub struct Friction {
 impl Friction {
     /// Whether any friction fired. A decision with no friction is
     /// admissible but ranked lowest.
+    #[must_use]
     pub fn any(&self) -> bool {
         self.corrective || self.regression || self.subtle
     }
 
     /// A rank for ordering: regression > corrective > subtle > none.
+    #[must_use]
     pub fn rank(&self) -> u8 {
         if self.regression {
             3
@@ -162,6 +166,7 @@ pub const MIN_PROMPT_CHARS: usize = 16;
 /// False for a short prompt (< [`MIN_PROMPT_CHARS`] chars, after
 /// trimming) and for a slash command (`/`-prefixed). A slash command
 /// is a harness directive, not a statement of intent.
+#[must_use]
 pub fn prompt_is_eligible(prompt: &str) -> bool {
     let t = prompt.trim();
     // `MIN_PROMPT_CHARS` names a character count, so count chars,
@@ -188,6 +193,7 @@ pub fn prompt_is_eligible(prompt: &str) -> bool {
 /// evidence cannot be found in the prompt. Case-insensitivity is the
 /// one relaxation — a model quoting the user's words in different case
 /// is not hallucinating.
+#[must_use]
 pub fn evidence_is_grounded(evidence: &str, prompt: &str) -> bool {
     let e = evidence.trim();
     if e.is_empty() {
@@ -201,6 +207,7 @@ pub fn evidence_is_grounded(evidence: &str, prompt: &str) -> bool {
 ///
 /// The gate runs in order: an ineligible prompt rejects everything; an
 /// ungrounded evidence string rejects the delta.
+#[must_use]
 pub fn admit<'a>(delta: &'a DecisionDelta, prompt: &str) -> Option<&'a DecisionDelta> {
     if !prompt_is_eligible(prompt) {
         return None;
@@ -213,6 +220,7 @@ pub fn admit<'a>(delta: &'a DecisionDelta, prompt: &str) -> Option<&'a DecisionD
 
 /// Sort admitted deltas by friction rank, highest first. A stable sort
 /// keeps extraction order within a rank.
+#[must_use]
 pub fn rank_by_friction(mut deltas: Vec<DecisionDelta>) -> Vec<DecisionDelta> {
     deltas.sort_by_key(|d| std::cmp::Reverse(d.friction.rank()));
     deltas
@@ -233,6 +241,7 @@ pub const DEFAULT_MAX_DECISIONS: usize = 4;
 ///
 /// `max_entries` is a hard cap; the reply parser also enforces it so
 /// a verbose model cannot grow the delta queue past the budget.
+#[must_use]
 pub fn build_prompt(user_prompt: &str, max_entries: usize) -> String {
     let cap = max_entries.max(1);
     format!(
@@ -272,6 +281,7 @@ pub const FILE_LINE_CEILING: usize = 120;
 /// friction-ranked order), and the rules that make the output usable:
 /// a timeless normative statement per entry, no task state, no file
 /// paths, and a hard line ceiling.
+#[must_use]
 pub fn build_consolidation_prompt(existing: &str, deltas: &[DecisionDelta]) -> String {
     let existing = if existing.trim().is_empty() {
         "(empty)".to_string()
@@ -308,6 +318,7 @@ pub fn build_consolidation_prompt(existing: &str, deltas: &[DecisionDelta]) -> S
 /// The model is *told* the ceiling; this enforces it. A reply that
 /// overruns is cut at the last full line, so a partial sentence never
 /// survives into the file.
+#[must_use]
 pub fn truncate_to_ceiling(text: &str) -> String {
     let mut out = String::new();
     for (i, line) in text.lines().enumerate() {
@@ -328,6 +339,7 @@ pub fn truncate_to_ceiling(text: &str) -> String {
 /// shape — yields an empty vector; a caller treats that as "no
 /// decisions this turn" rather than an error, matching the extraction
 /// path's best-effort contract.
+#[must_use]
 pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<DecisionDelta> {
     let Some(start) = reply.find('[') else {
         return Vec::new();

@@ -45,6 +45,7 @@ pub struct Intercept {
 /// If `command` is a bare top-level `grep`/`cat`/`find` invocation
 /// the corresponding tool covers better, return an [`Intercept`].
 /// `None` means "run it through the shell".
+#[must_use]
 pub fn intercept(command: &str) -> Option<Intercept> {
     let trimmed = command.trim();
     if trimmed.is_empty() {

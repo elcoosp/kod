@@ -21,6 +21,7 @@ pub struct Context {
 
 impl Context {
     /// Estimate token count (rough approximation)
+    #[must_use]
     pub fn estimated_tokens(&self) -> usize {
         let total_chars = self.user_input.len()
             + self
@@ -46,6 +47,7 @@ impl Context {
     }
 
     /// Convert to a prompt string for the LLM
+    #[must_use]
     pub fn to_prompt(&self) -> String {
         let mut prompt = String::new();
 
@@ -100,35 +102,41 @@ pub struct ContextBuilder {
 
 impl ContextBuilder {
     /// Start a builder with defaults.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the user input
+    #[must_use]
     pub fn with_user_input(mut self, input: impl Into<String>) -> Self {
         self.user_input = input.into();
         self
     }
 
     /// Set the memory context
+    #[must_use]
     pub fn with_memory(mut self, memory: MemoryContext) -> Self {
         self.memory_context = memory;
         self
     }
 
     /// Add skills to the context
+    #[must_use]
     pub fn with_skills(mut self, skills: Vec<Skill>) -> Self {
         self.skills = skills;
         self
     }
 
     /// Add a system prompt
+    #[must_use]
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
         self
     }
 
     /// Build the final context
+    #[must_use]
     pub fn build(self) -> Context {
         Context {
             user_input: self.user_input,

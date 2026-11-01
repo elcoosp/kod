@@ -54,6 +54,7 @@ pub async fn run_jev_tune_show() -> Result<()> {
 
 /// The lines `run_jev_tune_show` prints, as data. Same Testable Core
 /// shape as `limits_lines`.
+#[must_use]
 pub fn jev_tune_lines(cfg: &KodConfig) -> Vec<String> {
     let mut out = Vec::new();
     out.push("Jev thresholds".to_string());
@@ -155,6 +156,7 @@ pub async fn run_limits_show() -> Result<()> {
 /// capturing stdout. Same Testable Core pattern as
 /// `run_prompt_inner` and `run_swarm_inner`: the printer stays in the
 /// wrapper, the computation returns structured output.
+#[must_use]
 pub fn limits_lines(cfg: &KodConfig) -> Vec<String> {
     let l = &cfg.limits;
     let mut out = Vec::new();

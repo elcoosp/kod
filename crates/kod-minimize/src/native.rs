@@ -45,6 +45,7 @@ use serde_json::Value;
 /// A filter that recognizes its input returns the rewritten form; a
 /// filter that does not returns the input unchanged. Neither case
 /// errors: the caller's contract is "minimize or pass through".
+#[must_use]
 pub fn run(filter: &str, text: &str) -> Option<String> {
     match filter {
         "cargo-json" => Some(cargo_json(text)),

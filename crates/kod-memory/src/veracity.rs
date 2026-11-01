@@ -51,6 +51,7 @@ pub enum Veracity {
 
 impl Veracity {
     /// The design's evidence weight for this source.
+    #[must_use]
     pub fn weight(self) -> f64 {
         match self {
             Self::Stated => 1.0,
@@ -63,11 +64,13 @@ impl Veracity {
 
     /// The base confidence a brand-new fact starts at:
     /// `weight * 0.5`.
+    #[must_use]
     pub fn base_confidence(self) -> f64 {
         self.weight() * 0.5
     }
 
     /// The lowercase string label for this veracity level.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Stated => "stated",
@@ -94,6 +97,7 @@ pub const MENTION_STEP: f64 = 0.3;
 /// this hashes as-is and documents the gap: a combining accent and a
 /// precomposed character would produce two ids. `unicode-normalization`
 /// closes it; not worth the dependency for ASCII.
+#[must_use]
 pub fn fact_content_id(subject: &str, predicate: &str, object: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
@@ -108,12 +112,14 @@ pub fn fact_content_id(subject: &str, predicate: &str, object: &str) -> String {
 
 /// Raise a fact's confidence on a re-mention:
 /// `conf += (1 - conf) * weight * 0.3`, clamped to `[0, 1]`.
+#[must_use]
 pub fn raise_confidence(confidence: f64, weight: f64) -> f64 {
     let c = confidence.clamp(0.0, 1.0);
     (c + (1.0 - c) * weight * MENTION_STEP).clamp(0.0, 1.0)
 }
 
 /// The base confidence a new fact starts at, given its source.
+#[must_use]
 pub fn base_confidence(source: Veracity) -> f64 {
     source.base_confidence()
 }
@@ -122,6 +128,7 @@ pub fn base_confidence(source: Veracity) -> f64 {
 /// contradiction: true only when strictly higher. A tie keeps the
 /// incumbent — the design surfaces a contradiction rather than
 /// silently picking a winner, and a tie has no winner.
+#[must_use]
 pub fn should_supersede(challenger: f64, incumbent: f64) -> bool {
     challenger > incumbent
 }

@@ -76,6 +76,7 @@ const SYSTEM_RECURSIVE: &[&str] = &["/etc", "/boot", "/sys", "/proc"];
 ///
 /// Returns the expanded string and whether any variable was left
 /// unresolved.
+#[must_use]
 pub fn expand_lexical(raw: &str, home: &Path) -> (String, bool) {
     let mut out = String::with_capacity(raw.len());
     let mut unresolved = false;
@@ -151,6 +152,7 @@ pub fn expand_lexical(raw: &str, home: &Path) -> (String, bool) {
 /// touching the filesystem. `~/../..` normalizes to `/`, which is the
 /// point — a path that walks out of a protected directory is as
 /// dangerous as one that names it.
+#[must_use]
 pub fn normalize(path: &str) -> PathBuf {
     let p = Path::new(path);
     let mut out: Vec<Component> = Vec::new();
@@ -197,6 +199,7 @@ fn in_credential_store(path: &Path, home: &Path) -> bool {
 /// caller can escalate on it; this function treats an unresolved
 /// variable as `Confirm`, because a path it cannot see is a path it
 /// cannot clear.
+#[must_use]
 pub fn classify(raw: &str, ctx: &RiskContext) -> (PathDanger, String) {
     let (expanded, unresolved) = expand_lexical(raw, &ctx.home_dir);
     let normalized = normalize(&expanded);

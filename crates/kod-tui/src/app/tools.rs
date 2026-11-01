@@ -67,11 +67,13 @@ impl KodApp {
     }
 
     /// The name of the currently-running tool.
+    #[must_use]
     pub fn current_tool(&self) -> Option<&String> {
         self.current_tool.as_ref()
     }
 
     /// The tool executions in the current transcript.
+    #[must_use]
     pub fn tool_executions(&self) -> &[ToolExecution] {
         &self.tool_executions
     }
@@ -79,6 +81,7 @@ impl KodApp {
     /// Delta §11.4: number of tool rows still showing the live "running…"
     /// placeholder. Used by the status strip to render an aggregate when
     /// more than one call is in flight.
+    #[must_use]
     pub fn running_tool_count(&self) -> usize {
         self.messages
             .iter()
@@ -387,11 +390,13 @@ impl KodApp {
     }
 
     /// True when the tool result is expanded.
+    #[must_use]
     pub fn is_tool_expanded(&self, id: &MessageId) -> bool {
         self.expanded_tools.contains(id)
     }
 
     /// True when tool rows are visible.
+    #[must_use]
     pub fn show_tools(&self) -> bool {
         self.show_tools
     }

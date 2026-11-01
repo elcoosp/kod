@@ -44,6 +44,7 @@ pub struct RequestRecord {
 
 impl RequestRecord {
     /// USD saved by cache reads minus the write premium.
+    #[must_use]
     pub fn cache_savings_usd(&self) -> f64 {
         let read_saved = (self.input_rate - self.cache_read_rate) * (self.cache_read_tokens as f64)
             / 1_000_000.0;
@@ -54,6 +55,7 @@ impl RequestRecord {
     }
 
     /// Cached fraction of the input window. `None` with no input.
+    #[must_use]
     pub fn cache_rate(&self) -> Option<f64> {
         let total = self.input_tokens + self.cache_read_tokens;
         if total == 0 {
@@ -63,6 +65,7 @@ impl RequestRecord {
     }
 
     /// Output tokens per second. `None` with no duration or on error.
+    #[must_use]
     pub fn tokens_per_second(&self) -> Option<f64> {
         if self.duration_ms == 0 || self.error {
             return None;
@@ -98,6 +101,7 @@ pub struct Aggregates {
 
 impl Aggregates {
     /// Empty aggregate.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -121,6 +125,7 @@ impl Aggregates {
     }
 
     /// Fraction of requests that errored. None when no requests.
+    #[must_use]
     pub fn error_rate(&self) -> Option<f64> {
         if self.requests == 0 {
             return None;
@@ -130,6 +135,7 @@ impl Aggregates {
 
     /// Average time to first token in milliseconds. None when no ttft
     /// values were recorded.
+    #[must_use]
     pub fn avg_ttft_ms(&self) -> Option<f64> {
         if self.ttft_count == 0 {
             return None;
@@ -139,6 +145,7 @@ impl Aggregates {
 
     /// Fraction of the input window read from cache. None when no
     /// tokens were seen.
+    #[must_use]
     pub fn cache_rate(&self) -> Option<f64> {
         let total = self.input_tokens + self.cache_read_tokens;
         if total == 0 {

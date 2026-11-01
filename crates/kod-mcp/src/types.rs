@@ -86,6 +86,7 @@ impl McpToolResult {
     /// Flatten every `Text` part into one string, newline-separated.
     /// Image and URI-only resource parts become short placeholders so
     /// the model knows something was returned but did not fit as text.
+    #[must_use]
     pub fn render_text(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         for c in &self.content {

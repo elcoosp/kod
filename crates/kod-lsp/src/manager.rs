@@ -45,6 +45,7 @@ use tokio::sync::Mutex;
 /// this language on this host" and is not an error: the caller
 /// reports it as a missing capability and falls back to the
 /// compiler-based `check`.
+#[must_use]
 pub fn binary_for_path(path: &Path) -> Option<&'static str> {
     match path.extension().and_then(|s| s.to_str()) {
         Some("rs") if which("rust-analyzer") => Some("rust-analyzer"),
@@ -81,6 +82,7 @@ pub struct LspManager {
 impl LspManager {
     /// New manager for a given workspace root. Cheap; no process is
     /// spawned until the first request for a language.
+    #[must_use]
     pub fn new(workspace_root: PathBuf) -> Self {
         Self {
             workspace_root,

@@ -21,6 +21,7 @@ pub struct EditHashlineTool {
 
 impl EditHashlineTool {
     /// Build the hashline edit tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

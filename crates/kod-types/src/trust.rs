@@ -36,6 +36,7 @@ pub enum TrustLevel {
 
 impl TrustLevel {
     /// Human-facing label used in the marker and in the TUI badge.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             TrustLevel::System => "system",
@@ -50,12 +51,14 @@ impl TrustLevel {
     /// True when content at this level may inject instructions.
     /// Everything above `Assistant` is treated as adversarial for the
     /// purposes of the taint gate.
+    #[must_use]
     pub fn is_tainting(self) -> bool {
         matches!(self, TrustLevel::ToolUntrusted | TrustLevel::Retrieved)
     }
 
     /// The rendering marker for a source, e.g. `<|source=web_fetch
     /// id=call_7a2 trust=untrusted|>`.
+    #[must_use]
     pub fn open_marker(self, source: &str, id: Option<&str>) -> String {
         match id {
             Some(i) => format!("<|source={source} id={i} trust={}|>", self.as_str()),
@@ -64,6 +67,7 @@ impl TrustLevel {
     }
 
     /// The matching close marker.
+    #[must_use]
     pub fn close_marker() -> &'static str {
         "<|/source|>"
     }

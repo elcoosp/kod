@@ -30,6 +30,7 @@ pub enum Capability {
 
 impl Capability {
     /// The lowercase string label for this capability.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Capability::Coding => "coding",
@@ -339,30 +340,35 @@ impl AgentBuilder {
     }
 
     /// Add a capability
+    #[must_use]
     pub fn with_capability(mut self, capability: Capability) -> Self {
         self.capabilities.insert(capability);
         self
     }
 
     /// Set the model
+    #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
     /// Set max context tokens
+    #[must_use]
     pub fn with_max_context_tokens(mut self, tokens: usize) -> Self {
         self.max_context_tokens = tokens;
         self
     }
 
     /// Set model config
+    #[must_use]
     pub fn with_model_config(mut self, config: ModelConfig) -> Self {
         self.model_config = config;
         self
     }
 
     /// Build the agent
+    #[must_use]
     pub fn build(self) -> Agent {
         let (state_tx, state_rx) = watch::channel(AgentState::Idle);
         let model = self

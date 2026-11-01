@@ -31,6 +31,7 @@ impl TraceWriter {
 
     /// Default trace path next to a session log path: same directory,
     /// `turns.jsonl` instead of the session filename.
+    #[must_use]
     pub fn default_for_session(session_path: &Path) -> Option<PathBuf> {
         session_path.parent().map(|p| p.join("turns.jsonl"))
     }

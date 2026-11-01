@@ -350,6 +350,7 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
 /// real hunk headers, so `apply_unified_diff` (which parses those
 /// headers to locate hunks) saw zero hunks and rejected every patch
 /// this function produced. `render_then_apply` is the regression test.
+#[must_use]
 pub fn render_unified_diff(old: &str, new: &str, path: &str) -> String {
     let diff = TextDiff::from_lines(old, new);
     diff.unified_diff()

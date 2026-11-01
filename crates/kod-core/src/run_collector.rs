@@ -51,6 +51,7 @@ pub enum ToolStatus {
 
 impl ToolStatus {
     /// The lowercase string label for this status.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ok => "ok",
@@ -76,6 +77,7 @@ pub enum CostUnavailable {
 
 impl CostUnavailable {
     /// The lowercase string label for this reason.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::NoUsage => "no-usage",
@@ -116,6 +118,7 @@ impl ToolCounts {
     }
 
     /// Total tool calls recorded.
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.ok + self.error + self.blocked + self.skipped + self.timeout + self.aborted
     }
@@ -145,6 +148,7 @@ pub struct RunCollector {
 
 impl RunCollector {
     /// Empty collector.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -189,26 +193,31 @@ impl RunCollector {
     }
 
     /// How many turns the run took.
+    #[must_use]
     pub fn turns(&self) -> u64 {
         self.turns
     }
 
     /// Total elapsed wall time, milliseconds.
+    #[must_use]
     pub fn elapsed_ms(&self) -> u64 {
         self.elapsed_ms
     }
 
     /// A copy of the stop-reason histogram.
+    #[must_use]
     pub fn stop_reasons(&self) -> BTreeMap<String, u64> {
         self.stop_reasons.clone()
     }
 
     /// A copy of the per-tool counters.
+    #[must_use]
     pub fn tool_counts(&self) -> BTreeMap<String, ToolCounts> {
         self.tool_counts.clone()
     }
 
     /// Tools available but never invoked. Sorted.
+    #[must_use]
     pub fn unused_tools(&self) -> Vec<String> {
         self.tools_available
             .difference(&self.tools_invoked)
@@ -217,12 +226,14 @@ impl RunCollector {
     }
 
     /// A one-line coverage summary: `invoked / available`.
+    #[must_use]
     pub fn coverage(&self) -> (usize, usize) {
         (self.tools_invoked.len(), self.tools_available.len())
     }
 
     /// The full report, as a multi-line string a `/stats` handler
     /// can print.
+    #[must_use]
     pub fn report(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(

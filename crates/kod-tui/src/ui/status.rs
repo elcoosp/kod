@@ -18,6 +18,7 @@ pub struct StatusWidget;
 
 impl StatusWidget {
     /// Build the status widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

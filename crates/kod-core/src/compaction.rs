@@ -51,6 +51,7 @@ pub const MAX_LEAD_BAND: u64 = 32_000;
 /// the hard threshold because that is the point the lead is *from*.
 /// `0.125 * 0.95 = 0.11875 = 19/160`, so the arithmetic is exact in
 /// integers.
+#[must_use]
 pub fn lead_band_tokens(window_tokens: u64) -> u64 {
     (window_tokens.saturating_mul(19) / 160).clamp(MIN_LEAD_BAND, MAX_LEAD_BAND)
 }
@@ -60,6 +61,7 @@ pub fn lead_band_tokens(window_tokens: u64) -> u64 {
 /// Below this, do nothing. At or above it (and below the hard
 /// threshold), start the background summary. At or above the hard
 /// threshold, compact the current turn.
+#[must_use]
 pub fn arm_threshold_tokens(window_tokens: u64) -> u64 {
     let hard = window_tokens.saturating_mul(95) / 100;
     hard.saturating_sub(lead_band_tokens(window_tokens))
@@ -91,6 +93,7 @@ pub enum Action {
 /// too late (the request is rejected). The engine falls back to the
 /// estimate only when no observed number exists yet — the first turn
 /// of a session.
+#[must_use]
 pub fn decide(used_tokens: u64, budget_tokens: u64) -> Action {
     if budget_tokens == 0 {
         // A zero budget means "no window known"; refusing to compact
@@ -126,6 +129,7 @@ pub fn decide(used_tokens: u64, budget_tokens: u64) -> Action {
 /// Returns `None` when no safe cut exists that keeps at least one
 /// message — a transcript of a single orphaned `tool_use` and nothing
 /// else. The caller then leaves the transcript alone.
+#[must_use]
 pub fn safe_cutoff(turns: &[ChatMessage], keep_recent: usize) -> Option<usize> {
     if turns.is_empty() {
         return None;
@@ -202,6 +206,7 @@ pub fn safe_cutoff(turns: &[ChatMessage], keep_recent: usize) -> Option<usize> {
 /// factual: counts, tool names, file paths. It does not try to
 /// explain *why* the work happened — a model reading it knows it lost
 /// detail and should ask rather than guess.
+#[must_use]
 pub fn emergency_summary(dropped: &[ChatMessage], budget_tokens: u64) -> String {
     let tool_names: std::collections::BTreeSet<&str> = dropped
         .iter()

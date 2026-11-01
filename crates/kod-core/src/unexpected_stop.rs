@@ -102,6 +102,7 @@ pub struct StopCandidate<'a> {
 /// to evaluate. Cheap-to-expensive ordering means a non-candidate is
 /// rejected at the first failing condition, which matters because a
 /// caller evaluates this on every turn.
+#[must_use]
 pub fn is_candidate(c: &StopCandidate<'_>) -> bool {
     // No tool calls. A reply with tool calls is still in flight.
     if c.has_tool_calls {
@@ -129,6 +130,7 @@ pub struct UnexpectedStopClassifier {
 
 impl UnexpectedStopClassifier {
     /// Build a classifier over a judgment client.
+    #[must_use]
     pub fn new(client: JudgmentClient) -> Self {
         Self { client }
     }
@@ -136,6 +138,7 @@ impl UnexpectedStopClassifier {
     /// The judge question, as a value — public so a caller that
     /// wants to render or log it can, without reaching through the
     /// classifier.
+    #[must_use]
     pub fn question() -> Question {
         Question::YesNo {
             id: "unexpected".to_string(),
@@ -190,6 +193,7 @@ impl UnexpectedStopClassifier {
 /// does not carry one — it lives on `StreamChunk::StopReason` on
 /// the streaming path, and a caller of the collected path knows
 /// the reason from the wire layer.
+#[must_use]
 pub fn candidate_from_response<'a>(
     response: &'a GenerationResponse,
     stop_reason: Option<&'a str>,

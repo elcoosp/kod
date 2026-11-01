@@ -69,6 +69,7 @@ const CANDIDATES: &[&str] = &[
 /// construct in prose (OpenAI: *"Invalid schema ... 'const' is not
 /// permitted"*) is understood; one that returns an opaque "invalid
 /// request" yields [`RetryPlan::GiveUp`] rather than a guess.
+#[must_use]
 pub fn classify_rejection(status: u16, body: &str) -> Rejection {
     // Match case-insensitively: a provider that writes `'CONST' is
     // not permitted` is naming the construct just as clearly as one
@@ -145,6 +146,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 }
 
 /// Turn a rejection into a retry decision.
+#[must_use]
 pub fn plan_retry(rejection: &Rejection) -> RetryPlan {
     match &rejection.keyword {
         Some(kw) => RetryPlan::RetryWithoutConstruct {

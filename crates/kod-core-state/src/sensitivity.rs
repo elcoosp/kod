@@ -32,6 +32,7 @@ pub enum Sensitivity {
 
 impl Sensitivity {
     /// The lowercase string label for this level.
+    #[must_use]
     pub fn label(&self) -> &'static str {
         match self {
             Sensitivity::Public => "public",
@@ -76,6 +77,7 @@ pub struct TrustRequirement(pub Option<&'static str>);
 
 impl TrustRequirement {
     /// The minimum endpoint trust tier for a given sensitivity level.
+    #[must_use]
     pub fn for_sensitivity(s: Sensitivity) -> Self {
         match s {
             Sensitivity::Public => TrustRequirement(None),
@@ -85,6 +87,7 @@ impl TrustRequirement {
     }
 
     /// An endpoint that declared no tier is treated as standard.
+    #[must_use]
     pub fn satisfied_by(&self, tier: Option<&str>) -> bool {
         let Some(req) = self.0 else {
             return true;

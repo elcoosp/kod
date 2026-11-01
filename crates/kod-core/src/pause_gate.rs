@@ -86,6 +86,7 @@ pub struct PauseGate {
 
 impl PauseGate {
     /// A fresh gate, running.
+    #[must_use]
     pub fn new() -> Self {
         let (tx, rx) = watch::channel(false);
         Self { tx, rx }
@@ -112,6 +113,7 @@ impl PauseGate {
     /// pick a label. Not a substitute for `wait_if_paused` at a
     /// boundary — a caller that checks this and then proceeds has a
     /// race between the check and the proceed.
+    #[must_use]
     pub fn is_paused(&self) -> bool {
         *self.rx.borrow()
     }

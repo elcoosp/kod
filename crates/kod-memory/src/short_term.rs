@@ -28,6 +28,7 @@ pub struct ShortTermMemory {
 
 impl ShortTermMemory {
     /// Create a new short-term memory with the given capacity
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             state: RwLock::new(ShortTermState {

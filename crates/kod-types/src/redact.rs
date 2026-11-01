@@ -113,6 +113,7 @@ impl Redactor {
 
     /// Build with only the given rules. The entropy heuristic is off
     /// — a caller that supplied rules wants exactly those rules.
+    #[must_use]
     pub fn with_rules(rules: Vec<RedactRule>) -> Self {
         Self {
             rules: std::sync::Arc::new(rules),
@@ -123,6 +124,7 @@ impl Redactor {
 
     /// Turn the entropy heuristic on or off. `floor` in `[0.0, 8.0]`;
     /// values below 3.5 false-positive on normal code identifiers.
+    #[must_use]
     pub fn with_entropy(mut self, on: bool, floor: f64) -> Self {
         self.entropy_scan = on;
         self.entropy_floor = floor.clamp(0.0, 8.0);
@@ -132,6 +134,7 @@ impl Redactor {
     /// Redact `input`, returning the sanitized string and the list of
     /// redactions that fired. A rule that fires zero times is not
     /// reported.
+    #[must_use]
     pub fn redact(&self, input: &str) -> (String, Vec<Redaction>) {
         let mut current = input.to_string();
         let mut out = Vec::new();
@@ -262,6 +265,7 @@ impl Redactor {
     }
 
     /// Number of rules this redactor holds.
+    #[must_use]
     pub fn rule_count(&self) -> usize {
         self.rules.len()
     }
@@ -269,6 +273,7 @@ impl Redactor {
 
 /// The built-in rules. Adding a rule is safe; renaming or removing
 /// one changes the on-disk schema of historical session logs.
+#[must_use]
 pub fn builtin_rules() -> Vec<RedactRule> {
     fn r(name: &str, pat: &str, head: usize, tail: usize) -> RedactRule {
         RedactRule {
@@ -374,6 +379,7 @@ fn redact_high_entropy(input: &str, floor: f64) -> (String, Vec<Redaction>) {
 }
 
 /// Shannon entropy of a string, in bits per character.
+#[must_use]
 pub fn shannon_entropy(s: &str) -> f64 {
     if s.is_empty() {
         return 0.0;

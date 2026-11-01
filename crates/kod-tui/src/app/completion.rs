@@ -31,6 +31,7 @@ impl KodApp {
 
     /// Model-name completion for `/model <partial>`: static well-known
     /// names plus anything used before in this history file.
+    #[must_use]
     pub fn model_candidates(&self) -> Vec<String> {
         let mut parts = self.input.split_whitespace();
         if parts.next() != Some("/model") {
@@ -127,6 +128,7 @@ impl KodApp {
     }
 
     /// Filesystem entries matching the path token (dirs get `/` suffix).
+    #[must_use]
     pub fn path_candidates(&self) -> Vec<String> {
         let (_, token) = match self.path_token() {
             Some(t) => t,
@@ -197,6 +199,7 @@ impl KodApp {
     }
 
     /// Length of whichever completion list is currently active.
+    #[must_use]
     pub fn active_completion_len(&self) -> usize {
         let slash = self.completion_candidates().len();
         if slash > 0 {
@@ -212,6 +215,7 @@ impl KodApp {
     }
 
     /// Which popup list is active: slash commands, model names, or paths.
+    #[must_use]
     pub fn active_completion_kind(&self) -> CompletionKind {
         if !self.completion_candidates().is_empty() {
             CompletionKind::Slash
@@ -225,11 +229,13 @@ impl KodApp {
     }
 
     /// True when a completion is active and input mode allows it.
+    #[must_use]
     pub fn show_completions(&self) -> bool {
         *self.input_mode() == InputMode::Insert && self.active_completion_len() > 0
     }
 
     /// The currently-highlighted completion index.
+    #[must_use]
     pub fn completion_index(&self) -> usize {
         self.completion_index
     }
@@ -326,6 +332,7 @@ impl KodApp {
     /// engine does not touch it. Exposed as an `Arc` so a
     /// caller (a future sidebar widget, a test) can hold a
     /// reference without borrow-checker gymnastics.
+    #[must_use]
     pub fn render_cache(&self) -> &std::sync::Arc<crate::markdown::RenderCache> {
         &self.render_cache
     }

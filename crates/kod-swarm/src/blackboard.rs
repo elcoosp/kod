@@ -67,6 +67,7 @@ impl std::fmt::Debug for Blackboard {
 
 impl Blackboard {
     /// Empty blackboard.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,11 +110,13 @@ impl Blackboard {
     }
 
     /// Get a value by key.
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<BlackboardEntry> {
         self.inner.read().get(key).cloned()
     }
 
     /// All entries that carry `tag`.
+    #[must_use]
     pub fn query_tag(&self, tag: &str) -> Vec<BlackboardEntry> {
         self.inner
             .read()
@@ -124,6 +127,7 @@ impl Blackboard {
     }
 
     /// All entries whose key begins with `prefix`.
+    #[must_use]
     pub fn query_prefix(&self, prefix: &str) -> Vec<BlackboardEntry> {
         self.inner
             .read()
@@ -134,21 +138,25 @@ impl Blackboard {
     }
 
     /// Every entry, for `/agents blackboard`.
+    #[must_use]
     pub fn all(&self) -> Vec<BlackboardEntry> {
         self.inner.read().values().cloned().collect()
     }
 
     /// Number of entries.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.inner.read().len()
     }
 
     /// True when the blackboard holds no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner.read().is_empty()
     }
 
     /// Drop everything. Called between swarm runs.
+    #[must_use]
     pub fn clear(&self) {
         self.inner.write().clear();
     }
@@ -156,6 +164,7 @@ impl Blackboard {
     /// Render a compact block for an agent's prompt: the current
     /// state of everything tagged `team`, up to a budget. Bounded so
     /// a chatty swarm cannot blow the context window.
+    #[must_use]
     pub fn render_prompt_block(&self, tag: &str, max_entries: usize, max_chars: usize) -> String {
         let entries = self.query_tag(tag);
         if entries.is_empty() {

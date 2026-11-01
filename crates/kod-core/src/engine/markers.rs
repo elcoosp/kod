@@ -23,11 +23,13 @@ pub const SERVER_BUSY_WAIT_MARKER: &str = "\0kod-server-busy:";
 
 /// Build a rate-limit-wait marker: the window in seconds plus the
 /// 1-based attempt and the attempt cap, for display.
+#[must_use]
 pub fn rate_limit_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> String {
     format!("{RATE_LIMIT_WAIT_MARKER}{secs}\0{attempt}\0{max_attempts}")
 }
 
 /// Build a server-busy-wait marker (see [`SERVER_BUSY_WAIT_MARKER`]).
+#[must_use]
 pub fn server_busy_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> String {
     format!("{SERVER_BUSY_WAIT_MARKER}{secs}\0{attempt}\0{max_attempts}")
 }
@@ -35,6 +37,7 @@ pub fn server_busy_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> St
 /// Parse a wait marker of either kind into `(is_server_busy, secs,
 /// attempt, max_attempts)`. A malformed tail degrades to defaults
 /// instead of dropping the notice.
+#[must_use]
 pub fn parse_wait_marker(chunk: &str) -> Option<(bool, u64, u32, u32)> {
     if let Some(marker) = parse_rate_limit_wait(chunk) {
         return Some((false, marker.0, marker.1, marker.2));
@@ -46,12 +49,14 @@ pub fn parse_wait_marker(chunk: &str) -> Option<(bool, u64, u32, u32)> {
 /// `(secs, attempt, max_attempts)`. A malformed tail degrades to
 /// defaults instead of dropping the notice, the way [`parse_tool_done`]
 /// degrades its duration.
+#[must_use]
 pub fn parse_rate_limit_wait(chunk: &str) -> Option<(u64, u32, u32)> {
     parse_wait_marker_secs(chunk, RATE_LIMIT_WAIT_MARKER)
 }
 
 /// If `chunk` is a server-busy-wait marker, return
 /// `(secs, attempt, max_attempts)` (see [`parse_rate_limit_wait`]).
+#[must_use]
 pub fn parse_server_busy_wait(chunk: &str) -> Option<(u64, u32, u32)> {
     parse_wait_marker_secs(chunk, SERVER_BUSY_WAIT_MARKER)
 }
@@ -96,6 +101,7 @@ fn clean_call_id(cid: &str) -> String {
 /// chunk's parse. `name` is nominally a plugin-controlled string;
 /// sanitizing it here is the same discipline [`tool_done_marker`]
 /// applies to its header and summary.
+#[must_use]
 pub fn tool_start_marker(cid: &str, name: &str) -> String {
     format!(
         "{TOOL_START_MARKER}{}:{}\0",
@@ -106,6 +112,7 @@ pub fn tool_start_marker(cid: &str, name: &str) -> String {
 
 /// If `chunk` is a tool-start marker, return `(call_id, tool_name)`.
 /// A legacy v1 chunk (no `cid:` prefix) parses as `("", name)`.
+#[must_use]
 pub fn parse_tool_start(chunk: &str) -> Option<(&str, &str)> {
     let rest = chunk.strip_prefix(TOOL_START_MARKER)?.strip_suffix('\0')?;
     Some(rest.split_once(':').unwrap_or(("", rest)))
@@ -124,6 +131,7 @@ pub const TOOL_ARGS_MARKER: &str = "\0kod-args:";
 /// paths from the model's tool call) and could contain a `\0` — which
 /// would terminate the marker early. Sanitize it the same way
 /// [`tool_done_marker`] sanitizes its header and summary.
+#[must_use]
 pub fn tool_args_marker(cid: &str, display: &str) -> String {
     format!(
         "{TOOL_ARGS_MARKER}{}:{}\0",
@@ -133,6 +141,7 @@ pub fn tool_args_marker(cid: &str, display: &str) -> String {
 }
 
 /// If `chunk` is a tool-args marker, return `(call_id, display)`.
+#[must_use]
 pub fn parse_tool_args(chunk: &str) -> Option<(&str, &str)> {
     let rest = chunk.strip_prefix(TOOL_ARGS_MARKER)?.strip_suffix('\0')?;
     Some(rest.split_once(':').unwrap_or(("", rest)))
@@ -149,6 +158,7 @@ pub fn parse_tool_args(chunk: &str) -> Option<(&str, &str)> {
 pub const TOOL_DONE_MARKER: &str = "\0kod-done:";
 
 /// Build a tool-done marker chunk for one finished call.
+#[must_use]
 pub fn tool_done_marker(cid: &str, header: &str, summary: &str, duration_ms: u64) -> String {
     let clean = |s: &str| s.replace('\0', " ");
     format!(
@@ -162,6 +172,7 @@ pub fn tool_done_marker(cid: &str, header: &str, summary: &str, duration_ms: u64
 /// If `chunk` is a tool-done marker, return `(call_id, header, summary,
 /// duration_ms)`. A missing or malformed duration degrades to `0` rather
 /// than dropping the completion.
+#[must_use]
 pub fn parse_tool_done(chunk: &str) -> Option<(&str, &str, &str, u64)> {
     let rest = chunk.strip_prefix(TOOL_DONE_MARKER)?;
     let mut parts = rest.splitn(4, '\0');
@@ -173,6 +184,7 @@ pub fn parse_tool_done(chunk: &str) -> Option<(&str, &str, &str, u64)> {
 }
 
 /// Short human duration for tool rows: `340ms`, `1.2s`, `1m05s`.
+#[must_use]
 pub fn format_duration_ms(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms}ms")
@@ -193,11 +205,13 @@ pub fn format_duration_ms(ms: u64) -> String {
 pub const TURN_MARKER: &str = "\0kod-turn:";
 
 /// Build a turn-boundary marker chunk for goal-loop turn `n`.
+#[must_use]
 pub fn turn_marker(turn: u32) -> String {
     format!("{TURN_MARKER}{turn}\0")
 }
 
 /// If `chunk` is a turn-boundary marker, return the turn number.
+#[must_use]
 pub fn parse_turn_marker(chunk: &str) -> Option<u32> {
     let rest = chunk.strip_prefix(TURN_MARKER)?.strip_suffix('\0')?;
     rest.parse::<u32>().ok()
@@ -215,11 +229,13 @@ pub const ACTIVITY_MARKER: &str = "\0kod-activity:";
 
 /// Build an activity marker chunk carrying a short lowercase label
 /// (`saving memories…`). The label is sanitized (no `\0`).
+#[must_use]
 pub fn activity_marker(label: &str) -> String {
     format!("{ACTIVITY_MARKER}{}\0", label.replace('\0', " "))
 }
 
 /// If `chunk` is an activity marker, return its label.
+#[must_use]
 pub fn parse_activity_marker(chunk: &str) -> Option<&str> {
     chunk.strip_prefix(ACTIVITY_MARKER)?.strip_suffix('\0')
 }
@@ -238,12 +254,14 @@ pub fn parse_activity_marker(chunk: &str) -> Option<&str> {
 pub const USAGE_MARKER: &str = "\0kod-usage:";
 
 /// Build a usage marker chunk for one round's provider numbers.
+#[must_use]
 pub fn usage_marker(prompt_tokens: usize, completion_tokens: usize) -> String {
     format!("{USAGE_MARKER}{prompt_tokens},{completion_tokens}\0")
 }
 
 /// If `chunk` is a usage marker, return `(prompt, completion)`.
 /// Malformed numbers degrade to `None` rather than a wrong meter.
+#[must_use]
 pub fn parse_usage_marker(chunk: &str) -> Option<(usize, usize)> {
     let rest = chunk.strip_prefix(USAGE_MARKER)?.strip_suffix('\0')?;
     let (p, c) = rest.split_once(',')?;
@@ -256,11 +274,13 @@ pub fn parse_usage_marker(chunk: &str) -> Option<(usize, usize)> {
 pub const THINKING_MARKER: &str = "\0kod-thinking\0";
 
 /// The thinking-marker string.
+#[must_use]
 pub fn thinking_marker() -> String {
     THINKING_MARKER.to_string()
 }
 
 /// True when the chunk is a thinking marker.
+#[must_use]
 pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
 }
@@ -275,11 +295,13 @@ pub fn is_thinking_marker(chunk: &str) -> bool {
 pub const STREAM_RESET_MARKER: &str = "\0kod-stream-reset\0";
 
 /// The reset-marker chunk.
+#[must_use]
 pub fn stream_reset_marker() -> String {
     STREAM_RESET_MARKER.to_string()
 }
 
 /// True for exactly the reset marker (no id, no JSON).
+#[must_use]
 pub fn is_stream_reset_marker(chunk: &str) -> bool {
     chunk == STREAM_RESET_MARKER
 }
@@ -291,11 +313,13 @@ pub fn is_stream_reset_marker(chunk: &str) -> bool {
 pub const QUESTION_MARKER: &str = kod_tools::ask::QUESTION_MARKER;
 
 /// Build a question marker for `id` with the JSON-encoded request.
+#[must_use]
 pub fn question_marker(id: u64, json: &str) -> String {
     kod_tools::ask::question_marker(id, json)
 }
 
 /// Parse a question marker, returning `(id, json)`.
+#[must_use]
 pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
     kod_tools::ask::parse_question(chunk)
 }
@@ -309,6 +333,7 @@ pub const TOOL_APPROVAL_MARKER: &str = "\0kod-approval:";
 /// Build an approval-request chunk carrying the JSON-encoded request.
 /// The id is prepended as a decimal string so the parser does not need
 /// to decode the JSON to know which pending request the chunk is for.
+#[must_use]
 pub fn tool_approval_marker(id: u64, request_json: &str) -> String {
     // Sanitize NULs; the request JSON is user-tool-adjacent (paths,
     // arguments) and could contain anything.
@@ -317,6 +342,7 @@ pub fn tool_approval_marker(id: u64, request_json: &str) -> String {
 }
 
 /// If `chunk` is an approval-request marker, return `(id, json)`.
+#[must_use]
 pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
     let rest = chunk.strip_prefix(TOOL_APPROVAL_MARKER)?;
     let body = rest.strip_suffix('\0')?;
@@ -336,12 +362,14 @@ pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
 pub const TOOL_APPROVAL_BATCH_MARKER: &str = "\0kod-approval-batch:";
 
 /// Build a batch-approval chunk carrying the JSON-encoded batch.
+#[must_use]
 pub fn tool_approval_batch_marker(batch_id: u64, batch_json: &str) -> String {
     let clean = batch_json.replace('\0', " ");
     format!("{TOOL_APPROVAL_BATCH_MARKER}{batch_id}:{clean}\0")
 }
 
 /// If `chunk` is a batch-approval marker, return `(batch_id, json)`.
+#[must_use]
 pub fn parse_tool_approval_batch(chunk: &str) -> Option<(u64, &str)> {
     let rest = chunk.strip_prefix(TOOL_APPROVAL_BATCH_MARKER)?;
     let body = rest.strip_suffix('\0')?;

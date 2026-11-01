@@ -34,6 +34,7 @@ pub struct FileDiff {
 
 /// Split a unified diff into per-file sections on `diff --git` lines.
 /// A diff with no header becomes one section with an empty path.
+#[must_use]
 pub fn split_by_file(diff: &str) -> Vec<FileDiff> {
     let mut out: Vec<FileDiff> = Vec::new();
     let mut current_path: Option<String> = None;
@@ -79,6 +80,7 @@ fn est_tokens(s: &str) -> usize {
 }
 
 /// True when `diff` is large enough for the map-reduce path.
+#[must_use]
 pub fn needs_map_reduce(diff: &str) -> bool {
     est_tokens(diff) > MAP_REDUCE_THRESHOLD_TOKENS
 }

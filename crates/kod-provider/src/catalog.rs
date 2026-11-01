@@ -55,6 +55,7 @@ pub struct TimeBasedPricing {
 
 impl TimeBasedPricing {
     /// Whether `utc_hour` falls inside a peak window.
+    #[must_use]
     pub fn is_peak(&self, utc_hour: u8) -> bool {
         self.peak_windows
             .iter()
@@ -63,6 +64,7 @@ impl TimeBasedPricing {
 
     /// Multiplier for `utc_hour`: 1.0 inside a peak window, the
     /// off-peak multiplier outside.
+    #[must_use]
     pub fn multiplier_for(&self, utc_hour: u8) -> f64 {
         if self.is_peak(utc_hour) {
             1.0
@@ -120,6 +122,7 @@ pub enum ProviderPriority {
 /// Rank an endpoint by provider kind. The mapping is by the
 /// `provider` field a `kod_config::EndpointConfig` names; a caller
 /// that has a `ProviderKind` converts it to a string and calls this.
+#[must_use]
 pub fn provider_priority(provider_kind: &str) -> ProviderPriority {
     match provider_kind.to_ascii_lowercase().as_str() {
         "anthropic" | "openai" | "google" | "gemini" => ProviderPriority::FirstParty,
@@ -342,6 +345,7 @@ pub fn builtin() -> &'static [ModelMeta] {
 /// Order: exact match, then normalized match, then longest-prefix
 /// match against a normalized known id. The last rule is what makes
 /// `claude-3-5-sonnet-20240620` resolve to `claude-3-5-sonnet`.
+#[must_use]
 pub fn resolve(id: &str) -> Option<&'static ModelMeta> {
     let catalog = builtin();
     // Exact.

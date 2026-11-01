@@ -33,6 +33,7 @@ pub struct ApprovalWidget;
 
 impl ApprovalWidget {
     /// Build the approval widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

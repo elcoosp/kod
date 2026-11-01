@@ -112,6 +112,7 @@ impl TurnFailure {
     /// common shapes; a provider that needs finer control exposes its
     /// own error type and the caller dispatches on that before
     /// falling through to this.
+    #[must_use]
     pub fn classify(raw: &str) -> Self {
         let l = raw.to_lowercase();
         // Context window first — it can look like a client error.
@@ -208,6 +209,7 @@ impl TurnFailure {
 
     /// Should the caller retry at all? `false` means the loop should
     /// surface the failure to the user.
+    #[must_use]
     pub fn recoverable(&self) -> bool {
         !matches!(
             self,
@@ -225,6 +227,7 @@ impl TurnFailure {
     /// 9.7), so `resolve(selector, class_name())` finds the right
     /// per-class chain. Kept in lockstep with the enum's variant
     /// spelling.
+    #[must_use]
     pub fn class_name(&self) -> &'static str {
         match self {
             TurnFailure::TransportTimeout => "TransportTimeout",
@@ -245,6 +248,7 @@ impl TurnFailure {
     }
 
     /// One-line human-readable summary of the failure.
+    #[must_use]
     pub fn summary(&self) -> String {
         match self {
             TurnFailure::TransportTimeout => "transport timeout".to_string(),
@@ -296,6 +300,7 @@ pub enum RetryAction {
 }
 
 /// Pick the first strategy that applies from a fixed preference list.
+#[must_use]
 pub fn choose_action(f: &TurnFailure) -> RetryAction {
     match f {
         TurnFailure::TransportTimeout | TurnFailure::TransportNetwork => {

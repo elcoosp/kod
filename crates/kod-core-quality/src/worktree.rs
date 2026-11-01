@@ -149,6 +149,7 @@ impl WorktreeManager {
     }
 
     /// Override the per-worktree disk cap (MB).
+    #[must_use]
     pub fn with_disk_cap_mb(mut self, mb: u64) -> Self {
         self.disk_cap_mb = mb.max(64);
         self
@@ -156,11 +157,13 @@ impl WorktreeManager {
 
     /// The base commit worktrees are branched from. Exposed so the
     /// merge step can verify it is merging onto the expected parent.
+    #[must_use]
     pub fn base_commit(&self) -> &str {
         &self.base_commit
     }
 
     /// The worktrees created so far.
+    #[must_use]
     pub fn created(&self) -> &[WorktreeInfo] {
         &self.created
     }
@@ -690,6 +693,7 @@ impl Drop for WorktreeManager {
 /// platform's local-time formatter so two machines in different
 /// zones produce the same token for the same instant — the token is
 /// an identifier, not a human clock.
+#[must_use]
 pub fn timestamp_token_utc() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
@@ -705,6 +709,7 @@ pub fn timestamp_token_utc() -> String {
 
 /// Sanitize a caller-supplied slug into a kebab-case token. Empty
 /// after sanitization means the input was all separators.
+#[must_use]
 pub fn sanitize_slug(s: &str) -> String {
     s.to_lowercase()
         .chars()

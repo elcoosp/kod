@@ -24,6 +24,7 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     /// Empty tool registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tools: RwLock::new(std::collections::HashMap::new()),

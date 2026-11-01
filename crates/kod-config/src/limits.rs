@@ -83,6 +83,7 @@ impl LimitsConfig {
     }
 
     /// True when at least one limit is active.
+    #[must_use]
     pub fn any_active(&self) -> bool {
         self.max_cost_usd_per_session > 0.0
             || self.max_cost_usd_per_turn > 0.0
@@ -93,6 +94,7 @@ impl LimitsConfig {
 
     /// Resolve the quota for a tool name — explicit entry, else the
     /// `default` entry, else none.
+    #[must_use]
     pub fn quota_for(&self, tool: &str) -> Option<&ToolQuota> {
         self.tools
             .get(tool)

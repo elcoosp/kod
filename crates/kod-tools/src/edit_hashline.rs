@@ -157,6 +157,7 @@ pub struct Op {
 
 /// Compute the 4-hex tag for `text`. A short FNV-1a over the bytes,
 /// folded to two bytes. Stable across runs and platforms.
+#[must_use]
 pub fn tag_of(text: &str) -> Tag {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.as_bytes() {
@@ -169,6 +170,7 @@ pub fn tag_of(text: &str) -> Tag {
 }
 
 /// Render a [`Tag`] as the 4-hex string a header carries.
+#[must_use]
 pub fn tag_hex(tag: Tag) -> String {
     format!("{:02x}{:02x}", tag[0], tag[1])
 }
@@ -181,6 +183,7 @@ pub struct EditStore {
 
 impl EditStore {
     /// Empty edit store.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -203,6 +206,7 @@ impl EditStore {
     }
 
     /// The tag for `path`'s current snapshot, if any.
+    #[must_use]
     pub fn current_tag(&self, path: &Path) -> Option<Tag> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         self.snapshots.get(&key).map(|s| s.tag)
@@ -455,6 +459,7 @@ fn parse_range(s: &str) -> Result<(usize, usize), EditError> {
 /// Render `text` as `N:line` rows, the form a model edits against.
 /// Caps at `max_lines`, appending an elision footer that teaches the
 /// read selector when the file is longer.
+#[must_use]
 pub fn render_numbered(text: &str, max_lines: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let shown = lines.len().min(max_lines);

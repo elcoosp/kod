@@ -189,6 +189,7 @@ impl TtsrEngine {
     }
 
     /// How many rules are loaded.
+    #[must_use]
     pub fn rule_count(&self) -> usize {
         self.rules.len()
     }
@@ -299,6 +300,7 @@ fn interrupt_allows(mode: InterruptMode, site: MatchSite) -> bool {
 }
 
 /// A convenience: build the shipped rules the design names.
+#[must_use]
 pub fn builtin_rules() -> Vec<Rule> {
     vec![
         Rule {

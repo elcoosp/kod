@@ -46,6 +46,7 @@ pub enum When {
 
 impl When {
     /// One-line label used in rendered prompts.
+    #[must_use]
     pub fn label(&self) -> String {
         match self {
             When::Always => "always".to_string(),
@@ -203,6 +204,7 @@ pub const MAX_IMPORT_DEPTH: usize = 5;
 /// section's `source` is the importing file. An imported section's
 /// original path is not preserved; a caller that needs it reads the
 /// imported file directly.
+#[must_use]
 pub fn expand_imports(src: &str, from: &Path) -> String {
     let mut visited: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     // Seed with the top-level file so a true cycle (A imports B, B
@@ -315,6 +317,7 @@ pub struct InstructionChain {
 impl InstructionChain {
     /// Load every `AGENTS.md` / `CLAUDE.md` from `repo_root` down to
     /// (and including) `cwd`, in root-first order.
+    #[must_use]
     pub fn load(cwd: &Path, repo_root: &Path) -> Self {
         // F2b-11: the router calls `load` every turn; re-walking and
         // re-reading AGENTS.md/CLAUDE.md per request is avoidable.
@@ -406,6 +409,7 @@ impl InstructionChain {
     }
 
     /// Render sections whose guards fire for this turn.
+    #[must_use]
     pub fn render(&self, task: Option<&str>, paths: &[PathBuf], langs: &[&str]) -> String {
         let mut out = String::new();
         for s in &self.sections {

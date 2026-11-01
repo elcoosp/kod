@@ -56,6 +56,7 @@ impl TodoItem {
     /// prerequisite means the plan is broken, and treating it as done
     /// would hide that. The item stays blocked until the model either
     /// revives the prerequisite or calls `unblock`.
+    #[must_use]
     pub fn is_ready(&self, all: &[TodoItem]) -> bool {
         self.blocked_by.iter().all(|bid| {
             all.iter()
@@ -108,6 +109,7 @@ pub enum ConfidenceState {
 impl ConfidenceState {
     /// Raise to at least `other`. Never lowers: evidence once seen is
     /// not unseen when a later observation is weaker.
+    #[must_use]
     pub fn raise_to(self, other: Self) -> Self {
         // The derive gives Ord on declaration order, which is the
         // strength order here.
@@ -133,6 +135,7 @@ pub struct Evidence {
 pub type TodoList = Arc<RwLock<Vec<TodoItem>>>;
 
 /// Build a fresh empty todo list.
+#[must_use]
 pub fn new_list() -> TodoList {
     Arc::new(RwLock::new(Vec::new()))
 }

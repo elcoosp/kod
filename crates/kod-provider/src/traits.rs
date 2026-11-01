@@ -83,6 +83,7 @@ impl ModelInfo {
     }
 
     /// The wire identifier.
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -319,6 +320,7 @@ pub enum ToolChoice {
 
 impl ToolChoice {
     /// The tool name when this is `Specific`, else `None`.
+    #[must_use]
     pub fn specific_name(&self) -> Option<&str> {
         match self {
             ToolChoice::Specific(n) => Some(n.as_str()),

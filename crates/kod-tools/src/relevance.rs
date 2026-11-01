@@ -81,6 +81,7 @@ pub struct RipgrepBackend {
 impl RipgrepBackend {
     /// Discover `rg` on `PATH`. The result is cached on the backend
     /// so a `which` is not run per search.
+    #[must_use]
     pub fn new() -> Self {
         let rg = which_rg();
         Self { rg }
@@ -95,6 +96,7 @@ impl RipgrepBackend {
     }
 
     /// True when ripgrep was found in PATH.
+    #[must_use]
     pub fn has_rg(&self) -> bool {
         self.rg.is_some()
     }
@@ -211,6 +213,7 @@ fn which_rg() -> Option<PathBuf> {
 /// Used by `GrepTool` to re-sort its JSON result list without
 /// reformatting it. The scoring is identical to `heatmap_truncate`'s
 /// so the two paths agree.
+#[must_use]
 pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
     let terms = tokenize(query);
     if terms.is_empty() {
@@ -276,6 +279,7 @@ pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
 ///
 /// No model call, no IO. The whole function runs on the hit list the
 /// backend already produced.
+#[must_use]
 pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -> String {
     let terms = tokenize(query);
     if terms.is_empty() {

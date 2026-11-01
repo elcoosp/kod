@@ -137,6 +137,7 @@ pub struct JfindTool {
 impl JfindTool {
     /// Build with a Jev client (semantic). `None` uses the lexical
     /// fallback.
+    #[must_use]
     pub fn new(client: Option<Arc<dyn JevDecider>>) -> Self {
         let (judge, judge_is_semantic): (Arc<dyn Judge>, bool) = match client {
             Some(c) => (
@@ -193,6 +194,7 @@ impl JfindTool {
     }
 
     /// True when the semantic (Jev) judge is in use.
+    #[must_use]
     pub fn is_semantic(&self) -> bool {
         self.judge_is_semantic
     }

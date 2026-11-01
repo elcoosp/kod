@@ -132,6 +132,7 @@ pub fn record(cause: InvalidationCause) {
 /// Read the last `n` entries for `/debug cache`. Returns an empty vec
 /// on any error so a caller can print "no recorded invalidations"
 /// rather than failing the debug view.
+#[must_use]
 pub fn recent(n: usize) -> Vec<serde_json::Value> {
     let Some(path) = journal_path() else {
         return Vec::new();

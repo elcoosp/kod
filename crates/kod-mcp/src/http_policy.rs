@@ -55,6 +55,7 @@ pub struct Origin {
 impl Origin {
     /// Parse an absolute URL into a normalized `Origin`. Returns
     /// `None` for a URL that is not absolute or lacks a host.
+    #[must_use]
     pub fn parse(url: &str) -> Option<Origin> {
         // Delegated to the `url` crate — the same WHATWG parser
         // `reqwest` uses to actually follow the redirect. Any
@@ -92,6 +93,7 @@ impl Origin {
 
     /// Whether two origins match. The default port for a scheme is
     /// treated as absent, so `https://x` and `https://x:443` match.
+    #[must_use]
     pub fn same_as(&self, other: &Origin) -> bool {
         self.scheme == other.scheme
             && self.host == other.host
@@ -129,6 +131,7 @@ pub enum RedirectDecision {
 /// `from` is the URL that produced the response, `to` is the `Location`
 /// header, `status` is the response status, and `method` is the method
 /// of the original request.
+#[must_use]
 pub fn decide_redirect(from: &str, to: &str, status: u16, method: Method) -> RedirectDecision {
     // Only the redirect statuses the spec defines are followed.
     let method_preserving = matches!(status, 307 | 308);
@@ -169,6 +172,7 @@ pub const TRANSPORT_RESERVED: &[&str] = &[
 ];
 
 /// Whether `name` is transport-reserved and must not be set by config.
+#[must_use]
 pub fn is_transport_reserved(name: &str) -> bool {
     let l = name.to_ascii_lowercase();
     TRANSPORT_RESERVED.contains(&l.as_str())

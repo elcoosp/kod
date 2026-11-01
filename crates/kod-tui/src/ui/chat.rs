@@ -26,6 +26,7 @@ pub struct ChatWidget;
 
 impl ChatWidget {
     /// Build the chat widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

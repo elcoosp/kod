@@ -53,6 +53,7 @@ pub enum Next {
 /// Decide what to do with a response. `body_preview` is the first few
 /// hundred characters of the body, used for bot-wall detection.
 /// `attempt` is 0-based.
+#[must_use]
 pub fn decide(status: u16, body_preview: &str, attempt: usize) -> Next {
     // 429: retry once, honoring Retry-After when the caller threaded
     // it in via the preview is not how this works — the caller passes
@@ -68,6 +69,7 @@ pub fn decide(status: u16, body_preview: &str, attempt: usize) -> Next {
 
 /// [`decide`] with the server's `Retry-After` header, if any. A hint
 /// over the cap clamps to the cap; a missing hint is 1 second.
+#[must_use]
 pub fn decide_with_retry_after(
     status: u16,
     body_preview: &str,
@@ -85,6 +87,7 @@ pub fn decide_with_retry_after(
 }
 
 /// True when `status` + `body` look like a bot wall.
+#[must_use]
 pub fn is_bot_block(status: u16, body_preview: &str) -> bool {
     if !matches!(status, 403 | 503) {
         return false;
@@ -103,6 +106,7 @@ pub fn is_bot_block(status: u16, body_preview: &str) -> bool {
 }
 
 /// The user agent for `attempt` (clamped to the last).
+#[must_use]
 pub fn user_agent_for(attempt: usize) -> &'static str {
     USER_AGENTS
         .get(attempt)

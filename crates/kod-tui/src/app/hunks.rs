@@ -9,11 +9,13 @@ use super::*;
 
 impl KodApp {
     /// True when a hunk selection is in progress.
+    #[must_use]
     pub fn is_selecting_hunks(&self) -> bool {
         self.pending_hunk_selection.is_some()
     }
 
     /// The pending hunk selection, if any.
+    #[must_use]
     pub fn hunk_selection(&self) -> Option<&PendingHunkSelection> {
         self.pending_hunk_selection.as_ref()
     }

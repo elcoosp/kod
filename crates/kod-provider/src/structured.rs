@@ -80,6 +80,7 @@ pub async fn run_structured(
 /// told not to use one and did anyway), the whole text, and the first
 /// balanced `{...}` or `[...]` in the text. A reply with none of those
 /// is not JSON and the caller retries.
+#[must_use]
 pub fn extract_json(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
 

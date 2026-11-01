@@ -53,6 +53,7 @@ impl CommitLock {
     }
 
     /// The directory this lock is keyed to, for a log line.
+    #[must_use]
     pub fn key(&self) -> &Path {
         &self.key
     }
@@ -74,6 +75,7 @@ impl CommitLock {
     }
 
     /// Whether two locks would serialize against each other.
+    #[must_use]
     pub fn shares_repo_with(&self, other: &Self) -> bool {
         self.key == other.key
     }
@@ -85,6 +87,7 @@ impl CommitLock {
 /// the common dir. A `.git` *file* (a worktree) contains
 /// `gitdir: <path>`, and the common dir is that path's `.git` parent
 /// — so all worktrees of one repo resolve to the same key.
+#[must_use]
 pub fn git_common_dir(path: &Path) -> Option<PathBuf> {
     let mut cur = path.to_path_buf();
     loop {
@@ -120,6 +123,7 @@ pub fn git_common_dir(path: &Path) -> Option<PathBuf> {
 /// `--only` commits exactly the named paths, leaving everything else
 /// staged or dirty. This is the half of the fix that keeps agent A's
 /// commit from containing agent B's changes.
+#[must_use]
 pub fn commit_args(message: &str, paths: &[String]) -> Vec<String> {
     if paths.is_empty() {
         // No paths: a plain commit. The lock still serializes it.

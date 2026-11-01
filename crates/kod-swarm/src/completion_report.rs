@@ -51,6 +51,7 @@ impl ReportStatus {
     }
 
     /// The lowercase string label for this status.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Done => "done",
@@ -101,6 +102,7 @@ const CLOSE_TAG: &str = "</completion-report>";
 ///    open tag's line as the block body.
 /// 3. No open tag — the whole text becomes the summary, status
 ///    `Unknown`.
+#[must_use]
 pub fn parse(text: &str) -> CompletionReport {
     let Some(open_at) = text.find(OPEN_PREFIX) else {
         return CompletionReport {

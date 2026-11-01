@@ -109,6 +109,7 @@ impl MessageDigest {
     ///   id never reaches the wire. Two `Agent` messages with different
     ///   inner ids are byte-identical on every wire path and must
     ///   therefore digest the same.
+    #[must_use]
     pub fn of(msg: &ChatMessage) -> Self {
         let mut h = FNV_OFFSET;
         feed(&mut h, role_tag(&msg.role).as_bytes());
@@ -216,17 +217,20 @@ pub struct DigestMemo {
 
 impl DigestMemo {
     /// An empty memo.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Number of messages the memo has recorded. Zero on the first
     /// turn of a session.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// True when the memo holds no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -241,6 +245,7 @@ impl DigestMemo {
 
     /// The digest recorded for the message at position `i` of the
     /// last-sent log, if any. For tests and for a debug readout.
+    #[must_use]
     pub fn digest_at(&self, i: usize) -> Option<(MessageId, MessageDigest)> {
         self.entries.get(i).cloned()
     }

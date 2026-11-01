@@ -28,6 +28,7 @@ impl BehavioralSignals {
     /// are public, so a hand-built value near `u32::MAX` must not
     /// overflow. The pre-fix plain `+` was inconsistent with `merge`'s
     /// `saturating_add`.
+    #[must_use]
     pub fn total(&self) -> u32 {
         self.negation
             .saturating_add(self.repetition)
@@ -37,11 +38,13 @@ impl BehavioralSignals {
     }
 
     /// True when any signal is non-zero.
+    #[must_use]
     pub fn any(&self) -> bool {
         self.total() > 0
     }
 
     /// Saturating per-field sum with another set of signals.
+    #[must_use]
     pub fn merge(&self, other: &BehavioralSignals) -> BehavioralSignals {
         BehavioralSignals {
             negation: self.negation.saturating_add(other.negation),
@@ -152,6 +155,7 @@ fn is_yelling(line: &str) -> bool {
 }
 
 /// Extract the signals from one user message.
+#[must_use]
 pub fn analyze(text: &str) -> BehavioralSignals {
     let lower = text.to_ascii_lowercase();
     let negation = count_cues(&lower, NEGATION_CUES);

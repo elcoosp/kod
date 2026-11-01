@@ -65,6 +65,7 @@ pub struct ParsedQuery {
 impl ParsedQuery {
     /// Every constraint that is set, as `(name, value)` pairs, in a
     /// fixed order. Used to relax them one at a time.
+    #[must_use]
     pub fn constraints(&self) -> Vec<(&'static str, String)> {
         let mut out = Vec::new();
         if let Some(v) = &self.filetype {
@@ -110,6 +111,7 @@ impl ParsedQuery {
 /// Parse a Google-idiom search query. Always succeeds — an
 /// unrecognized `key:value` is kept as a free-text term (the token
 /// the user typed), never dropped.
+#[must_use]
 pub fn parse(query: &str) -> ParsedQuery {
     let mut q = ParsedQuery::default();
     let mut tokens = tokenize(query).into_iter().peekable();

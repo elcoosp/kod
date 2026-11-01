@@ -50,6 +50,7 @@ impl PrefixHash {
     pub const SEED: PrefixHash = PrefixHash(0xcbf2_9ce4_8422_2325);
 
     /// The raw hash value.
+    #[must_use]
     pub fn value(self) -> u64 {
         self.0
     }
@@ -104,16 +105,19 @@ impl Default for RetentionCursor {
 
 impl RetentionCursor {
     /// Empty cursor.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// How many messages have been retained.
+    #[must_use]
     pub fn retained(&self) -> usize {
         self.retained
     }
 
     /// The current chain hash.
+    #[must_use]
     pub fn hash(&self) -> PrefixHash {
         self.hash
     }
@@ -192,6 +196,7 @@ impl RetentionCadence {
     ///
     /// (Fix: `every_n_turns` used to be dead — `is_due` only checked
     /// the message floor, so any tool-using turn fired extraction.)
+    #[must_use]
     pub fn is_due(&self, new_messages: usize, new_user_turns: usize) -> bool {
         new_user_turns >= self.every_n_turns && new_messages >= self.min_new_messages
     }

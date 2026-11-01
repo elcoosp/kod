@@ -62,6 +62,7 @@ use ratatui::text::{Line, Span};
 /// hard-broken (mid-word) rather than allowed to overflow — the
 /// alternative, letting a 200-character identifier spill past the
 /// terminal's right edge, is worse than a soft wrap inside the word.
+#[must_use]
 pub fn render(markdown: &str, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     let width = width.max(1);
     let blocks = parse(markdown);
@@ -133,11 +134,13 @@ impl RenderCache {
     pub const DEFAULT_CAPACITY: usize = 128;
 
     /// Empty markdown cache.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
 
     /// Markdown cache with a given capacity.
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: std::sync::Mutex::new(HashMap::new()),

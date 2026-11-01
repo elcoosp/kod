@@ -68,6 +68,7 @@ pub enum SoundPosition {
 
 impl SoundPosition {
     /// The position for turn `n` (0-based), cycling start/middle/end.
+    #[must_use]
     pub fn for_turn(turn: usize) -> Self {
         match turn % 3 {
             0 => Self::Start,
@@ -77,6 +78,7 @@ impl SoundPosition {
     }
 
     /// Lowercase string label (start/middle/end).
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Start => "start",
@@ -90,6 +92,7 @@ impl SoundPosition {
 pub const CAT_SOUND: &str = "meow";
 
 /// The initial array: the glyphs `a..` repeated to `n`.
+#[must_use]
 pub fn initial_array(n: usize) -> Vec<char> {
     (0..n).map(|i| (b'a' + (i % 26) as u8) as char).collect()
 }
@@ -99,6 +102,7 @@ pub fn initial_array(n: usize) -> Vec<char> {
 /// Deterministic: positions `turn % len` and `(turn * 7 + 3) % len`.
 /// Deterministic means the harness and the checker agree without
 /// sharing state.
+#[must_use]
 pub fn action_for_turn(turn: usize, len: usize) -> (usize, usize) {
     if len == 0 {
         return (0, 0);
@@ -107,6 +111,7 @@ pub fn action_for_turn(turn: usize, len: usize) -> (usize, usize) {
 }
 
 /// Apply a swap to a copy of `arr`.
+#[must_use]
 pub fn apply(arr: &[char], action: (usize, usize)) -> Vec<char> {
     let mut out = arr.to_vec();
     if out.is_empty() {
@@ -123,6 +128,7 @@ pub fn apply(arr: &[char], action: (usize, usize)) -> Vec<char> {
 /// The reply must contain a line of the form `array: <glyphs>`. The
 /// glyphs are the non-whitespace characters after the colon, up to the
 /// end of the line. Returns `None` when no such line is present.
+#[must_use]
 pub fn parse_reported_array(text: &str) -> Option<Vec<char>> {
     for line in text.lines() {
         let lower = line.trim_start().to_lowercase();
@@ -140,6 +146,7 @@ pub fn parse_reported_array(text: &str) -> Option<Vec<char>> {
 ///
 /// The reply is split at the midpoint (by lines); the sound must be in
 /// the first third, the middle third, or the last third of the lines.
+#[must_use]
 pub fn cat_sound_at(text: &str, position: SoundPosition) -> bool {
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {
@@ -175,6 +182,7 @@ pub struct TurnReply {
 /// the cat sound was at the required position. The run stops at the
 /// first failure. `expected[0]` is the initial array; the harness
 /// applies the turn's action before comparing.
+#[must_use]
 pub fn depth(replies: &[TurnReply], initial: &[char]) -> usize {
     let mut current = initial.to_vec();
     for (turn, reply) in replies.iter().enumerate() {
@@ -379,6 +387,7 @@ mod tests {
 /// previous reply is the only state carried.
 ///
 /// The cat-sound directive rotates per `SoundPosition::for_turn`.
+#[must_use]
 pub fn prompt_for_turn(turn: usize, initial: &[char]) -> String {
     let pos = SoundPosition::for_turn(turn);
     let sound_clause = match pos {

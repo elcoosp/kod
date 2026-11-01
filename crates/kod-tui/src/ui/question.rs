@@ -16,6 +16,7 @@ pub struct QuestionWidget;
 
 impl QuestionWidget {
     /// Build the question widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

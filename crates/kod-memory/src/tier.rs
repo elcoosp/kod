@@ -51,6 +51,7 @@ pub enum Tier {
 
 impl Tier {
     /// The tier's 1-based number.
+    #[must_use]
     pub fn number(self) -> u8 {
         match self {
             Self::One => 1,
@@ -60,6 +61,7 @@ impl Tier {
     }
 
     /// The recall weight folded into a score.
+    #[must_use]
     pub fn weight(self) -> f32 {
         match self {
             Self::One => 1.0,
@@ -69,6 +71,7 @@ impl Tier {
     }
 
     /// Whether the body should be compressed at this tier.
+    #[must_use]
     pub fn compresses_body(self) -> bool {
         self == Self::Three
     }
@@ -79,6 +82,7 @@ impl Tier {
 /// A negative age (a clock skew, or a future timestamp) is tier 1 —
 /// the same as a fresh entry. `age_days` is integer days; a caller
 /// with a `Duration` floors it.
+#[must_use]
 pub fn tier_for(age_days: i64) -> Tier {
     if age_days >= TIER3_AFTER_DAYS {
         Tier::Three
@@ -90,6 +94,7 @@ pub fn tier_for(age_days: i64) -> Tier {
 }
 
 /// The tier for a timestamp, measured against `now`.
+#[must_use]
 pub fn tier_at(ts: time::OffsetDateTime, now: time::OffsetDateTime) -> Tier {
     let delta = now - ts;
     tier_for(delta.whole_days())

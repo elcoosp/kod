@@ -49,6 +49,7 @@ pub enum TaskType {
 impl TaskType {
     /// Canonical string used by the Jev classifier and logged
     /// decisions. Kept stable so a log viewer can branch on it.
+    #[must_use]
     pub fn as_label(&self) -> &'static str {
         match self {
             TaskType::Simple => "Simple",
@@ -65,6 +66,7 @@ impl TaskType {
     /// Inverse of [`TaskType::as_label`]. Returns `None` for an
     /// unrecognised label so a Jev answer the build does not know
     /// falls back to the heuristic instead of being coerced.
+    #[must_use]
     pub fn from_label(s: &str) -> Option<Self> {
         match s {
             "Simple" => Some(TaskType::Simple),
@@ -81,6 +83,7 @@ impl TaskType {
 
     /// Every label, in a stable order. Used to build the Jev choice
     /// criteria so the wire form matches [`TaskType::as_label`].
+    #[must_use]
     pub fn all_labels() -> &'static [&'static str] {
         &[
             "Simple",
@@ -301,6 +304,7 @@ impl PromptPlan {
     /// care how the byte sequence is chunked, only that the cacheable
     /// prefix is byte-stable. Splitting per section would multiply
     /// breakpoints for no benefit.
+    #[must_use]
     pub fn from_rendered(rendered: &str) -> Self {
         const VOLATILE_MARKER: &str = "## Volatile suffix";
         match rendered.find(VOLATILE_MARKER) {
@@ -333,6 +337,7 @@ impl PromptPlan {
     /// Reconstruct the text this plan was built from. Byte-identical to
     /// the pre-`PromptPlan` prompt — that equivalence is the invariant
     /// the `prompt_plan_renders_identically` test asserts.
+    #[must_use]
     pub fn render_text(&self) -> String {
         let mut out = String::new();
         for seg in &self.system {
@@ -346,6 +351,7 @@ impl PromptPlan {
     /// the string a provider with explicit cache support places a
     /// breakpoint after; the golden-prefix test asserts it is stable
     /// across turns in a session.
+    #[must_use]
     pub fn cacheable_prefix(&self) -> String {
         let mut out = String::new();
         for seg in &self.system {
@@ -629,6 +635,7 @@ impl TaskRouter {
     /// entries written via `memory_save` (D2-B3a). Same hash function
     /// the checkpoint manager uses for its per-project directory —
     /// one identity, one hash.
+    #[must_use]
     pub fn project_key_for(working_dir: &std::path::Path) -> String {
         let canonical =
             std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());

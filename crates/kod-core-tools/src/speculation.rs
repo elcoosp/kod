@@ -223,6 +223,7 @@ pub struct SpeculativeRead {
 /// `serde_json` would: the escape sequence is unescaped, so a spec
 /// for `a\"b` produces the path `a"b`, matching what
 /// `serde_json::from_str` gives once the args complete.
+#[must_use]
 pub fn extract_path_from_partial(args: &str) -> Option<String> {
     // Fast path: the args parse cleanly (a one-delta call).
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(args)
@@ -306,6 +307,7 @@ pub enum Reason {
 /// `Discarded(Stale)` from `consume`, while `validate` would return
 /// `Ok(false)` — the caller that wants the distinction (was it
 /// deleted, or was it replaced?) can use `validate` directly.
+#[must_use]
 pub fn consume(path: &Path, text: String, evidence: Evidence) -> SpecOutcome {
     match validate(path, &evidence) {
         Ok(true) => SpecOutcome::Committed {

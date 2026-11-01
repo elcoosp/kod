@@ -107,6 +107,7 @@ pub struct AsyncDelivery {
 
 impl AsyncDelivery {
     /// Empty delivery registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             queues: HashMap::new(),
@@ -115,6 +116,7 @@ impl AsyncDelivery {
     }
 
     /// The current epoch.
+    #[must_use]
     pub fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -158,11 +160,13 @@ impl AsyncDelivery {
     }
 
     /// How many results are queued for an owner.
+    #[must_use]
     pub fn queued_for(&self, owner_id: &str) -> usize {
         self.queues.get(owner_id).map_or(0, |v| v.len())
     }
 
     /// Whether anything is queued for any owner.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.queues.values().all(|v| v.is_empty())
     }

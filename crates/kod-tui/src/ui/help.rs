@@ -16,11 +16,13 @@ pub struct HelpWidget;
 
 impl HelpWidget {
     /// Build the help widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// Centered rect taking `w`×`h` of the screen.
+    #[must_use]
     pub fn centered(area: Rect, w: u16, h: u16) -> Rect {
         let w = w.min(area.width);
         let h = h.min(area.height);

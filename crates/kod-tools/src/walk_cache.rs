@@ -102,12 +102,14 @@ pub struct WalkCache {
 impl WalkCache {
     /// A cache with [`DEFAULT_TTL_SECS`]. A test that needs a
     /// different TTL uses [`WalkCache::with_ttl`].
+    #[must_use]
     pub fn new() -> Self {
         Self::with_ttl(Duration::from_secs(DEFAULT_TTL_SECS))
     }
 
     /// A cache with an explicit TTL. `Duration::ZERO` makes every
     /// entry stale on the next read (used by tests).
+    #[must_use]
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
@@ -244,6 +246,7 @@ pub fn invalidate_path(path: &Path) {
 ///
 /// This is the design's `collect_ranked(mtime_desc, limit)`. Callers
 /// use it to put the freshest files first in a context listing.
+#[must_use]
 pub fn collect_ranked(paths: &[PathBuf], limit: usize) -> Vec<PathBuf> {
     let mut scored: Vec<(PathBuf, std::time::SystemTime)> = paths
         .iter()

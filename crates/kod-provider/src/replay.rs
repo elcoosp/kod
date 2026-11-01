@@ -52,6 +52,7 @@ pub struct ReplayProvider {
 
 impl ReplayProvider {
     /// Build a replay provider from a fixed round sequence.
+    #[must_use]
     pub fn new(rounds: Vec<ReplayRound>) -> Self {
         Self {
             rounds,

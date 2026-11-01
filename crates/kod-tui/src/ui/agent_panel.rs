@@ -18,6 +18,7 @@ pub struct AgentPanelWidget;
 
 impl AgentPanelWidget {
     /// Build the agent-panel widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

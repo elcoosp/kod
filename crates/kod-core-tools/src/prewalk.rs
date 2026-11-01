@@ -98,11 +98,13 @@ impl Prewalk {
     }
 
     /// Whether the prewalk is armed and waiting for a mutation.
+    #[must_use]
     pub fn is_armed(&self) -> bool {
         matches!(self.state, PrewalkState::Armed)
     }
 
     /// Whether the prewalk has already fired.
+    #[must_use]
     pub fn is_done(&self) -> bool {
         matches!(self.state, PrewalkState::Done)
     }
@@ -122,6 +124,7 @@ impl Prewalk {
     /// session that has only read files has not committed to an
     /// approach yet, and the strong model should still be watching
     /// the reads.
+    #[must_use]
     pub fn is_mutating_tool(tool_name: &str) -> bool {
         matches!(
             tool_name,

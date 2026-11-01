@@ -59,6 +59,7 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     /// Test constructor: no actual delays, no jitter.
+    #[must_use]
     pub fn immediate() -> Self {
         Self {
             max_attempts: 3,
@@ -71,6 +72,7 @@ impl RetryPolicy {
     }
 
     /// Delay for attempt `n` (1-based) with jitter, capped at `max_delay`.
+    #[must_use]
     pub fn delay_for(&self, attempt: u32) -> Duration {
         let exp = self
             .base_delay
@@ -505,6 +507,7 @@ pub const STREAM_RATE_LIMIT_WAIT_CAP: Duration = Duration::from_secs(90);
 /// `status` is accepted for future use (a caller that wants to
 /// suppress body-text hints on a 4xx that is obviously not a rate
 /// limit) and is currently unused.
+#[must_use]
 pub fn extract_retry_hints(
     status: Option<u16>,
     headers: &[(String, String)],
@@ -657,6 +660,7 @@ fn scan_text_hint(body: &str) -> Option<Duration> {
 /// suggests, when it does. Used by adapters that only see a formatted
 /// error message (adk flattens the HTTP response, so tab-bridge's
 /// `"…wait ~20 minutes…"` body reaches this module as plain text).
+#[must_use]
 pub fn text_hint_secs(body: &str) -> Option<u64> {
     scan_text_hint(body).map(|d| d.as_secs())
 }

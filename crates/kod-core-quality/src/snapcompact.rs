@@ -362,6 +362,7 @@ fn crc32(data: &[u8]) -> u32 {
 
 /// Base64-encode `bytes` with the standard alphabet and `=` padding,
 /// as the PNG-in-JSON wire format expects.
+#[must_use]
 pub fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

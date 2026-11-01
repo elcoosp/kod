@@ -210,6 +210,7 @@ impl Default for ReadProtection {
 
 impl ReadProtection {
     /// Does `path` match any deny glob?
+    #[must_use]
     pub fn matches(&self, path: &std::path::Path) -> bool {
         if !self.enabled {
             return false;
@@ -330,6 +331,7 @@ impl PolicyEngine {
     /// The effective read-protection rules — the highest layer that
     /// set the block wins, matching the policy engine's standard
     /// layering.
+    #[must_use]
     pub fn read_protection(&self) -> &ReadProtection {
         &self.effective().read_protection
     }
@@ -471,6 +473,7 @@ impl PolicyEngine {
     /// `Policy`. Public so tests — and callers that construct a
     /// policy programmatically rather than via the config layering —
     /// can bypass `load`.
+    #[must_use]
     pub fn from_effective_for_tests(policy: Policy) -> Self {
         Self {
             effective: policy,
@@ -479,6 +482,7 @@ impl PolicyEngine {
     }
 
     /// The effective policy.
+    #[must_use]
     pub fn effective(&self) -> &Policy {
         &self.effective
     }
@@ -490,6 +494,7 @@ impl PolicyEngine {
     /// sees the policy -- the walker checks
     /// `ToolContext::permissions.forbidden_paths`, which nothing
     /// populated. This accessor lets the engine install it.
+    #[must_use]
     pub fn forbidden_for(&self, tool: &str) -> Vec<String> {
         self.effective()
             .tools
@@ -505,6 +510,7 @@ impl PolicyEngine {
     /// which was declared and documented but never consumed; the
     /// engine threads this into `ToolContext.allowed_domains`, where
     /// `web_fetch` enforces it.
+    #[must_use]
     pub fn web_fetch_allowed_domains(&self) -> Vec<String> {
         self.effective
             .tools
@@ -515,6 +521,7 @@ impl PolicyEngine {
 
     /// What layer set the policy for `tool`, if there is a per-tool
     /// entry. For preset-only decisions the answer is `Preset`.
+    #[must_use]
     pub fn source_for(&self, tool: &str) -> PolicySource {
         self.sources
             .get(tool)
@@ -529,6 +536,7 @@ impl PolicyEngine {
     /// matching the tool's own resolution. `session_denies` is the
     /// set of `(tool, path-pattern)` pairs the user said "never" to
     /// during this session — always checked first.
+    #[must_use]
     pub fn decide(
         &self,
         tool: &str,
@@ -664,11 +672,13 @@ impl PolicyEngine {
     }
 
     /// The git history protection flag.
+    #[must_use]
     pub fn git_history_protected(&self) -> bool {
         self.effective.git.history_protected
     }
 
     /// One-line summary of the effective policy, for `policy show`.
+    #[must_use]
     pub fn describe(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!("preset: {:?}", self.effective.preset));
@@ -847,6 +857,7 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 ///
 /// `patterns` empty means "no argument redaction" and returns false
 /// without touching the args.
+#[must_use]
 pub fn arguments_path_matches_redact_list(
     patterns: &[String],
     args: &Value,
@@ -2139,6 +2150,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
 /// The wrapper candidates a command resolves to, for the cross-crate
 /// mirror test. Thin wrapper over the internal parser.
 #[doc(hidden)]
+#[must_use]
 pub fn binary_candidates_for_tests(cmd: &str) -> Vec<String> {
     binary_candidates(cmd)
 }

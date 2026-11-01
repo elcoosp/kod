@@ -56,22 +56,26 @@ pub struct StateStore {
 
 impl StateStore {
     /// Open (or create the parent for) the state file at `path`.
+    #[must_use]
     pub fn open(path: PathBuf) -> Self {
         Self { path }
     }
 
     /// Default location for a session: `state.json` next to the trace
     /// log, which sits in `~/.kod/sessions/`.
+    #[must_use]
     pub fn default_path() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".kod").join("sessions").join("state.json"))
     }
 
     /// Sibling of a `turns.jsonl` file: same directory, `state.json`.
+    #[must_use]
     pub fn sibling_of(trace_path: &Path) -> Option<PathBuf> {
         trace_path.parent().map(|p| p.join("state.json"))
     }
 
     /// The path this state is persisted to.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }

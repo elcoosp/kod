@@ -54,6 +54,7 @@ impl DiagnosticReport {
     /// True when any check returned `CheckStatus::Fail`. `kod doctor`
     /// exits non-zero on this so a first-run script or CI job can gate
     /// on it.
+    #[must_use]
     pub fn has_failures(&self) -> bool {
         self.checks.iter().any(|c| c.status == CheckStatus::Fail)
     }
@@ -62,6 +63,7 @@ impl DiagnosticReport {
     /// (array of `{name, status, message}`), and `has_failures`
     /// (bool). Kept in kod-core so `kod doctor --json` and any embedder
     /// that wants to consume diagnostics use the same shape.
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let checks: Vec<serde_json::Value> = self
             .checks
@@ -89,6 +91,7 @@ impl DiagnosticReport {
 /// Run every check against `config`. Pure over `config`: no network
 /// calls, no user prompts. Filesystem queries are read-only and
 /// confined to the paths the config itself names.
+#[must_use]
 pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     let mut report = DiagnosticReport::default();
 

@@ -37,6 +37,7 @@ impl Default for EngineConfig {
 
 impl EngineConfig {
     /// Create from main KOD config
+    #[must_use]
     pub fn from_kod_config(config: &KodConfig, working_dir: &Path) -> Self {
         Self {
             working_dir: working_dir.to_path_buf(),
@@ -48,12 +49,14 @@ impl EngineConfig {
     }
 
     /// Set database path
+    #[must_use]
     pub fn with_db_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.db_path = Some(path.into());
         self
     }
 
     /// Get database path (or default)
+    #[must_use]
     pub fn get_db_path(&self) -> PathBuf {
         self.db_path
             .clone()

@@ -120,6 +120,7 @@ impl WorkerSlot {
     /// The load ratio, `context_tokens / context_window`. A zero
     /// window reports `1.0` — "full" — so a misconfigured slot is
     /// never picked over a properly configured one.
+    #[must_use]
     pub fn load_ratio(&self) -> f64 {
         if self.context_window == 0 {
             1.0
@@ -189,6 +190,7 @@ pub struct WorkPool {
 
 impl WorkPool {
     /// Build a pool capped at max_agents with a per-batch budget.
+    #[must_use]
     pub fn new(max_agents: usize, batch_budget: usize) -> Self {
         Self {
             policy: DispatchPolicy::Batched,
@@ -201,6 +203,7 @@ impl WorkPool {
     }
 
     /// Builder: override the dispatch policy.
+    #[must_use]
     pub fn with_policy(mut self, policy: DispatchPolicy) -> Self {
         self.policy = policy;
         self
@@ -215,11 +218,13 @@ impl WorkPool {
     }
 
     /// Number of live slots (any state).
+    #[must_use]
     pub fn slot_count(&self) -> usize {
         self.slots.len()
     }
 
     /// Every slot id, sorted. For a UI readout and for tests.
+    #[must_use]
     pub fn slot_ids(&self) -> Vec<String> {
         let mut v: Vec<String> = self.slots.keys().cloned().collect();
         v.sort();
@@ -227,6 +232,7 @@ impl WorkPool {
     }
 
     /// The pool's current batch budget.
+    #[must_use]
     pub fn batch_budget(&self) -> usize {
         self.batch_budget
     }
@@ -402,6 +408,7 @@ impl WorkPool {
 
     /// Whether every slot is Idle and every queue is empty. A
     /// caller's completion check.
+    #[must_use]
     pub fn is_drained(&self) -> bool {
         self.slots
             .values()
@@ -409,6 +416,7 @@ impl WorkPool {
     }
 
     /// How many items are queued across every slot.
+    #[must_use]
     pub fn queued_len(&self) -> usize {
         self.slots.values().map(|s| s.queue.len()).sum()
     }
@@ -428,6 +436,7 @@ impl WorkPool {
 /// tombstoned. The schema is deliberately flat — an object whose
 /// required array is exactly the item ids — so a model's structured
 /// output is a single `{ "<id>": <result>, ... }` object.
+#[must_use]
 pub fn build_batch_output_schema(items: &[WorkItem]) -> serde_json::Value {
     let required: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
     serde_json::json!({
@@ -439,6 +448,7 @@ pub fn build_batch_output_schema(items: &[WorkItem]) -> serde_json::Value {
 
 /// Verify a worker's structured response against a batch's schema:
 /// every item id must be a key in the response object.
+#[must_use]
 pub fn yield_contract_satisfied(response: &serde_json::Value, items: &[WorkItem]) -> bool {
     let Some(obj) = response.as_object() else {
         return false;

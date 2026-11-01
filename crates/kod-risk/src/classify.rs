@@ -26,14 +26,17 @@ pub enum RiskLevel {
 
 impl RiskLevel {
     /// Whether the command may run without asking anything.
+    #[must_use]
     pub fn runs_immediately(self) -> bool {
         matches!(self, Self::Safe | Self::Low)
     }
     /// Whether the command is refused outright, no reflection.
+    #[must_use]
     pub fn is_absolute_deny(self) -> bool {
         self == Self::Catastrophic
     }
     /// The stable lowercase token this level serialises to.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -91,6 +94,7 @@ pub struct Justification(pub String);
 impl Justification {
     /// True when the text is long enough and specific enough to count
     /// as an actual justification rather than an affirmation.
+    #[must_use]
     pub fn is_substantive(&self) -> bool {
         // T5-C29: reject all-whitespace justifications.
         if self.0.trim().is_empty() {
@@ -225,6 +229,7 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
 /// duplication is deliberate (the crates cannot share a dependency),
 /// so the regression is the only thing keeping them in sync.
 #[doc(hidden)]
+#[must_use]
 pub fn wrapper_table_for_tests() -> &'static [(&'static str, &'static [&'static str], usize)] {
     WRAPPERS
 }
@@ -251,6 +256,7 @@ const INTERPRETERS: &[(&str, &str)] = &[
 ];
 
 #[doc(hidden)]
+#[must_use]
 pub fn command_string_wrappers_for_tests() -> &'static [&'static str] {
     SHELLS_FOR_TESTS
 }
@@ -277,6 +283,7 @@ const DEVICE_CAPABLE: &[&str] = &["dd", "mkfs", "mkswap", "fdisk", "parted", "wi
 /// A heredoc body is dropped: a `cat <<EOF` whose text happens to
 /// contain the word `rm` must not trip the gate. The parser detects
 /// `<<` and skips to the terminator line.
+#[must_use]
 pub fn tokenize(command: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -578,6 +585,7 @@ fn split_segments(tokens: &[String]) -> Vec<Vec<String>> {
 }
 
 /// Assess a command.
+#[must_use]
 pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
     // T5-C2: `tokenize` emits a sentinel when a heredoc body has no
     // closing terminator (the rest of the command would otherwise be

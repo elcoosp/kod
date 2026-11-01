@@ -12,6 +12,7 @@
 use std::process::Command;
 
 /// Copy text to the system clipboard; returns true on success.
+#[must_use]
 pub fn write_clipboard(text: &str) -> bool {
     let bytes = text.as_bytes();
 
@@ -80,6 +81,7 @@ pub fn write_clipboard(text: &str) -> bool {
 /// Read the system clipboard into a string. Mirrors
 /// [`write_clipboard`]: same backends, same best-effort contract.
 /// Returns `None` when the clipboard is unreachable or empty.
+#[must_use]
 pub fn read_clipboard() -> Option<String> {
     #[cfg(target_os = "macos")]
     {

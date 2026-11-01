@@ -28,6 +28,7 @@ use kod_types::TaskStatus;
 
 impl Task {
     /// Build a new pending task.
+    #[must_use]
     pub fn new(description: String, priority: kod_types::Priority) -> Self {
         Self {
             id: TaskId::new(),
@@ -86,6 +87,7 @@ pub struct TaskCoordinator {
 
 impl TaskCoordinator {
     /// Empty coordinator.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

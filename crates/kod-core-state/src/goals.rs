@@ -62,11 +62,13 @@ pub enum GoalStatus {
 
 impl GoalStatus {
     /// True when the goal has finished (complete or dropped).
+    #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Complete | Self::Dropped)
     }
 
     /// Whether the goal should keep consuming turns.
+    #[must_use]
     pub fn is_running(self) -> bool {
         matches!(self, Self::Active)
     }
@@ -123,12 +125,14 @@ impl Goal {
     }
 
     /// Builder: set the goal's token cap.
+    #[must_use]
     pub fn with_token_budget(mut self, tokens: u64) -> Self {
         self.token_budget = Some(tokens);
         self
     }
 
     /// Builder: set the goal's wall-clock cap.
+    #[must_use]
     pub fn with_time_budget(mut self, seconds: u64) -> Self {
         self.time_budget_seconds = Some(seconds);
         self
@@ -147,6 +151,7 @@ impl Goal {
     /// So: `delta = (prompt − cache_read) + output`. `cache_write`
     /// is not added separately — it is already inside the
     /// "new input" remainder.
+    #[must_use]
     pub fn delta_tokens(usage: &TokenUsage) -> u64 {
         let new_input =
             (usage.prompt_tokens as u64).saturating_sub(usage.cache_read_tokens.unwrap_or(0));
@@ -204,11 +209,13 @@ impl Goal {
 
     /// Whether the runtime wants a continuation turn: the goal is
     /// still active, and the agent has stopped.
+    #[must_use]
     pub fn wants_continuation(&self) -> bool {
         self.status == GoalStatus::Active
     }
 
     /// A one-line budget report for the end of a completed goal.
+    #[must_use]
     pub fn report(&self) -> String {
         let token_part = match self.token_budget {
             Some(b) => format!("{} / {} tokens", self.tokens_used, b),
@@ -231,6 +238,7 @@ pub struct GoalRuntime {
 
 impl GoalRuntime {
     /// Fresh runtime with no current goal.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             current: None,
@@ -272,6 +280,7 @@ impl GoalRuntime {
     }
 
     /// The current goal, if any.
+    #[must_use]
     pub fn current(&self) -> Option<&Goal> {
         self.current.as_ref()
     }
@@ -333,6 +342,7 @@ impl GoalRuntime {
 
     /// Whether a continuation turn should fire: a goal exists and
     /// wants one.
+    #[must_use]
     pub fn wants_continuation(&self) -> bool {
         self.current
             .as_ref()

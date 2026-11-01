@@ -31,6 +31,7 @@ impl AgentSwarm {
     /// Kept for callers (a bench, a test) that have no engine to
     /// share a hub with; the `workspace_root` argument is retained
     /// for API compatibility and is otherwise unused.
+    #[must_use]
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
         let _ = workspace_root;
         Self::with_hub(Arc::new(AgentCommunicationHub::new()))
@@ -45,6 +46,7 @@ impl AgentSwarm {
     /// two `Arc`-wrapped maps) gives both callers a handle to the
     /// same state — the runner registers its agents on this hub,
     /// and the tools the engine holds read from it.
+    #[must_use]
     pub fn with_hub(hub: Arc<AgentCommunicationHub>) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
@@ -243,11 +245,13 @@ impl AgentSwarm {
     }
 
     /// Get the communication hub
+    #[must_use]
     pub fn communication(&self) -> &AgentCommunicationHub {
         &self.communication
     }
 
     /// Get the task coordinator
+    #[must_use]
     pub fn coordinator(&self) -> &TaskCoordinator {
         &self.coordinator
     }

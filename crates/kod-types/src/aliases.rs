@@ -21,6 +21,7 @@
 ///
 /// Returns the input unchanged when no alias matches, so a caller can
 /// use this unconditionally.
+#[must_use]
 pub fn resolve_tool_name(name: &str) -> &str {
     // Strip any number of `functions.` prefixes. Some
     // OpenAI-compatible gateways add one; a chained gateway can add

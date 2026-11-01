@@ -56,6 +56,7 @@ impl RequestSummary {
     /// Build a summary from a live `CompletionRequest`. Used by replay
     /// to capture what the current engine actually sent so it can be
     /// diffed against the fixture.
+    #[must_use]
     pub fn from_request(req: &kod_provider::CompletionRequest) -> Self {
         let model = req.model.model.clone();
         let endpoint = req.model.endpoint.clone();
@@ -76,6 +77,7 @@ impl RequestSummary {
     /// FNV-1a hash of the summary fields. Stable across runs; the
     /// diff is meaningful because the components are stable strings
     /// or counts.
+    #[must_use]
     pub fn hash(&self) -> String {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         fn feed(h: &mut u64, b: &[u8]) {
@@ -179,6 +181,7 @@ impl Fixture {
     }
 
     /// Pretty JSON. Fixtures are read by humans as often as by CI.
+    #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
     }
@@ -200,6 +203,7 @@ impl Fixture {
     /// The default directory for user fixtures.
     /// `<home>/.kod/fixtures/`. Returns `None` when no home dir is
     /// available.
+    #[must_use]
     pub fn fixtures_dir() -> Option<std::path::PathBuf> {
         // `KOD_FIXTURES_DIR` overrides the default `~/.kod/fixtures` —
         // the same override idiom `KOD_SESSION_LOG` uses in this
@@ -224,6 +228,7 @@ impl Fixture {
     /// `../../etc/passwd` and have `save_to` write outside the
     /// fixtures directory. Restricting to a bare stem is the same
     /// allow-list shape `checkpoint::find` uses for its ids.
+    #[must_use]
     pub fn default_path(name: &str) -> Option<std::path::PathBuf> {
         if !Self::is_valid_name(name) {
             return None;
@@ -237,6 +242,7 @@ impl Fixture {
     /// Deliberately conservative: a fixture name is a label a user
     /// types, not a path. Anything that looks like a path is
     /// refused.
+    #[must_use]
     pub fn is_valid_name(name: &str) -> bool {
         if name.is_empty() || name == "." || name == ".." {
             return false;
@@ -253,12 +259,14 @@ impl Fixture {
     }
 
     /// Parse a fixture. Errors carry the field path when possible.
+    #[must_use]
     pub fn from_json(s: &str) -> Result<Self, String> {
         serde_json::from_str(s).map_err(|e| e.to_string())
     }
 
     /// Compare this fixture against a fresh replay. Returns the first
     /// divergent round index, if any.
+    #[must_use]
     pub fn first_divergence(&self, other: &Fixture) -> Option<usize> {
         let n = self.rounds.len().min(other.rounds.len());
         for i in 0..n {
@@ -274,6 +282,7 @@ impl Fixture {
 }
 
 /// Diff a specific round between a fixture and a fresh replay.
+#[must_use]
 pub fn diff_rounds(expected: &RoundFixture, actual: &RoundFixture) -> String {
     let mut out = String::new();
     out.push_str(&format!(

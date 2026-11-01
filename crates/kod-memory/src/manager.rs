@@ -2300,6 +2300,7 @@ pub const FRESHNESS_WINDOW_MS: u64 = 120_000;
 
 impl PendingMemory {
     /// Snapshot `context` as of now.
+    #[must_use]
     pub fn snapshot(context: kod_types::MemoryContext) -> Self {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2318,6 +2319,7 @@ impl PendingMemory {
     }
 
     /// Whether the snapshot is inside the freshness window.
+    #[must_use]
     pub fn is_fresh(&self) -> bool {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

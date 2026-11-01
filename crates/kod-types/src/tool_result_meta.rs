@@ -64,18 +64,21 @@ impl TruncationMeta {
     /// the wrong number, and the two truncation-note arms that said
     /// "showing last N of M bytes" (Head, Middle) rendered N as the
     /// dropped count instead of the kept one.
+    #[must_use]
     pub fn returned_bytes(&self) -> usize {
         self.limit_bytes.min(self.original_bytes)
     }
 
     /// Bytes dropped from the original. `original_bytes -
     /// returned_bytes()`.
+    #[must_use]
     pub fn dropped_bytes(&self) -> usize {
         self.original_bytes.saturating_sub(self.returned_bytes())
     }
 
     /// True when there is more to read (`next_offset` is before the
     /// end).
+    #[must_use]
     pub fn has_continuation(&self) -> bool {
         self.next_offset < self.original_bytes
     }
@@ -83,6 +86,7 @@ impl TruncationMeta {
 
 /// A short human-readable suffix for the returned text. Kept terse —
 /// the structured form is on the result, this is the inline hint.
+#[must_use]
 pub fn truncation_note(meta: &TruncationMeta) -> String {
     let more = if meta.has_continuation() {
         format!("; continue at offset {}", meta.next_offset)
@@ -126,6 +130,7 @@ pub fn truncation_note(meta: &TruncationMeta) -> String {
 /// field is not useless. The cost of a false negative (an empty result
 /// kept) is small; the cost of a false positive (a useful result
 /// dropped) is a wrong prune.
+#[must_use]
 pub fn is_useless(tool_name: &str, result: &Value) -> bool {
     // An error result is not "useless" — it carries a message the
     // model must see.

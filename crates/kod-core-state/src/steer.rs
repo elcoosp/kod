@@ -43,6 +43,7 @@ impl InterruptSource {
     /// the golden-prompt tests and every recorded transcript stay
     /// valid. The others are new — a swarm notice never had a header
     /// before, and a background completion did not exist.
+    #[must_use]
     pub fn header(self) -> &'static str {
         match self {
             Self::User => {
@@ -99,6 +100,7 @@ impl SoftInterrupt {
     }
 
     /// The full text injected into the conversation.
+    #[must_use]
     pub fn render(&self) -> String {
         format!("{}\n{}", self.source.header(), self.content)
     }

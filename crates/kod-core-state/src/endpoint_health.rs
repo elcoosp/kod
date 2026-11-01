@@ -54,6 +54,7 @@ impl Default for EndpointHealth {
 impl EndpointHealth {
     /// Build a breaker that trips after strike_limit failures and
     /// holds the endpoint out for cooldown.
+    #[must_use]
     pub fn new(strike_limit: u32, cooldown: Duration) -> Self {
         Self {
             states: HashMap::new(),
@@ -140,6 +141,7 @@ impl EndpointHealth {
 
     /// Last recorded error for an endpoint, for a `/cache` surface
     /// or an audit line.
+    #[must_use]
     pub fn last_error(&self, endpoint: &str) -> Option<&str> {
         self.states
             .get(endpoint)
@@ -148,6 +150,7 @@ impl EndpointHealth {
 
     /// Snapshot of the failing endpoints, for a `/cache` or
     /// `/doctor` readout.
+    #[must_use]
     pub fn unhealthy(&self) -> Vec<(String, u32, Option<&str>)> {
         let now = Instant::now();
         self.states

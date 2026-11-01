@@ -127,6 +127,7 @@ pub struct WebFetchTool {
 
 impl WebFetchTool {
     /// Build the web_fetch tool.
+    #[must_use]
     pub fn new() -> Self {
         // H-S7 / T1-C15: the initial client is no longer built here.
         // `fetch_with_safe_redirects` builds a per-hop client with the
@@ -702,6 +703,7 @@ fn html_to_text(html: &str) -> String {
 /// Fuzz-only wrapper: expose the private HTML parser for external
 /// fuzz targets without widening the crate's public surface.
 #[doc(hidden)]
+#[must_use]
 pub fn html_to_text_for_fuzz(html: &str) -> String {
     html_to_text(html)
 }

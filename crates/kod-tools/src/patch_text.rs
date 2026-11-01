@@ -75,6 +75,7 @@ pub struct Hunk {
 /// reply is not a patch to apply half of). A block that parses but
 /// names no file returns an empty vec, which the caller treats as
 /// "nothing to do".
+#[must_use]
 pub fn extract(text: &str) -> Option<Vec<FilePatch>> {
     let mut out: Vec<FilePatch> = Vec::new();
     let mut lines = text.lines();

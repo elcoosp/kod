@@ -20,6 +20,7 @@ pub struct FileInfoTool {
 
 impl FileInfoTool {
     /// Build the file-info tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

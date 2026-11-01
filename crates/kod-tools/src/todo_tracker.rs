@@ -74,6 +74,7 @@ pub struct TodoTracker {
 
 impl TodoTracker {
     /// Fresh tracker.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -84,6 +85,7 @@ impl TodoTracker {
     /// non-empty already. A prompt that ends in `?` or `!` is a
     /// question or an exclamation — not a task to plan, so the tool is
     /// not pushed.
+    #[must_use]
     pub fn should_offer_prelude(&self, input: &str, has_todos: bool) -> bool {
         if self.prelude_offered {
             return false;
@@ -143,6 +145,7 @@ impl TodoTracker {
     /// (it is asking, not finishing). `async_wakes_pending` — a
     /// background job will deliver a result, so the model is waiting,
     /// not stopped.
+    #[must_use]
     pub fn completion_reminder_due(
         &self,
         incomplete_todos: bool,
@@ -172,16 +175,19 @@ impl TodoTracker {
     }
 
     /// The current mutating-call count.
+    #[must_use]
     pub fn mutating_since_todo(&self) -> u32 {
         self.mutating_since_todo
     }
 
     /// The mid-run nudges fired this cycle.
+    #[must_use]
     pub fn nudges_this_cycle(&self) -> u32 {
         self.nudges_this_cycle
     }
 
     /// Whether a completion reminder is outstanding.
+    #[must_use]
     pub fn reminder_awaiting_progress(&self) -> bool {
         self.reminder_awaiting_progress
     }

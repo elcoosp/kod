@@ -89,6 +89,7 @@ pub struct AutoThinking {
 
 impl AutoThinking {
     /// Build a classifier over a shared judgment client, default mode.
+    #[must_use]
     pub fn new(client: JudgmentClient) -> Self {
         Self {
             client,
@@ -97,12 +98,14 @@ impl AutoThinking {
     }
 
     /// Builder: set the classifier mode.
+    #[must_use]
     pub fn with_mode(mut self, mode: ClassifierMode) -> Self {
         self.mode = mode;
         self
     }
 
     /// The current classifier mode.
+    #[must_use]
     pub fn mode(&self) -> ClassifierMode {
         self.mode
     }
@@ -245,6 +248,7 @@ fn parse_effort_label(label: &str) -> EffortLevel {
 ///
 /// `supported` is ascending. An empty list is treated as
 /// `[Medium]`.
+#[must_use]
 pub fn clamp_to_supported(level: EffortLevel, supported: &[EffortLevel]) -> EffortLevel {
     if supported.is_empty() {
         return EffortLevel::Medium;
@@ -273,6 +277,7 @@ pub fn clamp_to_supported(level: EffortLevel, supported: &[EffortLevel]) -> Effo
 /// "One tier" means one step in `supported`'s own ordering, not one
 /// step in the full `EffortLevel` enum — a model whose top is `High`
 /// ceilings at `Medium`, not at `Low`.
+#[must_use]
 pub fn ceiling_for_auto(level: EffortLevel, supported: &[EffortLevel]) -> EffortLevel {
     if supported.is_empty() {
         return EffortLevel::Medium;

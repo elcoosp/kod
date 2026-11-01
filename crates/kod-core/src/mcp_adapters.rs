@@ -49,12 +49,14 @@ use std::sync::Arc;
 pub const MCP_TOOL_PREFIX: &str = "mcp:";
 
 /// Compose a tool name from a server name and a tool name.
+#[must_use]
 pub fn mcp_tool_name(server: &str, tool: &str) -> String {
     format!("{MCP_TOOL_PREFIX}{server}.{tool}")
 }
 
 /// The owning server + tool for a composed name. `None` when the
 /// input does not start with the prefix or has no separator.
+#[must_use]
 pub fn split_mcp_tool_name(full: &str) -> Option<(&str, &str)> {
     let rest = full.strip_prefix(MCP_TOOL_PREFIX)?;
     let (server, tool) = rest.split_once('.')?;
@@ -86,6 +88,7 @@ pub struct McpHost {
 impl McpHost {
     /// Build a host from a parsed `[mcp]` section. Does not spawn
     /// anything — [`McpHost::startup_tools`] does that.
+    #[must_use]
     pub fn new(config: McpConfig, working_dir: std::path::PathBuf) -> Self {
         Self {
             specs: config.servers,
@@ -357,12 +360,14 @@ impl McpToolAdapter {
     }
 
     /// The owning server name, for tests and diagnostics.
+    #[must_use]
     pub fn server(&self) -> &str {
         &self.server
     }
 
     /// The tool name as the server advertises it (without the
     /// `mcp:<server>.` prefix), for tests and diagnostics.
+    #[must_use]
     pub fn tool_name(&self) -> &str {
         &self.tool_name
     }

@@ -67,6 +67,7 @@ use kod_core_quality::prune::PrunePlan;
 use kod_core_quality::shake::{ShakeConfig, ShakePlan, plan_shake};
 
 /// The doc's reserve rule: `max(15% of window, 16_384)`.
+#[must_use]
 pub fn resolve_reserve(window_tokens: u64) -> u64 {
     let fifteen_pct = window_tokens.saturating_mul(15) / 100;
     fifteen_pct.max(16_384)
@@ -78,6 +79,7 @@ pub fn resolve_reserve(window_tokens: u64) -> u64 {
 /// window returns `false`; refusing to compact on an unknown window
 /// is the safe reading (the caller learns the real number from the
 /// provider on the next call).
+#[must_use]
 pub fn should_compact(used_tokens: u64, window_tokens: u64) -> bool {
     if window_tokens == 0 {
         return false;
@@ -244,6 +246,7 @@ pub enum CompactionPlan {
 
 impl CompactionPlan {
     /// True when the plan produces no mutations.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Shake(p) => p.is_empty(),
@@ -301,6 +304,7 @@ pub struct CompactionAdmission {
 impl CompactionAdmission {
     /// True when the plan is admitted: it strictly shrinks the
     /// transcript. This is the design's no-reduction guard.
+    #[must_use]
     pub fn admits(&self) -> bool {
         self.projected < self.current
     }
@@ -311,6 +315,7 @@ impl CompactionAdmission {
     ///
     /// **Not** consulted by [`Self::admits`] — see the type's docs
     /// for why conflating the two breaks small windows.
+    #[must_use]
     pub fn fits_under_reserve(&self) -> bool {
         self.projected <= self.window.saturating_sub(self.reserve)
     }
@@ -349,6 +354,7 @@ pub struct DispatchOutcome {
 
 impl DispatchOutcome {
     /// Whether a plan was produced.
+    #[must_use]
     pub fn has_plan(&self) -> bool {
         self.plan.is_some()
     }
@@ -361,6 +367,7 @@ pub struct CompactionDispatcher {
 
 impl CompactionDispatcher {
     /// Build with an explicit method list, in preference order.
+    #[must_use]
     pub fn new(methods: Vec<Box<dyn CompactionMethod>>) -> Self {
         Self { methods }
     }
@@ -368,6 +375,7 @@ impl CompactionDispatcher {
     /// Build the doc's default ladder: `[remote, snapcompact,
     /// handoff, shake, soft]`. `remote`, `snapcompact`, `handoff`,
     /// and `soft` land as stubs; `shake` is the real rung.
+    #[must_use]
     pub fn default_ladder(shake_config: ShakeConfig) -> Self {
         Self::new(vec![
             Box::new(RemoteMethod::stub()),
@@ -380,17 +388,20 @@ impl CompactionDispatcher {
 
     /// The number of methods registered.
     /// The number of registered methods.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.methods.len()
     }
 
     /// True when no methods are registered.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.methods.is_empty()
     }
 
     /// The registered methods' names, in preference order.
     /// The registered methods' names, in preference order.
+    #[must_use]
     pub fn method_names(&self) -> Vec<&'static str> {
         self.methods.iter().map(|m| m.name()).collect()
     }
@@ -455,6 +466,7 @@ pub struct ShakeMethod {
 
 impl ShakeMethod {
     /// Build a shake method over the given config.
+    #[must_use]
     pub fn new(config: ShakeConfig) -> Self {
         Self { config }
     }
@@ -513,6 +525,7 @@ pub struct PruneMethod {
 
 impl PruneMethod {
     /// Build a prune method over the given config.
+    #[must_use]
     pub fn new(config: kod_core_quality::prune::PruneConfig) -> Self {
         Self { config }
     }
@@ -604,11 +617,13 @@ pub const MIN_REMOTE_MESSAGES: usize = 4;
 
 impl RemoteMethod {
     /// Build a remote-compaction method.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// Alias, preserved for the stub-era registration.
+    #[must_use]
     pub fn stub() -> Self {
         Self::new()
     }
@@ -728,11 +743,13 @@ pub const SAVINGS_MARGIN: f64 = 0.9;
 
 impl SnapcompactMethod {
     /// Build a snapcompact method.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// Alias, preserved for the stub-era registration.
+    #[must_use]
     pub fn stub() -> Self {
         Self::new()
     }
@@ -855,6 +872,7 @@ pub const MIN_HANDOFF_MESSAGES: usize = 4;
 
 impl HandoffMethod {
     /// Build a handoff method.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -862,6 +880,7 @@ impl HandoffMethod {
     /// Alias for [`Self::new`], preserved for the stub-registration
     /// shape the dispatcher's constructor used before the real
     /// implementation landed.
+    #[must_use]
     pub fn stub() -> Self {
         Self::new()
     }
@@ -969,6 +988,7 @@ pub struct SoftMethod;
 
 impl SoftMethod {
     /// Build a soft-summarize method (stub).
+    #[must_use]
     pub fn stub() -> Self {
         Self
     }

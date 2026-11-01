@@ -77,6 +77,7 @@ pub struct CacheLedger {
 
 impl CacheLedger {
     /// Empty ledger.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -105,6 +106,7 @@ impl CacheLedger {
 
     /// Whether the endpoint's cache matches the fingerprint the
     /// caller is about to send.
+    #[must_use]
     pub fn is_warm(&self, endpoint: &str, head_fingerprint: u64) -> bool {
         self.states
             .get(endpoint)
@@ -112,6 +114,7 @@ impl CacheLedger {
     }
 
     /// The endpoint currently warm, if any.
+    #[must_use]
     pub fn sticky(&self) -> Option<&str> {
         self.sticky.as_deref()
     }
@@ -127,6 +130,7 @@ impl CacheLedger {
     /// Conservative by construction: the write rate is the *higher*
     /// of the two, so the estimate never understates the penalty and
     /// the gate errs on the side of staying.
+    #[must_use]
     pub fn switch_penalty_usd(
         &self,
         target: &str,
@@ -145,6 +149,7 @@ impl CacheLedger {
     /// Snapshot of every endpoint the ledger has observed, for a
     /// `/cache` surface. Returns `(endpoint, cached_tokens,
     /// last_used_turn)` in insertion order.
+    #[must_use]
     pub fn snapshot(&self) -> Vec<(String, u64, u64)> {
         self.states
             .iter()
@@ -153,6 +158,7 @@ impl CacheLedger {
     }
 
     /// The endpoint currently warm, if any.
+    #[must_use]
     pub fn sticky_endpoint(&self) -> Option<&str> {
         self.sticky.as_deref()
     }
@@ -176,6 +182,7 @@ impl CacheLedger {
     /// Conservative on ambiguity: a caller that cannot produce a
     /// saving estimate passes 0.0, and the gate keeps the warm
     /// fallback.
+    #[must_use]
     pub fn gate<'a>(
         &self,
         preferred: &'a str,

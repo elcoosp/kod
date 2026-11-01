@@ -104,6 +104,7 @@ pub struct CheckpointManager {
 
 impl CheckpointManager {
     /// Open (or create-on-demand) a manager rooted at `dir`.
+    #[must_use]
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
@@ -115,6 +116,7 @@ impl CheckpointManager {
     /// `~/.kod/checkpoints/<fnv1a-hash-of-canonical-working-dir>/`.
     /// Returns `None` when the home directory cannot be determined
     /// (a stripped container, a test).
+    #[must_use]
     pub fn for_working_dir(working_dir: &Path) -> Option<Self> {
         // `KOD_CHECKPOINT_DIR` overrides the whole root, not just the
         // per-project hash beneath it: when set, every working
@@ -196,11 +198,13 @@ impl CheckpointManager {
     }
 
     /// The directory snapshots are stored in.
+    #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
     /// Override the retention cap (used by tests).
+    #[must_use]
     pub fn with_max_snapshots(mut self, n: usize) -> Self {
         self.max_snapshots = n.max(1);
         self
@@ -503,6 +507,7 @@ fn is_valid_id(id: &str) -> bool {
 /// and processes, which `std::collections::hash_map::DefaultHasher` is
 /// not — the checkpoint directory for a project must be the same for
 /// the session that wrote a snapshot and the session that restores it.
+#[must_use]
 pub fn fnv1a_hex(s: &str) -> String {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;

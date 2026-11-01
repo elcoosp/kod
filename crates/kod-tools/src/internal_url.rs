@@ -82,6 +82,7 @@ impl ResolveContext {
 
     /// Attach tool permissions. The `xd://` path calls this; every
     /// other handler ignores the field.
+    #[must_use]
     pub fn with_tool_permissions(mut self, perms: kod_types::ToolPermissions) -> Self {
         self.tool_permissions = Some(perms);
         self
@@ -93,6 +94,7 @@ impl ResolveContext {
 /// path; `artifact://id` / `memory://x` are store keys and return
 /// `None`. Used to run the path gates on an internal URL before
 /// dispatching, so `conflict://` cannot read a secret or write `.git`.
+#[must_use]
 pub fn url_path_target(url: &str) -> Option<std::path::PathBuf> {
     let rest = url.strip_prefix("conflict://")?;
     if rest.is_empty() {
@@ -138,12 +140,14 @@ impl ResolvedResource {
     }
 
     /// Builder: override the MIME type.
+    #[must_use]
     pub fn with_mime(mut self, mime: impl Into<String>) -> Self {
         self.mime = Some(mime.into());
         self
     }
 
     /// Builder: mark the resource as immutable.
+    #[must_use]
     pub fn immutable(mut self) -> Self {
         self.immutable = true;
         self
@@ -305,6 +309,7 @@ impl std::fmt::Debug for ProtocolRouter {
 ///
 /// The scheme is normalized to lower-case, matching the router's
 /// lookup policy.
+#[must_use]
 pub fn scheme_of(url: &str) -> Option<String> {
     let idx = url.find("://")?;
     let scheme = &url[..idx];
@@ -320,6 +325,7 @@ pub fn scheme_of(url: &str) -> Option<String> {
 
 impl ProtocolRouter {
     /// Empty router with no handlers.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -328,6 +334,7 @@ impl ProtocolRouter {
     /// replaces the first (last write wins) — construction is
     /// deterministic because the engine controls the registration
     /// order.
+    #[must_use]
     pub fn register(self, handler: Arc<dyn ProtocolHandler>) -> Self {
         let scheme = handler.scheme().to_ascii_lowercase();
         let mut map = (*self.handlers).clone();
@@ -339,6 +346,7 @@ impl ProtocolRouter {
 
     /// The schemes this router knows, sorted. For a "known schemes"
     /// list in an error message.
+    #[must_use]
     pub fn known_schemes(&self) -> Vec<String> {
         let mut v: Vec<String> = self.handlers.keys().cloned().collect();
         v.sort_unstable();
@@ -354,6 +362,7 @@ impl ProtocolRouter {
     /// as a path. (An unknown scheme *is* an error when the model
     /// typed `xxx://` deliberately; the caller that wants that
     /// distinction calls `resolve` directly.)
+    #[must_use]
     pub fn handles(&self, url: &str) -> bool {
         scheme_of(url).is_some_and(|s| self.handlers.contains_key(&s))
     }
@@ -404,6 +413,7 @@ impl ProtocolRouter {
     /// handler maps the URL back to a file. `None` for a store scheme
     /// or an unknown scheme. The write tool gates on this before
     /// dispatching.
+    #[must_use]
     pub fn write_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
         let scheme = scheme_of(url)?;
         let handler = self.handlers.get(&scheme)?;
@@ -413,6 +423,7 @@ impl ProtocolRouter {
     /// The filesystem path a `resolve` of `url` reads, when the
     /// handler maps the URL back to a file. The read tool gates on
     /// this before dispatching.
+    #[must_use]
     pub fn read_target_path(&self, url: &str, ctx: &ResolveContext) -> Option<std::path::PathBuf> {
         let scheme = scheme_of(url)?;
         let handler = self.handlers.get(&scheme)?;
@@ -422,6 +433,7 @@ impl ProtocolRouter {
     /// Convert a [`ProtocolError`] into a `KodError` that carries the
     /// handler's message. The read/write tools call this so the
     /// error's text is exactly what the handler produced.
+    #[must_use]
     pub fn to_kod_error(err: &ProtocolError) -> KodError {
         KodError::InvalidParameters {
             reason: err.to_string(),
@@ -464,6 +476,7 @@ struct StoredArtifact {
 
 impl ArtifactHandler {
     /// Empty artifact handler with no stored resources.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             store: Arc::new(tokio::sync::RwLock::new(HashMap::new())),

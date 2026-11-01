@@ -147,11 +147,13 @@ impl SkillWatcher {
     }
 
     /// Check if watcher is running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.is_running.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Get the watched directory
+    #[must_use]
     pub fn watch_dir(&self) -> &Path {
         &self.watch_dir
     }

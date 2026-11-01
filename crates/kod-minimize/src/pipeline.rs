@@ -80,6 +80,7 @@ impl Def {
     }
 
     /// Whether this def applies to a `(program, args)` pair.
+    #[must_use]
     pub fn matches(&self, program: &str, args: &[String]) -> bool {
         if program != self.program {
             return false;

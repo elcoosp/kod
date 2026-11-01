@@ -203,6 +203,7 @@ struct Inner {
 
 impl IrcBus {
     /// Empty bus.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(Mutex::new(Inner {

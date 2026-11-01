@@ -109,24 +109,28 @@ impl JevConfig {
     /// True when the integration is switched on. Call sites check
     /// this before doing anything else so the disabled path never
     /// touches the network.
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
     /// The per-request timeout, floored at 50 ms so a typo cannot
     /// produce a zero-length timeout that fails on every call.
+    #[must_use]
     pub fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms.max(50))
     }
 
     /// The reasoning-timeout as a `Duration`. Zero means the valve
     /// is disabled and the classifier is trusted absolutely.
+    #[must_use]
     pub fn reasoning_timeout(&self) -> Duration {
         Duration::from_secs(self.reasoning_timeout_secs)
     }
 
     /// The cache TTL as a `Duration`. A TTL of zero disables the
     /// cache entirely (every lookup misses).
+    #[must_use]
     pub fn cache_ttl(&self) -> Duration {
         Duration::from_secs(self.cache_ttl_secs)
     }
@@ -182,6 +186,7 @@ impl JevThresholds {
     ];
 
     /// Read a threshold by name. `None` for an unknown name.
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<f32> {
         Some(match name {
             "task_classify_min" => self.task_classify_min,

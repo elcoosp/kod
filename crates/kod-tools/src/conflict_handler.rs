@@ -90,6 +90,7 @@ pub struct ConflictStore {
 
 impl ConflictStore {
     /// Empty conflict store.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -144,6 +145,7 @@ fn stable_id(path: &std::path::Path, start: usize, body: &str) -> String {
 
 /// Scan `text` for conflict blocks. Only column-0 `<<<<<<<` opens a
 /// block; a `|||||||` (diff3 base) section is tolerated and dropped.
+#[must_use]
 pub fn scan(text: &str) -> Vec<ConflictBlock> {
     let mut out: Vec<ConflictBlock> = Vec::new();
     let bytes = text.as_bytes();

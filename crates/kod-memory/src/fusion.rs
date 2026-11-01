@@ -55,6 +55,7 @@ pub const MMR_LAMBDA: f64 = 0.7;
 /// An item that appears in several lists accumulates from each — that
 /// is the point: agreement across retrievers ranks higher than a
 /// strong showing in one.
+#[must_use]
 pub fn reciprocal_rank_fusion(lists: &[Vec<String>]) -> Vec<(String, f64)> {
     let mut scores: HashMap<String, f64> = HashMap::new();
     for list in lists {
@@ -140,6 +141,7 @@ pub enum QueryIntent {
 ///
 /// Order matters: preference beats procedural (a `prefer` query
 /// usually also contains a verb), temporal beats general.
+#[must_use]
 pub fn classify_intent(query: &str) -> QueryIntent {
     classify_intent_with_confidence(query).0
 }
@@ -159,6 +161,7 @@ pub fn classify_intent(query: &str) -> QueryIntent {
 /// Callers that want the intent only should use [`classify_intent`].
 /// Callers that want to blend the intent weights toward neutral
 /// should use [`blend_weights`] with this confidence.
+#[must_use]
 pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
     let lower = query.to_ascii_lowercase();
     let trimmed = lower.trim();
@@ -233,6 +236,7 @@ pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
 ///
 /// `confidence` in `[0, 1]`; values outside are clamped. `0.0`
 /// returns the neutral weights, `1.0` returns the input unchanged.
+#[must_use]
 pub fn blend_weights(weights: IntentWeights, confidence: f64) -> IntentWeights {
     let c = confidence.clamp(0.0, 1.0);
     let blend = |w: f64| 1.0 + c * (w - 1.0);
@@ -267,6 +271,7 @@ pub struct IntentWeights {
 /// * A **preference** query leans on importance (a preference is a
 ///   durable fact, and importance captures that).
 /// * A **question** and **general** query use the neutral weights.
+#[must_use]
 pub fn intent_weights(intent: QueryIntent) -> IntentWeights {
     match intent {
         QueryIntent::Temporal => IntentWeights {
@@ -303,6 +308,7 @@ pub fn intent_weights(intent: QueryIntent) -> IntentWeights {
 /// with no cue returns `0.3` — the floor, not zero, because even an
 /// uncued query leans slightly toward its classification over a
 /// uniform prior.
+#[must_use]
 pub fn intent_confidence(matches: u32) -> f64 {
     (0.3 + 0.15 * matches as f64).min(1.0)
 }

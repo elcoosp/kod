@@ -26,6 +26,7 @@ pub struct AstSymbol {
 
 /// Extract symbols from `source` as Rust, or `None` when the parse
 /// fails (the caller falls back to its regex path).
+#[must_use]
 pub fn rust_symbols(source: &str) -> Option<Vec<AstSymbol>> {
     let tree = crate::parse_cache::global().parse(Lang::Rust, source)?;
     let bytes = source.as_bytes();

@@ -36,6 +36,7 @@ impl PreflightSample {
     ///
     /// Returns the reasons, so a caller can print them rather than a
     /// bare "no".
+    #[must_use]
     pub fn pressure_reasons(&self, cores: usize) -> Vec<String> {
         let mut out = Vec::new();
         if let (Some(total), Some(free)) = (self.total_ram_bytes, self.free_ram_bytes)
@@ -66,6 +67,7 @@ impl PreflightSample {
 }
 
 /// Parse Linux `/proc/meminfo`. Returns `(total, free, swap_used)`.
+#[must_use]
 pub fn parse_meminfo(text: &str) -> (Option<u64>, Option<u64>, Option<u64>) {
     let field = |name: &str| -> Option<u64> {
         text.lines()
@@ -90,6 +92,7 @@ pub fn parse_meminfo(text: &str) -> (Option<u64>, Option<u64>, Option<u64>) {
 }
 
 /// Parse `sysctl -n vm.loadavg` (macOS), which prints `{ 1.5 2.0 3.0 }`.
+#[must_use]
 pub fn parse_loadavg(text: &str) -> Option<f64> {
     // `.filter(|v| v.is_finite())`: `f64::parse` accepts `"NaN"`,
     // `"inf"`, `"-inf"`, and `"Infinity"`. A `NaN` load would
@@ -106,6 +109,7 @@ pub fn parse_loadavg(text: &str) -> Option<f64> {
 }
 
 /// Parse `pmset -g batt` (macOS). Returns `(percent, on_battery)`.
+#[must_use]
 pub fn parse_pmset(text: &str) -> (Option<u8>, bool) {
     let on_battery = text.contains("Battery Power");
     let percent = text
@@ -117,6 +121,7 @@ pub fn parse_pmset(text: &str) -> (Option<u8>, bool) {
 }
 
 /// Sample the host.
+#[must_use]
 pub fn sample() -> PreflightSample {
     // The fields are only assigned in the linux/macos arms below; on
     // other targets the binding is never mutated, so `mut` would warn

@@ -47,11 +47,13 @@ impl OutputSpool {
     }
 
     /// The spool file path.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// Bytes written so far.
+    #[must_use]
     pub fn written(&self) -> u64 {
         self.written
     }
@@ -67,6 +69,7 @@ impl OutputSpool {
     }
 
     /// How long since the last write.
+    #[must_use]
     pub fn silent_for(&self) -> Duration {
         self.last_write.elapsed()
     }
@@ -75,6 +78,7 @@ impl OutputSpool {
     ///
     /// A zero threshold means "never report a stall" — the caller
     /// turned the watchdog off.
+    #[must_use]
     pub fn is_stalled(&self, threshold: Duration) -> bool {
         !threshold.is_zero() && self.silent_for() >= threshold
     }
@@ -86,6 +90,7 @@ impl OutputSpool {
     /// gigabyte one. The decode is lossy because a background command
     /// may emit anything — the preview is for a human or a model to
     /// scan, not to parse.
+    #[must_use]
     pub fn preview(&self) -> String {
         use std::io::{Read as _, Seek as _, SeekFrom};
         let Ok(mut f) = std::fs::File::open(&self.path) else {

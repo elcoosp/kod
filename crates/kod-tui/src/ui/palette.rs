@@ -16,17 +16,20 @@ pub struct PaletteWidget;
 
 impl PaletteWidget {
     /// Build the palette widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// Should the palette be rendered?
+    #[must_use]
     pub fn should_show(app: &KodApp) -> bool {
         app.is_palette_open()
     }
 
     /// Popup height: one line per candidate (bounded to 12) plus
     /// two for the border and one for the query line.
+    #[must_use]
     pub fn height(app: &KodApp) -> u16 {
         let n = app.palette_candidates().len().min(12) as u16;
         (n + 4).min(20)

@@ -76,6 +76,7 @@ impl McpServerConfig {
     /// A server is "spawnable" when it has a command and is enabled.
     /// A block with an empty command is a config the user drafted but
     /// never filled in; skipping it is the honest behaviour.
+    #[must_use]
     pub fn is_spawnable(&self) -> bool {
         self.enabled && !self.command.trim().is_empty()
     }

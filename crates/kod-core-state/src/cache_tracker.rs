@@ -60,6 +60,7 @@ impl Default for CacheTracker {
 
 impl CacheTracker {
     /// Build a tracker keeping at most max_history hashes.
+    #[must_use]
     pub fn new(max_history: usize) -> Self {
         Self {
             hashes: Vec::new(),
@@ -128,6 +129,7 @@ impl CacheTracker {
     /// How many messages have been observed since the last reset.
     /// Total messages seen since the last reset, including those
     /// trimmed from the window.
+    #[must_use]
     pub fn observed(&self) -> usize {
         self.dropped + self.hashes.len()
     }
@@ -135,6 +137,7 @@ impl CacheTracker {
     /// Messages still held in the comparison window. Past this the
     /// oldest are dropped — a mutation that deep is a full-prefix
     /// miss regardless, so the tracker does not need them.
+    #[must_use]
     pub fn retained(&self) -> usize {
         self.hashes.len()
     }
@@ -146,6 +149,7 @@ impl CacheTracker {
 /// timestamps change for reasons that have nothing to do with the
 /// wire bytes, and folding them in would report a violation every
 /// time a user pinned a turn.
+#[must_use]
 pub fn stable_message_hash(m: &ChatMessage) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;

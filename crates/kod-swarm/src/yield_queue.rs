@@ -70,6 +70,7 @@ pub struct QueuedYield {
 
 impl QueuedYield {
     /// Evaluate the thunk. `None` means the item is stale.
+    #[must_use]
     pub fn take_render(self) -> Option<String> {
         (self.render)()
     }
@@ -97,6 +98,7 @@ pub struct DrainBatch {
 
 impl DrainBatch {
     /// True when the batch is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
@@ -125,6 +127,7 @@ pub struct YieldQueue {
 
 impl YieldQueue {
     /// Empty queue with idle flush enabled.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(VecDeque::new()),

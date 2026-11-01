@@ -664,6 +664,7 @@ impl KodConfig {
     /// Effective schema version: `1` for a config that never named
     /// one, the stored value otherwise. Callers that need to branch
     /// on the shape check this, not the raw field.
+    #[must_use]
     pub fn effective_version(&self) -> u32 {
         if self.config_version == 0 {
             1
@@ -673,6 +674,7 @@ impl KodConfig {
     }
 
     /// True when the config file (as loaded) predates the v2 layout.
+    #[must_use]
     pub fn needs_migration(&self) -> bool {
         self.effective_version() < 2
     }

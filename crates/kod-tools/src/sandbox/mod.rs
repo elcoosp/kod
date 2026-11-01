@@ -21,6 +21,7 @@ pub mod landlock {
     //! Stub for non-Linux platforms.
 
     /// No Linux kernel, no Landlock.
+    #[must_use]
     pub fn probe_abi() -> Option<u32> {
         None
     }

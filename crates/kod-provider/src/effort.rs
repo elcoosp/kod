@@ -18,6 +18,7 @@ pub use kod_types::effort::EffortLevel;
 ///
 /// A zero base stays zero: a caller that disabled the timeout meant
 /// it, and scaling zero would silently re-enable it.
+#[must_use]
 pub fn scaled_idle_timeout(base: std::time::Duration, effort: EffortLevel) -> std::time::Duration {
     if base.is_zero() {
         return base;

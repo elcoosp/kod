@@ -16,16 +16,19 @@ pub struct CompletionsWidget;
 
 impl CompletionsWidget {
     /// Build the completions widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
     /// True when the completions panel should render.
+    #[must_use]
     pub fn should_show(app: &KodApp) -> bool {
         app.active_completion_len() > 0
     }
 
     /// Panel height for the current completion count.
+    #[must_use]
     pub fn height(app: &KodApp) -> u16 {
         (app.active_completion_len().min(8) + 2).min(10) as u16
     }

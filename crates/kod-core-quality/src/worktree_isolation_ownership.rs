@@ -84,6 +84,7 @@ impl IsolationOwnership {
     /// the start token cannot be read, the function degrades to "is
     /// the pid alive" — documented, and the case is rare enough that
     /// a false positive leaves one worktree to reap next run.
+    #[must_use]
     pub fn is_alive(&self) -> bool {
         is_pid_alive(self.pid) && token_matches(self.pid, &self.start_token)
     }
@@ -100,6 +101,7 @@ pub fn write_marker(worktree: &Path, id: impl Into<String>) -> Result<()> {
 }
 
 /// Read the marker at the worktree root, if any.
+#[must_use]
 pub fn read_marker(worktree: &Path) -> Option<IsolationOwnership> {
     let path = worktree.join(MARKER_FILENAME);
     let body = std::fs::read_to_string(&path).ok()?;
@@ -158,6 +160,7 @@ pub fn reap_dead(repo: &Path) -> Result<Vec<PathBuf>> {
 /// current-time-in-millis at write time, which detects pid reuse
 /// only approximately. Documented as a known limitation; the caller
 /// that cares about exactness is Linux in practice.
+#[must_use]
 pub fn process_start_token(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {

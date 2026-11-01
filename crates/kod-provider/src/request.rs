@@ -50,6 +50,7 @@ impl ModelRef {
 
     /// `"local-ollama/qwen2.5-coder:32b"` — for logs, tool headers,
     /// and the `/model` display.
+    #[must_use]
     pub fn display(&self) -> String {
         format!("{}/{}", self.endpoint, self.model)
     }
@@ -85,11 +86,13 @@ pub struct SystemPrompt {
 
 impl SystemPrompt {
     /// Empty system prompt.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Append a segment. Returns `self` for chaining.
+    #[must_use]
     pub fn with(mut self, text: impl Into<String>, cacheable: bool) -> Self {
         self.segments.push(SystemSegment {
             text: text.into(),
@@ -101,6 +104,7 @@ impl SystemPrompt {
     /// Concatenate every segment's text with a blank line between, in
     /// order. Providers without native system-prompt support use this
     /// to build a single system message.
+    #[must_use]
     pub fn render_text(&self) -> String {
         self.segments
             .iter()
@@ -110,6 +114,7 @@ impl SystemPrompt {
     }
 
     /// True when the prompt has no segments.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
@@ -187,6 +192,7 @@ impl CompletionRequest {
     /// Construct a minimal request — useful for tests and for the
     /// migration adapter, which renders this back to the old `&str`
     /// shape. Production callers build the full struct directly.
+    #[must_use]
     pub fn new(model: ModelRef) -> Self {
         Self {
             system: SystemPrompt::new(),
@@ -218,6 +224,7 @@ impl CompletionRequest {
     /// today (system block, then a transcript). The layout is
     /// deliberately stable: the D1 migration's golden-prefix test
     /// compares this output to the pre-migration engine.
+    #[must_use]
     pub fn render_text(&self) -> String {
         let mut out = String::new();
         if !self.system.is_empty() {
@@ -266,6 +273,7 @@ pub struct ProviderCapabilities {
 impl ProviderCapabilities {
     /// Sensible default: everything on, no prompt-cache hints, no
     /// pricing. Providers override with their real matrix.
+    #[must_use]
     pub fn conservative() -> Self {
         Self {
             tools: true,
@@ -371,6 +379,7 @@ fn default_cache_write_rate() -> f64 {
 impl ModelPricing {
     /// Build pricing from the two rates a config file has always
     /// carried, deriving the cache tiers from the published ratios.
+    #[must_use]
     pub fn new(input_per_mtok_usd: f64, output_per_mtok_usd: f64) -> Self {
         Self {
             input_per_mtok_usd,
@@ -384,6 +393,7 @@ impl ModelPricing {
 
     /// Build pricing with explicit cache rates, for a caller whose
     /// endpoint charges a non-default ratio.
+    #[must_use]
     pub fn with_cache_rates(
         input_per_mtok_usd: f64,
         output_per_mtok_usd: f64,
@@ -404,6 +414,7 @@ impl ModelPricing {
     /// chain after `new` or `with_cache_rates`. `Split` is the
     /// default; OpenAI-compatible endpoints override to `Subset`
     /// because their `prompt_tokens` includes cached tokens.
+    #[must_use]
     pub fn with_cache_convention(mut self, conv: crate::CacheConvention) -> Self {
         self.cache_convention = conv;
         self
@@ -414,6 +425,7 @@ impl ModelPricing {
     /// Kept for callers that only have the two-token-count shape;
     /// delegates to [`Self::cost_for_usage`] with zero cache tokens
     /// so both paths agree on the arithmetic.
+    #[must_use]
     pub fn cost_usd(&self, prompt_tokens: usize, completion_tokens: usize) -> f64 {
         self.cost_for_usage(&crate::TokenUsage {
             prompt_tokens,
@@ -431,6 +443,7 @@ impl ModelPricing {
     /// `uncached_input_tokens` is derived, not passed: a caller that
     /// has a `TokenUsage` should never have to recompute the split,
     /// and every kod call site has one.
+    #[must_use]
     pub fn cost_for_usage(&self, usage: &crate::TokenUsage) -> f64 {
         let m = 1_000_000.0;
         // The convention decides what `prompt_tokens` already contains.

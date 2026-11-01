@@ -68,6 +68,7 @@ pub struct ParseCache {
 
 impl ParseCache {
     /// Empty cache with no entries.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),

@@ -30,12 +30,14 @@ use serde_json::Value;
 pub const QUESTION_MARKER: &str = "\0kod-question:";
 
 /// Build the sentinel string that wraps a question marker.
+#[must_use]
 pub fn question_marker(id: u64, question_json: &str) -> String {
     let clean = question_json.replace('\0', " ");
     format!("{QUESTION_MARKER}{id}:{clean}\0")
 }
 
 /// Parse a question marker back into its id and JSON.
+#[must_use]
 pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
     let rest = chunk.strip_prefix(QUESTION_MARKER)?;
     let body = rest.strip_suffix('\0')?;
@@ -61,6 +63,7 @@ pub struct AskUserTool {
 
 impl AskUserTool {
     /// Build the ask_user tool.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {

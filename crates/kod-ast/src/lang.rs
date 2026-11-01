@@ -33,6 +33,7 @@ pub enum Lang {
 impl Lang {
     /// The language for `path`, by extension. `None` for a file the
     /// parser set does not cover.
+    #[must_use]
     pub fn from_path(path: &Path) -> Option<Lang> {
         Self::from_extension(path.extension().and_then(|e| e.to_str())?)
     }
@@ -40,6 +41,7 @@ impl Lang {
     /// The language for a bare extension (no dot). Lower-cased by the
     /// caller's `to_str` when it came from a path; an explicitly
     /// upper-case extension is accepted too.
+    #[must_use]
     pub fn from_extension(ext: &str) -> Option<Lang> {
         match ext.to_ascii_lowercase().as_str() {
             "rs" => Some(Lang::Rust),
@@ -58,6 +60,7 @@ impl Lang {
     /// The tree-sitter grammar. Each arm returns the modern
     /// `LanguageFn` constant (tree-sitter 0.23+ convention) converted
     /// to a `Language`.
+    #[must_use]
     pub fn language(self) -> tree_sitter::Language {
         match self {
             Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -73,6 +76,7 @@ impl Lang {
     }
 
     /// The stable name used in the cache key and in logs.
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Lang::Rust => "rust",

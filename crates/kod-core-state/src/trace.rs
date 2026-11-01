@@ -188,6 +188,7 @@ pub struct TurnTrace {
 impl TurnTrace {
     /// Total wall time in milliseconds.
     /// Total wall time of the turn in milliseconds.
+    #[must_use]
     pub fn duration_ms(&self) -> u64 {
         self.ended_at_ms.saturating_sub(self.started_at_ms)
     }
@@ -258,6 +259,7 @@ impl TurnTraceBuilder {
     }
 
     /// Mark this trace as belonging to a swarm subtask.
+    #[must_use]
     pub fn with_parent(mut self, parent: TurnId) -> Self {
         self.trace.parent = Some(parent);
         self
@@ -463,6 +465,7 @@ impl TurnTraceBuilder {
     }
 
     /// Finish the trace and return the immutable value.
+    #[must_use]
     pub fn finish(mut self) -> TurnTrace {
         self.close_round();
         self.trace.ended_at_ms = now_ms();
@@ -504,6 +507,7 @@ fn summarize_result(result: &kod_types::ToolResult) -> String {
 }
 
 /// Short FNV-1a hash of a value's serialized form, for `args_hash`.
+#[must_use]
 pub fn hash_short(v: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(v).unwrap_or_default();
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

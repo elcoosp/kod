@@ -125,11 +125,13 @@ pub struct StreamGuard {
 
 impl StreamGuard {
     /// Guard with the default config.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_config(StreamGuardConfig::default())
     }
 
     /// Guard with a caller-supplied config.
+    #[must_use]
     pub fn with_config(config: StreamGuardConfig) -> Self {
         Self {
             tail: Vec::with_capacity(config.tail_capacity),
@@ -164,6 +166,7 @@ impl StreamGuard {
     /// Scan the current tail without regard to the stride. Call on
     /// stream termination so a short final delta can still complete
     /// a pattern the previous scan did not see.
+    #[must_use]
     pub fn final_verdict(&self) -> StallVerdict {
         self.scan()
     }
@@ -183,6 +186,7 @@ impl StreamGuard {
     }
 
     /// Bytes currently retained.
+    #[must_use]
     pub fn tail_len(&self) -> usize {
         self.tail.len()
     }

@@ -21,6 +21,7 @@ pub struct InputWidget;
 
 impl InputWidget {
     /// Build the input widget.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

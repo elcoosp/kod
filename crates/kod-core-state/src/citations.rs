@@ -114,6 +114,7 @@ fn citation_regex() -> &'static Regex {
 ///
 /// Duplicates (same path, same line) collapse to one entry: a reply
 /// that references the same line twice does not need two checks.
+#[must_use]
 pub fn extract_citations(text: &str) -> Vec<Citation> {
     let re = citation_regex();
     let mut out: Vec<Citation> = Vec::new();
@@ -167,6 +168,7 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
 /// A path that cannot be canonicalized (a missing file, a
 /// non-existent parent) is reported as `MissingFile` — the citation
 /// points at nothing.
+#[must_use]
 pub fn verify(citation: &Citation, root: &Path) -> Verification {
     // Strip a leading `/` from an absolute citation so containment
     // can apply uniformly. The empty string after stripping (a
@@ -230,6 +232,7 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
 /// Render the `## Citation check (N/M verified)` block for a list of
 /// checks. Callers pass at least one non-verified check; the block
 /// is not produced for an all-clean reply.
+#[must_use]
 pub fn render_block(checks: &[CitationCheck]) -> String {
     let total = checks.len();
     let ok = checks
@@ -265,6 +268,7 @@ pub fn render_block(checks: &[CitationCheck]) -> String {
 ///
 /// A reply with no citations, or with every citation verified, is
 /// returned unchanged (`block: None`).
+#[must_use]
 pub fn check_and_annotate(text: &str, root: &Path) -> AnnotatedReply {
     let citations = extract_citations(text);
     if citations.is_empty() {

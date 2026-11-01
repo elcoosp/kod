@@ -78,6 +78,7 @@ pub const EMPTY_COMPLETION_BASE_DELAY_MS: u64 = 500;
 /// Free function form, for tests and for a caller that wants to
 /// classify a chunk without owning a tracker. The rule is in the
 /// module doc.
+#[must_use]
 pub fn chunk_commits(chunk: &StreamChunk) -> bool {
     match chunk {
         StreamChunk::Text(t) => !t.is_empty(),
@@ -110,6 +111,7 @@ pub struct AttemptTracker {
 
 impl AttemptTracker {
     /// Tracker with no committed chunks seen.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -125,6 +127,7 @@ impl AttemptTracker {
     }
 
     /// Has the attempt committed? See the module doc.
+    #[must_use]
     pub fn is_committed(&self) -> bool {
         self.committed
     }
@@ -133,6 +136,7 @@ impl AttemptTracker {
     /// stream fails. Provided as a named method so the calling code
     /// reads as `if tracker.is_safe_to_retry() { retry() } else
     /// { surface(err) }` rather than the double-negation.
+    #[must_use]
     pub fn is_safe_to_retry(&self) -> bool {
         !self.committed
     }
@@ -159,6 +163,7 @@ pub struct EmptyCompletionRetry {
 
 impl EmptyCompletionRetry {
     /// Fresh retry state with zero attempts.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -184,6 +189,7 @@ impl EmptyCompletionRetry {
     /// (a transient upstream failure that manifested as an empty
     /// stream). The note's threshold of 1 accepts the latter without
     /// admitting the former.
+    #[must_use]
     pub fn should_retry(&self, content: &str, usage: Option<&TokenUsage>) -> bool {
         if self.attempts >= MAX_EMPTY_COMPLETION_RETRIES {
             return false;
@@ -204,6 +210,7 @@ impl EmptyCompletionRetry {
     }
 
     /// How many retries have been issued so far.
+    #[must_use]
     pub fn attempts(&self) -> u32 {
         self.attempts
     }
@@ -215,6 +222,7 @@ impl EmptyCompletionRetry {
     /// Returns `0` when the budget is spent, so a caller that
     /// unconditionally sleeps the returned duration does not add a
     /// spurious pause after the last retry.
+    #[must_use]
     pub fn next_delay_ms(&self) -> u64 {
         if self.attempts >= MAX_EMPTY_COMPLETION_RETRIES {
             return 0;

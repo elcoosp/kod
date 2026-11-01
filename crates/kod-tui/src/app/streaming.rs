@@ -13,11 +13,13 @@ use super::*;
 
 impl KodApp {
     /// The response text accumulated so far.
+    #[must_use]
     pub fn current_response(&self) -> &str {
         &self.current_response
     }
 
     /// True when a response stream is active.
+    #[must_use]
     pub fn is_streaming(&self) -> bool {
         self.is_streaming
     }
@@ -260,6 +262,7 @@ impl KodApp {
     /// compatible servers as a 404, and context-length errors sometimes
     /// arrive wrapped in a `400` or `422`. Match the most specific
     /// phrasing first.
+    #[must_use]
     pub fn friendly_error(error: &str, fail_count: usize) -> String {
         let lower = error.to_lowercase();
         let advice = if lower.contains("model not found")
@@ -389,6 +392,7 @@ impl KodApp {
     }
 
     /// The current goal text.
+    #[must_use]
     pub fn goal(&self) -> Option<&str> {
         self.goal.as_deref()
     }
@@ -403,11 +407,13 @@ impl KodApp {
     /// The budget that will be (or has been) attached to the active
     /// goal. Returns the default (all `None`) when no budget was
     /// configured.
+    #[must_use]
     pub fn goal_budget(&self) -> GoalBudget {
         self.goal_budget
     }
 
     /// True when a turn is in flight.
+    #[must_use]
     pub fn is_generating(&self) -> bool {
         self.generating
     }
@@ -427,6 +433,7 @@ impl KodApp {
     /// Current spinner frame. While generating, the frame derives from
     /// wall-clock time (≈10 fps), so every render advances it even when
     /// `ResponseChunk` traffic starves `Tick` events.
+    #[must_use]
     pub fn spinner(&self) -> &'static str {
         if self.generating
             && let Some(started) = self.spinner_started

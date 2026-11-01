@@ -121,6 +121,7 @@ impl OpenAICompatProvider {
     }
 
     /// Opt in or out of the §9.3 stream stall detector. On by default.
+    #[must_use]
     pub fn with_stream_guard(mut self, enabled: bool) -> Self {
         self.stream_guard_enabled = enabled;
         self
@@ -129,6 +130,7 @@ impl OpenAICompatProvider {
     /// Bound how long the retry loops may sleep out a provider-suggested
     /// rate-limit window. Tab-bridge's send-frequency limit is ~20 min;
     /// set ~1500 s for such endpoints (see EndpointConfig).
+    #[must_use]
     pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
         self.rate_limit_wait = wait;
         self
@@ -138,6 +140,7 @@ impl OpenAICompatProvider {
     /// stable background id) instead of leaving them anonymous. Only
     /// applied when the endpoint is a tab bridge (see provider_setup);
     /// explicit `session_id`s always win.
+    #[must_use]
     pub fn with_default_session(self, session: impl Into<String>) -> Self {
         *self.default_session.write().expect("default_session lock") = Some(session.into());
         self
@@ -150,6 +153,7 @@ impl OpenAICompatProvider {
     /// the primitive existed. A caller that sets a positive cap
     /// wraps **only the streaming HTTP request** in the bracket; the
     /// agent's own lifetime is unrelated to slot occupancy.
+    #[must_use]
     pub fn with_concurrency(self, cap: usize) -> Self {
         self.concurrency.set_cap(cap);
         self
@@ -195,11 +199,13 @@ impl OpenAICompatProvider {
     }
 
     /// The normalized API root (`.../v1`).
+    #[must_use]
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
     /// The default model used when request options don't specify one.
+    #[must_use]
     pub fn default_model(&self) -> &str {
         &self.model
     }
@@ -1078,6 +1084,7 @@ impl OpenAICompatProvider {
 ///
 /// Accepts a server root (`http://localhost:11434`, `http://localhost:1234`)
 /// or an API root that already ends in `/v1`.
+#[must_use]
 pub fn normalize_base_url(base_url: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     if trimmed.ends_with("/v1") {

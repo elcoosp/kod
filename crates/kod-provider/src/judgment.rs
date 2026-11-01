@@ -129,6 +129,7 @@ pub enum Question {
 
 impl Question {
     /// The question's id.
+    #[must_use]
     pub fn id(&self) -> &str {
         match self {
             Self::YesNo { id, .. } | Self::Choice { id, .. } | Self::Score { id, .. } => id,
@@ -136,6 +137,7 @@ impl Question {
     }
 
     /// The question text, as shown to the model.
+    #[must_use]
     pub fn text(&self) -> &str {
         match self {
             Self::YesNo { text, .. } | Self::Choice { text, .. } | Self::Score { text, .. } => text,
@@ -146,6 +148,7 @@ impl Question {
     ///
     /// `YesNo` always yields `["yes", "no"]`. `Choice` and `Score`
     /// yield their labels verbatim.
+    #[must_use]
     pub fn labels(&self) -> Vec<&str> {
         match self {
             Self::YesNo { .. } => vec!["yes", "no"],
@@ -323,6 +326,7 @@ pub fn render_system_prompt(questions: &[Question]) -> Result<String, JudgmentEr
 /// special characters in either are escaped, so a state that itself
 /// contains `<` or `&` does not produce malformed XML for the model
 /// to trip on.
+#[must_use]
 pub fn render_user_message(state: &[(&str, &str)], questions: &[Question]) -> String {
     let mut out = String::from("<state>\n");
     for (name, value) in state {
@@ -374,11 +378,13 @@ impl Answers {
     }
 
     /// How many questions got an answer.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
     /// True when no answers were collected.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -416,6 +422,7 @@ impl Answers {
 ///
 /// Deterministic. A partial parse is not an error — the caller
 /// checks [`Answers::missing`] and decides whether to retry.
+#[must_use]
 pub fn parse_response(text: &str, questions: &[Question]) -> Answers {
     let mut by_id: HashMap<&str, &Question> = HashMap::new();
     for q in questions {

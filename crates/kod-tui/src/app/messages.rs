@@ -8,6 +8,7 @@ use super::*;
 
 impl KodApp {
     /// The chat messages.
+    #[must_use]
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
@@ -74,6 +75,7 @@ impl KodApp {
     }
 
     /// True when a cleared message set can be restored.
+    #[must_use]
     pub fn has_undo(&self) -> bool {
         !self.cleared_stack.is_empty()
     }
@@ -98,6 +100,7 @@ impl KodApp {
     }
 
     /// True when the message at `idx` is pinned.
+    #[must_use]
     pub fn is_message_pinned(&self, idx: usize) -> bool {
         self.messages
             .get(idx)
@@ -255,6 +258,7 @@ impl KodApp {
     }
 
     /// Number of saved forks available via /undo.
+    #[must_use]
     pub fn fork_count(&self) -> usize {
         self.cleared_stack.len()
     }
@@ -280,11 +284,13 @@ impl KodApp {
     }
 
     /// True when the viewport is at the bottom.
+    #[must_use]
     pub fn is_scrolled_to_bottom(&self) -> bool {
         self.scroll_lines == 0
     }
 
     /// Scroll offset from the bottom, in lines.
+    #[must_use]
     pub fn scroll_offset(&self) -> usize {
         self.scroll_lines
     }

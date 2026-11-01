@@ -198,6 +198,7 @@ pub const FRENCH: &[&str] = &[
 ];
 
 /// True if `word` (already lowercased) is a stopword in either list.
+#[must_use]
 pub fn is_stopword(word: &str) -> bool {
     ENGLISH.contains(&word) || FRENCH.contains(&word)
 }
@@ -211,6 +212,7 @@ pub fn is_stopword(word: &str) -> bool {
 /// participles, French plural and adverb endings. A word shorter
 /// than the suffix + 3 chars is left alone (so `is` + `ing` does not
 /// become `is`).
+#[must_use]
 pub fn stem(word: &str) -> String {
     let suffixes: &[&str] = &[
         "ements", "ement", "ations", "ation", "iques", "ique", "ing", "ies", "ied", "est", "ed",

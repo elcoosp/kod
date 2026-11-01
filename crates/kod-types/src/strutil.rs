@@ -23,6 +23,7 @@
 ///
 /// `max` larger than `s.len()` returns `s.len()`. `max == 0`
 /// returns 0. The result is always a valid index into `s`.
+#[must_use]
 pub fn floor_char_boundary(s: &str, max: usize) -> usize {
     if max >= s.len() {
         return s.len();
@@ -49,6 +50,7 @@ pub fn floor_char_boundary(s: &str, max: usize) -> usize {
 /// [`truncate_bytes`]; the fix is the one named in
 /// `docs/BUG_REPORT_TRUNCATE_CHARS.md`.
 #[inline]
+#[must_use]
 pub fn truncate_chars(s: &str, max: usize) -> &str {
     match s.char_indices().nth(max) {
         Some((i, _)) => &s[..i],
@@ -76,6 +78,7 @@ pub fn truncate_chars(s: &str, max: usize) -> &str {
 /// Never panics. `truncate_with_ellipsis("hello", 10, "…")` is
 /// `"hello"`; `truncate_with_ellipsis("hello world", 5, "…")` is
 /// `"hello…"`.
+#[must_use]
 pub fn truncate_with_ellipsis(s: &str, max: usize, ellipsis: &str) -> String {
     let shown = truncate_chars(s, max);
     if shown.len() < s.len() {
@@ -98,6 +101,7 @@ pub fn truncate_with_ellipsis(s: &str, max: usize, ellipsis: &str) -> String {
 /// Never panics. Same boundary behavior as the pre-split
 /// `truncate_chars`.
 #[inline]
+#[must_use]
 pub fn truncate_bytes(s: &str, max: usize) -> &str {
     &s[..floor_char_boundary(s, max)]
 }

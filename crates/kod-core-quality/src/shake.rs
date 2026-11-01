@@ -74,10 +74,12 @@ pub struct ByteRange {
 
 impl ByteRange {
     /// Number of bytes in the range.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.end.saturating_sub(self.start)
     }
     /// True when the range covers zero bytes.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.end <= self.start
     }
@@ -113,6 +115,7 @@ impl RegionKind {
     /// kind so a reader can tell what was there; points at recovery.
     /// Kept short on purpose — a placeholder that is itself a
     /// paragraph defeats the goal.
+    #[must_use]
     pub fn placeholder(&self, bytes: usize) -> String {
         let tokens = bytes / 4;
         match self {
@@ -170,10 +173,12 @@ pub struct ShakePlan {
 
 impl ShakePlan {
     /// True when the plan contains no actions.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
     /// Number of actions in the plan.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.actions.len()
     }
@@ -183,6 +188,7 @@ impl ShakePlan {
     /// are saturated to zero — a placeholder longer than the region
     /// it replaces would be a bug, not a savings, and the gate below
     /// would reject it anyway.
+    #[must_use]
     pub fn estimated_savings_bytes(&self) -> u64 {
         self.actions
             .iter()
@@ -192,6 +198,7 @@ impl ShakePlan {
 
     /// [`Self::estimated_savings_bytes`] in the workspace's rough
     /// char-per-token convention.
+    #[must_use]
     pub fn estimated_savings_tokens(&self) -> u64 {
         self.estimated_savings_bytes() / 4
     }
@@ -291,6 +298,7 @@ impl ShakeConfig {
     /// anything over the fence threshold. Intended for a user who
     /// has hit a hard context limit and wants the maximum available
     /// reduction, accepting that they may lose a recent snippet.
+    #[must_use]
     pub fn aggressive() -> Self {
         Self {
             protect_tokens: 4_000,
@@ -307,6 +315,7 @@ impl ShakeConfig {
     ///
     /// The doc's "artifact protection" clause in this preset is not
     /// representable here; see the module doc.
+    #[must_use]
     pub fn rescue() -> Self {
         Self {
             protect_tokens: 0,

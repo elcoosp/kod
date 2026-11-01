@@ -108,6 +108,7 @@ impl AnthropicProvider {
     }
 
     /// Opt in or out of the §9.3 stream stall detector. On by default.
+    #[must_use]
     pub fn with_stream_guard(mut self, enabled: bool) -> Self {
         self.stream_guard_enabled = enabled;
         self
@@ -117,6 +118,7 @@ impl AnthropicProvider {
     /// the provider may sleep out once per call. Mirrors the OpenAI
     /// provider's `with_rate_limit_wait`; `ZERO` (the default) keeps
     /// the legacy fail-fast behavior.
+    #[must_use]
     pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
         self.rate_limit_wait = wait;
         self
@@ -128,6 +130,7 @@ impl AnthropicProvider {
     /// the streaming HTTP request — see the OpenAI provider's
     /// `with_concurrency` for the contract, and
     /// `kod_provider::concurrency` for the deadlock reasoning.
+    #[must_use]
     pub fn with_concurrency(self, cap: usize) -> Self {
         self.concurrency.set_cap(cap);
         self
@@ -157,11 +160,13 @@ impl AnthropicProvider {
     ///
     /// Defaults to `https://api.anthropic.com`; a self-hosted
     /// compatible endpoint sets this explicitly at construction.
+    #[must_use]
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
     /// The model name used when a request omits `model`.
+    #[must_use]
     pub fn default_model(&self) -> &str {
         &self.model
     }

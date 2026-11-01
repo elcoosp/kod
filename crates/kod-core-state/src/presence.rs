@@ -43,6 +43,7 @@ impl MarkerKind {
 }
 
 /// The marker directory for `kind`, under `root`.
+#[must_use]
 pub fn marker_dir(root: &Path, kind: MarkerKind) -> PathBuf {
     root.join(kind.dir_name())
 }
@@ -57,6 +58,7 @@ pub fn marker_dir(root: &Path, kind: MarkerKind) -> PathBuf {
 ///
 /// Best-effort: a failure means the session is simply absent from the
 /// list, which is better than failing the session's own startup.
+#[must_use]
 pub fn mark(root: &Path, kind: MarkerKind, session: &str) -> Option<PathBuf> {
     let dir = marker_dir(root, kind);
     std::fs::create_dir_all(&dir).ok()?;
@@ -75,6 +77,7 @@ pub fn mark(root: &Path, kind: MarkerKind, session: &str) -> Option<PathBuf> {
 /// the start time but pulls in a new binding — instead the fallback
 /// `None` is returned, and readers fall back to the pid-only check.
 /// That is a regression relative to Linux, not a false positive.
+#[must_use]
 pub fn process_start_token(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -114,6 +117,7 @@ pub struct LiveSession {
 ///
 /// A marker whose pid is gone is left on disk — removing it here would
 /// hide the crash from a caller that wants to offer recovery.
+#[must_use]
 pub fn list(root: &Path, kind: MarkerKind) -> Vec<LiveSession> {
     let dir = marker_dir(root, kind);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -158,6 +162,7 @@ fn parse_marker(raw: &str) -> Option<(u32, Option<String>)> {
 /// it. Comparing start tokens (field 22 of `/proc/<pid>/stat` on
 /// Linux, where available) rejects that case: the recycled process
 /// has a different start time, so the marker reads as dead.
+#[must_use]
 pub fn process_alive_with_token(pid: u32, token: &str) -> bool {
     if !process_alive(pid) {
         return false;
@@ -183,6 +188,7 @@ pub fn process_alive_with_token(pid: u32, token: &str) -> bool {
 /// with a stored start token should prefer
 /// [`process_alive_with_token`].
 #[cfg(unix)]
+#[must_use]
 pub fn process_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;

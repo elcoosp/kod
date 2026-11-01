@@ -73,12 +73,14 @@ pub const PRESETS: &[ModelProfile] = &[
 ];
 
 /// Look up a profile by name.
+#[must_use]
 pub fn by_name(name: &str) -> Option<&'static ModelProfile> {
     PRESETS.iter().find(|p| p.name == name)
 }
 
 /// Comma-separated list of preset names, for an error message that
 /// names the alternatives.
+#[must_use]
 pub fn names_csv() -> String {
     PRESETS
         .iter()

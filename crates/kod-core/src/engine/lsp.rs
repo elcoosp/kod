@@ -7,6 +7,7 @@ impl KodEngine {
     /// function because `kod-tui` and the `lsp_*` tools call it to
     /// decide whether an "install X" message is appropriate before
     /// making a request.
+    #[must_use]
     pub fn lsp_binary_for(path: &std::path::Path) -> Option<&'static str> {
         kod_lsp::binary_for_path(path)
     }

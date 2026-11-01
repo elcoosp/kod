@@ -52,6 +52,7 @@ pub struct Allocation {
 impl Allocation {
     /// The total chars the four truncatable sections get. The request
     /// is not counted here; it is subtracted up front.
+    #[must_use]
     pub fn truncatable_total(&self) -> usize {
         self.history + self.skills + self.memory + self.repomap
     }
@@ -76,6 +77,7 @@ impl PromptBudget {
     /// is what we keep free for the completion. A reserve of 0 is
     /// treated as "reserve 20% of the window", which is the safe
     /// default if a caller forgets.
+    #[must_use]
     pub fn from_tokens(context_window: usize, reserve_out: usize) -> Self {
         let reserve = if reserve_out == 0 {
             context_window / 5
@@ -162,6 +164,7 @@ impl PromptTrace {
     /// allocation was recorded. Equal to `alloc.request + alloc.history
     /// + alloc.skills + alloc.memory + alloc.repomap` for a budgeted
     ///   prompt.
+    #[must_use]
     pub fn total_chars(&self) -> Option<usize> {
         self.alloc.map(|a| a.request + a.truncatable_total())
     }
@@ -170,6 +173,7 @@ impl PromptTrace {
     /// convention. `/debug tokens` uses this for the "≈ N tokens"
     /// figure so it is directly comparable to the `context_window`
     /// the config carries.
+    #[must_use]
     pub fn total_tokens_estimate(&self) -> Option<usize> {
         self.total_chars()
             .map(|c| c / PromptBudget::CHARS_PER_TOKEN)

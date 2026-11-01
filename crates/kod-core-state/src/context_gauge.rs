@@ -79,6 +79,7 @@ struct Anchor {
 impl ContextGauge {
     /// A gauge with no anchor yet. The first turn of a session lives
     /// here until the first provider call completes.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -123,6 +124,7 @@ impl ContextGauge {
     /// The anchor, if one exists: `(covers_through, context_tokens)`.
     /// For tests and for a UI readout that wants to show what the
     /// gauge is standing on.
+    #[must_use]
     pub fn anchor(&self) -> Option<(usize, u64)> {
         self.anchor.map(|a| (a.covers_through, a.context_tokens))
     }
@@ -130,6 +132,7 @@ impl ContextGauge {
     /// True when a settled usage report has been observed and not yet
     /// cleared. A caller about to walk the transcript can check this
     /// and skip the walk entirely.
+    #[must_use]
     pub fn is_anchored(&self) -> bool {
         self.anchor.is_some()
     }
@@ -140,6 +143,7 @@ impl ContextGauge {
     /// by the anchor and only `messages[n..]` needs a local estimate.
     /// `None` when there is no anchor — the caller estimates the whole
     /// transcript.
+    #[must_use]
     pub fn tail_start(&self) -> Option<usize> {
         self.anchor.map(|a| a.covers_through + 1)
     }
@@ -149,6 +153,7 @@ impl ContextGauge {
     /// Returns `None` when there is no anchor, so a caller that wants
     /// a definite number can fall back to its own char-arithmetic
     /// without this module inventing a placeholder.
+    #[must_use]
     pub fn estimate(&self, tail_tokens: u64) -> Option<u64> {
         self.anchor
             .map(|a| a.context_tokens.saturating_add(tail_tokens))
@@ -157,6 +162,7 @@ impl ContextGauge {
     /// `estimate` with a caller-supplied fallback for the
     /// unanchored case. Convenience for the common "use the anchor if
     /// we have one, otherwise use the char-arithmetic estimate" shape.
+    #[must_use]
     pub fn estimate_or(&self, tail_tokens: u64, fallback: u64) -> u64 {
         self.estimate(tail_tokens).unwrap_or(fallback)
     }

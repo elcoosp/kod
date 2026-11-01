@@ -49,6 +49,7 @@ pub const RECALL_PRECEDENCE_NOTE: &str = "The following are remembered notes fro
 /// The block may be multi-line. Nested blocks (which should not exist,
 /// but a malformed store could produce) are handled by the
 /// non-greedy scan: each opening tag matches the next closing tag.
+#[must_use]
 pub fn strip_memory_tags(text: &str) -> String {
     const OPEN: &str = "<memories>";
     const CLOSE: &str = "</memories>";
@@ -81,6 +82,7 @@ pub fn strip_memory_tags(text: &str) -> String {
 /// False for empty or whitespace-only text, for a lone placeholder
 /// (`...`, `…`, `ok`, `done`, `n/a`), and for text that is only
 /// punctuation. A turn that fails this check is not extracted.
+#[must_use]
 pub fn has_substantive_content(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -101,6 +103,7 @@ pub fn has_substantive_content(text: &str) -> bool {
 /// inside a `<memories>` block. The block is tagged so
 /// [`strip_memory_tags`] can recognise and drop it if the model's
 /// reply — which saw this block — is later extracted.
+#[must_use]
 pub fn frame_recalled_block(entries: &str) -> String {
     format!(
         "{RECALL_PRECEDENCE_NOTE}\n\n<memories>\n{}\n</memories>",

@@ -42,6 +42,7 @@ pub enum FileOp {
 impl FileOp {
     /// Whether this op changed the file's bytes. Only modifications
     /// produce a conflict notice — a peer that read is not at risk.
+    #[must_use]
     pub fn is_modification(self) -> bool {
         matches!(self, FileOp::Write | FileOp::Edit)
     }
@@ -88,6 +89,7 @@ impl FileTouchBus {
     /// carries touch events for the life of a swarm run, and a
     /// subscriber that falls more than that far behind is a bug, not
     /// a legitimate state.
+    #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self { tx }
@@ -101,6 +103,7 @@ impl FileTouchBus {
     }
 
     /// Subscribe to touch events.
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<SwarmBusEvent> {
         self.tx.subscribe()
     }
@@ -137,6 +140,7 @@ pub struct FileTouchService {
 
 impl FileTouchService {
     /// Empty service.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

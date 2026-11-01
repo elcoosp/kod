@@ -82,6 +82,7 @@ pub enum Severity {
 
 impl Severity {
     /// The lowercase string label for this severity.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Nit => "nit",
@@ -135,6 +136,7 @@ impl Admission {
     /// Whether this admission resulted in the note being accepted.
     /// Trivial, but easier to read at a call site than a match on
     /// three variants.
+    #[must_use]
     pub fn accepted(&self) -> bool {
         matches!(self, Self::Accept | Self::AcceptDisplacing(_))
     }
@@ -199,12 +201,14 @@ impl Default for EmissionGuard {
 
 impl EmissionGuard {
     /// A guard with the default budget and history cap.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_budget(DEFAULT_BUDGET)
     }
 
     /// A guard with a custom per-update budget, clamped to
     /// `[0, MAX_BUDGET]`.
+    #[must_use]
     pub fn with_budget(limit: usize) -> Self {
         Self {
             seen: HashMap::new(),
@@ -215,6 +219,7 @@ impl EmissionGuard {
     }
 
     /// The configured budget limit.
+    #[must_use]
     pub fn budget_limit(&self) -> usize {
         self.budget_limit
     }
@@ -222,16 +227,19 @@ impl EmissionGuard {
     /// Begin a new update. Clears the per-update budget but keeps
     /// the dedupe history — a note admitted in the last update is
     /// still a duplicate in this one.
+    #[must_use]
     pub fn begin_update(&mut self) {
         self.pending.clear();
     }
 
     /// How many keys the dedupe history currently holds.
+    #[must_use]
     pub fn history_len(&self) -> usize {
         self.history.len()
     }
 
     /// How many non-blockers are pending in the current update.
+    #[must_use]
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }
@@ -335,6 +343,7 @@ impl EmissionGuard {
 ///
 /// See the module doc for the rule. The function is pure — the
 /// caller supplies the primary's state.
+#[must_use]
 pub fn route(advice: &Advice, primary_state: PrimaryState) -> Delivery {
     match primary_state {
         // Nothing to interrupt. A card is preserved for the human
@@ -372,6 +381,7 @@ pub fn route(advice: &Advice, primary_state: PrimaryState) -> Delivery {
 /// advisor traffic is expected to be ASCII; a future pass can add
 /// `unicode-normalization` if the assumption proves false. Documented
 /// so a reader does not assume full NFKC.
+#[must_use]
 pub fn normalize(note: &str) -> String {
     note.chars()
         .filter(|c| c.is_alphanumeric())
@@ -388,6 +398,7 @@ pub fn normalize(note: &str) -> String {
 /// Stored *normalized*: lowercase, no spaces or punctuation. A
 /// caller adding an entry must normalize it the same way or it
 /// will never match.
+#[must_use]
 pub fn noise_phrases() -> &'static [&'static str] {
     &[
         "stop",
@@ -429,6 +440,7 @@ pub fn noise_phrases() -> &'static [&'static str] {
 }
 
 /// Whether `normalized` matches a noise phrase.
+#[must_use]
 pub fn is_noise(normalized: &str) -> bool {
     noise_phrases().contains(&normalized)
 }

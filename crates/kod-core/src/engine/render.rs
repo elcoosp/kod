@@ -357,6 +357,7 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
 /// One-line "what + why" for the running indicator: the argument
 /// excerpt plus the model's declared intent, when it sent one
 /// (`execute_command cargo test — verify the fix`).
+#[must_use]
 pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
     append_intent(&format_call_brief_base(name, args), args)
 }
@@ -366,6 +367,7 @@ pub const TOOL_RESULT_LINES: usize = 12;
 
 /// Human-readable tool header: `list_files path=.` instead of raw JSON.
 /// `complete_tool_execution` wraps it in `[...]`, so no brackets here.
+#[must_use]
 pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
     const KEYS: [&str; 5] = ["path", "pattern", "command", "file", "content"];
     let mut parts = vec![name.to_string()];
@@ -441,6 +443,7 @@ pub(crate) fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String
 }
 
 /// One-line summary of a tool result.
+#[must_use]
 pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     match result {
         ToolResult::Success(v) => summarize_success(name, v),

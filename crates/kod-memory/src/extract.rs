@@ -59,6 +59,7 @@ impl FactKind {
 }
 
 /// Build the extraction prompt from a transcript.
+#[must_use]
 pub fn build_prompt(messages: &[ChatMessage], max_entries: usize) -> String {
     let mut transcript = String::new();
     for m in messages {
@@ -182,6 +183,7 @@ pub async fn extract(
 }
 
 /// Build the metadata for an extracted fact.
+#[must_use]
 pub fn metadata_for(fact: &ExtractedFact, project_key: Option<String>) -> MemoryMetadata {
     MemoryMetadata {
         tags: vec![fact.kind.as_tag().to_string()],

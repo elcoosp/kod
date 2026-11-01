@@ -49,6 +49,7 @@ pub struct PathLockTable {
 
 impl PathLockTable {
     /// Empty lock table.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -142,11 +143,13 @@ pub struct PathLockGuard {
 impl PathLockGuard {
     /// The path this guard holds. Provided so a caller can log the
     /// attribution.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// The holder string this guard was acquired under.
+    #[must_use]
     pub fn holder(&self) -> &str {
         &self.holder
     }

@@ -57,6 +57,7 @@ impl SessionSafeWriter {
 
     /// Pin the log file location (tests, CI). Takes precedence over
     /// `KOD_LOG` and the default home path.
+    #[must_use]
     pub fn with_log_path(path: PathBuf) -> Self {
         Self {
             file: Mutex::new(None),

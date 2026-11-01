@@ -86,6 +86,7 @@ pub struct CleanseScheduler {
 
 impl CleanseScheduler {
     /// Scheduler capped at max_agents concurrent cleanses.
+    #[must_use]
     pub fn new(max_agents: usize) -> Self {
         Self {
             pending: HashMap::new(),
@@ -97,6 +98,7 @@ impl CleanseScheduler {
 
     /// Override the batch budget. The default is
     /// [`DEFAULT_BATCH_BUDGET`] clamped to `total / max_agents`.
+    #[must_use]
     pub fn with_batch_budget(mut self, budget: usize) -> Self {
         self.batch_budget = Some(budget);
         self
@@ -232,6 +234,7 @@ impl CleanseScheduler {
 
     /// The verdict: clean when nothing is pending and no file is
     /// owned-and-unreleased.
+    #[must_use]
     pub fn verify(&self) -> CleanseVerdict {
         let pending_any = self.pending.values().any(|v| !v.is_empty());
         let owned_any = self.owned.values().any(|o| !o.released);
@@ -243,11 +246,13 @@ impl CleanseScheduler {
     }
 
     /// How many files are pending.
+    #[must_use]
     pub fn pending_files(&self) -> usize {
         self.pending.keys().count()
     }
 
     /// The owner of a file, if any.
+    #[must_use]
     pub fn owner_of(&self, file: &str) -> Option<&OwnerEntry> {
         self.owned.get(file)
     }
