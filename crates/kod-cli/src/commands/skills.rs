@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// List every skill discovered across the configured sources.
 pub async fn run_skills_list(json: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -59,6 +60,7 @@ pub async fn run_skills_list(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Validate every skill file; report parse and schema errors.
 pub async fn run_skills_validate() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -122,6 +124,7 @@ pub async fn run_skills_validate() -> Result<()> {
     Ok(())
 }
 
+/// Create a new skill file under the user skills directory.
 pub async fn run_skills_new(name: &str) -> Result<()> {
     // Validate the name: kebab-case, [a-z0-9-].
     let trimmed = name.trim();
@@ -210,6 +213,7 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Remove a skill by name (prompts unless yes is true).
 pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -258,6 +262,7 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// Open a skill file in EDITOR.
 pub async fn run_skills_edit(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -293,6 +298,7 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
     }
 }
 
+/// Print a skill file to stdout.
 pub async fn run_skills_show(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -377,6 +383,7 @@ pub(super) fn to_title_case(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+/// Copy a skill to dest (refuses to overwrite without force).
 pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
@@ -426,6 +433,7 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
     Ok(())
 }
 
+/// Search skills by name or description.
 pub async fn run_skills_search(query: &str) -> Result<()> {
     let config = KodConfig::load_default()?;
     let dirs = config.skills_dirs()?;
@@ -505,6 +513,7 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate skills, treating warnings as errors.
 pub async fn run_skills_validate_strict() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -564,6 +573,7 @@ pub async fn run_skills_validate_strict() -> Result<()> {
     Ok(())
 }
 
+/// Copy a skill under a new name.
 pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     // Validate the new name.
     if !new_name
@@ -626,6 +636,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rename a skill.
 pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     // Validate `new_name` *before* it is joined into a path. The
     // copy path validates internally, but rename joins the name
@@ -678,6 +689,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Print the on-disk path of a skill.
 pub async fn run_skills_source(name: &str) -> Result<()> {
     match find_skill_path(name).await? {
         Some(p) => {

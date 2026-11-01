@@ -87,12 +87,19 @@ async fn install_policy_async(
 /// the interactive-only flag). It does NOT call `engine.start()`: the
 /// caller does that after installing whatever else it needs.
 pub struct EngineBootstrapOptions<'a> {
+    /// Override the routing default model.
     pub model_override: Option<&'a str>,
+    /// Override the approval preset from the CLI.
     pub cli_preset: Option<&'a str>,
+    /// Refuse to start without a working sandbox.
     pub require_sandbox: bool,
+    /// Install the MCP adapter into the engine.
     pub install_mcp: bool,
+    /// Override the default database path.
     pub db_path: Option<std::path::PathBuf>,
+    /// Install the embedding client into the engine.
     pub install_embedder: bool,
+    /// Install the policy layer into the engine.
     pub install_policy: bool,
     /// When true, install the per-process secret-placeholder vault.
     /// Tests set this to `false` so they do not touch the developer's
@@ -129,6 +136,7 @@ impl<'a> Default for EngineBootstrapOptions<'a> {
     }
 }
 
+/// Build a KodEngine from a config and bootstrap options.
 pub async fn engine_from_config(
     config: &KodConfig,
     opts: EngineBootstrapOptions<'_>,
@@ -305,6 +313,7 @@ pub enum SkillsAction {
         /// Skill name (as shown by `kod skills`).
         name: String,
         #[arg(long, default_value_t = false)]
+        /// Skip the confirmation prompt.
         yes: bool,
     },
     /// Open a skill file in $EDITOR.
@@ -423,10 +432,12 @@ pub struct Cli {
     pub verbose: bool,
 
     #[command(subcommand)]
+    /// The parsed subcommand, or None for the default.
     pub command: Option<Command>,
 }
 
 impl Cli {
+    /// Parse the CLI arguments and dispatch to the subcommand.
     pub fn run(&self) -> Result<()> {
         match &self.command {
             Some(Command::Chat {
@@ -909,6 +920,7 @@ impl Cli {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+/// Profile subcommands.
 pub enum ProfileAction {
     /// List the built-in profiles.
     List {
@@ -929,6 +941,7 @@ pub enum ProfileAction {
 }
 
 #[derive(Subcommand, Debug)]
+/// Top-level CLI commands.
 pub enum Command {
     /// Start a chat session
     Chat {
@@ -1037,6 +1050,7 @@ pub enum Command {
     /// scaffolds a new skill file.
     Skills {
         #[command(subcommand)]
+        /// The skills subcommand to run, or None to list.
         action: Option<SkillsAction>,
         /// Emit machine-readable JSON instead of the human text
         /// listing. Applies to the list action.
@@ -1058,6 +1072,7 @@ pub enum Command {
     /// opens the file in $EDITOR.
     Config {
         #[command(subcommand)]
+        /// The config subcommand to run, or None to display.
         action: Option<ConfigAction>,
     },
 
@@ -1091,6 +1106,7 @@ pub enum Command {
     /// `[llm]` config, or write a named preset into `config.toml`.
     Profile {
         #[command(subcommand)]
+        /// The profile subcommand to run.
         action: ProfileAction,
     },
 
@@ -1183,6 +1199,7 @@ pub enum Command {
     /// by default; `clear` deletes the file.
     Sessions {
         #[command(subcommand)]
+        /// The sessions subcommand to run.
         action: SessionsAction,
     },
 
@@ -1201,6 +1218,7 @@ pub enum Command {
     /// run, so a session that does not like an edit can undo it.
     Checkpoint {
         #[command(subcommand)]
+        /// The checkpoint subcommand to run.
         action: CheckpointAction,
     },
 
@@ -1212,6 +1230,7 @@ pub enum Command {
     /// Inspect or modify the long-term memory database.
     Memory {
         #[command(subcommand)]
+        /// The memory subcommand to run.
         action: MemoryAction,
     },
 
@@ -1219,6 +1238,7 @@ pub enum Command {
     /// --sandbox` uses is available.
     Sandbox {
         #[command(subcommand)]
+        /// The sandbox subcommand to run.
         action: SandboxAction,
     },
 
@@ -1227,6 +1247,7 @@ pub enum Command {
     /// `.kod/policy.toml`.
     Policy {
         #[command(subcommand)]
+        /// The policy subcommand to run.
         action: PolicyAction,
     },
 
@@ -1234,12 +1255,14 @@ pub enum Command {
     /// JSON schema and permissions.
     Tools {
         #[command(subcommand)]
+        /// The tools subcommand to run, or None to list.
         action: Option<ToolsAction>,
     },
 
     /// Inspect or print the TUI theme.
     Theme {
         #[command(subcommand)]
+        /// The theme subcommand to run.
         action: ThemeAction,
     },
     /// Start (or stop) the long-lived daemon that `kod prompt
@@ -1301,30 +1324,35 @@ pub enum Command {
     /// Jev (TypeSafe AI) status, statistics, and threshold tuning.
     Jev {
         #[command(subcommand)]
+        /// The JEV subcommand to run.
         action: JevAction,
     },
 
     /// Session cost and limits.
     Budget {
         #[command(subcommand)]
+        /// The budget subcommand to run.
         action: BudgetAction,
     },
 
     /// Per-tool quotas and counters.
     Limits {
         #[command(subcommand)]
+        /// The limits subcommand to run.
         action: LimitsAction,
     },
 
     /// Plan artifact for the current session.
     Plan {
         #[command(subcommand)]
+        /// The plan subcommand to run.
         action: PlanAction,
     },
 
     /// Durable decisions for the current session.
     Decisions {
         #[command(subcommand)]
+        /// The decisions subcommand to run.
         action: DecisionsAction,
     },
 
@@ -1370,6 +1398,7 @@ pub enum Command {
     /// `--path` overrides.
     Trace {
         #[command(subcommand)]
+        /// The trace subcommand to run.
         action: TraceAction,
     },
 
@@ -1379,6 +1408,7 @@ pub enum Command {
     /// detect a request-shape drift.
     Fixture {
         #[command(subcommand)]
+        /// The fixture subcommand to run.
         action: FixtureAction,
     },
 }
@@ -1445,6 +1475,7 @@ pub enum TraceAction {
     /// Print a JSON summary of every turn. Useful in scripts.
     Json {
         #[arg(long)]
+        /// The session log to replay.
         path: Option<std::path::PathBuf>,
     },
     /// Replay one turn: read its `user_prompt` from the trace,
@@ -1526,6 +1557,7 @@ pub enum PlanAction {
     /// Print the plan as JSON.
     Json {
         #[arg(long)]
+        /// Override the state directory.
         state: Option<std::path::PathBuf>,
     },
 }
@@ -1536,6 +1568,7 @@ pub enum DecisionsAction {
     /// Print the persisted decisions for the default transcript.
     Show {
         #[arg(long)]
+        /// Override the state directory.
         state: Option<std::path::PathBuf>,
         /// Cap on rows printed. Default 30, max 200.
         #[arg(long, default_value_t = 30)]
@@ -1544,6 +1577,7 @@ pub enum DecisionsAction {
     /// Print the decisions as JSON.
     Json {
         #[arg(long)]
+        /// Override the state directory.
         state: Option<std::path::PathBuf>,
     },
 }
@@ -1674,6 +1708,7 @@ pub enum MemoryAction {
     /// Delete every entry. Prompts unless `--yes`.
     Clear {
         #[arg(long, default_value_t = false)]
+        /// Skip the confirmation prompt.
         yes: bool,
     },
 }

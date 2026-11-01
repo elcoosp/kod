@@ -7,6 +7,7 @@
 
 use super::*;
 
+/// Attach to a running daemon's chat session over the unix socket.
 pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -179,6 +180,7 @@ pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Run the interactive chat client.
 pub async fn run_chat(
     model: Option<String>,
     sandbox: bool,
@@ -679,6 +681,7 @@ pub async fn run_chat(
     Ok(())
 }
 
+/// Attach to a running daemon's agent session.
 pub async fn run_agent_remote(
     name: String,
     goal: String,
@@ -771,6 +774,7 @@ pub async fn run_agent_remote(
     ))
 }
 
+/// Run an agent locally with the given name and goal.
 pub async fn run_agent(
     name: String,
     goal: String,
@@ -835,6 +839,7 @@ pub async fn run_agent_inner(
     Ok(response.text)
 }
 
+/// Speak ACP over stdio; used by editor integrations.
 pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
 

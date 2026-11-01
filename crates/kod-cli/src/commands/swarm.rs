@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// Attach to a running swarm daemon and drive it from this client.
 pub async fn run_swarm_remote(
     goal: String,
     agents: Option<usize>,
@@ -128,6 +129,7 @@ pub async fn run_swarm_remote(
     ))
 }
 
+/// Run a swarm locally with the given goal and agent count.
 pub async fn run_swarm(
     goal: String,
     agents: Option<usize>,

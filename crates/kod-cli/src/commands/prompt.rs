@@ -4,6 +4,7 @@
 
 use super::*;
 
+/// Send a prompt to a running kod daemon over the unix socket.
 pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -109,6 +110,7 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
     ))
 }
 
+/// Run a one-shot prompt against the engine.
 pub async fn run_prompt(
     prompt: String,
     model: Option<String>,
@@ -168,6 +170,7 @@ pub async fn run_prompt_inner(
     Ok(text)
 }
 
+/// Run a one-shot prompt, streaming tokens to stdout.
 pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Result<()> {
     let input = if prompt.trim() == "-" {
         use std::io::Read;

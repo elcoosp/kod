@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// Print the effective config as TOML.
 pub async fn run_config_display() -> Result<()> {
     let config = KodConfig::load_default()?;
 
@@ -123,12 +124,14 @@ pub async fn run_config_display() -> Result<()> {
     Ok(())
 }
 
+/// Print the config file path.
 pub async fn run_config_path() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     println!("{}", dir.join("config.toml").display());
     Ok(())
 }
 
+/// Open the config file in EDITOR.
 pub async fn run_config_edit() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
@@ -173,6 +176,7 @@ pub async fn run_config_edit() -> Result<()> {
     ))
 }
 
+/// Migrate the config file to the current schema.
 pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
     let dir = KodConfig::config_dir()?;
     std::fs::create_dir_all(&dir).map_err(KodError::Io)?;
@@ -271,6 +275,7 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// Validate the config file.
 pub async fn run_config_validate() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
@@ -389,6 +394,7 @@ pub async fn run_config_validate() -> Result<()> {
 pub(super) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+/// Seed the config from a named profile.
 pub async fn run_config_init_from(name: &str) -> Result<()> {
     let profile = kod_config::profiles::by_name(name).ok_or_else(|| {
         KodError::Config(format!(
@@ -443,6 +449,7 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Print the raw config file as-is.
 pub async fn run_config_show_raw() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
@@ -459,6 +466,7 @@ pub async fn run_config_show_raw() -> Result<()> {
     Ok(())
 }
 
+/// Print the merged config (file plus env plus defaults).
 pub async fn run_config_show_merged() -> Result<()> {
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
@@ -469,6 +477,7 @@ pub async fn run_config_show_merged() -> Result<()> {
     Ok(())
 }
 
+/// Export the merged config as TOML to dest.
 pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
