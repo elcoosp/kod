@@ -37,6 +37,10 @@ impl MockLlm {
     /// A mock that serves `replies[i]` for the i-th completion request,
     /// repeating the last once exhausted. Useful for a multi-step
     /// scenario (decompose -> agent reply).
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub async fn start_scripted(replies: Vec<String>) -> Self {
         assert!(!replies.is_empty(), "a script needs at least one reply");
         let hits = Arc::new(AtomicUsize::new(0));
@@ -72,6 +76,10 @@ impl MockLlm {
     /// Write a `config.toml` under `cfg_dir` pointing the default
     /// endpoint at this mock. `extra_toml` is appended verbatim, so a
     /// caller can add `[swarm]` or `[memory]` blocks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn write_config(&self, cfg_dir: &Path, extra_toml: &str) {
         std::fs::create_dir_all(cfg_dir).expect("create config dir");
         std::fs::write(

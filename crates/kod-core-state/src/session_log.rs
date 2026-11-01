@@ -337,6 +337,10 @@ impl SessionRecorder {
     /// directories. An existing file is appended to, never truncated —
     /// a `kod replay` run can then be handed a file that has been
     /// extended across multiple sessions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn open(path: PathBuf) -> Result<Self> {
         let file = crate::open_owner_only_append(&path)?;
         Ok(Self {
@@ -363,6 +367,10 @@ impl SessionRecorder {
     /// (Tier 1.3). Redaction counts are appended as one
     /// `SessionEntry::Redaction` line so `/stats` can report them
     /// without a second scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn record(&self, entry: &SessionEntry) -> Result<()> {
         // Clone so we can mutate for redaction without changing the
         // caller's entry.
@@ -470,6 +478,10 @@ impl SessionRecorder {
     /// explicit ("everything written by this recorder is on disk when
     /// this returns") without relying on the per-line flush not
     /// regressing later.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn flush(&self) -> Result<()> {
         let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
         w.flush().map_err(KodError::Io)?;
@@ -493,6 +505,10 @@ const MAX_SESSION_LOG_BYTES: u64 = 256 * 1024 * 1024;
 /// error rather than allocating past the cap. The `metadata` check
 /// runs before any read, so a sparse or hostile file cannot force a
 /// multi-GB allocation.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
     // Check the on-disk size before reading. `metadata` is cheap and
     // does not follow the read into memory.
@@ -561,6 +577,10 @@ pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
 /// A cold revive reads this to rebuild a session's tool surface. A
 /// log written before the variant existed returns `None` — the
 /// caller then falls back to rebuilding from config.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn session_init_for(
     path: &Path,
     holder: &str,

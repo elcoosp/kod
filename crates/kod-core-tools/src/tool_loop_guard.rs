@@ -155,6 +155,10 @@ impl ToolLoopGuard {
     /// rather than one-and-done. A model that returns to text (an
     /// empty calls slice) resets the streak immediately — no
     /// corrective, because the loop is broken.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn observe_round(
         &mut self,
         calls: &[ToolCall],

@@ -5,6 +5,10 @@
 use super::*;
 
 /// Send a prompt to a running kod daemon over the unix socket.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -111,6 +115,10 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
 }
 
 /// Run a one-shot prompt against the engine.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_prompt(
     prompt: String,
     model: Option<String>,
@@ -134,6 +142,10 @@ pub async fn run_prompt(
 }
 
 /// The testable core of [`run_prompt`].
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_prompt_inner(
     prompt: String,
     config: &KodConfig,
@@ -171,6 +183,10 @@ pub async fn run_prompt_inner(
 }
 
 /// Run a one-shot prompt, streaming tokens to stdout.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Result<()> {
     let input = if prompt.trim() == "-" {
         use std::io::Read;

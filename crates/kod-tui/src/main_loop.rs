@@ -167,6 +167,10 @@ impl TuiLoop {
     /// event loop for the duration of the editing session, which is
     /// the desired behaviour: while a user is in their editor, the
     /// TUI behind it is frozen and should not be processing input.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn open_external_editor(&mut self, initial: &str) -> Result<String> {
         use crossterm::execute;
 
@@ -275,6 +279,10 @@ impl TuiLoop {
     }
 
     /// Set up the engine with the OpenAI-compatible provider
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn init_engine(&mut self, model: Option<String>) -> Result<()> {
         let config = KodConfig::load_default()?;
         let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
@@ -637,6 +645,10 @@ impl TuiLoop {
     /// `?` with raw mode still on, so the shell rendered garbage
     /// until the user typed `reset`. The wrapper does best-effort
     /// teardown on every error path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn init_terminal(&mut self) -> Result<()> {
         let result = self.init_terminal_inner().await;
         if result.is_err() {
@@ -701,6 +713,10 @@ impl TuiLoop {
     }
 
     /// Restore terminal
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn restore_terminal(&mut self) -> Result<()> {
         // Release terminal ownership first: even if a later step here
         // errors, the subscriber must never keep writing to a file
@@ -739,6 +755,10 @@ impl TuiLoop {
     }
 
     /// Run the main loop
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn run(&mut self, model: Option<String>) -> Result<()> {
         // Install a panic hook that restores the terminal so a single
         // unexpected error doesn't strand the user in a broken screen.
@@ -1056,6 +1076,10 @@ impl TuiLoop {
     }
 
     /// Handle a single event
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn handle_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Key(key_code) => self.handle_key(key_code).await?,
@@ -2243,6 +2267,14 @@ impl TuiLoop {
     /// Execute a slash command as if the user typed it. Public so an
     /// embedder (or an integration test) can drive command dispatch
     /// without going through the event loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub async fn handle_command(&mut self, input: &str) -> Result<()> {
         let mut parts = input.split_whitespace();
         let cmd = parts.next().unwrap_or("");

@@ -123,6 +123,10 @@ impl AgentCommunicationHub {
     }
 
     /// Register an agent so it can send and receive messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn register_agent(&self, agent_id: AgentId) -> Result<()> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut agents = self.agents.write().await;
@@ -196,6 +200,10 @@ impl AgentCommunicationHub {
     }
 
     /// Send a direct message from one agent to another.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn send_direct(
         &self,
         from: &AgentId,
@@ -244,6 +252,10 @@ impl AgentCommunicationHub {
     /// each recipient's history once — same as
     /// [`AgentCommunicationHub::send_direct`], per-recipient. See that
     /// method's doc for the semantics of `get_agent_history`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn broadcast(&self, from: &AgentId, content: MessageContent) -> Result<()> {
         let agents = self.agents.read().await;
         if !agents.contains_key(from) {
@@ -294,6 +306,10 @@ impl AgentCommunicationHub {
     /// hub without inventing a second message shape: the runner's
     /// events are progress notifications, and
     /// `AgentMessageContent::ProgressUpdate` carries exactly that.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn broadcast_lifecycle(&self, from: &AgentId, note: &str) -> Result<()> {
         self.broadcast(
             from,
@@ -320,6 +336,10 @@ impl AgentCommunicationHub {
     }
 
     /// Take the receiver for an agent, preventing a second take.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn get_agent_receiver(&self, agent_id: &AgentId) -> Result<AgentMessageReceiver> {
         let mut agents = self.agents.write().await;
         match agents.get_mut(agent_id) {
@@ -421,6 +441,10 @@ impl AgentCommunicationHub {
     /// online agent. The convenience the note tool calls; separate
     /// from `broadcast_lifecycle` so the two message kinds do not
     /// have to be distinguished by inspecting the payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn post_knowledge(
         &self,
         from: &AgentId,

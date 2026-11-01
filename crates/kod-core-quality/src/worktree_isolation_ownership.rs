@@ -91,6 +91,10 @@ impl IsolationOwnership {
 }
 
 /// Write the marker for `id` at the worktree root.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn write_marker(worktree: &Path, id: impl Into<String>) -> Result<()> {
     let marker = IsolationOwnership::for_current_process(id);
     let body =
@@ -111,6 +115,10 @@ pub fn read_marker(worktree: &Path) -> Option<IsolationOwnership> {
 /// Remove the marker from a worktree, if present. Called by a clean
 /// shutdown so a worktree that is about to be removed does not look
 /// stale to a concurrent reaper.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn remove_marker(worktree: &Path) -> Result<()> {
     let path = worktree.join(MARKER_FILENAME);
     match std::fs::remove_file(&path) {
@@ -127,6 +135,10 @@ pub fn remove_marker(worktree: &Path) -> Result<()> {
 /// is skipped. The caller is responsible for removing each reported
 /// path (a `git worktree remove --force` is the intended step; this
 /// function does not mutate the repo).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn reap_dead(repo: &Path) -> Result<Vec<PathBuf>> {
     let worktrees_dir = repo.join(".kod").join("worktrees");
     let entries = match std::fs::read_dir(&worktrees_dir) {

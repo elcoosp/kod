@@ -117,6 +117,10 @@ impl WorktreeManager {
     /// HEAD. `Ok(None)` means "not a git repo"; the caller falls back
     /// to the shared workspace. `Ok(Some(mgr))` means worktrees are
     /// available.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn detect(repo: &Path) -> Result<Option<Self>> {
         let inside = run_git(repo, &["rev-parse", "--is-inside-work-tree"], 10);
         match inside {
@@ -172,6 +176,10 @@ impl WorktreeManager {
     /// kebab-case token; the resulting path is
     /// `<repo>/.kod/worktrees/<slug>` and the branch is
     /// `kod/agent-<slug>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn create(&mut self, slug: &str) -> Result<WorktreeInfo> {
         let slug = sanitize_slug(slug);
         if slug.is_empty() {
@@ -282,6 +290,10 @@ impl WorktreeManager {
     /// `<repo>/.kod/worktrees/wt-<yyyymmdd-hhmmss>`. On any failure
     /// past the worktree creation, the worktree and branch are rolled
     /// back so the repo is not left half-relocated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn create_session(&mut self, clean_source: bool) -> Result<WorktreeInfo> {
         // The token is second-precision. Two `/wt` invocations in
         // the same second used to mint the same slug *and* the same
@@ -439,6 +451,10 @@ impl WorktreeManager {
     /// The caller is expected to be on the base branch (typically
     /// `main`) with a clean index; a dirty index fails the first
     /// merge with a `failed` entry naming the branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn merge_all(&mut self) -> Result<MergeReport> {
         // H-D3: verify the repo is still on the base commit with a
         // clean index before merging anything. A swarm runs for

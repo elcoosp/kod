@@ -184,6 +184,10 @@ impl SandboxResolver {
     /// - `Require` + a backend: `Ok(Some(inv))`.
     /// - `Require` + no backend: `Err(SandboxViolation)` naming the
     ///   install command for the current platform.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn invocation(
         &self,
         mode: SandboxMode,
@@ -593,6 +597,10 @@ fn seatbelt_invocation(_wd: &Path, _opts: SandboxOpts) -> SandboxInvocation {
 /// Backward-compatible free function that matches the pre-C3a shape.
 /// Uses a one-shot resolver; prefer holding a `SandboxResolver` when
 /// the caller invokes multiple times.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn sandbox_invocation(mode: SandboxMode, wd: &Path) -> Result<Option<SandboxInvocation>> {
     SandboxResolver::detect().invocation(mode, wd, SandboxOpts::default())
 }
@@ -757,6 +765,10 @@ impl QuotaHook {
         }
     }
     /// Run the quota check for this tool call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn check_and_record(&self, tool: &str, command: Option<&str>) -> Result<()> {
         (self.inner)(tool, command)
     }
@@ -984,6 +996,10 @@ impl ArtifactStoreHook {
 
     /// M-40: `owner` is the holder (transcript key) the artifact
     /// belongs to; threaded through to `ArtifactHandler::store_for`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn call(
         &self,
         id: String,
@@ -1187,6 +1203,10 @@ impl ToolContext {
 
     /// Resolve `path` relative to the working directory, canonicalize
     /// it, and refuse anything that escapes the working directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         let raw = Path::new(path);
         let joined = if raw.is_absolute() {
@@ -1278,6 +1298,10 @@ impl ToolContext {
     }
 
     /// Check if path is allowed by permissions
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn is_path_allowed(&self, path: &Path) -> Result<bool> {
         Ok(is_path_allowed_by(
             &self.permissions.forbidden_paths,
@@ -1287,6 +1311,10 @@ impl ToolContext {
     }
 
     /// Check if path can be read
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn can_read(&self, path: &Path) -> Result<()> {
         if !self.permissions.read_files {
             return Err(KodError::PermissionDenied {
@@ -1317,6 +1345,10 @@ impl ToolContext {
     ///
     /// The three gates compose: the strictest applicable one wins.
     /// None overrides the others.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn can_write(&self, path: &Path) -> Result<()> {
         if !self.permissions.write_files {
             return Err(KodError::PermissionDenied {
@@ -1390,6 +1422,10 @@ impl ToolContext {
     /// `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` relative to
     /// a held parent dirfd, which this pragmatic check does not
     /// replace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn revalidate_write_parent(&self, resolved: &std::path::Path) -> Result<()> {
         let parent = resolved
             .parent()
@@ -1428,6 +1464,10 @@ impl ToolContext {
     /// Denying here without the flag is the honest behaviour: a caller
     /// that did not grant `execute_commands` should not be able to run
     /// anything, not even `echo`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn can_execute_command(&self, _command: &str) -> Result<()> {
         if !self.permissions.execute_commands {
             return Err(KodError::PermissionDenied {
@@ -1439,6 +1479,10 @@ impl ToolContext {
     }
 
     /// Check if network access is allowed
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn can_access_network(&self, url: &str) -> Result<()> {
         if !self.permissions.network_access {
             return Err(KodError::PermissionDenied {
@@ -1454,6 +1498,10 @@ impl ToolContext {
     /// `GitAccess::Read` for a query, `GitAccess::Write` for a
     /// mutation. A context granted `Write` also satisfies `Read`
     /// (see the enum's `Ord`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn can_git_operation(&self, required: kod_types::GitAccess) -> Result<()> {
         if !self.permissions.git_access.is_at_least(required) {
             return Err(KodError::PermissionDenied {

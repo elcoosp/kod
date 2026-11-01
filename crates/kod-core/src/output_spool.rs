@@ -33,6 +33,10 @@ pub struct OutputSpool {
 
 impl OutputSpool {
     /// Create a spool at `path`, truncating any existing file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn create(path: impl Into<PathBuf>) -> std::io::Result<Self> {
         let path = path.into();
         if let Some(parent) = path.parent() {
@@ -60,6 +64,10 @@ impl OutputSpool {
 
     /// Append a chunk. Bumps the last-write clock — this is what
     /// re-arms a stall.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn append(&mut self, chunk: &[u8]) -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new().append(true).open(&self.path)?;
         f.write_all(chunk)?;

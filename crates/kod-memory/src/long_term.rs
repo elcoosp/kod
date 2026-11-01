@@ -40,6 +40,10 @@ impl LongTermMemory {
     /// the async runtime is under any load, so the cost is negligible and
     /// wrapping it would force the caller into an async constructor for
     /// no benefit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -130,6 +134,10 @@ impl LongTermMemory {
     /// memory type, without deserializing the corpus. `None` means
     /// "no index hit" — the caller falls back to a full scan so an
     /// entry predating the index still dedups.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn find_by_content_hash(
         &self,
         hash: u64,
@@ -243,6 +251,10 @@ impl LongTermMemory {
 
     /// Store an entry persistently. Overwrites any existing entry with
     /// the same id.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store(&self, entry: MemoryEntry) -> Result<()> {
         let key = entry.id.as_uuid().as_bytes().to_vec();
         let value =
@@ -311,6 +323,10 @@ impl LongTermMemory {
     /// on a per-prompt hot path. This method amortises them. Entries
     /// are serialized before the transaction opens, so a serialization
     /// error fails the batch without touching redb.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_batch(&self, entries: Vec<MemoryEntry>) -> Result<()> {
         if entries.is_empty() {
             return Ok(());
@@ -349,6 +365,10 @@ impl LongTermMemory {
     }
 
     /// Get an entry by id.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn get(&self, id: &MemoryId) -> Result<Option<MemoryEntry>> {
         let key = id.as_uuid().as_bytes().to_vec();
         self.blocking(move |db| {
@@ -372,11 +392,19 @@ impl LongTermMemory {
     }
 
     /// Update an existing entry. Same as `store` (overwrites).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn update(&self, entry: MemoryEntry) -> Result<()> {
         self.store(entry).await
     }
 
     /// Remove an entry by id. Idempotent: removing a missing id succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn remove(&self, id: &MemoryId) -> Result<()> {
         let key = id.as_uuid().as_bytes().to_vec();
         self.blocking(move |db| {
@@ -430,6 +458,10 @@ impl LongTermMemory {
     ///
     /// Returns the number of keys removed, which is always
     /// `ids.len()`: redb's `remove` is idempotent on a missing key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn remove_batch(&self, ids: &[MemoryId]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
@@ -482,6 +514,10 @@ impl LongTermMemory {
     }
 
     /// Get every entry in the table (order unspecified).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn get_all(&self) -> Result<Vec<MemoryEntry>> {
         self.blocking(|db| {
             let txn = db.begin_read().map_err(|e| {
@@ -518,6 +554,10 @@ impl LongTermMemory {
     /// Loads every entry then filters. The substring scan is pure CPU on
     /// the owned `Vec`, so it runs on the caller's task — the redb scan
     /// is the only part that benefits from `spawn_blocking`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn search(&self, query: &str) -> Result<Vec<MemoryEntry>> {
         let all = self.get_all().await?;
         let query_lower = query.to_lowercase();
@@ -534,6 +574,10 @@ impl LongTermMemory {
     /// trail of what was believed before — but stops appearing in
     /// retrieval. Both ids must exist; a caller superseding an entry
     /// that was already removed gets an error naming which one.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn supersede(&self, old: &MemoryId, new: &MemoryId) -> Result<()> {
         let mut entry = self
             .get(old)
@@ -552,6 +596,10 @@ impl LongTermMemory {
     /// caller reading either side sees the disagreement. Both stay
     /// active — a contradiction is a fact to surface, not one to
     /// resolve by picking a winner.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn link_contradiction(&self, a: &MemoryId, b: &MemoryId) -> Result<()> {
         let mut ea = self
             .get(a)
@@ -591,6 +639,10 @@ impl LongTermMemory {
 
     /// Entries `id` contradicts, for a caller surfacing the
     /// disagreement.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn contradictions_of(&self, id: &MemoryId) -> Result<Vec<MemoryEntry>> {
         let Some(entry) = self.get(id).await? else {
             return Ok(Vec::new());
@@ -605,6 +657,10 @@ impl LongTermMemory {
     }
 
     /// Number of entries in the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn count(&self) -> Result<usize> {
         // T1-H3: redb tracks the row count internally; `len()` is an
         // O(1) B-tree count, not a walk. The pre-fix shape iterated
@@ -653,6 +709,10 @@ impl LongTermMemory {
     }
 
     /// Remove every entry from the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn clear(&self) -> Result<()> {
         self.blocking(|db| {
             let txn = db.begin_write().map_err(|e| {

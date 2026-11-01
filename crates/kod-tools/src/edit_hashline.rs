@@ -221,6 +221,10 @@ impl EditStore {
     /// Apply `ops` to `path` under the tag guard. Returns the new tag
     /// on success (the model chains edits on it). All-or-nothing:
     /// nothing is written if any op fails validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn apply(&mut self, path: &Path, tag: Tag, ops: &[Op]) -> Result<(Tag, String), EditError> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let snap = self.snapshots.get(&key).ok_or(EditError::NeverRead)?;
@@ -349,6 +353,10 @@ fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
 
 /// Parse the hashline edit format from `text`: a `[path#tag]` header
 /// then `PUT`/`CUT` ops. Returns `(path, tag, ops)`.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn parse(text: &str) -> Result<(String, Tag, Vec<Op>), EditError> {
     let mut path: Option<String> = None;
     let mut tag: Option<Tag> = None;

@@ -121,6 +121,10 @@ impl StateStore {
 
     /// Write the state atomically: temp file + rename. A crash mid-write
     /// leaves the previous state intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn save(&self, state: &EngineState) -> Result<(), std::io::Error> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;

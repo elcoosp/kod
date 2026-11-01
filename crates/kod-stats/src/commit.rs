@@ -164,6 +164,10 @@ pub fn score_change(description: &str) -> i32 {
 
 /// Validate a proposal. `Ok(())` when it is complete; `Err` names the
 /// first failure.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn validate(proposal: &CommitProposal) -> Result<(), RejectReason> {
     if !TYPES.contains(&proposal.r#type.as_str()) {
         return Err(RejectReason::UnknownType(proposal.r#type.clone()));

@@ -48,6 +48,10 @@ pub use tool_quota::{QuotaVerdict, ToolCounts, check as check_quota};
 /// config is enabled but the client could not be built — a
 /// misconfigured integration should be a loud failure at
 /// startup, not a silent no-op.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn install_jev_from_config(
     engine: &KodEngine,
     config: &kod_config::JevConfig,

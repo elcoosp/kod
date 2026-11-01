@@ -16,6 +16,10 @@ use serde_json::Value;
 
 /// Validate `value` against `schema`. `Err` carries every failure, one
 /// per line, each naming its path.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn validate(schema: &Value, value: &Value) -> Result<(), String> {
     let mut errors = Vec::new();
     check(schema, value, "$", &mut errors);

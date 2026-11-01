@@ -173,6 +173,10 @@ impl UnexpectedStopClassifier {
     /// classifier will ask the question and the judge will almost
     /// certainly answer `no` — but spending a judge call on a reply
     /// that is not a candidate is waste.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn classify(&self, request: &str, reply: &str) -> Result<bool, JudgmentError> {
         let question = Self::question();
         let state: &[(&str, &str)] = &[("request", request), ("reply", reply)];

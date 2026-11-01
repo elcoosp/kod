@@ -243,6 +243,10 @@ pub fn scan_vendors(text: &str) -> Vec<Discovered> {
 /// The pattern matches `scheme://user:password@host`. The password
 /// is the secret; the rest of the URL is not. A URL with no password
 /// (`scheme://user@host`) does not match.
+///
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
 pub fn scan_connection_urls(text: &str) -> Vec<Discovered> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {

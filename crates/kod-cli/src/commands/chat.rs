@@ -8,6 +8,10 @@
 use super::*;
 
 /// Attach to a running daemon's chat session over the unix socket.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -181,6 +185,10 @@ pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
 }
 
 /// Run the interactive chat client.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_chat(
     model: Option<String>,
     sandbox: bool,
@@ -677,6 +685,10 @@ pub async fn run_chat(
 }
 
 /// Attach to a running daemon's agent session.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_agent_remote(
     name: String,
     goal: String,
@@ -770,6 +782,10 @@ pub async fn run_agent_remote(
 }
 
 /// Run an agent locally with the given name and goal.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_agent(
     name: String,
     goal: String,
@@ -812,6 +828,10 @@ pub async fn run_agent(
 /// Returns `Ok(None)` when the engine produced no text (an empty
 /// completion, or a turn that only made tool calls). The wrapper
 /// prints nothing in that case.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_agent_inner(
     goal: String,
     config: &KodConfig,
@@ -835,6 +855,10 @@ pub async fn run_agent_inner(
 }
 
 /// Speak ACP over stdio; used by editor integrations.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
 

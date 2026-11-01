@@ -6,6 +6,10 @@ use super::*;
 /// Replay a saved fixture against the current engine, printing any
 /// divergence in the request shape (Tier 1.5). Returns the number of
 /// divergent rounds; zero means a clean replay.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool) -> Result<i32> {
     use kod_provider::replay::{ReplayProvider, ReplayRound, ReplayToolCall};
 
@@ -201,6 +205,10 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
 /// `turns` is `None`.
 ///
 /// Refuses to overwrite an existing fixture unless `force` is set.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_fixture_save_v2(
     name: &str,
     turns: Option<std::path::PathBuf>,
@@ -230,6 +238,10 @@ pub async fn run_fixture_save_v2(
 }
 
 /// Tier 1.5 — list the fixtures under `~/.kod/fixtures/`.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_fixture_list() -> Result<()> {
     let Some(dir) = kod_core::Fixture::fixtures_dir() else {
         return Err(KodError::Config("no home directory".to_string()));
@@ -276,6 +288,10 @@ pub async fn run_fixture_list() -> Result<()> {
 }
 
 /// Save the current session's turns as a fixture.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Result<()> {
     let traces = kod_core::read_traces(turns_path)
         .map_err(|e| KodError::Config(format!("could not read turn traces: {e}")))?;

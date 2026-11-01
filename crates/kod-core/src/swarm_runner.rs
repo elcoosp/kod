@@ -301,6 +301,10 @@ impl SwarmRunner {
     /// and more than eight concurrent agentic loops against a local
     /// model server will queue behind each other rather than run
     /// concurrently.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn new(
         engine: Arc<KodEngine>,
         max_agents: usize,
@@ -370,6 +374,10 @@ impl SwarmRunner {
     }
 
     /// Build a swarm runner from a config.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn from_config(
         engine: Arc<KodEngine>,
         config: &kod_config::SwarmConfig,
@@ -423,6 +431,10 @@ impl SwarmRunner {
     /// Run the swarm to completion. Events are emitted on `chunk_tx`
     /// while the run proceeds; the returned response carries the same
     /// information in a shape a caller can consume without a channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn run(
         &self,
         goal: &str,

@@ -218,6 +218,10 @@ impl AgentRegistry {
     }
 
     /// Attach a session file to a ref.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn set_session_file(
         &mut self,
         id: &str,
@@ -255,6 +259,10 @@ impl AgentRegistry {
     }
 
     /// Mark an agent active (a turn started).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn mark_active(&mut self, id: &str) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         if a.lifecycle == Lifecycle::Dead {
@@ -266,6 +274,10 @@ impl AgentRegistry {
     }
 
     /// Mark an agent idle (a turn ended).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn mark_idle(&mut self, id: &str) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         if a.lifecycle == Lifecycle::Dead {
@@ -280,6 +292,10 @@ impl AgentRegistry {
     /// a generation older than the ref's current one is a no-op that
     /// returns `StaleGeneration`, so a stale finalizer cannot clobber
     /// a newer session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn park(&mut self, id: &str, expected_generation: u64) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         if a.lifecycle == Lifecycle::Dead {
@@ -301,6 +317,10 @@ impl AgentRegistry {
     ///
     /// Returns the ref so the caller can rebuild the session from
     /// its metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn revive(&mut self, id: &str) -> Result<AgentRef, RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         match a.lifecycle {
@@ -321,12 +341,20 @@ impl AgentRegistry {
     /// Ensure an agent is live, reviving if parked. The "coalesced"
     /// operation: a caller that wants to send a message does not
     /// have to check the state first.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn ensure_live(&mut self, id: &str) -> Result<AgentRef, RegistryError> {
         self.revive(id)
     }
 
     /// Kill an agent. The ref is retained as a tombstone — the id
     /// is refused forever.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn kill(&mut self, id: &str) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         a.lifecycle = Lifecycle::Dead;
@@ -374,6 +402,10 @@ impl AgentRegistry {
     /// The file is a JSON object mapping id → `AgentRef`. It is
     /// written whole (not appended) — a registry is small and the
     /// atomic-replace shape is simpler than a log.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn persist(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -405,6 +437,10 @@ impl AgentRegistry {
     /// registry yet. A corrupt file is: a truncated write that
     /// happened to survive is worse than no file, and silently
     /// starting empty would hide it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -437,6 +473,10 @@ impl AgentRegistry {
     /// surface and system prompt come from the caller's own
     /// reconstruction, since the session log carries no init entry
     /// today.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn cold_revive(
         &mut self,
         id: &str,

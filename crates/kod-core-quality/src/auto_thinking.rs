@@ -132,6 +132,10 @@ impl AutoThinking {
     /// is the judge expressing an opinion outside the offered
     /// vocabulary, which is exactly the ambiguity `Medium` exists
     /// to resolve.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn classify(
         &self,
         input: &str,

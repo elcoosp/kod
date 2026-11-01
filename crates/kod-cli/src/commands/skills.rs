@@ -3,6 +3,10 @@
 use super::*;
 
 /// List every skill discovered across the configured sources.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_list(json: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -61,6 +65,10 @@ pub async fn run_skills_list(json: bool) -> Result<()> {
 }
 
 /// Validate every skill file; report parse and schema errors.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_validate() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -125,6 +133,10 @@ pub async fn run_skills_validate() -> Result<()> {
 }
 
 /// Create a new skill file under the user skills directory.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_new(name: &str) -> Result<()> {
     // Validate the name: kebab-case, [a-z0-9-].
     let trimmed = name.trim();
@@ -212,6 +224,10 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
 }
 
 /// Remove a skill by name (prompts unless yes is true).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -261,6 +277,10 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
 }
 
 /// Open a skill file in EDITOR.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_edit(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -296,6 +316,10 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
 }
 
 /// Print a skill file to stdout.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_show(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
@@ -381,6 +405,10 @@ pub(super) fn to_title_case(s: &str) -> String {
         .join(" ")
 }
 /// Copy a skill to dest (refuses to overwrite without force).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
@@ -431,6 +459,10 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
 }
 
 /// Search skills by name or description.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_search(query: &str) -> Result<()> {
     let config = KodConfig::load_default()?;
     let dirs = config.skills_dirs()?;
@@ -511,6 +543,10 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
 }
 
 /// Validate skills, treating warnings as errors.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_validate_strict() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
@@ -571,6 +607,10 @@ pub async fn run_skills_validate_strict() -> Result<()> {
 }
 
 /// Copy a skill under a new name.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     // Validate the new name.
     if !new_name
@@ -633,6 +673,10 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
 }
 
 /// Rename a skill.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     // Validate `new_name` *before* it is joined into a path. The
     // copy path validates internally, but rename joins the name
@@ -685,6 +729,10 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
 }
 
 /// Print the on-disk path of a skill.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_source(name: &str) -> Result<()> {
     match find_skill_path(name).await? {
         Some(p) => {

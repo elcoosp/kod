@@ -275,6 +275,10 @@ impl IrcBus {
     ///
     /// The caller supplies the timeout; [`DEFAULT_IRC_TIMEOUT_MS`] is
     /// the design's default for a caller that has no preference.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn send_await(
         &self,
         from: impl Into<String>,

@@ -8,6 +8,10 @@
 use super::*;
 
 /// Dispatch a memory subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_memory(action: MemoryAction) -> Result<()> {
     use kod_memory::MemoryManager;
     let config = KodConfig::load_default()?;
@@ -261,6 +265,10 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
 }
 
 /// Dispatch a sessions subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_sessions(action: SessionsAction) -> Result<()> {
     use kod_tui::app::Message;
 
@@ -532,6 +540,10 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
 }
 
 /// Replay a session log; optionally re-execute recorded tool calls.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> Result<()> {
     let entries = kod_core_state::session_log::read_session(&path)?;
     let tool_calls: Vec<_> = entries
@@ -702,6 +714,10 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
 }
 
 /// Dispatch a checkpoint subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
     use kod_core_state::checkpoint::CheckpointManager;
 

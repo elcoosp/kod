@@ -280,6 +280,10 @@ impl Question {
 /// than once per call.
 ///
 /// Fails on an empty question set or a malformed question.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn render_system_prompt(questions: &[Question]) -> Result<String, JudgmentError> {
     if questions.is_empty() {
         return Err(JudgmentError::Malformed(
@@ -582,6 +586,10 @@ impl JudgmentClient {
     /// `options.max_format_retries` times with a stricter reminder.
     /// Exhausting the retries without a complete parse is
     /// [`JudgmentError::Unparseable`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn ask(
         &self,
         state: &[(&str, &str)],

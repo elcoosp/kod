@@ -33,6 +33,10 @@ impl SkillParser {
     }
 
     /// Parse a skill from a file
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn parse_file(&self, path: &Path) -> Result<Skill> {
         let content = std::fs::read_to_string(path).map_err(|e| KodError::SkillParseError {
             path: path.display().to_string(),
@@ -47,6 +51,10 @@ impl SkillParser {
     }
 
     /// Parse skill content from a string
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn parse_content(&self, content: &str, source_name: &str) -> Result<Skill> {
         let (metadata, body) = self.split_front_matter(content, source_name)?;
 

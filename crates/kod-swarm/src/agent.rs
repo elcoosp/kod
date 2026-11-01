@@ -187,6 +187,10 @@ impl Agent {
     }
 
     /// Start the agent
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn start(&self) -> Result<()> {
         if self.state() != AgentState::Idle && self.state() != AgentState::Stopped {
             return Err(KodError::InvalidState(format!(
@@ -222,6 +226,10 @@ impl Agent {
     }
 
     /// Pause the agent
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn pause(&self) -> Result<()> {
         if self.state() != AgentState::Running {
             return Err(KodError::InvalidState(format!(
@@ -238,6 +246,10 @@ impl Agent {
     }
 
     /// Resume the agent
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn resume(&self) -> Result<()> {
         if self.state() != AgentState::Paused {
             return Err(KodError::InvalidState(format!(
@@ -256,6 +268,10 @@ impl Agent {
     }
 
     /// Stop the agent
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn stop(&self) -> Result<()> {
         match self.state() {
             AgentState::Running | AgentState::Paused | AgentState::Starting => {

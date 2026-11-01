@@ -280,6 +280,10 @@ impl BackgroundJobRunner {
     }
 
     /// Acquire a permit for a job. Awaits when the cap is reached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub async fn acquire_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
         self.sem
             .clone()

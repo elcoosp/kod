@@ -187,6 +187,10 @@ impl Fixture {
     }
 
     /// Save to `path` in pretty JSON, creating parents.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -195,6 +199,10 @@ impl Fixture {
     }
 
     /// Load from `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_from(path: &std::path::Path) -> std::io::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         Self::from_json(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
@@ -259,6 +267,10 @@ impl Fixture {
     }
 
     /// Parse a fixture. Errors carry the field path when possible.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     #[must_use]
     pub fn from_json(s: &str) -> Result<Self, String> {
         serde_json::from_str(s).map_err(|e| e.to_string())

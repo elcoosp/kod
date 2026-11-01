@@ -420,6 +420,10 @@ pub struct PromptRequest<'a> {
 
 impl TaskRouter {
     /// Create a new task router.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let memory_manager = if config.enable_memory {
             // The manager's own default is a fixed 4096-token budget.
@@ -485,6 +489,10 @@ impl TaskRouter {
     /// reason to fail a completed prompt. A manager that is not
     /// configured (`enable_memory: false`) is a silent no-op, which
     /// is what a test that disabled memory expects.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_short_term(&self, content: &str) -> Result<()> {
         let Some(manager) = &self.memory_manager else {
             return Ok(());
@@ -512,6 +520,10 @@ impl TaskRouter {
     /// durable `LongTerm` layer.
     ///
     /// Errors when memory is disabled, matching `store_long_term`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_episodic(
         &self,
         content: &str,
@@ -531,6 +543,10 @@ impl TaskRouter {
     /// Store a long-term memory entry with a project scope and tags
     /// (D2-B3a). Called by the `memory_save` tool. Returns the new
     /// entry's id. Errors when memory is disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_long_term(
         &self,
         content: &str,
@@ -587,6 +603,10 @@ impl TaskRouter {
     /// carried by `memory.compaction_interval_secs`. Best-effort: a
     /// store error is returned to the caller, which logs it; the task
     /// retries on its next tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn consolidate_memory(&self) -> Result<kod_memory::ConsolidationReport> {
         match &self.memory_manager {
             Some(m) => m.consolidate().await,
@@ -644,6 +664,10 @@ impl TaskRouter {
 
     /// Load skills from a directory (matcher uses interior mutability,
     /// so this works through the shared `Arc` in the engine).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn load_skills(&self, skills_dir: &std::path::Path) -> Result<usize> {
         let mut loader = kod_skills::loader::SkillLoader::new(skills_dir);
         let skills = loader.load_all().await?;
@@ -707,6 +731,10 @@ impl TaskRouter {
     ///
     /// Idempotent: a second call is a no-op. No-op when the directory
     /// does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
         if !skills_dir.is_dir() {
             return Ok(());
@@ -826,6 +854,10 @@ impl TaskRouter {
     /// Matching is whole-word, not substring: "prefix" no longer matches
     /// "fix", "remove" no longer matches "move", "testify" no longer
     /// matches "test".
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn classify_task(&self, input: &str) -> Result<TaskType> {
         // Case-insensitive whole-word substring test.
         fn contains_word(haystack: &str, needle: &str) -> bool {
@@ -943,11 +975,19 @@ impl TaskRouter {
     }
 
     /// Process user input
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_input(&self, input: &str) -> Result<TaskResponse> {
         self.process_input_with_context(input, None).await
     }
 
     /// Process user input with optional memory context
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_input_with_context(
         &self,
         input: &str,
@@ -1175,6 +1215,10 @@ impl TaskRouter {
     /// [`TaskRouter::build_prompt_with_context`] with a context supplied
     /// by `process_input_with_context` so the retrieval runs once per
     /// prompt (D0.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt(
         &self,
         input: &str,
@@ -1196,6 +1240,10 @@ impl TaskRouter {
     /// memory context. When `Some`, the retrieval is skipped — this is
     /// the single-retrieval path the engine uses. When `None`, behaves
     /// exactly like the old `build_prompt`: retrieves from the manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_with_context(
         &self,
         input: &str,
@@ -1219,6 +1267,10 @@ impl TaskRouter {
     /// the allocation from the endpoint's window and the request size;
     /// a caller that does not care (a test, the CLI's plain path) uses
     /// the two shorter forms.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_with_budget(
         &self,
         input: &str,
@@ -1250,6 +1302,10 @@ impl TaskRouter {
     /// `TaskResponse.skills_used`; a skill Jev found relevant but whose
     /// name, triggers, tags and capabilities shared no substring with
     /// the request never had its instructions inserted into the prompt.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_via(&self, req: PromptRequest<'_>) -> Result<String> {
         let PromptRequest {
             input,
@@ -1493,6 +1549,10 @@ impl TaskRouter {
     }
 
     /// Build a prompt with budget and skill inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_with_budget_and_skills(
         &self,
         input: &str,
@@ -1546,6 +1606,10 @@ impl TaskRouter {
     /// `String` uses `build_prompt_with_budget` — which is exactly what
     /// this method calls under the hood, so the cost is one extra
     /// allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_plan(
         &self,
         input: &str,
@@ -1571,6 +1635,10 @@ impl TaskRouter {
     /// [`Self::build_prompt_with_budget_and_skills`] produces, so a
     /// caller that has the engine's `refined_skills` (lexical ∪ Jev)
     /// gets them in `## Relevant Skills`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_plan_via(&self, req: PromptRequest<'_>) -> Result<PromptPlan> {
         let PromptRequest {
             input,
@@ -1594,6 +1662,10 @@ impl TaskRouter {
     }
 
     /// Build a prompt plan with skill inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn build_prompt_plan_with_skills(
         &self,
         input: &str,

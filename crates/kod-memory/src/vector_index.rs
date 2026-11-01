@@ -70,6 +70,10 @@ impl VectorIndex {
     /// Insert (or replace) the vector for `id`. The vector is
     /// L2-normalized in place. A zero vector, a wrong-dim vector, or a
     /// NaN component is rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn insert(&mut self, id: MemoryId, v: Vec<f32>) -> Result<()> {
         if self.dim == 0 {
             return Err(KodError::MemoryStorage(
@@ -125,6 +129,10 @@ impl VectorIndex {
     /// `keep` is an optional predicate evaluated against each id; a
     /// `false` result skips that entry. Used to filter by `project_key`
     /// without materialising a second index.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn search<F>(&self, query: &[f32], k: usize, keep: F) -> Result<Vec<(MemoryId, f32)>>
     where
         F: Fn(&MemoryId) -> bool,

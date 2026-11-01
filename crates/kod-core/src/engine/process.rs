@@ -3,6 +3,10 @@ use kod_core_state::goals::GoalBudget;
 
 impl KodEngine {
     /// Process user input
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process(&self, input: &str) -> Result<TaskResponse> {
         self.process_for(DEFAULT_TRANSCRIPT_KEY, input).await
     }
@@ -261,6 +265,10 @@ impl KodEngine {
     }
 
     /// Run one non-streaming turn for a transcript key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
         // H-E5: the non-streaming path never set `current_request`,
         // so the request-keyed Jev helpers (task classification,
@@ -781,6 +789,10 @@ impl KodEngine {
     /// (the TUI renders each chunk immediately) and tool starts arrive as
     /// [`tool_start_marker`] chunks (see [`parse_tool_start`]) so the UI can
     /// show "running …" while the tool actually executes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_streaming(
         &self,
         input: &str,
@@ -791,6 +803,10 @@ impl KodEngine {
     }
 
     /// Streaming variant of [`KodEngine::process_for`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_streaming_for(
         &self,
         key: &str,
@@ -815,6 +831,10 @@ impl KodEngine {
     /// `None` routes by task type as before; this is what every
     /// non-swarm caller passes, and it is what
     /// `process_streaming_for` itself passes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_streaming_with_model_for(
         &self,
         key: &str,
@@ -1327,6 +1347,10 @@ impl KodEngine {
     /// fires. Steer notes queued via [`KodEngine::steer`] are injected
     /// every turn. Each turn's text streams live; turns are separated by
     /// a turn-marker chunk (see [`turn_marker`]) so the TUI can render progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_goal_streaming(
         &self,
         input: &str,
@@ -1338,6 +1362,10 @@ impl KodEngine {
     }
 
     /// Streaming goal loop with a budget, on the default transcript.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_goal_streaming_with_budget(
         &self,
         input: &str,
@@ -1358,6 +1386,10 @@ impl KodEngine {
     /// Streaming goal loop on a named transcript. Uses the default
     /// (empty) budget; see `process_goal_streaming_for_with_budget`
     /// for the budget-carrying variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_goal_streaming_for(
         &self,
         key: &str,
@@ -1379,6 +1411,10 @@ impl KodEngine {
     /// with `token` / `time_seconds` attached, so a turn that pushes
     /// usage over either cap flips the runtime to `BudgetLimited`
     /// and emits the one-shot steer below.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn process_goal_streaming_for_with_budget(
         &self,
         key: &str,

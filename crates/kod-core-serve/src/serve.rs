@@ -160,6 +160,10 @@ struct Response<'a> {
 }
 
 /// Run the daemon until `shutdown` fires or `SIGINT` arrives.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
     let listener = crate::transport::bind(&socket_path).await?;
     set_socket_perms(&socket_path)?;
@@ -228,6 +232,10 @@ pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
 /// `Ok(())` whether or not the daemon answered — a daemon that died
 /// before processing the request is not an error from the caller's
 /// point of view.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
     let stream = crate::transport::connect(socket_path).await?;
     let req = serde_json::json!({
@@ -377,6 +385,10 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
 /// `serve` binds a Unix socket and calls this per connection,
 /// while tests and embedders call it directly with `tokio::io::duplex`
 /// handles.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn serve_io<R, W>(
     engine: Arc<KodEngine>,
     input: R,

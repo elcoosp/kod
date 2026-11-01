@@ -200,6 +200,10 @@ impl KodEngine {
     /// Returns `Ok(())` on success. The caller decides whether to
     /// persist the new value to config — the engine only owns the
     /// in-process client.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn update_jev_threshold(&self, name: &str, value: f32) -> Result<()> {
         let Some(client) = self.jev_client() else {
             return Err(KodError::InvalidState(

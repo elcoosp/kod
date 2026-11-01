@@ -92,6 +92,10 @@ impl PathLockTable {
     /// re-entrancy: a holder that tries to acquire the same path twice
     /// deadlocks against itself, which is the intended behavior for a
     /// tool that is not supposed to nest writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn acquire(
         &self,
         path: &Path,

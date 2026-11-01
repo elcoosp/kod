@@ -90,6 +90,10 @@ impl ProviderRegistry {
     /// the provider — providers built from an `EndpointConfig` already
     /// carry their default model internally, and `GenerationOptions`
     /// does not (yet) let a caller override it per call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn resolve(&self, model_ref: &ModelRef) -> Result<Arc<dyn LlmProvider>> {
         match self.endpoints.get(&model_ref.endpoint) {
             Some(entry) => Ok(Arc::clone(&entry.provider)),

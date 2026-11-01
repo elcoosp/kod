@@ -21,6 +21,10 @@ pub struct TraceWriter {
 
 impl TraceWriter {
     /// Open `path` for append, creating parents if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn open(path: PathBuf) -> Result<Self> {
         let file = crate::open_owner_only_append(&path)?;
         Ok(Self {
@@ -37,6 +41,14 @@ impl TraceWriter {
     }
 
     /// Append one trace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn record(&self, trace: &TurnTrace) -> Result<()> {
         let line =
             serde_json::to_string(trace).map_err(|e| KodError::Serialization(e.to_string()))?;
@@ -55,6 +67,10 @@ impl TraceWriter {
 /// Read every trace in `path`, in file order. Unparseable lines are
 /// skipped with a warning — a crash mid-write leaves one partial line
 /// that is not a real failure.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn read_traces(path: &Path) -> Result<Vec<TurnTrace>> {
     let raw = std::fs::read_to_string(path).map_err(KodError::Io)?;
     let mut out = Vec::new();

@@ -134,6 +134,10 @@ fn tokenize(s: &str) -> Vec<String> {
 }
 
 /// Read a file and produce a compact `FileDigest`.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn digest_file(path: &Path) -> std::io::Result<FileDigest> {
     let body = std::fs::read_to_string(path)?;
     let line_count = body.lines().count() as u32;

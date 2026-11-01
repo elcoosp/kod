@@ -28,6 +28,10 @@ pub struct SkillWatcher {
 
 impl SkillWatcher {
     /// Create a new watcher for the given directory
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(watch_dir: &Path) -> Result<(Self, mpsc::Receiver<WatchEvent>)> {
         // One bounded tokio channel carries events from the notify
         // callback straight to the returned receiver. The previous
@@ -127,6 +131,10 @@ impl SkillWatcher {
     }
 
     /// Start the watcher (it's already watching, this is for state tracking)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn start(&self) -> Result<()> {
         // T5-C20: the watcher actually starts in `new()` (notify's
         // `recommended_watcher` callback is registered and `watch()` is
@@ -138,6 +146,10 @@ impl SkillWatcher {
     }
 
     /// Stop the watcher
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn stop(&mut self) -> Result<()> {
         self.is_running
             .store(false, std::sync::atomic::Ordering::SeqCst);

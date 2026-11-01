@@ -76,6 +76,10 @@ mod imp {
     /// invocations serialize. Without the lock, a connect-probe that
     /// saw a stale file could unlink a socket a sibling had just
     /// bound (check-then-act with no atomicity).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn bind(path: &Path) -> Result<Listener> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(KodError::Io)?;
@@ -123,6 +127,10 @@ mod imp {
 
     /// Dial a Unix socket, returning a [`Stream`] whose halves can be
     /// split and boxed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn connect(path: &Path) -> Result<Stream> {
         let s = UnixStream::connect(path).await.map_err(|e| {
             KodError::Internal(format!("could not connect to {}: {e}", path.display()))
@@ -139,6 +147,10 @@ mod imp {
         ///
         /// Peer credentials are checked before the socket is split;
         /// after split they are no longer reachable.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err` when the underlying operation fails.
         pub async fn accept(&self) -> Result<Stream> {
             let (s, _addr) = self
                 .inner

@@ -160,6 +160,10 @@ impl CheckpointManager {
     /// propagated, and a root that does not exist is a no-op. Call
     /// from the shutdown path, not per-snapshot — the parent readdir
     /// is O(projects) and should not run on every write.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn sweep_old_projects(&self) -> Result<usize> {
         let Some(root) = self.dir.parent() else {
             return Ok(0);
@@ -218,6 +222,10 @@ impl CheckpointManager {
     /// A `NotFound` is *not* a skip: it is a snapshot of "this file did
     /// not exist yet", which a later restore uses to delete the file
     /// the tool is about to create.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn snapshot_before(&self, path: &Path, tool: &str) -> Result<Option<String>> {
         std::fs::create_dir_all(&self.dir).map_err(KodError::Io)?;
 
@@ -326,6 +334,10 @@ impl CheckpointManager {
 
     /// Every snapshot for this project, newest first. Unreadable files
     /// are skipped with a warning rather than aborting the listing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn list(&self) -> Result<Vec<Snapshot>> {
         if !self.dir.is_dir() {
             return Ok(Vec::new());
@@ -366,6 +378,10 @@ impl CheckpointManager {
     /// path. A caller that passed `../../etc/passwd` as an id
     /// previously joined it into the checkpoint directory and read
     /// (or on restore, wrote) outside it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn find(&self, id: &str) -> Result<Option<Snapshot>> {
         if !is_valid_id(id) {
             // H-D7: an invalid id cannot name any checkpoint; returning
@@ -386,6 +402,10 @@ impl CheckpointManager {
     /// Write the snapshot's content back to its original path. Returns
     /// the path that was restored. When the snapshot recorded a
     /// non-existent file, the restore deletes whatever is there now.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn restore(&self, id: &str) -> Result<PathBuf> {
         let s = self.find(id)?.ok_or_else(|| KodError::InvalidParameters {
             reason: format!("no checkpoint with id {id:?}"),
@@ -419,6 +439,10 @@ impl CheckpointManager {
     }
 
     /// Delete every snapshot for this project. Returns the count removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn clear(&self) -> Result<usize> {
         if !self.dir.is_dir() {
             return Ok(0);
@@ -440,6 +464,10 @@ impl CheckpointManager {
     ///
     /// Public so `KodEngine::shutdown()` can run it explicitly rather
     /// than relying on the next snapshot write to trigger it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn enforce_retention(&self) -> Result<()> {
         // Consistent with `clear` and `list`: a manager whose
         // directory has not been created yet (nothing has been

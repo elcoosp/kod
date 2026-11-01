@@ -504,6 +504,10 @@ pub struct BlockInfo {
 /// Feed one SSE line (already trimmed of `\n`) into the state machine.
 /// Returns the chunks the line produced. Lines that are blank, comments,
 /// or events we do not consume return an empty vec.
+///
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
 pub fn parse_sse_line(
     state: &mut AnthropicStreamState,
     line: &str,

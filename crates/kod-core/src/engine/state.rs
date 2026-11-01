@@ -274,6 +274,10 @@ impl KodEngine {
     ///
     /// This is the one call the CLI and TUI make. It is idempotent;
     /// a caller that has already installed a vault replaces it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn install_default_secret_vault(&self) -> std::io::Result<()> {
         let Some(home) = dirs::home_dir() else {
             tracing::debug!("no home directory; secret placeholders are disabled",);
@@ -389,6 +393,10 @@ impl KodEngine {
     /// system_prompt_hash)`; the caller compares the fingerprint to
     /// its own rebuilt surface and refuses the revive when they
     /// differ.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn session_init_from_log(
         log_path: &std::path::Path,
         holder: &str,
@@ -971,6 +979,10 @@ impl KodEngine {
     ///
     /// Returns the number of messages appended. A missing or empty
     /// log yields `Ok(0)` and leaves history untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn rehydrate_from_log_for(&self, key: &str, path: &std::path::Path) -> Result<usize> {
         self.rehydrate_from_log_with(
             key,
@@ -982,6 +994,10 @@ impl KodEngine {
 
     /// Rehydrate with an explicit mode. `rehydrate_from_log_for` is
     /// the `Prose` convenience.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn rehydrate_from_log_with(
         &self,
         key: &str,

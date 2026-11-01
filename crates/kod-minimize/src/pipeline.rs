@@ -55,6 +55,10 @@ pub struct Def {
 
 impl Def {
     /// Parse a def from TOML.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn from_toml(text: &str) -> Result<Self, DefError> {
         let raw: DefRaw = toml::from_str(text).map_err(|e| DefError::Parse {
             reason: e.to_string(),
@@ -400,6 +404,10 @@ fn take_lines(text: &str, n: usize, bound: LineBound) -> String {
 /// (`\x1b[K`, `\x1b[2J`, etc.) by dropping the whole CSI sequence —
 /// the pattern `\x1b\[[0-9;]*[A-Za-z]` is the standard SGR matcher and
 /// covers both cases.
+///
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
 pub fn strip_ansi(text: &str) -> String {
     // A regex per call is fine here: the pipeline runs once per tool
     // call, not once per line, and the pattern compiles to a

@@ -73,6 +73,10 @@ impl DeferredDiagnostics {
     /// Push diagnostics for `holder`. A diagnostic equal to one
     /// already queued is dropped. Returns the number of *new* entries
     /// (0 when everything was a duplicate, or the input was empty).
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn push(&self, holder: &str, diags: &[Diagnostic]) -> usize {
         if diags.is_empty() {
             return 0;
@@ -105,6 +109,10 @@ impl DeferredDiagnostics {
     /// Take every queued diagnostic for `holder`, emptying that
     /// transcript's queue. Called by the prompt builder at the start
     /// of a turn.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn take(&self, holder: &str) -> Vec<Diagnostic> {
         let mut g = self
             .by_holder
@@ -114,6 +122,10 @@ impl DeferredDiagnostics {
     }
 
     /// Number of queued diagnostics for `holder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn len_for(&self, holder: &str) -> usize {
         self.by_holder
             .lock()
@@ -123,6 +135,10 @@ impl DeferredDiagnostics {
     }
 
     /// True when nothing is queued for any transcript.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn is_empty(&self) -> bool {
         self.by_holder
             .lock()

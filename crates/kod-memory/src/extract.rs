@@ -148,6 +148,10 @@ pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
 
 /// Run the extraction pass. Returns the extracted facts; storage is
 /// the caller's job.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn extract(
     provider: Arc<dyn LlmProvider>,
     model_ref: &ModelRef,

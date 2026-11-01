@@ -80,6 +80,10 @@ pub struct OllamaEmbedder {
 
 impl OllamaEmbedder {
     /// Build an Ollama-backed embedder against the given base URL and model.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -170,6 +174,10 @@ pub struct OpenAIEmbedder {
 impl OpenAIEmbedder {
     /// Build an OpenAI-compatible embedder against the given base URL,
     /// model, and API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(
         base_url: impl Into<String>,
         model: impl Into<String>,
@@ -366,6 +374,10 @@ fn derive_ollama_root(base_url: &str) -> String {
 /// Parse a JSON array of numbers into `Vec<f32>`. Rejects non-array
 /// shapes and entries that are not numbers; truncates absurdly long
 /// arrays (defensive — a server returning 10⁶ floats is a bug).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
     const MAX_DIMS: usize = 8192;
     let arr = v

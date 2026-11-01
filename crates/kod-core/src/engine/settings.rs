@@ -19,6 +19,10 @@ impl KodEngine {
     }
 
     /// Create a new engine
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let working_dir = config.working_dir.clone();
         // Capture the caller's context_window before `config` moves

@@ -54,6 +54,10 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     /// Create a provider with an explicit API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_api_key(
         base_url: impl Into<String>,
         model: impl Into<String>,
@@ -73,6 +77,10 @@ impl AnthropicProvider {
     /// timeout (H-E11) is the streaming bound; `timeout_secs` is
     /// honoured for non-streaming `complete()` calls via the
     /// request-level wrapper in `collect`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_api_key_and_timeout(
         base_url: impl Into<String>,
         model: impl Into<String>,
@@ -137,6 +145,10 @@ impl AnthropicProvider {
     }
 
     /// Switch models on the same endpoint and credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_model(self, model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         let inner = build_client(&self.api_key, &model, &self.base_url)?;

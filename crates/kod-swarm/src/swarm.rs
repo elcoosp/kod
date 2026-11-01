@@ -58,6 +58,10 @@ impl AgentSwarm {
     /// Add an agent to the swarm. The Agent is wrapped in an Arc so
     /// callers can keep a handle (via `get_agent`) and drive its
     /// lifecycle while it stays registered.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn add_agent(&self, agent: Agent) -> Result<()> {
         let agent_id = agent.id().clone();
         let agent = std::sync::Arc::new(agent);
@@ -90,6 +94,10 @@ impl AgentSwarm {
     /// Running → Stopping → Stopped transition instead of a channel
     /// that closes mid-flight. Then unregisters it from the
     /// communication hub so peers stop addressing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn remove_agent(&self, agent_id: &AgentId) -> Result<()> {
         // Take the agent out under the write lock, but do the stop
         // outside so a slow stop does not hold the swarm's map.
@@ -129,6 +137,10 @@ impl AgentSwarm {
     /// swarm ends empty, because a shutdown that refuses to finish
     /// because one agent misbehaved is worse than a shutdown that
     /// reports the problem and continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn shutdown(&self) -> Result<()> {
         // Swap the map out so we do not hold the write lock across
         // each stop's await.
@@ -163,6 +175,10 @@ impl AgentSwarm {
     }
 
     /// Start the agent with the given ID, if it is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn start_agent(&self, agent_id: &AgentId) -> Result<()> {
         let agent = self
             .get_agent(agent_id)
@@ -172,6 +188,10 @@ impl AgentSwarm {
     }
 
     /// Pause the agent with the given ID, if it is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn pause_agent(&self, agent_id: &AgentId) -> Result<()> {
         let agent = self
             .get_agent(agent_id)
@@ -181,6 +201,10 @@ impl AgentSwarm {
     }
 
     /// Resume the agent with the given ID, if it is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn resume_agent(&self, agent_id: &AgentId) -> Result<()> {
         let agent = self
             .get_agent(agent_id)
@@ -190,6 +214,10 @@ impl AgentSwarm {
     }
 
     /// Stop the agent with the given ID, if it is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn stop_agent(&self, agent_id: &AgentId) -> Result<()> {
         let agent = self
             .get_agent(agent_id)

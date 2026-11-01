@@ -197,6 +197,10 @@ pub fn extract(text: &str) -> Option<Vec<FilePatch>> {
 /// body. `Delete` produces the reverse. `Update` searches `original`
 /// for each hunk's context block — the block must be unique, or the
 /// function returns `Err` (see the module docs).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, String> {
     match patch {
         FilePatch::Add { path, content } => {

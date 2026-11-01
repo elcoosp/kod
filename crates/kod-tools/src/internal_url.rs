@@ -369,6 +369,10 @@ impl ProtocolRouter {
 
     /// Resolve a URL. `Err(UnknownScheme)` when the scheme is not
     /// registered; `Err(Malformed)` for a URL with no `://`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn resolve(
         &self,
         url: &str,
@@ -389,6 +393,10 @@ impl ProtocolRouter {
     }
 
     /// Write content to a URL. Same scheme resolution as `resolve`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn write(
         &self,
         url: &str,
@@ -501,6 +509,10 @@ impl ArtifactHandler {
     /// M-40: `store` for the default transcript (`"session"`). The
     /// hooked minimizer path uses [`Self::store_for`] with the
     /// caller's own holder so artifacts are per-session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store(
         &self,
         id: impl Into<String>,
@@ -517,6 +529,10 @@ impl ArtifactHandler {
     /// honest signal that the caller's id scheme collides across
     /// sessions (the minimizer's `cmd-<hash>` will, if two agents
     /// run the same command with the same output).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_for(
         &self,
         id: impl Into<String>,

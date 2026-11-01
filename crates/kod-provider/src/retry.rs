@@ -155,6 +155,10 @@ impl RetryPolicy {
 /// Run `f` under the retry policy. Only `is_retryable()` errors are retried.
 /// A `Retry-After` hint (from `KodError::RateLimited` or
 /// `KodError::ServerBusy`) overrides the computed delay.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn with_retry<T, F, Fut>(policy: &RetryPolicy, f: F) -> Result<T>
 where
     F: Fn() -> Fut,

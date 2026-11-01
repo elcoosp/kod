@@ -65,6 +65,10 @@ impl HookRunner {
     /// Run every pre-tool hook that matches `call`. Returns `Ok(())` when
     /// all pass (or none match) and an error naming the first failing
     /// hook otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn run_pre(&self, call: &ToolCall) -> Result<()> {
         if !self.is_enabled() {
             return Ok(());

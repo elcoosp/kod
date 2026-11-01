@@ -112,6 +112,10 @@ pub struct LspClient {
 impl LspClient {
     /// Spawn a server. Does not yet send `initialize`; call
     /// [`LspClient::initialize`] before any other request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn start(program: &str, workspace_root: &Path) -> Result<Self, LspError> {
         let mut child = Command::new(program)
             .current_dir(workspace_root)
@@ -184,6 +188,10 @@ impl LspClient {
 
     /// Send `initialize`, wait for the matching response, send
     /// `initialized`. After this returns the server is ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn initialize(&mut self) -> Result<(), LspError> {
         let root_uri = path_to_uri(&self.workspace_root);
         let id = self
@@ -248,6 +256,10 @@ impl LspClient {
 
     /// Open a file. The server will analyze it and send
     /// `publishDiagnostics` notifications.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn did_open(&mut self, path: &Path, content: &str) -> Result<(), LspError> {
         let uri = path_to_uri(path);
         let language_id = crate::types::language_id_for(path);
@@ -267,6 +279,10 @@ impl LspClient {
 
     /// Notify the server that a file changed. Only valid after
     /// [`LspClient::did_open`] for the same file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn did_change(
         &mut self,
         path: &Path,
@@ -293,6 +309,10 @@ impl LspClient {
     /// In a long-running daemon session the server's document map
     /// grew monotonically with distinct files touched, and only a
     /// full process restart could free it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn did_close(&mut self, path: &Path) -> Result<(), LspError> {
         let uri = path_to_uri(path);
         self.notify(
@@ -341,6 +361,10 @@ impl LspClient {
     /// `did_change` are the raw protocol steps and exist mainly for
     /// tests. The version number is bumped internally so LSP's
     /// monotonicity requirement holds without the caller tracking it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn diagnostics(
         &mut self,
         path: &Path,
@@ -385,6 +409,10 @@ impl LspClient {
     /// instant its publish arrives, without waiting out the quiet
     /// window. A server that does not echo (the version field is
     /// optional in the spec) keeps the settle heuristic unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn collect_diagnostics(
         &mut self,
         path: &Path,
@@ -522,6 +550,10 @@ impl LspClient {
     /// for the response (30 s timeout), and parses the Location(s)
     /// the server returns. LSP allows a single Location, an array of
     /// Locations, or `null`; all three shapes are normalised here.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn definition(
         &mut self,
         path: &std::path::Path,
@@ -547,6 +579,10 @@ impl LspClient {
     /// `textDocument/references`. `include_declaration` controls
     /// whether the symbol's own declaration is included; true is the
     /// usual choice for a coding agent (it wants every mention).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn references(
         &mut self,
         path: &std::path::Path,
@@ -573,6 +609,10 @@ impl LspClient {
 
     /// `textDocument/hover`. Returns the text plus the range it
     /// applies to. A `null` response is normalised to an empty Hover.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn hover(
         &mut self,
         path: &std::path::Path,

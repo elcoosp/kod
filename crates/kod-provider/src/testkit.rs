@@ -103,6 +103,10 @@ impl MockProvider {
 
     /// A provider with a multi-element script; each call consumes the
     /// next entry, repeating the last entry once the list runs out.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn scripted(name: impl Into<String>, script: Vec<Script>) -> Self {
         assert!(
             !script.is_empty(),

@@ -99,6 +99,10 @@ impl EndpointHealth {
     /// A probe that fails again re-enters cooldown via
     /// `record_failure`; a probe that succeeds clears state via
     /// `record_success`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn is_available(&mut self, endpoint: &str) -> bool {
         let Some(state) = self.states.get(endpoint) else {
             return true;

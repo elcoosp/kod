@@ -296,6 +296,10 @@ impl MemoryManager {
     }
 
     /// Create a new memory manager
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(db_path: PathBuf, short_term_capacity: usize) -> Result<Self> {
         let long_term = LongTermMemory::new(&db_path)?;
 
@@ -478,6 +482,10 @@ impl MemoryManager {
     }
 
     /// Store content in the specified memory type
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store(&self, memory_type: MemoryType, content: &str) -> Result<MemoryId> {
         self.store_with_metadata(memory_type, content, Default::default())
             .await
@@ -486,6 +494,10 @@ impl MemoryManager {
     /// Store content with caller-supplied metadata (D2-B3a). Used by
     /// the memory tools to attach tags and the `project_key` the hybrid
     /// retrieval filters on. `store()` is the no-metadata shorthand.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_with_metadata(
         &self,
         memory_type: MemoryType,
@@ -827,11 +839,19 @@ impl MemoryManager {
     }
 
     /// Get a long-term memory entry
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn get_long_term(&self, id: &MemoryId) -> Result<Option<MemoryEntry>> {
         self.long_term.get(id).await
     }
 
     /// Update memory content
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn update(
         &self,
         memory_type: MemoryType,
@@ -888,6 +908,10 @@ impl MemoryManager {
     }
 
     /// Remove memory entry
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn remove(&self, memory_type: MemoryType, id: &MemoryId) -> Result<()> {
         match memory_type {
             MemoryType::ShortTerm => {
@@ -917,6 +941,10 @@ impl MemoryManager {
     /// If a caller depends on per-project scoping, filter the
     /// returned entries by `entry.metadata.project_key` — that is
     /// what the current design expects.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn search(&self, query: &str) -> Result<Vec<MemoryEntry>> {
         let mut results = Vec::new();
 
@@ -945,6 +973,10 @@ impl MemoryManager {
     /// contribute. Without an embedder, weight is redistributed to
     /// keyword and the behaviour reduces to a weighted keyword search
     /// — the pre-D2 result, with stopwords and stemming.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
         let working_memory = self.short_term.get_recent(10);
         let long_term = self.retrieve_long_term_hybrid(query).await?;
@@ -960,6 +992,14 @@ impl MemoryManager {
     /// The hybrid retrieval itself, exposed for tests and for a caller
     /// that wants the top-k list without wrapping it in a
     /// `MemoryContext`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub async fn retrieve_long_term_hybrid(&self, query: &str) -> Result<Vec<MemoryEntry>> {
         let all_arc = self.long_term_entries_cached().await?;
         if all_arc.is_empty() {
@@ -1282,6 +1322,10 @@ impl MemoryManager {
     /// Duplicate fusion (cosine > 0.95) needs an embedder; without one
     /// the pass reports `fused: 0` and leaves every pair in place. The
     /// archival half runs regardless.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn consolidate(&self) -> Result<ConsolidationReport> {
         // T4-flake: wait for in-flight embed tasks before compacting.
         //
@@ -1659,6 +1703,10 @@ impl MemoryManager {
     }
 
     /// Get all long-term memories
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn get_all_long_term(&self) -> Result<Vec<MemoryEntry>> {
         self.long_term.get_all().await
     }
@@ -1688,6 +1736,10 @@ impl MemoryManager {
     }
 
     /// Clear all memories
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn clear_all(&self) -> Result<()> {
         // Bug-hunt: `long_term.clear()` is the fallible half;
         // `short_term` is an in-memory Vec. Clear long-term first

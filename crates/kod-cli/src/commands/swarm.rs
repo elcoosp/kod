@@ -3,6 +3,10 @@
 use super::*;
 
 /// Attach to a running swarm daemon and drive it from this client.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_swarm_remote(
     goal: String,
     agents: Option<usize>,
@@ -130,6 +134,10 @@ pub async fn run_swarm_remote(
 }
 
 /// Run a swarm locally with the given goal and agent count.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_swarm(
     goal: String,
     agents: Option<usize>,
@@ -156,6 +164,10 @@ pub async fn run_swarm(
 /// options as arguments; returns the [`kod_core::SwarmResponse`]
 /// without printing it, so an integration test can assert on the
 /// structured output.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_swarm_inner(
     goal: String,
     agents: Option<usize>,

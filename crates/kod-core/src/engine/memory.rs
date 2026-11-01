@@ -333,6 +333,10 @@ impl KodEngine {
     /// Called by `shutdown()` when `memory.extract_on_shutdown` is
     /// true. Also callable directly from a test or a future
     /// `/remember-session` command.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn extract_memories_now(&self, key: &str) -> Result<usize> {
         let config = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,

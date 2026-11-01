@@ -55,6 +55,10 @@ pub enum HunkLine {
 ///
 /// Fails with a descriptive error when a hunk's context does not match
 /// — that is the failure mode a model must see to correct itself.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
     let hunks = parse_unified_diff(patch)?;
     if hunks.is_empty() {
@@ -218,6 +222,10 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
 }
 
 /// Parse a unified diff (`--- a/…`, `+++ b/…`, `@@ -l,n +l,n @@`).
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
     let mut hunks = Vec::new();
     let mut current: Option<Hunk> = None;

@@ -12,6 +12,10 @@ use super::*;
 /// `kod jev status` — print the effective Jev config.
 /// `kod jev stats` — read `JevDecision` entries from a session log.
 /// `kod jev test` — ping the endpoint. Exits non-zero on failure.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_test() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     let client = kod_core::JevClient::from_config(&cfg.jev)
@@ -44,6 +48,10 @@ pub async fn run_jev_test() -> Result<()> {
 }
 
 /// `kod jev tune` — print thresholds.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_tune_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     for line in jev_tune_lines(&cfg) {
@@ -67,6 +75,10 @@ pub fn jev_tune_lines(cfg: &KodConfig) -> Vec<String> {
 }
 
 /// `kod jev tune set <name> <value>` — set a threshold and persist.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
     let mut cfg = KodConfig::load_default()?;
     if !cfg.jev.thresholds.set(name, value) {
@@ -85,6 +97,10 @@ pub async fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
 }
 
 /// `kod jev tune reset` — restore defaults.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_tune_reset() -> Result<()> {
     let mut cfg = KodConfig::load_default()?;
     cfg.jev.thresholds = kod_config::JevThresholds::default();
@@ -95,6 +111,10 @@ pub async fn run_jev_tune_reset() -> Result<()> {
 }
 
 /// `kod budget show` — total cost from the newest session log.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
     let path = match log {
         Some(p) => p,
@@ -142,6 +162,10 @@ pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
 }
 
 /// `kod limits show` — effective `[limits]` config.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_limits_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     for line in limits_lines(&cfg) {
@@ -197,6 +221,10 @@ pub fn limits_lines(cfg: &KodConfig) -> Vec<String> {
 
 /// `kod plan show` — read state.json's plan for the default
 /// transcript.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
     let path = match state {
         Some(p) => p,
@@ -227,6 +255,10 @@ pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
 }
 
 /// `kod plan json` — plan as JSON.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let s = plan_json_string(state)?;
     println!("{s}");
@@ -238,6 +270,10 @@ pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
 /// `null` is a valid output: it means "no plan recorded in this state
 /// file". The wrapper prints whatever this returns; a test asserts on
 /// the parsed `serde_json::Value`.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn plan_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
     let path = match state {
         Some(p) => p,
@@ -251,6 +287,10 @@ pub fn plan_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
 }
 
 /// `kod decisions show` — decisions from state.json.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize) -> Result<()> {
     let path = match state {
         Some(p) => p,
@@ -279,6 +319,10 @@ pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize)
 }
 
 /// `kod decisions json` — decisions as JSON.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let s = decisions_json_string(state)?;
     println!("{s}");
@@ -287,6 +331,10 @@ pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()>
 
 /// The JSON body `run_decisions_json` prints, as data.
 /// `null` means "no decisions recorded".
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn decisions_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
     let path = match state {
         Some(p) => p,
@@ -315,6 +363,10 @@ pub(super) fn resolve_trace_path(arg: Option<std::path::PathBuf>) -> Result<std:
 }
 
 /// `kod trace list` — a compact table of recent turns.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     if !path.exists() {
@@ -355,6 +407,10 @@ pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> R
 }
 
 /// `kod trace show <id>` — one turn's full tree.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     let traces = kod_core::read_traces(&path)?;
@@ -426,6 +482,10 @@ pub async fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result
 /// engine. The trace carries the user prompt; the engine rebuilds
 /// the same request from scratch. Returns `Ok(())` on a match, or
 /// `Err` on a divergence (in strict mode) or an engine error.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_trace_replay(
     id: u64,
     path: Option<std::path::PathBuf>,
@@ -605,6 +665,10 @@ pub(super) async fn drive_prompt_through_fresh_engine(
 }
 
 /// `kod trace json` — every turn as a JSON array.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
     let s = trace_json_string(path)?;
     println!("{s}");
@@ -613,6 +677,10 @@ pub async fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
 
 /// The JSON body `run_trace_json` prints, as data. An empty trace
 /// file serializes to `[]`, not `null`.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn trace_json_string(path: Option<std::path::PathBuf>) -> Result<String> {
     let path = resolve_trace_path(path)?;
     let traces = kod_core::read_traces(&path)?;

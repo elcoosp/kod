@@ -203,6 +203,10 @@ impl McpHost {
     /// Get (or spawn) the client for `name`. Idempotent: two callers
     /// racing on the first call spawn one process, not two — the
     /// write lock is held across the check-and-insert.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn ensure_started(&self, name: &str) -> Result<Arc<McpClient>> {
         {
             let guard = self.servers.read().await;

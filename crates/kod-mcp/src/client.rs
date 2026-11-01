@@ -117,6 +117,10 @@ impl McpClient {
     /// MCP handshake — call [`McpClient::initialize`] next.
     /// Spawn a server in the parent's working directory. Equivalent to
     /// `spawn_stdio_in` with `cwd = None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn spawn_stdio(
         cmd: &str,
         args: &[String],
@@ -130,6 +134,10 @@ impl McpClient {
     /// the OS; without it, the child inherits the parent's cwd, which
     /// is kod's own directory, not the embedder's — the bug that left
     /// `crate::McpHost::working_dir` a dead field.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn spawn_stdio_in(
         cmd: &str,
         args: &[String],
@@ -230,6 +238,10 @@ impl McpClient {
     /// Perform the MCP handshake: send `initialize`, wait for the
     /// response, then send `notifications/initialized`. After this
     /// returns, the server is ready for `tools/list` and `tools/call`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn initialize(&self) -> Result<ServerInfo, McpError> {
         let params = serde_json::json!({
             "protocolVersion": "2025-06-18",
@@ -267,6 +279,10 @@ impl McpClient {
     }
 
     /// List the tools the server advertises.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn list_tools(&self) -> Result<Vec<McpToolDef>, McpError> {
         // H-R8: paginate `tools/list`. The MCP protocol returns a
         // `nextCursor` when a server has more tools than fit in one
@@ -320,6 +336,10 @@ impl McpClient {
 
     /// Invoke a tool by name. `args` is the JSON object the tool's
     /// `input_schema` describes; the server validates.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn call_tool(
         &self,
         name: &str,
@@ -331,6 +351,10 @@ impl McpClient {
 
     /// Same as [`McpClient::call_tool`] with an explicit timeout, for a
     /// caller that knows a particular tool is slow.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn call_tool_with_timeout(
         &self,
         name: &str,

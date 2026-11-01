@@ -85,6 +85,10 @@ impl LlmConfig {
     /// `LlmConfig { endpoints: vec![], .. }`) gets a static default
     /// endpoint — the same shape as `LlmConfig::default()` — rather
     /// than a panic or a fallible accessor.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     #[must_use]
     pub fn default_endpoint(&self) -> &EndpointConfig {
         static FALLBACK: std::sync::OnceLock<EndpointConfig> = std::sync::OnceLock::new();
@@ -111,6 +115,10 @@ impl LlmConfig {
     /// with an opaque HTTP error at the first prompt otherwise. This
     /// clamps with a `tracing::warn!` per adjustment so the session
     /// still runs and the user sees what changed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn validate(&mut self) {
         // T5-C28: warn when a declared api_key_env is not set. A
         // config that names ANTHROPIC_API_KEY but never exports it

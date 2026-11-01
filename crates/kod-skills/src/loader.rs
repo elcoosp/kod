@@ -29,6 +29,10 @@ impl SkillLoader {
     }
 
     /// Load all skills from the directory
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn load_all(&mut self) -> Result<Vec<Skill>> {
         let skills = self.scan_directory().await?;
 
@@ -137,6 +141,10 @@ impl SkillLoader {
     }
 
     /// Reload a specific skill file
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn reload_skill(&self, path: &Path) -> Result<Option<Skill>> {
         let skill = self.parser.parse_file(path)?;
 
@@ -172,6 +180,10 @@ impl SkillLoader {
     }
 
     /// Enable hot reloading
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn enable_hot_reload(&mut self) -> Result<()> {
         if self.watcher.is_some() {
             return Ok(()); // Already enabled
@@ -202,6 +214,10 @@ impl SkillLoader {
 /// so project-local skills override global ones. Directories that do not
 /// exist are skipped with a warning — an empty home skills dir must not
 /// block a session.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn load_from_dirs(dirs: &[std::path::PathBuf]) -> Result<Vec<kod_types::Skill>> {
     use std::collections::HashMap;
     let mut by_name: HashMap<String, kod_types::Skill> = HashMap::new();
@@ -240,6 +256,10 @@ pub async fn load_from_dirs(dirs: &[std::path::PathBuf]) -> Result<Vec<kod_types
 /// `extension` is `Some("md")` for the skill use case. A discovered
 /// path whose parse fails is logged and skipped — one bad file in a
 /// foreign directory must not break the whole load.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn load_via_registry(
     registry: &crate::capability::CapabilityRegistry,
     extension: Option<&str>,

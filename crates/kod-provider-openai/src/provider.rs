@@ -67,11 +67,19 @@ pub struct OpenAICompatProvider {
 
 impl OpenAICompatProvider {
     /// Create a provider for `base_url` (server root or `.../v1`) with `model`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Result<Self> {
         Self::with_api_key(base_url, model, resolve_api_key(None))
     }
 
     /// Create a provider with an explicit API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_api_key(
         base_url: impl Into<String>,
         model: impl Into<String>,
@@ -81,6 +89,10 @@ impl OpenAICompatProvider {
     }
 
     /// Like `with_api_key` but with a configurable request timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_api_key_and_timeout(
         base_url: impl Into<String>,
         model: impl Into<String>,
@@ -140,6 +152,10 @@ impl OpenAICompatProvider {
     /// stable background id) instead of leaving them anonymous. Only
     /// applied when the endpoint is a tab bridge (see `provider_setup`);
     /// explicit `session_id`s always win.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     #[must_use]
     pub fn with_default_session(self, session: impl Into<String>) -> Self {
         *self.default_session.write().expect("default_session lock") = Some(session.into());
@@ -170,6 +186,10 @@ impl OpenAICompatProvider {
     /// next request to establish new TCP and TLS state for no reason.
     /// The TUI's `/model` switch is the common caller; back-to-back
     /// switches are now cheap.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn with_model(self, model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         // Build a new inner OpenAICompatible (that struct holds the

@@ -148,6 +148,10 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
 }
 
 /// Write a tool list under `key`. Creates the cache dir on demand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn write(key: &str, tools: &[McpToolDef]) -> io::Result<()> {
     let dir = cache_dir().ok_or_else(|| io::Error::other("no platform cache dir"))?;
     write_to(&dir, key, tools)
@@ -155,6 +159,10 @@ pub fn write(key: &str, tools: &[McpToolDef]) -> io::Result<()> {
 
 /// [`write()`] against an explicit directory. Writes to a temp file and
 /// renames, so a concurrent reader never sees a half-written entry.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn write_to(dir: &Path, key: &str, tools: &[McpToolDef]) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let now_nanos = SystemTime::now()
@@ -186,6 +194,10 @@ pub fn write_to(dir: &Path, key: &str, tools: &[McpToolDef]) -> io::Result<()> {
 }
 
 /// Delete the entry for `key`. A missing entry is not an error.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn clear(key: &str) -> io::Result<()> {
     let Some(dir) = cache_dir() else {
         return Ok(());
@@ -194,6 +206,10 @@ pub fn clear(key: &str) -> io::Result<()> {
 }
 
 /// [`clear`] against an explicit directory.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn clear_from(dir: &Path, key: &str) -> io::Result<()> {
     let path = dir.join(format!("{key}.json"));
     match std::fs::remove_file(path) {

@@ -272,6 +272,10 @@ impl KodEngine {
     /// Not in the engine's tool context: `/wt` is a user action, not
     /// a model action, and the model should not be able to relocate
     /// a session on its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn relocate_to_session_worktree(
         &self,
         key: &str,

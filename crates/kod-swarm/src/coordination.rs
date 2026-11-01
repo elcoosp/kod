@@ -93,6 +93,10 @@ impl TaskCoordinator {
     }
 
     /// Register a new task
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn register_task(&self, task: Task) -> Result<()> {
         let mut tasks = self.tasks.write().await;
         if tasks.contains_key(&task.id) {
@@ -125,6 +129,10 @@ impl TaskCoordinator {
     /// Callers who want to move in-progress work to a different agent
     /// should `unassign_task` first, which releases the current
     /// assignee's load and returns the task to Pending.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn assign_task(&self, task_id: &TaskId, agent_id: &AgentId) -> Result<()> {
         let mut tasks = self.tasks.write().await;
         let task = tasks
@@ -176,6 +184,10 @@ impl TaskCoordinator {
     /// transition and the no-op, so a caller that wanted to know "did my
     /// completion land, or did someone else get there first?" had no way
     /// to find out.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn complete_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         self.finish_task(task_id, TaskStatus::Completed).await
     }
@@ -185,6 +197,10 @@ impl TaskCoordinator {
     /// a failed task does not keep the agent "busy" forever.
     ///
     /// See [`TaskCoordinator::complete_task`] for the return semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn fail_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         self.finish_task(task_id, TaskStatus::Failed).await
     }
@@ -255,6 +271,10 @@ impl TaskCoordinator {
     /// load counter drifted negative-by-one and the task appeared to
     /// need doing again. Terminal is terminal; a caller that needs to
     /// redo the work creates a new task.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn unassign_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         let (from, was_assigned) = {
             let mut tasks = self.tasks.write().await;

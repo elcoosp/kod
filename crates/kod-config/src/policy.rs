@@ -282,6 +282,10 @@ impl Default for Policy {
 
 impl Policy {
     /// Parse a policy from a TOML string.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn from_toml(s: &str) -> Result<Self> {
         let mut p: Self =
             toml::from_str(s).map_err(|e| KodError::Config(format!("policy.toml: {e}")))?;
@@ -296,6 +300,10 @@ impl Policy {
     /// Load a policy from `.kod/policy.toml` under `root`. `Ok(None)`
     /// when the file does not exist — the absence is normal; the
     /// caller merges with what the preset supplies.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_project(root: &Path) -> Result<Option<(Self, PathBuf)>> {
         let path = root.join(".kod").join("policy.toml");
         if !path.is_file() {
@@ -345,6 +353,10 @@ impl PolicyEngine {
     /// `Preset::Yolo`. It is only consulted when the preset layer is
     /// not otherwise set (i.e. the policy.toml has no `preset =` line
     /// and the CLI has not supplied one).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load(
         cfg: &KodConfig,
         project_root: Option<&Path>,

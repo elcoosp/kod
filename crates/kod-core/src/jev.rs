@@ -206,6 +206,10 @@ pub trait JevDecider: Send + Sync {
     /// Rebuild this decider with a new threshold set. Used by
     /// `/jev tune set` to hot-swap the effective thresholds without
     /// restarting the engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     fn with_thresholds(
         &self,
         new: kod_config::JevThresholds,
@@ -288,6 +292,10 @@ impl JevClient {
     /// The builder reads `TYPESAFE_API_KEY` from the environment when
     /// `config.api_key` is `None`; an explicit key wins over the env,
     /// matching the SDK's documented precedence.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn from_config(cfg: &JevConfig) -> Result<Option<Self>, JevError> {
         if !cfg.is_enabled() {
             return Ok(None);
@@ -389,6 +397,10 @@ impl JevClient {
     ///
     /// `purpose` is a short label used in the session log; it is not
     /// sent to `TypeSafe`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn evaluate_yes_no(
         &self,
         state: &Value,
@@ -422,6 +434,10 @@ impl JevClient {
     /// round-trip. Returns `(label, p_yes)` pairs in the order the
     /// labels were supplied. An empty label list returns an empty
     /// vec without a network call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn evaluate_yes_no_batch(
         &self,
         state: &Value,
@@ -487,6 +503,10 @@ impl JevClient {
 
     /// Ask one ordered-rubric question about `state`. The value is the
     /// winning level from `levels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn evaluate_score(
         &self,
         state: &Value,
@@ -536,6 +556,10 @@ impl JevClient {
     }
 
     /// Ask a choice question with a set of mutually exclusive labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn evaluate_choice(
         &self,
         state: &Value,

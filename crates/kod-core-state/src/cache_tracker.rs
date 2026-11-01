@@ -73,6 +73,10 @@ impl CacheTracker {
     ///
     /// Returns `Err` on the first position where the transcript is no
     /// longer a prefix-extension of what was observed before.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn observe(&mut self, messages: &[ChatMessage]) -> Result<(), CacheViolation> {
         for (i, m) in messages.iter().enumerate() {
             // The retained window starts at `dropped`; anything before

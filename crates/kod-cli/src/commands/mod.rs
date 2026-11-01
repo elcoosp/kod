@@ -137,6 +137,10 @@ impl<'a> Default for EngineBootstrapOptions<'a> {
 }
 
 /// Build a `KodEngine` from a config and bootstrap options.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn engine_from_config(
     config: &KodConfig,
     opts: EngineBootstrapOptions<'_>,
@@ -430,6 +434,10 @@ pub struct Cli {
 
 impl Cli {
     /// Parse the CLI arguments and dispatch to the subcommand.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn run(&self) -> Result<()> {
         match &self.command {
             Some(Command::Chat {

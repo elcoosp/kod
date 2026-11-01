@@ -207,6 +207,10 @@ impl Server {
 }
 
 /// Run the ACP bridge until the client closes stdin.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
     serve_io(engine, tokio::io::stdin(), tokio::io::stdout()).await
 }
@@ -218,6 +222,10 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
 /// `initialize` -> `session/new` -> `session/prompt` ->
 /// `session/update` turn is exercised in-process, without spawning
 /// the binary and without needing a model.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn serve_io<R, W>(engine: Arc<KodEngine>, reader: R, mut writer: W) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,

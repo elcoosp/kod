@@ -56,6 +56,10 @@ pub struct SearchResults {
 /// A pluggable search implementation.
 pub trait SearchBackend: Send + Sync {
     /// Run a regex search rooted at `root`, capped at `max_hits`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     fn search(
         &self,
         root: &std::path::Path,

@@ -83,6 +83,10 @@ pub struct Evidence {
 /// Capture the file's identity. Fails when the path cannot be
 /// statted (missing, permission denied) — a failed capture means the
 /// speculation cannot be validated and should not be admitted.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn capture_evidence(path: &Path) -> std::io::Result<Evidence> {
     let meta = std::fs::metadata(path)?;
     #[cfg(unix)]
@@ -114,6 +118,10 @@ pub fn capture_evidence(path: &Path) -> std::io::Result<Evidence> {
 /// returned, so a caller that validates the evidence and then uses
 /// the text is using *consistent* data — a two-step "capture, then
 /// read" would race even against itself.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn read_with_evidence(path: &Path) -> std::io::Result<(String, Evidence)> {
     let meta = std::fs::metadata(path)?;
     #[cfg(unix)]
@@ -157,6 +165,10 @@ pub fn read_with_evidence(path: &Path) -> std::io::Result<(String, Evidence)> {
 /// A failure at step 1 or 2 skips the read entirely. A failure at
 /// step 3 is what the design calls the "post-execution mutation
 /// veto".
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn validate(path: &Path, evidence: &Evidence) -> std::io::Result<bool> {
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,

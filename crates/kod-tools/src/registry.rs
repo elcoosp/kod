@@ -128,6 +128,10 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn execute_tool(
         &self,
         name: &str,

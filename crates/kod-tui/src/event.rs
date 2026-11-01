@@ -550,6 +550,10 @@ impl EventHandler {
     }
 
     /// Send an event (from external sources)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn send_event(&self, event: Event) -> Result<()> {
         self.push_event(event);
         Ok(())

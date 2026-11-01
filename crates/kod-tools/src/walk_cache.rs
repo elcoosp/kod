@@ -127,6 +127,10 @@ impl WalkCache {
     /// is a rare race (a cold cache in two threads) and the cost of
     /// the alternative — a per-key lock, or a lock held across the
     /// walk — is worse than one redundant walk.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn get_or_walk<F>(
         &self,
         root: &Path,
@@ -180,6 +184,10 @@ impl WalkCache {
     }
 
     /// Drop every entry. Called by every tool that writes to disk.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn invalidate_all(&self) {
         self.entries.lock().expect("walk_cache poisoned").clear();
     }
@@ -188,12 +196,20 @@ impl WalkCache {
     /// it). Finer-grained than [`Self::invalidate_all`]: a write to
     /// `/work/a.rs` invalidates a walk rooted at `/work` but leaves a
     /// walk rooted at `/tmp` alone.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn invalidate_path(&self, path: &Path) {
         let mut g = self.entries.lock().expect("walk_cache poisoned");
         g.retain(|k, _| !path.starts_with(&k.root));
     }
 
     /// Number of entries currently cached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn len(&self) -> usize {
         self.entries.lock().expect("walk_cache poisoned").len()
     }
@@ -204,6 +220,10 @@ impl WalkCache {
     }
 
     /// Hit / miss / entry counts.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn stats(&self) -> Stats {
         let g = self.entries.lock().expect("walk_cache poisoned");
         Stats {

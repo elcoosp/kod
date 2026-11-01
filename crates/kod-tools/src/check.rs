@@ -427,6 +427,10 @@ impl CheckTool {
     /// Run the project's check command and parse its output. Public so
     /// the engine's auto-check hook can reuse it without going through
     /// the `Tool` trait.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn run_check(workdir: &Path, timeout_secs: u64) -> Result<CheckOutcome> {
         let kind = ProjectKind::detect(workdir).ok_or_else(|| KodError::ToolExecution {
             tool_name: "check".to_string(),

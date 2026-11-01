@@ -107,12 +107,20 @@ impl PromptBudget {
     /// section was under its share.
     /// Backward-compatible wrapper. Callers that do not have an
     /// overhead estimate use this; H-E3's callers pass it explicitly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn allocate(&self, request_chars: usize) -> Result<Allocation, BudgetError> {
         self.allocate_with_overhead(request_chars, 0)
     }
 
     /// Allocate with the prompt overhead subtracted from the window.
     /// See the module-level note on H-E3 in `allocate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn allocate_with_overhead(
         &self,
         request_chars: usize,

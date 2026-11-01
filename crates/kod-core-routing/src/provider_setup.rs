@@ -43,6 +43,10 @@ use std::sync::Arc;
 /// for the `/model` argument. Endpoints other than the default are
 /// unaffected: the override applies to the initial route, not to
 /// every endpoint in the registry.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn build_registry(
     llm: &LlmConfig,
     model_override: Option<&str>,

@@ -8,6 +8,10 @@
 use super::*;
 
 /// Run the interactive TUI; resumes the last session unless --no-resume.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_tui(
     model: Option<String>,
     no_resume: bool,
@@ -24,6 +28,10 @@ pub async fn run_tui(
 }
 
 /// Run the diagnostic self-check and print the results.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_doctor(json: bool) -> Result<()> {
     use kod_core::doctor::{CheckStatus, run_diagnostics};
 
@@ -67,6 +75,10 @@ pub async fn run_doctor(json: bool) -> Result<()> {
 }
 
 /// Create the config directory and default config file.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_init(force: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let config_dir = KodConfig::config_dir()?;
@@ -167,6 +179,10 @@ pub async fn run_init(force: bool) -> Result<()> {
 }
 
 /// List the models in the configured provider registry.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_models(filter: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
     let (registry, default_model, _routing) = kod_core::build_registry(&config.llm, None)?;
@@ -258,6 +274,10 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
 }
 
 /// Check for a newer release of kod and upgrade if available.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_update() -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let repo = std::env::var("KOD_UPDATE_REPO").unwrap_or_else(|_| "elcoosp/kod".to_string());
@@ -338,6 +358,10 @@ pub async fn run_update() -> Result<()> {
 }
 
 /// Dispatch a profile subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_profile(action: ProfileAction) -> Result<()> {
     match action {
         ProfileAction::List { json } => {
@@ -451,6 +475,10 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
 }
 
 /// Dispatch a policy subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_policy(action: PolicyAction) -> Result<()> {
     let config = KodConfig::load_default()?;
     let cwd = std::env::current_dir()
@@ -541,6 +569,14 @@ pub async fn run_policy(action: PolicyAction) -> Result<()> {
 }
 
 /// Run the workspace test suite.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
+///
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
 pub async fn run_tests() -> Result<()> {
     println!("Running KOD test suite...");
 
@@ -612,6 +648,10 @@ pub async fn run_tests() -> Result<()> {
 }
 
 /// Print the repository map for the current project.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_map(max_chars: usize) -> Result<()> {
     // `KOD_MAP_ROOT` overrides the directory the map is built from.
     // The command is a read of the repo the caller is in; a test needs
@@ -639,6 +679,10 @@ pub async fn run_map(max_chars: usize) -> Result<()> {
 }
 
 /// Start (or, with --stop, stop) the kod daemon.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result<()> {
     let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
 
@@ -720,6 +764,10 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
 }
 
 /// Run a command inside the given sandbox profile.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn run_sandbox_exec(profile_path: std::path::PathBuf, cmd: Vec<String>) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -772,6 +820,10 @@ pub fn run_sandbox_exec(profile_path: std::path::PathBuf, cmd: Vec<String>) -> R
     }
 }
 /// Report the sandbox backend and its capabilities.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_sandbox_check() -> Result<()> {
     use kod_tools::context::{SandboxMode, sandbox_invocation};
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -824,6 +876,10 @@ pub async fn run_sandbox_check() -> Result<()> {
 }
 
 /// Run the diagnostic self-check and apply fixes where possible.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_doctor_fix(json: bool) -> Result<()> {
     use kod_core::doctor::run_diagnostics;
 
@@ -920,6 +976,10 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
 }
 
 /// Dispatch a tools subcommand.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     use kod_tools::ToolRegistry;
 
@@ -1084,6 +1144,10 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
 }
 
 /// Show the JEV classification status.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_status() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     let jev = &cfg.jev;
@@ -1124,6 +1188,10 @@ pub async fn run_jev_status() -> Result<()> {
 }
 
 /// Show JEV classification statistics from the log.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     let path = match log {
         Some(p) => p,
@@ -1184,6 +1252,10 @@ pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
 /// turns) and instruction-following (a cat sound at a rotating
 /// position). The harness lives in `kod_stats::if_bench`; this
 /// function drives it.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_if_bench(
     model_override: Option<String>,
     turns: Option<usize>,
@@ -1296,6 +1368,10 @@ pub async fn run_if_bench(
 /// and prints either "OK" plus the formatted message or the
 /// rejection reason. Exits 1 on a rejection so a script can gate a
 /// commit on it.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_commit_check(
     type_: String,
     scope: Option<String>,

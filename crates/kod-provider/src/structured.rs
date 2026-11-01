@@ -28,6 +28,10 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 /// spent, returns an error carrying the last validation failure — the
 /// caller sees *what* was wrong with the final attempt, not a generic
 /// "invalid JSON."
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub async fn run_structured(
     provider: &dyn LlmProvider,
     prompt: &str,

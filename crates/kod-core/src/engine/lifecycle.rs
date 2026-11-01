@@ -2,6 +2,10 @@ use super::*;
 
 impl KodEngine {
     /// Start the engine
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn start(&self) -> Result<()> {
         let mut running = self.is_running.write().await;
 
@@ -387,6 +391,10 @@ impl KodEngine {
     ///
     /// Returns the messages-append count on success, or a refusal
     /// naming what changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn cold_revive_session(
         &self,
         log_path: &std::path::Path,
@@ -542,6 +550,10 @@ impl KodEngine {
     /// `Arc<TaskRouter>` held by callers of this engine. Documented in
     /// `LongTermMemory` — the OS will flush on process exit, which is
     /// sufficient for redb's durability guarantee (fsync per commit).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn shutdown(&self) -> Result<()> {
         let was_running = {
             let mut running = self.is_running.write().await;
@@ -735,6 +747,10 @@ impl KodEngine {
     }
 
     /// Load skills from a directory into the router's matcher.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn load_skills(&self, skills_dir: &std::path::Path) -> Result<usize> {
         self.router.load_skills(skills_dir).await
     }
@@ -746,6 +762,10 @@ impl KodEngine {
     /// counted here, so the returned number is "files loaded", not
     /// "distinct skills available" — use `loaded_skill_names` for the
     /// deduplicated set.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn load_skills_from_dirs(&self, dirs: &[std::path::PathBuf]) -> Result<usize> {
         let mut total = 0;
         for dir in dirs {
@@ -772,6 +792,10 @@ impl KodEngine {
     /// edited skills to appear without a restart. No-op when the
     /// directory does not exist or hot reload was already enabled for
     /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
         self.router.enable_hot_reload(skills_dir).await
     }

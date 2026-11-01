@@ -193,6 +193,10 @@ pub const MAX_COLS: usize = 200;
 /// The image is monochrome — black glyphs on a white background.
 /// That is the highest-contrast choice a vision model reads most
 /// reliably, and it needs no colour table beyond two entries.
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
 pub fn rasterize_to_png(text: &str) -> Result<Vec<u8>, RasterizeError> {
     let lines: Vec<&str> = text.lines().take(MAX_LINES).collect();
     if lines.is_empty() || lines.iter().all(|l| l.trim().is_empty()) {

@@ -1109,6 +1109,10 @@ impl KodEngine {
     /// generates one (a UUID, a content hash); a caller that wants
     /// to fail on collision passes a deterministic id. The
     /// underlying store refuses to overwrite.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn store_artifact(
         &self,
         id: impl Into<String>,
@@ -1134,6 +1138,10 @@ impl KodEngine {
     /// context. Used by the swarm runner's repo probe; a caller that
     /// wants a specific tool can also reach it this way, but the
     /// agentic loop is the ordinary path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn run_tool(
         &self,
         name: &str,
@@ -1182,6 +1190,10 @@ impl KodEngine {
     /// vec makes a caller unable to distinguish "the server has no
     /// models" from "the server is not reachable." The two deserve
     /// different user-facing messages and different recovery paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         match self.current_provider().await {
             Some(p) => p.list_models().await,

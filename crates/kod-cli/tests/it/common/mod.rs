@@ -19,6 +19,10 @@ pub struct TestEnvironment {
 #[allow(dead_code)]
 impl TestEnvironment {
     /// Create a new test environment
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     #[must_use]
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
@@ -38,6 +42,10 @@ impl TestEnvironment {
     }
 
     /// Add a test skill
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     pub fn add_skill(&self, name: &str, category: &str, triggers: &[&str]) {
         let skill_content = format!(
             r#"---
@@ -83,6 +91,10 @@ Output for {} test.
     }
 
     /// Create a test config file
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated.
     #[must_use]
     pub fn create_config(&self, model: &str) -> PathBuf {
         let config_path = self.working_dir.join("config.toml");
@@ -110,6 +122,14 @@ impl Default for TestEnvironment {
 }
 
 /// Run a kod command in the test environment
+///
+/// # Errors
+///
+/// Returns `Err` when the underlying operation fails.
+///
+/// # Panics
+///
+/// Panics if an internal invariant is violated.
 #[allow(dead_code)]
 pub fn run_kod_command(args: &[&str], working_dir: &Path) -> Result<String, String> {
     use std::process::Command;

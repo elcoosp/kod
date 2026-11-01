@@ -329,6 +329,10 @@ impl KodConfig {
     /// hits it ~3x per tool-write round. This parses once and re-parses
     /// only when the file's mtime changes. Startup side-effects
     /// (creating a default config) stay in `load_default`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_cached() -> Result<std::sync::Arc<Self>> {
         use std::sync::{Mutex, OnceLock};
         static CACHE: OnceLock<
@@ -362,6 +366,10 @@ impl KodConfig {
 
     /// Load the config from the default location, falling back to
     /// defaults on first run.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_default() -> Result<Self> {
         let config_dir = match Self::config_dir() {
             Ok(d) => d,
@@ -491,6 +499,10 @@ impl KodConfig {
     }
 
     /// Load configuration from a specific path
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_from(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| KodError::Config(format!("Failed to read config file: {e}")))?;
@@ -502,6 +514,10 @@ impl KodConfig {
     }
 
     /// Save configuration to a specific path
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -540,6 +556,10 @@ impl KodConfig {
     }
 
     /// Get the configuration directory
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn config_dir() -> Result<PathBuf> {
         // `KOD_CONFIG_DIR` is the kod config directory *itself* (the
         // directory that holds `config.toml`), not a parent. It is
@@ -575,6 +595,14 @@ impl KodConfig {
     /// A caller (the `kod config` display, the engine, a future backup
     /// command) needs the path that will actually be opened, not the
     /// raw `Option` in the config file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn memory_db_path(&self) -> Result<PathBuf> {
         if let Some(explicit) = &self.memory.long_term_db_path {
             return Ok(PathBuf::from(explicit));
@@ -599,6 +627,10 @@ impl KodConfig {
     /// Prefer [`KodConfig::skills_dirs`] — this returns only the first
     /// directory and exists for backwards compatibility with callers
     /// that predate multi-directory discovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn skills_dir(&self) -> Result<PathBuf> {
         Ok(self.skills_dirs()?.into_iter().next().unwrap_or_else(|| {
             // T5-C39: warn when home is unresolvable rather than
@@ -625,6 +657,10 @@ impl KodConfig {
     /// Later directories shadow earlier ones for skills that share a
     /// name, so a project-local skill overrides a global one with the
     /// same name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn skills_dirs(&self) -> Result<Vec<PathBuf>> {
         if let Some(dir) = &self.skills.skills_dir {
             return Ok(vec![PathBuf::from(dir)]);

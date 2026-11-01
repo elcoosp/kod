@@ -174,6 +174,10 @@ impl SecretVault {
     /// file that exists but is not 44 bytes of valid base64url
     /// returns an error rather than silently regenerating — a
     /// truncated key file is a bug worth surfacing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the underlying operation fails.
     pub fn load_or_create(path: &std::path::Path) -> std::io::Result<Self> {
         use base64::Engine as _;
         match std::fs::read(path) {
