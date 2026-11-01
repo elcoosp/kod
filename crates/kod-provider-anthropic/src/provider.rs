@@ -1198,16 +1198,16 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     // `prompt_tokens` so a single field carries the full input window,
     // and keeps the split in the cache fields for the cost math.
     let usage = v.get("usage").map(|u| {
-        let input = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
-        let output = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        let input = u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+        let output = u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
         // Option preserved: `None` means the field was absent, which
         // is different from "present and zero." kod's `TokenUsage`
         // keeps that distinction so the hit-rate readout can say
         // "unknown" rather than lying with "0%".
-        let cache_read = u.get("cache_read_input_tokens").and_then(|n| n.as_u64());
+        let cache_read = u.get("cache_read_input_tokens").and_then(serde_json::Value::as_u64);
         let cache_creation = u
             .get("cache_creation_input_tokens")
-            .and_then(|n| n.as_u64());
+            .and_then(serde_json::Value::as_u64);
         // Delta §13.1: Anthropic's newer usage shape nests a
         // `cache_creation` object with a per-TTL breakdown; the 1-hour
         // subset bills at 2x input. A reply with only the flat
@@ -1218,7 +1218,7 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
         let cache_creation_1h = u
             .get("cache_creation")
             .and_then(|c| c.get("ephemeral_1h_input_tokens"))
-            .and_then(|n| n.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .map(|n| n.min(cache_creation.unwrap_or(0)));
         let read_usize = cache_read.unwrap_or(0) as usize;
         let creation_usize = cache_creation.unwrap_or(0) as usize;

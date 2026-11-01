@@ -380,7 +380,7 @@ mod proptests {
 
     fn triplet(u: &Url) -> (String, Option<String>, Option<u16>) {
         let scheme = u.scheme().to_string();
-        let host = u.host_str().map(|h| h.to_ascii_lowercase());
+        let host = u.host_str().map(str::to_ascii_lowercase);
         let effective_port = match (u.port(), scheme.as_str()) {
             (Some(443), "https") | (Some(80), "http") => None,
             (p, _) => p,

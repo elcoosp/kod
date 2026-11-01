@@ -282,7 +282,7 @@ where
             });
         } else if has_id {
             // Response to an agent → client request.
-            let Some(id) = frame.get("id").and_then(|v| v.as_i64()) else {
+            let Some(id) = frame.get("id").and_then(serde_json::Value::as_i64) else {
                 continue;
             };
             let sender = server.pending.lock().await.remove(&id);
@@ -380,7 +380,7 @@ async fn dispatch_request(server: Arc<Server>, id: Value, method: &str, params: 
             // decides whether to keep the connection.
             let requested = params
                 .get("protocolVersion")
-                .and_then(|v| v.as_i64())
+                .and_then(serde_json::Value::as_i64)
                 .unwrap_or(PROTOCOL_VERSION);
             let agreed = if requested == PROTOCOL_VERSION {
                 requested

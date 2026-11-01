@@ -138,7 +138,7 @@ impl ChunkScorer for LexicalScorer {
         let overlap = term_overlap(&chunk.message.content, &query.terms) as f32
             / query.terms.len().max(1) as f32;
         let recency = (-(chunk.age_turns as f32) / self.half_life_turns).exp2();
-        let combined = 0.7 * overlap as f32 + 0.3 * recency;
+        let combined = 0.3f32.mul_add(recency, 0.7 * overlap as f32);
         // P2 bug-hunt post-v0.1.9: the BUG-C-11 fix normalized
         // `overlap` to 0..1 (`/ query.terms.len().max(1)`), but the
         // thresholds below were left at their pre-fix values

@@ -106,7 +106,7 @@ where
                 .iter()
                 .map(|(pid, _)| similarity(id, pid))
                 .fold(0.0_f64, f64::max);
-            let score = lambda * relevance - (1.0 - lambda) * max_sim;
+            let score = (1.0 - lambda).mul_add(-max_sim, lambda * relevance);
             if score > best_score {
                 best_score = score;
                 best_idx = i;
@@ -310,7 +310,7 @@ pub fn intent_weights(intent: QueryIntent) -> IntentWeights {
 /// uniform prior.
 #[must_use]
 pub fn intent_confidence(matches: u32) -> f64 {
-    (0.3 + 0.15 * matches as f64).min(1.0)
+    0.15f64.mul_add(matches as f64, 0.3).min(1.0)
 }
 
 #[cfg(test)]
@@ -318,7 +318,7 @@ mod tests {
     use super::*;
 
     fn list(ids: &[&str]) -> Vec<String> {
-        ids.iter().map(|s| s.to_string()).collect()
+        ids.iter().map(std::string::ToString::to_string).collect()
     }
 
     // ---- RRF ---------------------------------------------------------
@@ -587,8 +587,8 @@ mod tests {
     fn blend_at_half_is_between_neutral_and_full() {
         let w = intent_weights(QueryIntent::Temporal);
         let b = blend_weights(w, 0.5);
-        assert!((b.vector - (1.0 + 0.5 * (w.vector - 1.0))).abs() < 1e-9);
-        assert!((b.keyword - (1.0 + 0.5 * (w.keyword - 1.0))).abs() < 1e-9);
+        assert!((b.vector - 0.5f64.mul_add(w.vector - 1.0, 1.0)).abs() < 1e-9);
+        assert!((b.keyword - 0.5f64.mul_add(w.keyword - 1.0, 1.0)).abs() < 1e-9);
     }
 
     #[test]

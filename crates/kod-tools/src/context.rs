@@ -1681,7 +1681,7 @@ mod tests {
             .expect("Require must return Some");
         assert_eq!(inv.program, "sandbox-exec");
         assert_eq!(inv.backend, Backend::Seatbelt);
-        assert_eq!(inv.args.last().map(|s| s.as_str()), Some("--"));
+        assert_eq!(inv.args.last().map(std::string::String::as_str), Some("--"));
         let profile = &inv.args[1];
         assert!(profile.contains("/tmp"), "profile missing wd: {profile}");
         assert!(

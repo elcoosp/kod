@@ -2352,7 +2352,7 @@ impl TuiLoop {
                                     for entry in walkdir::WalkDir::new(dir)
                                         .follow_links(false)
                                         .into_iter()
-                                        .filter_map(|e| e.ok())
+                                        .filter_map(std::result::Result::ok)
                                     {
                                         if !entry.file_type().is_file() {
                                             continue;
@@ -3658,7 +3658,7 @@ impl TuiLoop {
                 // Print the last assistant reply with no decoration —
                 // no markdown fences, no bubble frame. Useful when
                 // copy-pasting code from a rendered reply.
-                let text = self.app.last_assistant_text().map(|s| s.to_string());
+                let text = self.app.last_assistant_text().map(std::string::ToString::to_string);
                 match text {
                     Some(t) => {
                         // Suspend-print-resume: a bare `println!` while
@@ -3729,7 +3729,7 @@ impl TuiLoop {
                 // a follow-up.
                 let n = self.app.messages().len();
                 let label = parts
-                    .next().map_or_else(|| format!("branch-{n}"), |s| s.to_string());
+                    .next().map_or_else(|| format!("branch-{n}"), std::string::ToString::to_string);
                 self.app.push_system_message(&format!(
                     "⤵ branch point: {label} ({n} messages so far). Use /save <path> to capture this state.",
                 ));
@@ -3807,7 +3807,7 @@ impl TuiLoop {
                 let tools_on = self.app.show_tools();
                 let auto_on = self.app.autocompact();
                 let theme = self.app.theme_name().to_string();
-                let goal = self.app.goal().map(|g| g.to_string());
+                let goal = self.app.goal().map(std::string::ToString::to_string);
                 let sys_override = self.app.session_system_prompt().is_some();
                 let attached = self.app.attached_files().len();
                 let config_path = KodConfig::config_dir()
@@ -4118,7 +4118,7 @@ impl TuiLoop {
                 }
             }
             "/fork" => {
-                let label = parts.next().map(|s| s.to_string());
+                let label = parts.next().map(std::string::ToString::to_string);
                 let n = self.app.fork_messages();
                 if n == 0 {
                     self.app
@@ -5083,7 +5083,7 @@ impl TuiLoop {
                 // With a file argument: try LSP first (fast, per-file,
                 // project-aware), fall back to the compiler if no
                 // server is available or the file cannot be read.
-                let arg = parts.next().map(|s| s.to_string());
+                let arg = parts.next().map(std::string::ToString::to_string);
                 let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
                 let mut handled = false;
@@ -5295,7 +5295,7 @@ impl TuiLoop {
                 // types just `/export-html` still gets a file
                 // instead of an error.
                 let html = self.app.export_html();
-                let arg = parts.next().map(|s| s.to_string());
+                let arg = parts.next().map(std::string::ToString::to_string);
                 let path = match arg {
                     Some(p) if p != "-" => std::path::PathBuf::from(p),
                     Some(_) => {
@@ -5472,7 +5472,7 @@ impl TuiLoop {
                         .as_ref()
                         .map(|c| {
                             let names: Vec<&str> =
-                                c.commands.keys().map(|s| s.as_str()).collect();
+                                c.commands.keys().map(std::string::String::as_str).collect();
                             if names.is_empty() {
                                 String::new()
                             } else {
@@ -6731,7 +6731,7 @@ mod tests {
         CWD_LOCK
             .get_or_init(|| std::sync::Mutex::new(()))
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     use super::*;
@@ -7372,7 +7372,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            tui.app().current_tool().map(|s| s.as_str()),
+            tui.app().current_tool().map(std::string::String::as_str),
             Some("execute_command")
         );
         tui.handle_event(Event::ToolProgress {
@@ -7382,7 +7382,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            tui.app().current_tool().map(|s| s.as_str()),
+            tui.app().current_tool().map(std::string::String::as_str),
             Some("execute_command cargo test -p kod-tui")
         );
     }
@@ -9114,7 +9114,7 @@ impl TuiLoop {
                     *i += 1;
                     tokens
                         .get(*i)
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                         .ok_or_else(|| format!("{name} needs a value"))
                 };
             match name {

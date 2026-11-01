@@ -496,7 +496,7 @@ async fn list_files_skips_entries_under_forbidden_paths_through_the_engine() {
     // `total` is the pre-truncation count of the same filtered set
     // (5000-entry cap; this fixture is three entries, so no
     // truncation). Equality is exact.
-    let total = v.get("total").and_then(|x| x.as_u64()).unwrap_or(0);
+    let total = v.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0);
     assert_eq!(
         total,
         file_strs.len() as u64,

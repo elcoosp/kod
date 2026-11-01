@@ -179,7 +179,7 @@ fn hit_from_rg_match(v: &serde_json::Value) -> Option<SearchHit> {
         .and_then(|t| t.as_str())?;
     let line_number = data
         .get("line_number")
-        .and_then(|n| n.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     let line = data
         .get("lines")

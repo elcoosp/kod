@@ -305,7 +305,7 @@ fn sanitize_in_place(
                 let member = obj
                     .get_mut(kw)
                     .and_then(Value::as_array_mut)
-                    .and_then(|a| a.pop())
+                    .and_then(std::vec::Vec::pop)
                     .unwrap_or(Value::Null);
                 if let Some(member_obj) = member.as_object() {
                     obj.remove(kw);
@@ -380,7 +380,7 @@ fn sanitize_in_place(
                 let member = obj
                     .get_mut(kw)
                     .and_then(Value::as_array_mut)
-                    .and_then(|a| a.pop())
+                    .and_then(std::vec::Vec::pop)
                     .unwrap_or(Value::Null);
                 if let Some(member_obj) = member.as_object() {
                     obj.remove(kw);

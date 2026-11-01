@@ -148,7 +148,7 @@ impl RetryPolicy {
         // — after `* 2 - 1` — was ALWAYS NEGATIVE, in [-1, 0).
         // Fixed by taking the top 32 bits and dividing by `2^32`.
         let top32 = (state >> 32) as u32;
-        (top32 as f64) / (u32::MAX as f64 + 1.0) * 2.0 - 1.0
+        ((top32 as f64) / (u32::MAX as f64 + 1.0)).mul_add(2.0, -1.0)
     }
 }
 
@@ -615,7 +615,7 @@ fn scan_suffix_hint(body: &str) -> Option<Duration> {
     let needle = "retry-after-ms=";
     let pos = body.rfind(needle)?;
     let after = &body[pos + needle.len()..];
-    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
     digits.parse::<u64>().ok().map(Duration::from_millis)
 }
 
@@ -647,7 +647,7 @@ fn scan_text_hint(body: &str) -> Option<Duration> {
         let rest = trimmed[num_end..].trim_start();
         let unit: String = rest
             .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
+            .take_while(char::is_ascii_alphabetic)
             .collect();
         let secs = match unit.as_str() {
             "" | "s" | "sec" | "secs" | "second" | "seconds" => n,
@@ -830,7 +830,7 @@ mod hint_tests {
         for _ in 0..40 {
             let d = policy.delay_for(1).as_nanos() as f64;
             assert!(
-                d >= base * (1.0 - j) - 1.0 && d <= base * (1.0 + j) + 1.0,
+                d >= base.mul_add(1.0 - j, -1.0) && d <= base.mul_add(1.0 + j, 1.0),
                 "delay {d} outside [{}, {}]",
                 base * (1.0 - j),
                 base * (1.0 + j),

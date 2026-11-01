@@ -596,7 +596,7 @@ impl WorktreeManager {
         )?;
         Ok(out
             .lines()
-            .map(|l| l.trim())
+            .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(PathBuf::from)
             .collect())
@@ -812,20 +812,19 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
     let effective = timeout_secs.max(1);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(effective);
     let status = loop {
-        if let Some(s) = child.try_wait().map_err(KodError::Io)? { break s } else {
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = out_thread.join();
-                let _ = err_thread.join();
-                return Err(KodError::Internal(format!(
-                    "git {}: did not finish within {}s (killed)",
-                    args.join(" "),
-                    effective,
-                )));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Some(s) = child.try_wait().map_err(KodError::Io)? { break s }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = out_thread.join();
+            let _ = err_thread.join();
+            return Err(KodError::Internal(format!(
+                "git {}: did not finish within {}s (killed)",
+                args.join(" "),
+                effective,
+            )));
         }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     };
     let stdout = out_thread.join().unwrap_or_default();
     let stderr = err_thread.join().unwrap_or_default();

@@ -590,7 +590,7 @@ mod validate_proptests {
     use proptest::prelude::*;
 
     fn arb_type() -> impl Strategy<Value = String> {
-        prop::sample::select(TYPES.to_vec()).prop_map(|s| s.to_string())
+        prop::sample::select(TYPES.to_vec()).prop_map(std::string::ToString::to_string)
     }
 
     fn arb_unknown_type() -> impl Strategy<Value = String> {

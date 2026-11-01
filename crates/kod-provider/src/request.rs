@@ -478,11 +478,7 @@ impl ModelPricing {
         let write_1h_rate = self
             .cache_write_1h_per_mtok_usd
             .unwrap_or(2.0 * self.input_per_mtok_usd);
-        (fresh as f64 / m) * self.input_per_mtok_usd
-            + (read as f64 / m) * self.cache_read_per_mtok_usd
-            + (write_5m as f64 / m) * self.cache_write_per_mtok_usd
-            + (write_1h as f64 / m) * write_1h_rate
-            + (usage.completion_tokens as f64 / m) * self.output_per_mtok_usd
+        (usage.completion_tokens as f64 / m).mul_add(self.output_per_mtok_usd, (write_1h as f64 / m).mul_add(write_1h_rate, (write_5m as f64 / m).mul_add(self.cache_write_per_mtok_usd, (read as f64 / m).mul_add(self.cache_read_per_mtok_usd, (fresh as f64 / m) * self.input_per_mtok_usd))))
     }
 }
 

@@ -165,7 +165,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     use crate::app::*;
 
@@ -1822,7 +1822,7 @@ mod coverage_split_hunks {
         // collapsed summary line.
         assert_eq!(out.lines().count(), 1, "one line, got: {out:?}");
         assert!(
-            !out.contains("\n"),
+            !out.contains('\n'),
             "newlines are collapsed away, got: {out:?}"
         );
         assert!(out.starts_with("Error: HTTP 500"), "got: {out:?}");

@@ -97,7 +97,7 @@ impl RepoMap {
     /// Total symbols across every file.
     #[must_use]
     pub fn symbol_count(&self) -> usize {
-        self.entries.values().map(|v| v.len()).sum()
+        self.entries.values().map(std::vec::Vec::len).sum()
     }
 }
 
@@ -210,7 +210,7 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
             name != ".git" && name != "target" && name != "node_modules"
         });
     let mut truncated_at: Option<usize> = None;
-    for (i, entry) in builder.build().filter_map(|e| e.ok()).enumerate() {
+    for (i, entry) in builder.build().filter_map(std::result::Result::ok).enumerate() {
         if i >= MAX_REPO_FILES {
             truncated_at = Some(i);
             break;
@@ -493,7 +493,7 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     > = std::sync::OnceLock::new();
 
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let mut out: Vec<String> = Vec::new();
     for pat in patterns {
@@ -1586,7 +1586,7 @@ mod extract_imports_proptests {
             let src = format!("import (\n    \"{a}\"\n    \"{b}\"\n    \"{c}\"\n)\n");
             let got = extract_imports("go", &src);
             let set: std::collections::HashSet<&str> =
-                got.iter().map(|s| s.as_str()).collect();
+                got.iter().map(std::string::String::as_str).collect();
             prop_assert!(set.contains(a.as_str()), "missing {a:?} in {got:?}");
             prop_assert!(set.contains(b.as_str()), "missing {b:?} in {got:?}");
             prop_assert!(set.contains(c.as_str()), "missing {c:?} in {got:?}");

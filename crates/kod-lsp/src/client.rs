@@ -240,7 +240,7 @@ impl LspClient {
                         )));
                     }
                 };
-            if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
+            if msg.get("id").and_then(serde_json::Value::as_i64) == Some(id) {
                 if let Some(err) = msg.get("error") {
                     return Err(LspError::Protocol(format!(
                         "initialize returned an error: {err}"
@@ -523,7 +523,7 @@ impl LspClient {
                 // waiting out the quiet window. A server that does
                 // not echo (rust-analyzer omits the optional field)
                 // falls through to the settle rule below.
-                let echoed = params.get("version").and_then(|v| v.as_i64());
+                let echoed = params.get("version").and_then(serde_json::Value::as_i64);
                 if let (Some(sent), Some(echoed)) = (sent_version, echoed)
                     && sent == echoed
                 {
@@ -710,7 +710,7 @@ impl LspClient {
             let msg = tokio::time::timeout(remaining, self.read_handling_server_requests())
                 .await
                 .map_err(|_| LspError::Timeout)??;
-            if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
+            if msg.get("id").and_then(serde_json::Value::as_i64) == Some(id) {
                 if let Some(err) = msg.get("error") {
                     return Err(LspError::Protocol(format!(
                         "{method} returned an error: {err}"
@@ -801,7 +801,7 @@ impl LspClient {
         loop {
             let msg = self.read_message().await?;
             if let (Some(id), Some(_method)) = (
-                msg.get("id").and_then(|v| v.as_i64()),
+                msg.get("id").and_then(serde_json::Value::as_i64),
                 msg.get("method").and_then(|v| v.as_str()),
             ) {
                 self.send_message(&serde_json::json!({
@@ -920,7 +920,7 @@ fn parse_diagnostics(params: &serde_json::Value, uri: &str) -> Vec<Diagnostic> {
             let start = d.get("range")?.get("start")?;
             let line = start.get("line")?.as_u64()? + 1;
             let character = start.get("character")?.as_u64()? + 1;
-            let severity_n = d.get("severity").and_then(|v| v.as_u64()).unwrap_or(1);
+            let severity_n = d.get("severity").and_then(serde_json::Value::as_u64).unwrap_or(1);
             let severity = match severity_n {
                 1 => "error",
                 2 => "warning",

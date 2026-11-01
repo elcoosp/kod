@@ -2005,7 +2005,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
         // which saw `\rm` as the program name and let `rm` slip past a
         // policy that explicitly named it.
         let owned = kod_risk::classify::tokenize(&cur);
-        let raw: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        let raw: Vec<&str> = owned.iter().map(std::string::String::as_str).collect();
         // Skip leading `NAME=value` env assignments.
         let mut start = 0;
         while start < raw.len() && looks_like_env_assignment(raw[start]) {

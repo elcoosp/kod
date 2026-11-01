@@ -289,7 +289,7 @@ impl KodConfig {
         // in either.
         cfg.config_version = table
             .get("config_version")
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(cfg.config_version);
 
@@ -1246,7 +1246,7 @@ mod proptests {
             static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
             // `cargo test` shares one process across tests; nextest does
             // not. The lock makes the env-var mutation safe either way.
-            let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let tmp = tempfile::TempDir::new().unwrap();
             std::fs::write(tmp.path().join("config.toml"), garbage.as_bytes()).unwrap();
             // SAFETY (edition 2024): `set_var`/`remove_var` are unsafe

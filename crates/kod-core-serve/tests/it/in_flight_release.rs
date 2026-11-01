@@ -78,7 +78,7 @@ async fn read_until_response<R: AsyncRead + Unpin>(r: &mut BufReader<R>, want_id
             Ok(Err(e)) => panic!("frame read error: {e}"),
             Err(_) => panic!("timed out waiting for response to id={want_id}"),
         };
-        let is_response = frame.get("id").and_then(|v| v.as_i64()) == Some(want_id)
+        let is_response = frame.get("id").and_then(serde_json::Value::as_i64) == Some(want_id)
             && frame.get("method").is_none();
         if is_response {
             return frame;
@@ -155,7 +155,7 @@ fn assert_not_busy(resp: &Value, context: &str) {
     if let Some(code) = resp
         .get("error")
         .and_then(|e| e.get("code"))
-        .and_then(|v| v.as_i64())
+        .and_then(serde_json::Value::as_i64)
     {
         assert_ne!(
             code, -32002,

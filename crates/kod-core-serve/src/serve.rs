@@ -489,7 +489,7 @@ where
                 let client_min = req
                     .params
                     .get("min")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .map_or(1, |n| n.min(u8::MAX as u64) as u8);
                 // Bug-hunt: a client sending `max = 300` used to be
                 // truncated to `44` (300 as u8), breaking version
@@ -498,7 +498,7 @@ where
                 let client_max = req
                     .params
                     .get("max")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .map_or(client_min, |n| n.min(u8::MAX as u64) as u8);
                 let lo = client_min.max(MIN_PROTOCOL_VERSION);
                 let hi = client_max.min(MAX_PROTOCOL_VERSION);
@@ -608,7 +608,7 @@ where
                 write_ack(&out_tx, &req.id).await?;
             }
             "respond_to_approval" => {
-                let item_id = req.params.get("id").and_then(|v| v.as_u64());
+                let item_id = req.params.get("id").and_then(serde_json::Value::as_u64);
                 let decision = match req.params.get("decision").and_then(|v| v.as_str()) {
                     Some("approve") => Some(kod_core::engine::ApprovalDecision::Approve),
                     Some("deny") => Some(kod_core::engine::ApprovalDecision::Deny),
@@ -637,7 +637,7 @@ where
                 }
             }
             "respond_to_question" => {
-                let item_id = req.params.get("id").and_then(|v| v.as_u64());
+                let item_id = req.params.get("id").and_then(serde_json::Value::as_u64);
                 let answer = string_param(&req.params, "answer");
                 match item_id {
                     Some(n) => {
@@ -664,12 +664,12 @@ where
                 let max_agents = req
                     .params
                     .get("max_agents")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .map_or(5, |n| n as usize);
                 let merge = req
                     .params
                     .get("merge")
-                    .and_then(|v| v.as_bool())
+                    .and_then(serde_json::Value::as_bool)
                     .unwrap_or(true);
                 let engine = engine.clone();
                 let out = out_tx.clone();
@@ -711,7 +711,7 @@ where
                 let max_chars = req
                     .params
                     .get("max_chars")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(4000) as usize;
                 let data = engine.peek_transcript(&key, max_chars).await;
                 write_ok(&out_tx, &req.id, data).await?;
@@ -1493,11 +1493,11 @@ mod version_tests {
         // The negotiation handler clamps; we call the same helper shape.
         let client_min = v
             .get("min")
-            .and_then(|x| x.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .map_or(1, |n| n.min(u8::MAX as u64) as u8);
         let client_max = v
             .get("max")
-            .and_then(|x| x.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .map_or(1, |n| n.min(u8::MAX as u64) as u8);
         assert_eq!(client_min, u8::MAX);
         assert_eq!(client_max, u8::MAX);

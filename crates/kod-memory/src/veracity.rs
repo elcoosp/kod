@@ -115,7 +115,7 @@ pub fn fact_content_id(subject: &str, predicate: &str, object: &str) -> String {
 #[must_use]
 pub fn raise_confidence(confidence: f64, weight: f64) -> f64 {
     let c = confidence.clamp(0.0, 1.0);
-    (c + (1.0 - c) * weight * MENTION_STEP).clamp(0.0, 1.0)
+    ((1.0 - c) * weight).mul_add(MENTION_STEP, c).clamp(0.0, 1.0)
 }
 
 /// The base confidence a new fact starts at, given its source.

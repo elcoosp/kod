@@ -82,7 +82,7 @@ pub async fn run_swarm_remote(
                     .unwrap_or("");
                 let merged_by_model = data
                     .and_then(|d| d.get("merged_by_model"))
-                    .and_then(|b| b.as_bool())
+                    .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
 
                 if let Some(conflicts) = data
@@ -424,10 +424,10 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
         }
         "agent_retrying" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-            let attempt = data.get("attempt").and_then(|x| x.as_u64()).unwrap_or(0);
+            let attempt = data.get("attempt").and_then(serde_json::Value::as_u64).unwrap_or(0);
             let max = data
                 .get("max_attempts")
-                .and_then(|x| x.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let prev = data
                 .get("previous_error")
@@ -469,15 +469,15 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
             let merged = data
                 .get("merged")
                 .and_then(|a| a.as_array())
-                .map_or(0, |a| a.len());
+                .map_or(0, std::vec::Vec::len);
             let conflicted = data
                 .get("conflicted")
                 .and_then(|a| a.as_array())
-                .map_or(0, |a| a.len());
+                .map_or(0, std::vec::Vec::len);
             let failed = data
                 .get("failed")
                 .and_then(|a| a.as_array())
-                .map_or(0, |a| a.len());
+                .map_or(0, std::vec::Vec::len);
             if conflicted == 0 && failed == 0 {
                 println!(
                     "\n\u{2500}\u{2500} worktrees merged: {merged} ok \u{2500}\u{2500}\n"

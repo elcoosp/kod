@@ -222,7 +222,7 @@ impl WebFetchTool {
                 use std::net::ToSocketAddrs;
                 (host_owned.as_str(), port)
                     .to_socket_addrs()
-                    .map(|it| it.collect::<Vec<_>>())
+                    .map(std::iter::Iterator::collect::<Vec<_>>)
             })
             .await
             .map_err(|e| format!("DNS lookup task failed: {e}"))?
@@ -317,7 +317,7 @@ impl Tool for WebFetchTool {
         if !context.allowed_domains.is_empty() {
             let host = reqwest::Url::parse(url_str)
                 .ok()
-                .and_then(|u| u.host_str().map(|s| s.to_lowercase()))
+                .and_then(|u| u.host_str().map(str::to_lowercase))
                 .unwrap_or_default();
             if !domain_allowed(&host, &context.allowed_domains) {
                 return Ok(ToolResult::Error(format!(
@@ -360,7 +360,7 @@ impl Tool for WebFetchTool {
                     use std::net::ToSocketAddrs;
                     (host_owned.as_str(), port)
                         .to_socket_addrs()
-                        .map(|it| it.collect::<Vec<_>>())
+                        .map(std::iter::Iterator::collect::<Vec<_>>)
                 })
                 .await
                 .unwrap_or(Ok(Vec::new()));

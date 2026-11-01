@@ -52,7 +52,7 @@ impl KodApp {
         let mut out: Vec<String> = KNOWN
             .iter()
             .filter(|m| m.to_lowercase().contains(&partial))
-            .map(|m| m.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         for name in &self.available_models {
             if !name.is_empty() && name.to_lowercase().contains(&partial) && !out.contains(name) {
@@ -168,7 +168,7 @@ impl KodApp {
             }
             let mut names: Vec<String> = match std::fs::read_dir(&dir) {
                 Ok(rd) => rd
-                    .filter_map(|e| e.ok())
+                    .filter_map(std::result::Result::ok)
                     .map(|e| e.file_name().to_string_lossy().to_string())
                     .collect(),
                 Err(_) => Vec::new(),

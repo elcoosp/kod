@@ -290,7 +290,7 @@ fn sweep_plan_dirs_at(root: &std::path::Path) -> usize {
         return 0;
     };
     let mut dirs: Vec<(std::path::PathBuf, std::time::SystemTime)> = rd
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let p = e.path();
             if !p.is_dir() {
@@ -720,8 +720,8 @@ mod tests {
         let p = Plan::new("g", vec!["a".into(), "b".into()]);
         let b = p.render_prompt_block();
         assert!(b.contains("## Plan"));
-        assert!(b.contains("a"));
-        assert!(b.contains("b"));
+        assert!(b.contains('a'));
+        assert!(b.contains('b'));
         assert!(b.contains("Current step"));
     }
 

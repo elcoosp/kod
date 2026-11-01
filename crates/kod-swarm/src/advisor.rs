@@ -385,7 +385,7 @@ pub fn route(advice: &Advice, primary_state: PrimaryState) -> Delivery {
 pub fn normalize(note: &str) -> String {
     note.chars()
         .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
+        .flat_map(char::to_lowercase)
         .collect()
 }
 
@@ -991,7 +991,7 @@ mod normalize_non_ascii_proptests {
             let lower = s.to_ascii_lowercase();
             let expected: String = lower
                 .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
+                .filter(char::is_ascii_alphanumeric)
                 .collect();
             assert_eq!(normalize(s), expected, "input {s:?}");
         }

@@ -2172,7 +2172,7 @@ impl SwarmRunner {
             .filter(|w| w.len() >= 4)
             .filter(|w| seen.insert(w.to_string()))
             .take(5)
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let mut hits = String::new();

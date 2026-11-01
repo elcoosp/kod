@@ -382,7 +382,7 @@ impl TuiSession {
     pub fn screen_text(&self) -> String {
         let raw = self.screen().contents();
         raw.lines()
-            .map(|l| l.trim_end())
+            .map(str::trim_end)
             .collect::<Vec<_>>()
             .join("\n")
     }

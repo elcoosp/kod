@@ -131,7 +131,7 @@ impl DeferredDiagnostics {
             .lock()
             .expect("deferred_diagnostics poisoned")
             .get(holder)
-            .map_or(0, |v| v.len())
+            .map_or(0, std::vec::Vec::len)
     }
 
     /// True when nothing is queued for any transcript.
@@ -144,7 +144,7 @@ impl DeferredDiagnostics {
             .lock()
             .expect("deferred_diagnostics poisoned")
             .values()
-            .all(|v| v.is_empty())
+            .all(std::vec::Vec::is_empty)
     }
 }
 

@@ -128,7 +128,7 @@ async fn chat_completions(
 
     let streaming = serde_json::from_slice::<serde_json::Value>(&body)
         .ok()
-        .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+        .and_then(|v| v.get("stream").and_then(serde_json::Value::as_bool))
         .unwrap_or(false);
 
     if streaming {

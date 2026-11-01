@@ -51,7 +51,7 @@ fn trace_json_on_empty_file_is_empty_array() {
         "empty trace file must serialize to [], got {v:?}",
     );
     assert_eq!(
-        v.as_array().map(|a| a.len()),
+        v.as_array().map(std::vec::Vec::len),
         Some(0),
         "expected empty array, got {v:?}",
     );

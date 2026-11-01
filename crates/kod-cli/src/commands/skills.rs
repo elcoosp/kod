@@ -85,7 +85,7 @@ pub async fn run_skills_validate() -> Result<()> {
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() {
                 continue;
@@ -347,7 +347,7 @@ pub(super) async fn find_skill_path(name: &str) -> Result<Option<std::path::Path
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() {
                 continue;
@@ -374,7 +374,7 @@ pub(super) async fn find_skill_path(name: &str) -> Result<Option<std::path::Path
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() {
                 continue;
@@ -483,7 +483,7 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() {
                 continue;
@@ -563,7 +563,7 @@ pub async fn run_skills_validate_strict() -> Result<()> {
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() {
                 continue;

@@ -205,7 +205,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
 
     match config.memory_db_path() {
         Ok(path) => {
-            let parent_ok = path.parent().is_some_and(|p| p.exists());
+            let parent_ok = path.parent().is_some_and(std::path::Path::exists);
             if parent_ok {
                 report.push(
                     "memory",

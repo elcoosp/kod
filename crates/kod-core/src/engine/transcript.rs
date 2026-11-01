@@ -723,7 +723,7 @@ impl KodEngine {
         let (count, tail) = {
             let guard = self.history.read().await;
             let turns = guard.get(key);
-            let count = turns.map_or(0, |t| t.len());
+            let count = turns.map_or(0, std::vec::Vec::len);
             let mut out = String::new();
             if let Some(turns) = turns {
                 // The last 20 turns, newest-last, matching the order

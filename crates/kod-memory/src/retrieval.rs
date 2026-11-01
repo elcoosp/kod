@@ -359,7 +359,7 @@ impl HybridScorer {
                 // BM25 TF term (with k1 = 1.2), normalised by the
                 // same idf so the sum lies in [0, idf * tf_sat].
                 let tf_sat = (count * 2.2) / (count + 1.2);
-                score += idf * tf_sat;
+                score = idf.mul_add(tf_sat, score);
             }
         }
         if max_possible <= 0.0 {
@@ -382,7 +382,7 @@ pub fn recency(ts: OffsetDateTime, now: OffsetDateTime, half_life_days: f32) -> 
         return 0.0;
     }
     let exponent = -secs / half_life_secs;
-    2f32.powf(exponent)
+    exponent.exp2()
 }
 
 #[cfg(test)]

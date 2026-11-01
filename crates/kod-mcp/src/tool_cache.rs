@@ -401,7 +401,7 @@ fn future_timestamped_entry_is_rejected() {
     assert!(
         got.is_none(),
         "a future-timestamped entry must be treated as stale, got {:?}",
-        got.as_ref().map(|v| v.len())
+        got.as_ref().map(std::vec::Vec::len)
     );
     assert!(
         !path.exists(),

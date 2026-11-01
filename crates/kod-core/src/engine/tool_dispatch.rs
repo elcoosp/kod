@@ -189,7 +189,7 @@ impl KodEngine {
             let accepts_large = call
                 .arguments
                 .get("accept_large_output")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             let rendered = match results.get(i) {
@@ -735,7 +735,7 @@ impl KodEngine {
                         .arguments
                         .get("path")
                         .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                        .map(std::string::ToString::to_string);
                     let rule = kod_config::SessionDeny {
                         tool: call.tool_name.clone(),
                         path_pattern,

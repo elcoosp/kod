@@ -120,7 +120,7 @@ impl Tool for ToolSearchTool {
             })?;
         let limit = params["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
 
-        let inv = self.inventory.read().unwrap_or_else(|e| e.into_inner());
+        let inv = self.inventory.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         if inv.definitions.is_empty() {
             return Ok(ToolResult::Success(serde_json::json!({
                 "matches": [],

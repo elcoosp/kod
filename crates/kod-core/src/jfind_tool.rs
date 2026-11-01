@@ -34,7 +34,7 @@ impl Judge for LexicalJudge {
     async fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32> {
         let words: Vec<String> = question
             .split_whitespace()
-            .map(|w| w.to_lowercase())
+            .map(str::to_lowercase)
             .collect();
         candidates
             .iter()

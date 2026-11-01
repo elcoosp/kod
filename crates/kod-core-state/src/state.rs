@@ -231,7 +231,7 @@ mod tests {
         // No leftover temp files in the directory.
         let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| {
                 e.path()
                     .file_name()

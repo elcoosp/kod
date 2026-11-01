@@ -427,7 +427,7 @@ impl SessionRecorder {
         let line =
             serde_json::to_string(&cloned).map_err(|e| KodError::Serialization(e.to_string()))?;
         {
-            let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+            let mut w = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             // H-D10: one `write_all` of the full line + newline, not
             // `writeln!`. `writeln!` on a raw File issues two
             // `write` syscalls (payload, newline); O_APPEND atomicity
@@ -483,7 +483,7 @@ impl SessionRecorder {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub fn flush(&self) -> Result<()> {
-        let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+        let mut w = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         w.flush().map_err(KodError::Io)?;
         Ok(())
     }
@@ -756,7 +756,7 @@ fn sweep_session_logs_at(root: &Path) -> usize {
         return 0;
     };
     let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = rd
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {

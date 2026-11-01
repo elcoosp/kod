@@ -426,7 +426,7 @@ impl Tool for GitDiffTool {
             args.push(resolved.to_string_lossy().to_string());
         }
 
-        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         let raw = match run_git(&arg_refs, &context.working_dir, context.timeout_secs).await {
             Ok(s) => s,
             Err(e) => return Ok(ToolResult::Error(e.to_string())),

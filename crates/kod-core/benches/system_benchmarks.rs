@@ -61,7 +61,7 @@ fn workspace_root() -> PathBuf {
     manifest
         .parent()
         .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
+        .map(std::path::Path::to_path_buf)
         .unwrap_or(manifest)
 }
 

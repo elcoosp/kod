@@ -391,7 +391,7 @@ mod otlp_proptests {
     fn severity_number(v: &Value) -> Option<u64> {
         match v {
             Value::Object(map) => {
-                if let Some(n) = map.get("severityNumber").and_then(|n| n.as_u64()) {
+                if let Some(n) = map.get("severityNumber").and_then(serde_json::Value::as_u64) {
                     return Some(n);
                 }
                 map.values().find_map(severity_number)
@@ -517,7 +517,7 @@ mod otlp_proptests {
                 "kod.turn.error",
             ]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
             if r.ttft_ms.is_some() {
                 expected.insert("gen_ai.server.time_to_first_token_ms".to_string());
@@ -546,7 +546,7 @@ mod otlp_proptests {
                     // intValue-as-number, and intValue-as-string.
                     let as_u64 = v
                         .as_u64()
-                        .or_else(|| v.get("intValue").and_then(|iv| iv.as_u64()))
+                        .or_else(|| v.get("intValue").and_then(serde_json::Value::as_u64))
                         .or_else(|| {
                             v.get("intValue")
                                 .and_then(|iv| iv.as_str())
@@ -594,7 +594,7 @@ mod otlp_proptests {
 
             let expected: BTreeSet<String> = ["gen_ai.tool.name", "kod.tool.status", "kod.tool.duration_ms"]
                 .iter()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             prop_assert_eq!(keys, expected);
         }

@@ -394,7 +394,7 @@ fn test_search_scrolls_target_into_view() {
         .buffer()
         .content()
         .iter()
-        .map(|cell| cell.symbol())
+        .map(ratatui::buffer::Cell::symbol)
         .collect();
     assert!(
         visible.contains("line-0-x"),

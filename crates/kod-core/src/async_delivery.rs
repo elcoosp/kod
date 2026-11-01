@@ -162,13 +162,13 @@ impl AsyncDelivery {
     /// How many results are queued for an owner.
     #[must_use]
     pub fn queued_for(&self, owner_id: &str) -> usize {
-        self.queues.get(owner_id).map_or(0, |v| v.len())
+        self.queues.get(owner_id).map_or(0, std::vec::Vec::len)
     }
 
     /// Whether anything is queued for any owner.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.queues.values().all(|v| v.is_empty())
+        self.queues.values().all(std::vec::Vec::is_empty)
     }
 
     /// Drain every queued result for an owner into one batched

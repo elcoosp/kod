@@ -281,7 +281,7 @@ impl KodEngine {
         // Hygiene: read the cached (window, max_out). `set_registry`
         // populates it from the effective endpoint; a caller that
         // never installed a registry sees the built-in default.
-        let (window, max_out) = *self.budget_hint.read().unwrap_or_else(|e| e.into_inner());
+        let (window, max_out) = *self.budget_hint.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let budget = kod_core_state::budget::PromptBudget::from_tokens(window, max_out);
         // H-E3: subtract the parts the engine appends outside the four
         // budgeted sections — the environment/tool-use trailer, the

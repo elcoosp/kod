@@ -102,7 +102,7 @@ async fn config_init_from_backs_up_an_existing_config() {
     run_config_init_from(name).await.expect("second init-from");
     let backups = std::fs::read_dir(tmp.path())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             e.file_name()
                 .to_string_lossy()

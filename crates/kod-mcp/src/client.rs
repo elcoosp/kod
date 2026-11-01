@@ -326,7 +326,7 @@ impl McpClient {
                 .get("nextCursor")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             if cursor.is_none() {
                 break;
             }
@@ -581,12 +581,12 @@ async fn read_loop(
                 // server request was swallowed and an id collision could
                 // hijack a pending tools/call result.
                 if msg.get("method").is_none()
-                    && let Some(id) = msg.get("id").and_then(|v| v.as_i64())
+                    && let Some(id) = msg.get("id").and_then(serde_json::Value::as_i64)
                 {
                     let sender = pending.lock().await.remove(&id);
                     if let Some(tx) = sender {
                         if let Some(err) = msg.get("error") {
-                            let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
+                            let code = err.get("code").and_then(serde_json::Value::as_i64).unwrap_or(-1);
                             let message = err
                                 .get("message")
                                 .and_then(|v| v.as_str())

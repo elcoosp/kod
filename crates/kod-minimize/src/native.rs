@@ -92,7 +92,7 @@ fn cargo_json(text: &str) -> String {
                     .iter()
                     .find(|s| {
                         s.get("is_primary")
-                            .and_then(|p| p.as_bool())
+                            .and_then(serde_json::Value::as_bool)
                             .unwrap_or(false)
                     })
                     .or_else(|| spans.first())

@@ -282,7 +282,7 @@ impl MemoryManager {
                 let what = payload
                     .downcast_ref::<&'static str>()
                     .copied()
-                    .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                    .or_else(|| payload.downcast_ref::<String>().map(std::string::String::as_str))
                     .unwrap_or("non-string panic payload");
                 tracing::error!(
                     panic = what,
@@ -462,7 +462,7 @@ impl MemoryManager {
         // Learn dim from the first embedding actually present.
         let dim = updated
             .iter()
-            .find_map(|e| e.metadata.embedding.as_ref().map(|v| v.len()))
+            .find_map(|e| e.metadata.embedding.as_ref().map(std::vec::Vec::len))
             .unwrap_or(0);
         if dim == 0 {
             *self.vector_index.write() = None;
@@ -2636,7 +2636,7 @@ mod contradiction_resolution_tests {
 
         let a_after = mgr.get_long_term(&a).await.unwrap().unwrap();
         assert_eq!(
-            a_after.superseded_by.as_ref().map(|x| x.as_uuid()),
+            a_after.superseded_by.as_ref().map(kod_types::MemoryId::as_uuid),
             Some(b.as_uuid()),
             "the lower-confidence side must be superseded by the higher",
         );

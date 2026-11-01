@@ -122,7 +122,7 @@ pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
         let content = item
             .get("content")
             .and_then(|c| c.as_str())
-            .map(|s| s.trim())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(String::from);
         let content = match content {

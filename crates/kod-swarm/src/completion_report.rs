@@ -210,7 +210,7 @@ fn extract_status(open_line: &str) -> ReportStatus {
         let preceded_by_whitespace = open_line[..idx]
             .chars()
             .last()
-            .is_none_or(|c| c.is_whitespace());
+            .is_none_or(char::is_whitespace);
         if preceded_by_whitespace {
             break idx;
         }

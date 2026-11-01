@@ -1303,7 +1303,7 @@ impl KodEngine {
             // it; since we are the only owner at this point, this is
             // a simple `into_inner` on the tracked cell.
             let finished = match std::sync::Arc::try_unwrap(std::sync::Arc::new(trace)) {
-                Ok(m) => m.into_inner().unwrap_or_else(|e| e.into_inner()),
+                Ok(m) => m.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner),
                 Err(_) => {
                     return Ok(TaskResponse {
                         task_type: response.task_type,
@@ -1713,7 +1713,7 @@ impl KodEngine {
                     let mut rt = self.goal_runtime.write().await;
                     let steer = rt
                         .current_mut()
-                        .is_some_and(|g| g.take_budget_steer());
+                        .is_some_and(kod_core_state::goals::Goal::take_budget_steer);
                     (rt.current().map(|g| g.status), steer)
                 };
                 if steer {

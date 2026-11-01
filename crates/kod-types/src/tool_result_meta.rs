@@ -143,13 +143,13 @@ pub fn is_useless(tool_name: &str, result: &Value) -> bool {
             return result
                 .get("results")
                 .and_then(|v| v.as_array())
-                .is_some_and(|a| a.is_empty());
+                .is_some_and(std::vec::Vec::is_empty);
         }
         "list_files" => {
             return result
                 .get("files")
                 .and_then(|v| v.as_array())
-                .is_some_and(|a| a.is_empty());
+                .is_some_and(std::vec::Vec::is_empty);
         }
         "read_file" => {
             return result
@@ -166,7 +166,7 @@ pub fn is_useless(tool_name: &str, result: &Value) -> bool {
             return result
                 .get("changes")
                 .and_then(|v| v.as_array())
-                .is_some_and(|a| a.is_empty());
+                .is_some_and(std::vec::Vec::is_empty);
         }
         _ => {}
     }

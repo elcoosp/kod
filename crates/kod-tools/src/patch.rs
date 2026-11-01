@@ -82,7 +82,7 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
             .collect()
     };
     let had_trailing_newline = original.ends_with('\n');
-    if had_trailing_newline && lines.last().is_some_and(|s| s.is_empty()) {
+    if had_trailing_newline && lines.last().is_some_and(std::string::String::is_empty) {
         lines.pop();
     }
 

@@ -79,7 +79,7 @@ impl KodApp {
             return;
         }
         // Keep the in-memory list in sync when dispatch bypassed submit.
-        if self.input_history.last().map(|s| s.as_str()) != Some(entry) {
+        if self.input_history.last().map(std::string::String::as_str) != Some(entry) {
             self.input_history.push(entry.to_string());
         }
         let Some(path) = Self::history_path() else {
@@ -95,7 +95,7 @@ impl KodApp {
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_default();
-        if entries.last().map(|s| s.as_str()) != Some(entry) {
+        if entries.last().map(std::string::String::as_str) != Some(entry) {
             entries.push(entry.to_string());
         }
         if entries.len() > 500 {

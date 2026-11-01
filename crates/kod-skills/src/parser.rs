@@ -215,7 +215,7 @@ impl SkillParser {
         let mut search_at = 0;
         while let Some(found) = tag[search_at..].find(&pattern) {
             let idx = search_at + found;
-            let preceded_ok = tag[..idx].chars().last().is_none_or(|c| c.is_whitespace());
+            let preceded_ok = tag[..idx].chars().last().is_none_or(char::is_whitespace);
             if preceded_ok {
                 let rest = &tag[idx + pattern.len()..];
                 let end = rest.find('"')?;
@@ -230,7 +230,7 @@ impl SkillParser {
                 return None;
             };
             let idx = search_at + found;
-            let preceded_ok = tag[..idx].chars().last().is_none_or(|c| c.is_whitespace());
+            let preceded_ok = tag[..idx].chars().last().is_none_or(char::is_whitespace);
             if preceded_ok {
                 let content_start = idx + pattern.len();
                 let end = tag[content_start..].find('\'')? + content_start;

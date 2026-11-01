@@ -800,7 +800,7 @@ impl CompactionMethod for SnapcompactMethod {
         let dropped = &ctx.transcript[..split];
         let text: String = dropped
             .iter()
-            .map(|m| m.render_text())
+            .map(kod_types::ChatMessage::render_text)
             .collect::<Vec<_>>()
             .join("\n");
 

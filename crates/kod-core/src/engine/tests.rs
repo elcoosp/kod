@@ -21,7 +21,7 @@ fn sweep_background_spools_keeps_the_newest() {
 
     let logs: Vec<_> = std::fs::read_dir(dir)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("log"))
         .collect();
     assert_eq!(logs.len(), 64, "must trim to MAX_SPOOLS");

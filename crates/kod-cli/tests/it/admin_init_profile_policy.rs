@@ -73,7 +73,7 @@ async fn init_force_backs_up_the_existing_config() {
 
     let backups: Vec<_> = std::fs::read_dir(tmp.path())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             e.file_name()
                 .to_string_lossy()

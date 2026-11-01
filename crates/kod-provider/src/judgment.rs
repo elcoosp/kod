@@ -645,7 +645,7 @@ impl JudgmentClient {
             }
 
             last_raw = text;
-            last_missing = missing.iter().map(|s| s.to_string()).collect();
+            last_missing = missing.iter().map(std::string::ToString::to_string).collect();
 
             // Strict reminder for the next attempt. Rewrites the user
             // message with the same state but a sharper instruction.

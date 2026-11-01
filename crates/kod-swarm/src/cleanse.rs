@@ -138,7 +138,7 @@ impl CleanseScheduler {
         if let Some(b) = self.batch_budget {
             return b;
         }
-        let total: usize = self.pending.values().map(|v| v.len()).sum();
+        let total: usize = self.pending.values().map(std::vec::Vec::len).sum();
         let share = total / self.max_agents;
         share.clamp(1, DEFAULT_BATCH_BUDGET)
     }

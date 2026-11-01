@@ -549,7 +549,7 @@ pub fn parse_sse_line(
             // fields for cost math.
             if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
                 let get =
-                    |k: &str| -> usize { u.get(k).and_then(|n| n.as_u64()).unwrap_or(0) as usize };
+                    |k: &str| -> usize { u.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0) as usize };
                 let base = get("input_tokens");
                 let cache_read = get("cache_read_input_tokens");
                 let cache_creation = get("cache_creation_input_tokens");
@@ -565,7 +565,7 @@ pub fn parse_sse_line(
                 let creation_1h = u
                     .get("cache_creation")
                     .and_then(|c| c.get("ephemeral_1h_input_tokens"))
-                    .and_then(|n| n.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .map_or(0, |n| n as usize)
                     .min(cache_creation);
                 state.cache_read_input_tokens = cache_read;
@@ -578,7 +578,7 @@ pub fn parse_sse_line(
             Vec::new()
         }
         Some("content_block_start") => {
-            let index = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+            let index = v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
             let block = v.get("content_block").cloned().unwrap_or_default();
             let kind = block
                 .get("type")
@@ -607,7 +607,7 @@ pub fn parse_sse_line(
             }
         }
         Some("content_block_delta") => {
-            let index = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+            let index = v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
             let delta = v.get("delta").cloned().unwrap_or_default();
             match delta.get("type").and_then(|t| t.as_str()) {
                 Some("text_delta") => {
@@ -662,7 +662,7 @@ pub fn parse_sse_line(
             let out = v
                 .get("usage")
                 .and_then(|u| u.get("output_tokens"))
-                .and_then(|n| n.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
             if out > 0 || state.input_tokens > 0 {
                 chunks.push(StreamChunk::Usage(kod_provider::TokenUsage {

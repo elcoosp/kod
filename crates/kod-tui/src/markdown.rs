@@ -904,7 +904,7 @@ mod tests {
         let text = rendered_text(&out);
         assert!(text.contains("fn main() {"));
         assert!(text.contains("println!"));
-        assert!(text.contains("}"));
+        assert!(text.contains('}'));
         assert!(text.contains("before"));
         assert!(text.contains("after"));
         // The backtick fence must not appear in the output.

@@ -179,7 +179,7 @@ impl ToolRegistry {
                         let what = payload
                             .downcast_ref::<&'static str>()
                             .copied()
-                            .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                            .or_else(|| payload.downcast_ref::<String>().map(std::string::String::as_str))
                             .unwrap_or("non-string panic payload");
                         tracing::error!(
                             tool = %name,

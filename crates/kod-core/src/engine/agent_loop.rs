@@ -269,7 +269,7 @@ impl KodEngine {
             .read()
             .await
             .get(key)
-            .map_or(0, |v| v.len())
+            .map_or(0, std::vec::Vec::len)
     }
 
     /// M-16: truncate a transcript's history back to `len` messages.

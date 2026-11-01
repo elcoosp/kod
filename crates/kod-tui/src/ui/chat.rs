@@ -586,7 +586,7 @@ impl ChatWidget {
         ordered.sort_by_key(|m| m.sequence);
 
         // Begin a fresh render-cache frame. See render_cache.rs.
-        crate::render_cache::with_cache(|c| c.begin_frame());
+        crate::render_cache::with_cache(super::super::render_cache::RenderCache::begin_frame);
 
         let full_width = area.width.max(1) as usize;
         let height = area.height as usize;
@@ -840,7 +840,7 @@ impl ChatWidget {
                     continue;
                 }
                 if Self::starts_new_turn(app, message, i == 0)
-                    && lines.last().map_or(1, |l| l.width()) > 0
+                    && lines.last().map_or(1, ratatui::prelude::Line::width) > 0
                 {
                     lines.push(Line::from(vec![Span::styled(
                         "─".repeat(text_width.min(120)),
@@ -896,7 +896,7 @@ impl ChatWidget {
             .wrap(Wrap { trim: false })
             .scroll((paint_scroll, 0));
         paragraph.render(text_area, buf);
-        crate::render_cache::with_cache(|c| c.end_frame());
+        crate::render_cache::with_cache(super::super::render_cache::RenderCache::end_frame);
 
         if show_bar {
             // Thumb position tracks the viewport: offset 0 (live bottom)

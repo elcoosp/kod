@@ -129,7 +129,7 @@ impl KodEngine {
     pub(crate) async fn anchored_context_tokens(&self, holder: &str) -> Option<u64> {
         let tail_start = {
             let gauges = self.context_gauges.read().await;
-            gauges.get(holder).and_then(|g| g.tail_start())?
+            gauges.get(holder).and_then(kod_core_state::context_gauge::ContextGauge::tail_start)?
         };
         let tail: u64 = {
             let history = self.history.read().await;
@@ -699,7 +699,7 @@ impl KodEngine {
                     let what = payload
                         .downcast_ref::<&'static str>()
                         .copied()
-                        .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                        .or_else(|| payload.downcast_ref::<String>().map(std::string::String::as_str))
                         .unwrap_or("non-string panic payload");
                     tracing::error!(key = %engine_key, panic = what,
                         "compaction summary provider panicked; emergency path will be used");
@@ -950,7 +950,7 @@ mod compaction_proptests {
         #[test]
         fn prop_round_trip_numerics(v in prop::collection::vec(-1000i64..1000, 1..6)) {
             let json = serde_json::to_string(&v).unwrap();
-            let expected: Vec<String> = v.iter().map(|n| n.to_string()).collect();
+            let expected: Vec<String> = v.iter().map(std::string::ToString::to_string).collect();
             prop_assert_eq!(KodEngine::parse_plan_steps(&json), Some(expected));
         }
 

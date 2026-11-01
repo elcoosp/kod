@@ -173,7 +173,7 @@ impl CheckpointManager {
         }
         let mut dirs: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(root)
             .map_err(KodError::Io)?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter_map(|e| {
                 let p = e.path();
                 if !p.is_dir() {

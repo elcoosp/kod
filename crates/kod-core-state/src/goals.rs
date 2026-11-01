@@ -346,7 +346,7 @@ impl GoalRuntime {
     pub fn wants_continuation(&self) -> bool {
         self.current
             .as_ref()
-            .is_some_and(|g| g.wants_continuation())
+            .is_some_and(Goal::wants_continuation)
     }
 }
 

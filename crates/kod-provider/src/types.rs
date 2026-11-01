@@ -275,7 +275,7 @@ mod coverage_response_chunks {
 
     fn call(name: &str, id: Option<&str>) -> ToolCall {
         ToolCall {
-            id: id.map(|s| s.to_string()),
+            id: id.map(std::string::ToString::to_string),
             tool_name: name.to_string(),
             arguments: serde_json::json!({"k": "v"}),
         }
@@ -324,7 +324,7 @@ mod coverage_response_chunks {
         match &chunks[1] {
             StreamChunk::ToolCallDelta { index, arguments } => {
                 assert_eq!(*index, 0);
-                assert!(arguments.contains("k"));
+                assert!(arguments.contains('k'));
             }
             other => panic!("expected ToolCallDelta, got {other:?}"),
         }

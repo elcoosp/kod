@@ -154,7 +154,7 @@ pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
     // so a mere mention mid-paragraph is not a completion signal.
     let lines: Vec<&str> = text
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
     if lines.is_empty() {
@@ -390,7 +390,7 @@ pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
                 parts.push(format!("{key}={shown}"));
             }
         }
-        if let Some(rec) = obj.get("recursive").and_then(|v| v.as_bool())
+        if let Some(rec) = obj.get("recursive").and_then(serde_json::Value::as_bool)
             && rec
         {
             parts.push("recursive".to_string());
@@ -487,13 +487,13 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         && let Some(diff) = v.get("diff").and_then(|d| d.as_str())
     {
         let mut scope = vec![
-            if v.get("staged").and_then(|s| s.as_bool()).unwrap_or(false) {
+            if v.get("staged").and_then(serde_json::Value::as_bool).unwrap_or(false) {
                 "staged"
             } else {
                 "unstaged"
             },
         ];
-        if v.get("stat").and_then(|s| s.as_bool()).unwrap_or(false) {
+        if v.get("stat").and_then(serde_json::Value::as_bool).unwrap_or(false) {
             scope.push("--stat");
         }
         let path = v.get("path").and_then(|p| p.as_str()).map(shorten_path);
@@ -506,7 +506,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
         let trunc = if v
             .get("truncated")
-            .and_then(|t| t.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
         {
             "\n… [truncated at the tool's 64 KB cap — narrow with `path` or `stat`]"
@@ -519,11 +519,11 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     // Binary read_file: no text preview, just a name-and-size line.
     // The model sees the hex preview through the tool-result feedback
     // block; the chat row is a one-liner.
-    if name == "read_file" && v.get("binary").and_then(|b| b.as_bool()).unwrap_or(false) {
+    if name == "read_file" && v.get("binary").and_then(serde_json::Value::as_bool).unwrap_or(false) {
         let path = v
             .get("path")
             .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
-        let size = v.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0);
+        let size = v.get("size_bytes").and_then(serde_json::Value::as_u64).unwrap_or(0);
         return format!("{path} · binary ({size} bytes) — not shown as text");
     }
 
@@ -544,7 +544,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         // have no way to tell the preview is not the whole file.
         let truncated = v
             .get("truncated")
-            .and_then(|t| t.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let suffix = if truncated { " (truncated)" } else { "" };
         let mut out = format!(
@@ -640,11 +640,11 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         // perfectly ordinary 64 KB of text.
         let stdout_trunc = v
             .get("stdout_truncated")
-            .and_then(|t| t.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let stderr_trunc = v
             .get("stderr_truncated")
-            .and_then(|t| t.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         // Explain why the output stops, when it did.
         //
@@ -668,11 +668,11 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         //     with partial output.
         let timed_out = v
             .get("timed_out")
-            .and_then(|t| t.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let timeout_secs = v.get("timeout_secs").and_then(|n| n.as_u64()).unwrap_or(0);
+        let timeout_secs = v.get("timeout_secs").and_then(serde_json::Value::as_u64).unwrap_or(0);
         let truncated = stdout_trunc || stderr_trunc;
-        let signalled = v.get("exit_signal").and_then(|s| s.as_i64()).is_some();
+        let signalled = v.get("exit_signal").and_then(serde_json::Value::as_i64).is_some();
 
         if timed_out {
             out.push_str(&format!(

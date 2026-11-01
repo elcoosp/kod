@@ -485,7 +485,7 @@ impl Tool for ReadFileTool {
         // same shape they always did.
         let numbered = params
             .get("numbered")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         // F2f-23: a truncated read cannot be numbered safely — the
         // unseen tail must not be editable — so numbering is skipped.
@@ -940,10 +940,10 @@ impl Tool for ExecuteCommandTool {
         // command inline, so the flag degrades rather than failing.
         if params
             .get("run_in_background")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
         {
-            let stall = params.get("stall_wake_seconds").and_then(|v| v.as_u64());
+            let stall = params.get("stall_wake_seconds").and_then(serde_json::Value::as_u64);
             match &context.on_background_command {
                 Some(hook) => match hook.spawn(command, stall, &context.holder) {
                     Some(job_id) => {
@@ -1584,8 +1584,8 @@ pub fn gitaware_walk_arc(
         }
         builder
             .build()
-            .filter_map(|e| e.ok())
-            .map(|e| e.into_path())
+            .filter_map(std::result::Result::ok)
+            .map(ignore::DirEntry::into_path)
             .filter(|p| p != root)
             .collect()
     })
@@ -2030,7 +2030,7 @@ impl Tool for GrepTool {
                 for r in &results {
                     let line = r.get("text").and_then(|t| t.as_str()).unwrap_or("");
                     let path = r.get("file").and_then(|p| p.as_str()).unwrap_or("");
-                    let line_number = r.get("line").and_then(|n| n.as_u64()).unwrap_or(0);
+                    let line_number = r.get("line").and_then(serde_json::Value::as_u64).unwrap_or(0);
                     hits.push(crate::relevance::SearchHit {
                         path: std::path::PathBuf::from(path),
                         line_number,
@@ -2055,7 +2055,7 @@ impl Tool for GrepTool {
                             .and_then(|f| f.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        r.get("line").and_then(|n| n.as_u64()).unwrap_or(0),
+                        r.get("line").and_then(serde_json::Value::as_u64).unwrap_or(0),
                     );
                     index.insert(key, i);
                 }

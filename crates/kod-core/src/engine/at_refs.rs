@@ -103,7 +103,7 @@ pub(crate) fn sweep_background_spools(dir: &std::path::Path) {
         return;
     };
     let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = rd
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("log") {
@@ -212,7 +212,7 @@ mod read_protection_tests {
         kod_config::ReadProtection {
             enabled: true,
             mode,
-            deny: deny.iter().map(|s| s.to_string()).collect(),
+            deny: deny.iter().map(std::string::ToString::to_string).collect(),
         }
     }
 

@@ -1848,7 +1848,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     // walk the same set the map walked, or a change below the cap
     // would not invalidate. Stopping at the same limit keeps the two
     // walks consistent and bounds this one too.
-    for (i, entry) in builder.build().filter_map(|e| e.ok()).enumerate() {
+    for (i, entry) in builder.build().filter_map(std::result::Result::ok).enumerate() {
         if i >= kod_core_quality::repomap::MAX_REPO_FILES {
             break;
         }

@@ -84,7 +84,7 @@ impl Tool for MemorySaveTool {
         let content = params
             .get("content")
             .and_then(|v| v.as_str())
-            .map(|s| s.trim())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "memory_save: 'content' is required and must not be empty".to_string(),
@@ -174,14 +174,14 @@ impl Tool for MemorySearchTool {
         let query = params
             .get("query")
             .and_then(|v| v.as_str())
-            .map(|s| s.trim())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "memory_search: 'query' is required and must not be empty".to_string(),
             })?;
         let k = params
             .get("k")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .map_or(8, |n| n as usize)
             .min(30);
 

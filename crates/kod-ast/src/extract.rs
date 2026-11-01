@@ -133,7 +133,7 @@ fn node_kind(lang: Lang, node: tree_sitter::Node) -> Option<&'static str> {
 /// missing field means "no symbol".
 fn node_name(node: tree_sitter::Node, source: &[u8], _lang: Lang) -> Option<String> {
     let name_node = node.child_by_field_name("name")?;
-    name_node.utf8_text(source).ok().map(|s| s.to_string())
+    name_node.utf8_text(source).ok().map(std::string::ToString::to_string)
 }
 
 #[cfg(test)]
