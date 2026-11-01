@@ -73,7 +73,7 @@ impl TokenUsage {
     #[must_use]
     pub fn uncached_input_tokens(&self) -> usize {
         self.prompt_tokens
-            .saturating_sub(self.cache_read_tokens.unwrap_or(0) as usize)
+            .saturating_sub(usize::try_from(self.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
             .saturating_sub(self.cache_creation_tokens.unwrap_or(0) as usize)
     }
 
