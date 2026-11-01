@@ -63,7 +63,10 @@ pub enum Verification {
     MissingFile,
     /// The file exists but is shorter than the cited line. `max` is
     /// the file's actual line count.
-    LineOutOfRange { max: u32 },
+    LineOutOfRange {
+        /// The file's actual line count.
+        max: u32,
+    },
     /// The file exists and is a regular file, but opening it for
     /// the line count failed. Rare; reported rather than treated as
     /// a silent success.
@@ -73,7 +76,9 @@ pub enum Verification {
 /// A citation paired with its verification.
 #[derive(Debug, Clone)]
 pub struct CitationCheck {
+    /// The citation that was checked.
     pub citation: Citation,
+    /// The verification verdict.
     pub verification: Verification,
 }
 

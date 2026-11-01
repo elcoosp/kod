@@ -16,21 +16,32 @@ use std::time::Instant;
 /// A snapshot of the current spend state. `Copy` so a UI can hold it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CostSnapshot {
+    /// USD spent in the session so far.
     pub session_usd: f64,
+    /// Session cap in USD (0 = no cap).
     pub session_cap_usd: f64,
+    /// USD spent in the current turn.
     pub turn_usd: f64,
+    /// Turn cap in USD (0 = no cap).
     pub turn_cap_usd: f64,
+    /// Session spend as a fraction of its cap.
     pub session_fraction: f64,
+    /// Turn spend as a fraction of its cap.
     pub turn_fraction: f64,
+    /// True once the session soft-warn has fired.
     pub session_warned: bool,
+    /// True once the turn soft-warn has fired.
     pub turn_warned: bool,
+    /// True once any cap is exhausted.
     pub exhausted: bool,
 }
 
 /// Which cap tripped a soft warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoftWarningTrigger {
+    /// The session cap crossed its soft warning.
     Session,
+    /// The turn cap crossed its soft warning.
     Turn,
 }
 
@@ -60,6 +71,7 @@ impl Default for CostTracker {
 }
 
 impl CostTracker {
+    /// Fresh tracker with zero spend.
     pub fn new() -> Self {
         Self {
             inner: std::sync::Arc::new(CostInner {
@@ -128,6 +140,7 @@ impl CostTracker {
         self.inner.window.clear();
     }
 
+    /// Reset session and turn spend to zero.
     pub fn reset(&self) {
         self.inner.session_micro.store(0, Ordering::Relaxed);
         self.inner.turn_micro.store(0, Ordering::Relaxed);
@@ -136,6 +149,7 @@ impl CostTracker {
         self.clear_window();
     }
 
+    /// Snapshot the current spend state.
     pub fn snapshot(&self) -> CostSnapshot {
         let session_micro = self.inner.session_micro.load(Ordering::Relaxed);
         let turn_micro = self.inner.turn_micro.load(Ordering::Relaxed);

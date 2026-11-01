@@ -39,7 +39,9 @@ pub enum SessionEntry {
         /// agent uses `swarm:<agent-id>` so concurrent agents do not
         /// interleave their turns.
         holder: String,
+        /// The name of the tool being called.
         tool_name: String,
+        /// The call arguments, as JSON.
         arguments: serde_json::Value,
         /// Wall time the call took, in milliseconds.
         duration_ms: u64,
@@ -54,12 +56,16 @@ pub enum SessionEntry {
     /// log carries a clean audit trail of which endpoint served which
     /// turn.
     ModelFallback {
+        /// Unix milliseconds when the fallback happened.
         timestamp_ms: u64,
         /// The transcript key the fallback happened on ("session",
         /// "swarm:agent-3", ...).
         holder: String,
+        /// The endpoint that failed.
         from: String,
+        /// The endpoint that was tried next.
         to: String,
+        /// The error that triggered the fallback.
         error: String,
     },
     /// Cost of one provider call, in USD. Written after every
@@ -67,20 +73,30 @@ pub enum SessionEntry {
     /// `pricing` configured. Endpoints without pricing log nothing
     /// here — the field is not a guess.
     Cost {
+        /// Unix milliseconds when the completion finished.
         timestamp_ms: u64,
+        /// The transcript key the call ran under.
         holder: String,
+        /// The endpoint that served the call.
         endpoint: String,
+        /// The model that served the call.
         model: String,
+        /// Input tokens the provider reported.
         prompt_tokens: usize,
+        /// Output tokens the provider reported.
         completion_tokens: usize,
+        /// USD cost of the call.
         cost_usd: f64,
     },
     /// A policy decision made before a tool call (D3, AD-15).
     /// One entry per tool call, so the JSONL carries an audit trail
     /// of every allow/deny/ask the engine answered.
     PolicyDecision {
+        /// Unix milliseconds when the decision was made.
         timestamp_ms: u64,
+        /// The transcript key the decision was for.
         holder: String,
+        /// The tool the decision applies to.
         tool_name: String,
         /// "allow" | "deny" | "ask"
         outcome: String,
@@ -98,19 +114,27 @@ pub enum SessionEntry {
     /// `/remember` command. `channel` names which one; the value is
     /// one of `"extraction" | "tool" | "user"`.
     MemoryWrite {
+        /// Unix milliseconds when the memory entry was written.
         timestamp_ms: u64,
+        /// The memory entry id that was written.
         memory_id: String,
+        /// The write channel (extraction, tool, or user).
         channel: String,
         #[serde(default)]
+        /// Tags attached to the memory entry.
         tags: Vec<String>,
     },
     /// An approval decision was made on a pending tool call
     /// (D3.2, AD-15). `decision` is `"approve" | "deny" |
     /// "deny-always" | "timeout"`.
     Approval {
+        /// Unix milliseconds when the approval was recorded.
         timestamp_ms: u64,
+        /// The transcript key the approval was for.
         holder: String,
+        /// The tool the approval applies to.
         tool_name: String,
+        /// The approval decision (approve, deny, deny-always, timeout).
         decision: String,
         /// Tier 2.3 — when the caller substituted arguments (an
         /// `ApproveWith` decision), the new arguments are recorded
@@ -124,15 +148,20 @@ pub enum SessionEntry {
     /// see whether a write introduced or resolved errors without
     /// scanning the full diagnostic list.
     Diagnostics {
+        /// Unix milliseconds when the pass ran.
         timestamp_ms: u64,
+        /// The file the diagnostics were collected for.
         file: String,
+        /// Number of errors found.
         error_count: usize,
+        /// Number of warnings found.
         warning_count: usize,
     },
     /// One memory retrieval event (Tier 2.4). Logged per prompt so
     /// `/memory eval` can compute hit rates and identify queries
     /// that repeatedly miss.
     MemoryRetrieval {
+        /// Unix milliseconds when the retrieval happened.
         timestamp_ms: u64,
         /// Monotonic turn id that triggered the retrieval.
         turn_id: u64,
@@ -164,6 +193,7 @@ pub enum SessionEntry {
     /// Emitted *after* the entry whose payload was redacted, so a
     /// reader that wants the raw trail sees what fired where.
     Redaction {
+        /// Unix milliseconds when the redaction was recorded.
         timestamp_ms: u64,
         /// The rule names that fired, with their counts. Aggregated
         /// over the whole entry so a tool result with three OpenAI
@@ -178,8 +208,11 @@ pub enum SessionEntry {
     /// reader that wants the raw trail is not slowed by the extra
     /// entries.
     ToolOutcome {
+        /// Unix milliseconds when the classification completed.
         timestamp_ms: u64,
+        /// The transcript key the call ran under.
         holder: String,
+        /// The tool the call was for.
         tool_name: String,
         /// One of `success` | `partial` | `failure` | `irrelevant`.
         outcome: String,
@@ -200,6 +233,7 @@ pub enum SessionEntry {
     /// `/jev stats` can report Jev's share without re-parsing
     /// the purpose string.
     JevDecision {
+        /// Unix milliseconds when the decision was made.
         timestamp_ms: u64,
         /// The engine-transcript key the decision served.
         holder: String,
@@ -230,7 +264,9 @@ pub enum SessionEntry {
     /// a dangling start and tells the model which call never
     /// completed.
     SessionExit {
+        /// Unix milliseconds when the session ended.
         timestamp_ms: u64,
+        /// The transcript key the session ran under.
         holder: String,
         /// `"clean"` | `"cancelled"` | `"error"`.
         reason: String,
@@ -243,8 +279,11 @@ pub enum SessionEntry {
     /// sees a start with no matching completion reports the
     /// interrupted call.
     ToolExecutionStart {
+        /// Unix milliseconds when the tool call started.
         timestamp_ms: u64,
+        /// The transcript key the call is running under.
         holder: String,
+        /// The name of the tool being called.
         tool_name: String,
         /// The call's id, when the provider assigned one. Lets a
         /// resume match the start to its completion precisely rather
@@ -266,6 +305,7 @@ pub enum SessionEntry {
     /// detect "the config changed since this session ran" and
     /// refuse a stale revive.
     SessionInit {
+        /// Unix milliseconds when the session was initialized.
         timestamp_ms: u64,
         /// The transcript key the session ran under.
         holder: String,
@@ -419,6 +459,7 @@ impl SessionRecorder {
         Ok(())
     }
 
+    /// The path this recorder writes to.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -630,6 +671,8 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
     out
 }
 
+/// The default session-log path under the user's home directory,
+/// with a timestamp suffix.
 pub fn default_session_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ts = std::time::SystemTime::now()

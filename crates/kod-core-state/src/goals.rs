@@ -61,6 +61,7 @@ pub enum GoalStatus {
 }
 
 impl GoalStatus {
+    /// True when the goal has finished (complete or dropped).
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Complete | Self::Dropped)
     }
@@ -85,17 +86,20 @@ pub struct GoalBudget {
 /// One objective.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Goal {
+    /// The goal's unique id.
     pub id: u64,
     /// The objective text, as the user stated it.
     pub objective: String,
+    /// The goal's current status.
     pub status: GoalStatus,
     /// `None` means no token cap; the goal runs until the model
     /// declares it met or the caller drops it.
     pub token_budget: Option<u64>,
-    /// Accumulated across the goal's turns.
+    /// Tokens accumulated across the goal's turns.
     pub tokens_used: u64,
     /// `None` means no wall-clock cap.
     pub time_budget_seconds: Option<u64>,
+    /// Wall-clock seconds accumulated across the goal's turns.
     pub time_used_seconds: u64,
     /// Whether the budget-limited steer has already been emitted.
     /// The message is once per goal, not once per turn — the design
@@ -104,6 +108,7 @@ pub struct Goal {
 }
 
 impl Goal {
+    /// Build a new active goal with no budgets set.
     pub fn new(id: u64, objective: impl Into<String>) -> Self {
         Self {
             id,
@@ -117,11 +122,13 @@ impl Goal {
         }
     }
 
+    /// Builder: set the goal's token cap.
     pub fn with_token_budget(mut self, tokens: u64) -> Self {
         self.token_budget = Some(tokens);
         self
     }
 
+    /// Builder: set the goal's wall-clock cap.
     pub fn with_time_budget(mut self, seconds: u64) -> Self {
         self.time_budget_seconds = Some(seconds);
         self
@@ -225,6 +232,7 @@ pub struct GoalRuntime {
 }
 
 impl GoalRuntime {
+    /// Fresh runtime with no current goal.
     pub fn new() -> Self {
         Self {
             current: None,
@@ -270,6 +278,7 @@ impl GoalRuntime {
         self.current.as_ref()
     }
 
+    /// Mutable access to the current goal, if any.
     pub fn current_mut(&mut self) -> Option<&mut Goal> {
         self.current.as_mut()
     }

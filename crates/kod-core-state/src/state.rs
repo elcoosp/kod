@@ -36,7 +36,9 @@ pub struct EngineState {
     /// with a higher version is loaded best-effort and a warning is
     /// logged.
     pub schema_version: u32,
+    /// Persisted plan per transcript key.
     pub plans: HashMap<String, Plan>,
+    /// Persisted decision log per transcript key.
     pub decision_logs: HashMap<String, DecisionLog>,
 }
 
@@ -69,6 +71,7 @@ impl StateStore {
         trace_path.parent().map(|p| p.join("state.json"))
     }
 
+    /// The path this state is persisted to.
     pub fn path(&self) -> &Path {
         &self.path
     }

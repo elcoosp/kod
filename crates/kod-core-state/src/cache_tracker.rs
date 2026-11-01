@@ -23,6 +23,7 @@ pub struct CacheViolation {
     /// Index of the first message that differs from what was seen
     /// before.
     pub turn: usize,
+    /// A human-readable description of what changed.
     pub reason: String,
 }
 
@@ -58,6 +59,7 @@ impl Default for CacheTracker {
 }
 
 impl CacheTracker {
+    /// Build a tracker keeping at most max_history hashes.
     pub fn new(max_history: usize) -> Self {
         Self {
             hashes: Vec::new(),

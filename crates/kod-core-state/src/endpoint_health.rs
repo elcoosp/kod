@@ -52,6 +52,8 @@ impl Default for EndpointHealth {
 }
 
 impl EndpointHealth {
+    /// Build a breaker that trips after strike_limit failures and
+    /// holds the endpoint out for cooldown.
     pub fn new(strike_limit: u32, cooldown: Duration) -> Self {
         Self {
             states: HashMap::new(),

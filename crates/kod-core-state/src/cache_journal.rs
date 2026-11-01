@@ -23,17 +23,31 @@ pub enum InvalidationCause {
     /// The tool definitions array differs from the previous request.
     /// Expected on a late MCP registration; unexpected otherwise.
     ToolSurfaceChanged {
+        /// The tool surface's fingerprint before the change.
         previous_fingerprint: u64,
+        /// The tool surface's fingerprint after the change.
         current_fingerprint: u64,
+        /// Human-readable reason for the change.
         reason: String,
     },
     /// `compact_history_for` removed messages.
-    Compaction { removed: usize },
+    Compaction {
+        /// Number of messages removed by compaction.
+        removed: usize,
+    },
     /// The current model reference changed.
-    ModelSwitch { from: String, to: String },
+    ModelSwitch {
+        /// The model that was previously in use.
+        from: String,
+        /// The model now in use.
+        to: String,
+    },
     /// The cacheable system segment changed (identity, repo map, or
     /// the AGENTS.md snapshot if one is present).
-    SystemPromptChanged { fingerprint: u64 },
+    SystemPromptChanged {
+        /// Fingerprint of the new system prompt.
+        fingerprint: u64,
+    },
 }
 
 impl InvalidationCause {

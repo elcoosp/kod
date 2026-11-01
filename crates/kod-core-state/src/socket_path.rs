@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+/// The default Unix-socket path, honoring XDG_RUNTIME_DIR when set.
 pub fn default_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         let dir = PathBuf::from(dir);

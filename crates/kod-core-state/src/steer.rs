@@ -62,29 +62,35 @@ impl InterruptSource {
 /// One queued interrupt.
 #[derive(Debug, Clone)]
 pub struct SoftInterrupt {
+    /// The interrupt body.
     pub content: String,
+    /// Where the interrupt came from.
     pub source: InterruptSource,
 }
 
 impl SoftInterrupt {
+    /// Build a user-typed steer.
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             source: InterruptSource::User,
         }
     }
+    /// Build a harness-level notice.
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             source: InterruptSource::System,
         }
     }
+    /// Build a background-task update.
     pub fn background(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             source: InterruptSource::BackgroundTask,
         }
     }
+    /// Build a swarm notice.
     pub fn swarm(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),

@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
+/// How sensitive a turn is, from a data-policy perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sensitivity {
     /// No touched path is protected.
@@ -30,6 +31,7 @@ pub enum Sensitivity {
 }
 
 impl Sensitivity {
+    /// The lowercase string label for this level.
     pub fn label(&self) -> &'static str {
         match self {
             Sensitivity::Public => "public",
@@ -40,6 +42,7 @@ impl Sensitivity {
 }
 
 /// Classify a turn by the paths it is about to touch.
+/// Classify a turn by the set of paths it will touch.
 pub fn classify(
     paths: &[PathBuf],
     read_protected: impl Fn(&Path) -> bool,
@@ -72,6 +75,7 @@ pub fn classify(
 pub struct TrustRequirement(pub Option<&'static str>);
 
 impl TrustRequirement {
+    /// The minimum endpoint trust tier for a given sensitivity level.
     pub fn for_sensitivity(s: Sensitivity) -> Self {
         match s {
             Sensitivity::Public => TrustRequirement(None),

@@ -103,7 +103,9 @@ pub fn unmark(root: &Path, kind: MarkerKind, session: &str) {
 /// One live session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
+    /// The session name.
     pub name: String,
+    /// The owning process's pid.
     pub pid: u32,
 }
 

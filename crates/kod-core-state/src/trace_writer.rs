@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Append-only writer for the turns.jsonl trace log.
 pub struct TraceWriter {
     path: PathBuf,
     writer: Mutex<std::fs::File>,
@@ -44,6 +45,7 @@ impl TraceWriter {
         Ok(())
     }
 
+    /// The path this writer appends to.
     pub fn path(&self) -> &Path {
         &self.path
     }

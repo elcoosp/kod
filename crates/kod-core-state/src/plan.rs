@@ -21,36 +21,53 @@ use serde::{Deserialize, Serialize};
 /// One step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanStep {
+    /// The step's unique id (0-based).
     pub id: u32,
+    /// The step text.
     pub text: String,
+    /// Current lifecycle status.
     pub status: PlanStatus,
+    /// Optional rationale (why this step exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+    /// Step ids that must complete first.
     #[serde(default)]
     pub depends_on: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+/// The lifecycle status of a plan step.
 pub enum PlanStatus {
+    /// Not yet started.
     #[default]
     Pending,
+    /// Currently in progress.
     InProgress,
+    /// Finished.
     Done,
+    /// Blocked on an external dependency.
     Blocked,
+    /// Skipped (not needed).
     Skipped,
 }
 
 /// A plan for one transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
+    /// The plan's goal statement.
     pub goal: String,
+    /// The plan's steps in order.
     pub steps: Vec<PlanStep>,
+    /// Index of the currently-active step.
     pub current: usize,
+    /// Per-step notes, keyed by step id.
     #[serde(default)]
     pub notes: std::collections::BTreeMap<u32, Vec<String>>,
+    /// Creation time in milliseconds since the Unix epoch.
     #[serde(default)]
     pub created_at_ms: u64,
+    /// Jev-classifier confidence in the plan.
     #[serde(default)]
     pub jev_confidence: f32,
     /// Delta §11.10: paths the model declared it needs to keep
@@ -403,31 +420,48 @@ pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PlanUpdate {
+    /// Advance to the next pending step.
     Advance,
+    /// Add a note to a step.
     Annotate {
+        /// The step to annotate.
         step_id: u32,
+        /// The note text.
         note: String,
     },
+    /// Insert a new step after the given id.
     Insert {
+        /// The id to insert after.
         after_id: u32,
+        /// The new step's text.
         text: String,
     },
+    /// Remove a step by id.
     Remove {
+        /// The step to remove.
         step_id: u32,
     },
+    /// Replace a step's text.
     Replace {
+        /// The step to modify.
         step_id: u32,
+        /// The new text.
         text: String,
     },
+    /// Set a step's lifecycle status.
     SetStatus {
+        /// The step to modify.
         step_id: u32,
+        /// The new status.
         status: PlanStatus,
     },
     /// Delta §11.10: declare (or withdraw) a path whose `read_file`
     /// result must survive shake and prune. `path: None` drops the
     /// declaration; `Some` adds it (idempotent).
     ReferencePath {
+        /// The path being declared.
         path: String,
+        /// `Some(true)` drops the declaration; `None` or `Some(false)` adds it.
         drop: Option<bool>,
     },
 }

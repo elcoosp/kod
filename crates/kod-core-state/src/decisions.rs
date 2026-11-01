@@ -15,17 +15,24 @@ use serde::{Deserialize, Serialize};
 /// One durable decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRecord {
+    /// The decision's unique id.
     pub id: u64,
     /// Turn id that produced this decision.
     pub turn_id: u64,
+    /// The decision kind.
     pub kind: DecisionKind,
+    /// The decision text.
     pub text: String,
+    /// Who authored the decision.
     pub author: DecisionAuthor,
+    /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
+    /// Free-form tags.
     #[serde(default)]
     pub tags: Vec<String>,
 }
 
+/// The kind of a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionKind {
@@ -42,11 +49,14 @@ pub enum DecisionKind {
     Other,
 }
 
+/// The author of a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionAuthor {
+    /// The decision was made by the user.
     #[default]
     User,
+    /// The decision was made by the assistant.
     Assistant,
 }
 
@@ -54,11 +64,14 @@ pub enum DecisionAuthor {
 /// decisions do not bleed into the interactive session's prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DecisionLog {
+    /// The id to assign to the next decision.
     pub next_id: u64,
+    /// The decisions in this log.
     pub entries: Vec<DecisionRecord>,
 }
 
 impl DecisionLog {
+    /// Empty log.
     pub fn new() -> Self {
         Self::default()
     }

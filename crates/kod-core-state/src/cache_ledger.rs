@@ -76,6 +76,7 @@ pub struct CacheLedger {
 }
 
 impl CacheLedger {
+    /// Empty ledger.
     pub fn new() -> Self {
         Self::default()
     }

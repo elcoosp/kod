@@ -39,9 +39,13 @@ pub struct Allocation {
     /// length when it fits; smaller than the request when it does not
     /// (the caller must reject).
     pub request: usize,
+    /// Chars allocated to transcript history.
     pub history: usize,
+    /// Chars allocated to skill blocks.
     pub skills: usize,
+    /// Chars allocated to memory blocks.
     pub memory: usize,
+    /// Chars allocated to the repo map.
     pub repomap: usize,
 }
 
@@ -147,7 +151,9 @@ impl PromptBudget {
 /// per-section budget table.
 #[derive(Debug, Clone)]
 pub struct PromptTrace {
+    /// The rendered prompt text.
     pub text: String,
+    /// The allocation used, when one was applied.
     pub alloc: Option<Allocation>,
 }
 
@@ -173,7 +179,9 @@ impl PromptTrace {
 /// The request does not fit the window at all.
 #[derive(Debug, Clone, Copy)]
 pub struct BudgetError {
+    /// The request's char count.
     pub request_chars: usize,
+    /// The available window's char count.
     pub total_chars: usize,
 }
 

@@ -14,29 +14,42 @@ pub type TurnId = u64;
 /// Which phase of the streaming loop a round belongs to. Populated
 /// from the Jev per-round classifier when enabled; `Unknown`
 /// otherwise.
+/// Which phase of the streaming loop a round belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoundKind {
+    /// The model is planning.
     Planning,
+    /// The model is executing tool calls.
     ToolExec,
+    /// The model is synthesizing results.
     Synthesis,
+    /// The model is summarizing.
     Summary,
+    /// The phase is unknown.
     Unknown,
 }
 
 /// How a turn ended.
+/// How a turn ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
+    /// The turn completed successfully.
     Completed,
+    /// The turn was cancelled.
     Cancelled,
+    /// The turn failed.
     Failed,
+    /// The turn exhausted its budget.
     BudgetExhausted,
 }
 
 /// A single tool call within a round.
+/// A single tool call within a round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallTrace {
+    /// The tool name.
     pub name: String,
     /// Short FNV-1a hash of the arguments, retained for a quick
     /// identity check without comparing the full value. Kept
@@ -47,8 +60,11 @@ pub struct ToolCallTrace {
     /// model. Empty for a trace written before this field existed.
     #[serde(default)]
     pub arguments: serde_json::Value,
+    /// Wall time in milliseconds.
     pub duration_ms: u64,
+    /// The outcome kind.
     pub outcome: ToolOutcomeKind,
+    /// Number of bytes the tool returned.
     pub output_bytes: usize,
     /// Lines elided by the Jev compression pass, when it fired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,55 +76,84 @@ pub struct ToolCallTrace {
     pub result_summary: Option<String>,
 }
 
+/// The outcome of one tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutcomeKind {
+    /// The call succeeded.
     Success,
+    /// The call failed.
     Error,
+    /// The call was denied by policy.
     Denied,
+    /// The call requires user confirmation.
     RequiresConfirmation,
 }
 
 /// A retry that happened within a round.
+/// A retry that happened within a round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryTrace {
+    /// The endpoint that failed.
     pub from_endpoint: String,
+    /// The endpoint that was tried next.
     pub to_endpoint: String,
+    /// A human-readable reason.
     pub reason: String,
 }
 
 /// A single provider round within a turn.
+/// A single provider round within a turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundTrace {
+    /// The round kind.
     pub kind: RoundKind,
+    /// The endpoint that served the round.
     pub endpoint: String,
+    /// The model that served the round.
     pub model: String,
+    /// Unix milliseconds when the round/turn started.
     pub started_at_ms: u64,
+    /// Wall time in milliseconds.
     pub duration_ms: u64,
+    /// Input tokens the provider reported.
     pub input_tokens: usize,
+    /// Output tokens the provider reported.
     pub output_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Cache-read tokens the provider reported.
     pub cache_read_tokens: Option<usize>,
     #[serde(default)]
+    /// Tool calls made during this round.
     pub tool_calls: Vec<ToolCallTrace>,
     #[serde(default)]
+    /// Retries that happened during this round.
     pub retries: Vec<RetryTrace>,
     #[serde(default)]
+    /// Number of Jev decisions.
     pub jev_decisions: u32,
     #[serde(default)]
+    /// Number of Jev cache hits.
     pub jev_cache_hits: u32,
 }
 
 /// A turn's full trace.
+/// A turn's full trace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnTrace {
+    /// The turn id.
     pub id: TurnId,
+    /// The transcript key the turn ran under.
     pub holder: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The parent turn id, when this is a subagent turn.
     pub parent: Option<TurnId>,
+    /// Unix milliseconds when the round/turn started.
     pub started_at_ms: u64,
+    /// Unix milliseconds when the turn ended.
     pub ended_at_ms: u64,
     #[serde(default)]
+    /// The rounds that made up this turn.
     pub rounds: Vec<RoundTrace>,
     /// The user's input that opened this turn (Tier 1.5). Empty
     /// when the trace came from a build that predates this field, or
@@ -117,21 +162,32 @@ pub struct TurnTrace {
     /// replay; a round with an empty prompt is skipped.
     #[serde(default)]
     pub user_prompt: String,
+    /// The outcome kind.
     pub outcome: TurnOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A human-readable reason.
     pub reason: Option<String>,
+    /// Input tokens across the turn.
     pub prompt_tokens: usize,
+    /// Output tokens across the turn.
     pub completion_tokens: usize,
+    /// USD cost of the turn.
     pub cost_usd: f64,
+    /// Number of tool calls made.
     pub tool_call_count: u32,
+    /// Number of Jev decisions.
     pub jev_decisions: u32,
+    /// Number of Jev cache hits.
     pub jev_cache_hits: u32,
+    /// Character count of the prompt.
     pub prompt_chars: usize,
+    /// Character count of the reply.
     pub reply_chars: usize,
 }
 
 impl TurnTrace {
     /// Total wall time in milliseconds.
+    /// Total wall time of the turn in milliseconds.
     pub fn duration_ms(&self) -> u64 {
         self.ended_at_ms.saturating_sub(self.started_at_ms)
     }
@@ -252,10 +308,12 @@ impl TurnTraceBuilder {
         self.round_jev_cache_hits = 0;
     }
 
+    /// Set the current round's kind.
     pub fn set_round_kind(&mut self, kind: RoundKind) {
         self.round_kind = kind;
     }
 
+    /// Add token usage to the current round and the whole turn.
     pub fn add_usage(
         &mut self,
         prompt_tokens: usize,
@@ -273,6 +331,7 @@ impl TurnTraceBuilder {
         self.trace.cost_usd += cost_usd;
     }
 
+    /// Record one tool call within the current round.
     pub fn add_tool_call(
         &mut self,
         name: &str,
@@ -373,6 +432,7 @@ impl TurnTraceBuilder {
         }
     }
 
+    /// Record one retry within the current round.
     pub fn add_retry(&mut self, from: &str, to: &str, reason: &str) {
         self.round_retries.push(RetryTrace {
             from_endpoint: from.to_string(),
@@ -381,6 +441,7 @@ impl TurnTraceBuilder {
         });
     }
 
+    /// Count one Jev decision (and optionally a cache hit).
     pub fn add_jev(&mut self, cached: bool) {
         self.round_jev_decisions += 1;
         self.trace.jev_decisions += 1;
@@ -390,11 +451,13 @@ impl TurnTraceBuilder {
         }
     }
 
+    /// Set the turn outcome and an optional reason.
     pub fn set_outcome(&mut self, outcome: TurnOutcome, reason: Option<String>) {
         self.trace.outcome = outcome;
         self.trace.reason = reason;
     }
 
+    /// Record the character count of the model's reply.
     pub fn set_reply_chars(&mut self, chars: usize) {
         self.trace.reply_chars = chars;
     }

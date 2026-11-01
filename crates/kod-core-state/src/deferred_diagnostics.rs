@@ -64,6 +64,7 @@ pub struct DeferredDiagnostics {
 }
 
 impl DeferredDiagnostics {
+    /// Empty queue.
     pub fn new() -> Self {
         Self::default()
     }
