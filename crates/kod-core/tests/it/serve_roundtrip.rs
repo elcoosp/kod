@@ -169,8 +169,7 @@ async fn unknown_method_reports_an_error_line() {
     assert!(
         v["data"]["message"]
             .as_str()
-            .map(|s| s.contains("no_such_method"))
-            .unwrap_or(false),
+            .is_some_and(|s| s.contains("no_such_method")),
         "error message must name the unknown method: {v}",
     );
 

@@ -108,8 +108,7 @@ impl CacheLedger {
     pub fn is_warm(&self, endpoint: &str, head_fingerprint: u64) -> bool {
         self.states
             .get(endpoint)
-            .map(|s| s.head_fingerprint == head_fingerprint)
-            .unwrap_or(false)
+            .is_some_and(|s| s.head_fingerprint == head_fingerprint)
     }
 
     /// The endpoint currently warm, if any.

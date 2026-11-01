@@ -103,8 +103,7 @@ impl Plan {
             notes: Default::default(),
             created_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_millis() as u64),
             jev_confidence: 0.0,
             reference_paths: Vec::new(),
         }
@@ -150,8 +149,7 @@ impl Plan {
             .steps
             .iter()
             .position(|s| s.id == after_id)
-            .map(|i| i + 1)
-            .unwrap_or(self.steps.len());
+            .map_or(self.steps.len(), |i| i + 1);
         self.steps.insert(
             pos,
             PlanStep {

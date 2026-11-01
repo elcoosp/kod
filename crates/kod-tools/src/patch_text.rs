@@ -270,25 +270,19 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                 // body aligns with the located block.
                 let mut pos = start - 1;
                 for l in &hunk.lines {
-                    match l.as_bytes().first() {
-                        Some(b' ') | Some(b'-') => {
-                            match file_lines.get(pos) {
-                                Some(file_line) => {
-                                    out.push(if l.starts_with(' ') { ' ' } else { '-' });
-                                    out.push_str(file_line);
-                                    out.push('\n');
-                                }
-                                None => {
-                                    out.push_str(l);
-                                    out.push('\n');
-                                }
-                            }
-                            pos += 1;
-                        }
-                        _ => {
+                    if let Some(b' ' | b'-') = l.as_bytes().first() {
+                        if let Some(file_line) = file_lines.get(pos) {
+                            out.push(if l.starts_with(' ') { ' ' } else { '-' });
+                            out.push_str(file_line);
+                            out.push('\n');
+                        } else {
                             out.push_str(l);
                             out.push('\n');
                         }
+                        pos += 1;
+                    } else {
+                        out.push_str(l);
+                        out.push('\n');
                     }
                 }
                 new_side_offset += new_count as isize - old_count as isize;

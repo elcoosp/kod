@@ -779,7 +779,7 @@ impl FileTouchHook {
     }
     /// Fire the hook with the touch details.
     pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp, intent: Option<&str>) {
-        (self.inner)(holder, path, op, intent)
+        (self.inner)(holder, path, op, intent);
     }
 }
 
@@ -1177,46 +1177,40 @@ impl ToolContext {
             self.working_dir.join(raw)
         };
 
-        let canonical = match std::fs::canonicalize(&joined) {
-            Ok(c) => c,
-            Err(_) => {
-                // BUG-D-02: walk up to the nearest existing ancestor,
-                // then re-join the missing tail verbatim. The old
-                // one-level fallback failed whenever an ancestor above
-                // the immediate parent was also missing — which is the
-                // common `write_file src/new/dir/mod.rs` case.
-                let mut tail: Vec<std::ffi::OsString> = Vec::new();
-                let mut p = joined.clone();
-                let existing = loop {
-                    match std::fs::canonicalize(&p) {
-                        Ok(c) => break c,
-                        Err(_) => {
-                            let name =
-                                p.file_name().ok_or_else(|| KodError::InvalidParameters {
-                                    reason: format!(
-                                        "path has no existing ancestor: {}",
-                                        joined.display()
-                                    ),
-                                })?;
-                            tail.push(name.to_os_string());
-                            p = p
-                                .parent()
-                                .ok_or_else(|| KodError::InvalidParameters {
-                                    reason: format!(
-                                        "path has no existing ancestor: {}",
-                                        joined.display()
-                                    ),
-                                })?
-                                .to_path_buf();
-                        }
-                    }
-                };
-                let mut canonical = existing;
-                for part in tail.iter().rev() {
-                    canonical = canonical.join(part);
+        let canonical = if let Ok(c) = std::fs::canonicalize(&joined) { c } else {
+            // BUG-D-02: walk up to the nearest existing ancestor,
+            // then re-join the missing tail verbatim. The old
+            // one-level fallback failed whenever an ancestor above
+            // the immediate parent was also missing — which is the
+            // common `write_file src/new/dir/mod.rs` case.
+            let mut tail: Vec<std::ffi::OsString> = Vec::new();
+            let mut p = joined.clone();
+            let existing = loop {
+                if let Ok(c) = std::fs::canonicalize(&p) { break c } else {
+                    let name =
+                        p.file_name().ok_or_else(|| KodError::InvalidParameters {
+                            reason: format!(
+                                "path has no existing ancestor: {}",
+                                joined.display()
+                            ),
+                        })?;
+                    tail.push(name.to_os_string());
+                    p = p
+                        .parent()
+                        .ok_or_else(|| KodError::InvalidParameters {
+                            reason: format!(
+                                "path has no existing ancestor: {}",
+                                joined.display()
+                            ),
+                        })?
+                        .to_path_buf();
                 }
-                canonical
+            };
+            let mut canonical = existing;
+            for part in tail.iter().rev() {
+                canonical = canonical.join(part);
             }
+            canonical
         };
 
         let root = std::fs::canonicalize(&self.working_dir).map_err(KodError::Io)?;

@@ -1184,8 +1184,8 @@ impl MemoryManager {
             let reranked = crate::fusion::mmr_rerank(
                 &candidates,
                 |a, b| {
-                    let ca = contents.get(a).map(|s| s.as_str()).unwrap_or("");
-                    let cb = contents.get(b).map(|s| s.as_str()).unwrap_or("");
+                    let ca = contents.get(a).map_or("", |s| s.as_str());
+                    let cb = contents.get(b).map_or("", |s| s.as_str());
                     jaccard(ca, cb)
                 },
                 crate::fusion::MMR_LAMBDA,
@@ -1237,8 +1237,7 @@ impl MemoryManager {
         if !top.is_empty() {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             // H-D5: re-read each entry inside the write step so we
             // write back the *current* value, not a stale snapshot.
             // The pre-fix code captured `top` from `get_all()` and
@@ -2304,8 +2303,7 @@ impl PendingMemory {
     pub fn snapshot(context: kod_types::MemoryContext) -> Self {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         let ids = context
             .working_memory
             .iter()
@@ -2323,8 +2321,7 @@ impl PendingMemory {
     pub fn is_fresh(&self) -> bool {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         now_ms.saturating_sub(self.computed_at_ms) < FRESHNESS_WINDOW_MS
     }
 
@@ -2715,8 +2712,7 @@ mod memory_cache_and_index_invalidation {
         let lt_remove_tail = &src[lt_remove..];
         let lt_remove_end = lt_remove_tail
             .find("\n    }")
-            .map(|i| lt_remove + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| lt_remove + i);
         let lt_remove_body = &src[lt_remove..lt_remove_end];
         assert!(
             lt_remove_body.contains("vector_index.write()")
@@ -2731,8 +2727,7 @@ mod memory_cache_and_index_invalidation {
         let batch_tail = &src[batch..];
         let batch_end = batch_tail
             .find("\n    }")
-            .map(|i| batch + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| batch + i);
         let batch_body = &src[batch..batch_end];
         assert!(
             batch_body.contains("vector_index.write()") && batch_body.contains("idx.remove(id)"),
@@ -2744,8 +2739,7 @@ mod memory_cache_and_index_invalidation {
         let spawn_tail = &src[spawn..];
         let spawn_end = spawn_tail
             .find("\n    }\n")
-            .map(|i| spawn + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| spawn + i);
         let spawn_body = &src[spawn..spawn_end];
         assert!(
             spawn_body.contains("entries_cache"),

@@ -154,12 +154,12 @@ impl AsyncDelivery {
     ///
     /// Returns the number of results dropped.
     pub fn discard_owner(&mut self, owner_id: &str) -> usize {
-        self.queues.remove(owner_id).map(|v| v.len()).unwrap_or(0)
+        self.queues.remove(owner_id).map_or(0, |v| v.len())
     }
 
     /// How many results are queued for an owner.
     pub fn queued_for(&self, owner_id: &str) -> usize {
-        self.queues.get(owner_id).map(|v| v.len()).unwrap_or(0)
+        self.queues.get(owner_id).map_or(0, |v| v.len())
     }
 
     /// Whether anything is queued for any owner.

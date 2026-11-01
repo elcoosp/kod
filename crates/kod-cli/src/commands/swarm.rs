@@ -457,18 +457,15 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
             let merged = data
                 .get("merged")
                 .and_then(|a| a.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
+                .map_or(0, |a| a.len());
             let conflicted = data
                 .get("conflicted")
                 .and_then(|a| a.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
+                .map_or(0, |a| a.len());
             let failed = data
                 .get("failed")
                 .and_then(|a| a.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
+                .map_or(0, |a| a.len());
             if conflicted == 0 && failed == 0 {
                 println!(
                     "\n\u{2500}\u{2500} worktrees merged: {merged} ok \u{2500}\u{2500}\n"

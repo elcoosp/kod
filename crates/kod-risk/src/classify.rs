@@ -139,7 +139,7 @@ fn unwrap_optional_positional_wrapper(
         }
     }
 
-    let pos_start = dd.map(|i| i + 1).unwrap_or(1);
+    let pos_start = dd.map_or(1, |i| i + 1);
     let positionals: Vec<usize> = (pos_start..tokens.len())
         .filter(|&i| {
             let a = unquote(&tokens[i]);
@@ -305,8 +305,7 @@ pub fn tokenize(command: &str) -> Vec<String> {
             let line_end = chars[i..]
                 .iter()
                 .position(|&ch| ch == '\n')
-                .map(|offset| i + offset)
-                .unwrap_or(chars.len());
+                .map_or(chars.len(), |offset| i + offset);
             let this_line: String = chars[i..line_end].iter().collect();
             if this_line.trim() == term.as_str() {
                 heredoc_terminator = None;
@@ -749,7 +748,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         if unresolvable_program {
             findings.push(RiskFinding {
                 level: RiskLevel::Confirm,
-                reason: format!("program {prog_base:?} cannot be resolved statically",),
+                reason: format!("program {prog_base:?} cannot be resolved statically"),
                 target: seg.join(" "),
             });
             continue;
@@ -905,7 +904,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         // Path arguments to destructive commands.
         if DESTRUCTIVE.contains(&prog_base.as_str()) {
             let mut saw_path = false;
-            for arg in args.iter() {
+            for arg in &args {
                 let a = unquote(arg);
                 if a.starts_with('-') {
                     continue;
@@ -1035,7 +1034,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         }
 
         if prog_base == "tee" {
-            for arg in args.iter() {
+            for arg in &args {
                 let a = unquote(arg);
                 if a.starts_with('-') {
                     continue;

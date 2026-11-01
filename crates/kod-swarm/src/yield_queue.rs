@@ -156,7 +156,7 @@ impl YieldQueue {
     /// only known at drain).
     /// Number of queued yields.
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|q| q.len()).unwrap_or(0)
+        self.inner.lock().map_or(0, |q| q.len())
     }
 
     /// True when the queue is empty.
@@ -220,7 +220,7 @@ impl YieldQueue {
     /// empty batch when the caller has disabled idle flush (via
     /// `cancel_idle_flush_scheduling`).
     pub fn drain_idle(&self) -> DrainBatch {
-        let enabled = self.idle_flush_enabled.lock().map(|g| *g).unwrap_or(true);
+        let enabled = self.idle_flush_enabled.lock().map_or(true, |g| *g);
         if !enabled {
             return DrainBatch::default();
         }
@@ -245,7 +245,7 @@ impl YieldQueue {
 
     /// Whether idle flush is enabled.
     pub fn idle_flush_enabled(&self) -> bool {
-        self.idle_flush_enabled.lock().map(|g| *g).unwrap_or(true)
+        self.idle_flush_enabled.lock().map_or(true, |g| *g)
     }
 
     /// Drop every queued entry without rendering. For shutdown.

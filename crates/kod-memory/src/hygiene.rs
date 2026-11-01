@@ -57,19 +57,16 @@ pub fn strip_memory_tags(text: &str) -> String {
     while let Some(open) = rest.find(OPEN) {
         out.push_str(&rest[..open]);
         let after_open = &rest[open + OPEN.len()..];
-        match after_open.find(CLOSE) {
-            Some(close) => {
-                // Skip the whole block, including the closing tag.
-                rest = &after_open[close + CLOSE.len()..];
-            }
-            None => {
-                // An opening tag with no close: drop the rest — an
-                // unterminated block is malformed and keeping its
-                // contents would leak prompt scaffolding into the
-                // store.
-                rest = "";
-                break;
-            }
+        if let Some(close) = after_open.find(CLOSE) {
+            // Skip the whole block, including the closing tag.
+            rest = &after_open[close + CLOSE.len()..];
+        } else {
+            // An opening tag with no close: drop the rest — an
+            // unterminated block is malformed and keeping its
+            // contents would leak prompt scaffolding into the
+            // store.
+            rest = "";
+            break;
         }
     }
     out.push_str(rest);

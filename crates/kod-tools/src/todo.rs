@@ -214,8 +214,7 @@ impl TodoTool {
 pub fn note_evidence(list: &TodoList, todo_id: u64, note: String, raise: ConfidenceState) -> bool {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis() as u64);
     // `try_write` in a sync fn: the evidence path runs on the engine's
     // async runtime, and blocking there on a lock the tool holds while
     // the model is mid-call would be a stall for a log line. Dropping

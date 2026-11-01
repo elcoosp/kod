@@ -111,7 +111,7 @@ where
                     attempt += 1;
                 }
                 crate::web_retry::Next::Return => {
-                    return Err(format!("returned HTTP {status}: {body_preview}",));
+                    return Err(format!("returned HTTP {status}: {body_preview}"));
                 }
             },
         }

@@ -17,8 +17,7 @@ use kod_types::{GitAccess, ToolPermissions, ToolResult};
 
 fn binary_on_path(name: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
-        .unwrap_or(false)
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
 }
 
 fn init_repo(dir: &std::path::Path) {

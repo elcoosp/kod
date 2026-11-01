@@ -131,13 +131,12 @@ pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
         let kind = item
             .get("type")
             .and_then(|t| t.as_str())
-            .map(|t| match t {
+            .map_or(FactKind::Fact, |t| match t {
                 "preference" => FactKind::Preference,
                 "decision" => FactKind::Decision,
                 "pattern" => FactKind::Pattern,
                 _ => FactKind::Fact,
-            })
-            .unwrap_or(FactKind::Fact);
+            });
         if content.len() < 12 {
             continue;
         }

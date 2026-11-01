@@ -78,7 +78,7 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
             .collect()
     };
     let had_trailing_newline = original.ends_with('\n');
-    if had_trailing_newline && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+    if had_trailing_newline && lines.last().is_some_and(|s| s.is_empty()) {
         lines.pop();
     }
 
@@ -86,8 +86,7 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         .lines()
         .rev()
         .find(|l| !l.trim().is_empty())
-        .map(|l| l.starts_with("\\ No newline at end of file"))
-        .unwrap_or(false);
+        .is_some_and(|l| l.starts_with("\\ No newline at end of file"));
 
     let mut offset: isize = 0;
     let mut eof_trailing: Option<bool> = None;
@@ -179,7 +178,7 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
             });
         }
         let reaches_eof = cursor == lines.len();
-        let changed_last = matches!(hunk.last_line_tag, Some('+') | Some('-'));
+        let changed_last = matches!(hunk.last_line_tag, Some('+' | '-'));
         lines.splice(target..cursor, new_lines);
         offset += hunk.new_lines as isize - hunk.old_lines as isize;
         if reaches_eof {
@@ -255,7 +254,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
         // panic.
         let Some((tag, text)) = line.split_at_checked(1) else {
             return Err(KodError::InvalidParameters {
-                reason: format!("diff line does not start on a char boundary: {line:?}",),
+                reason: format!("diff line does not start on a char boundary: {line:?}"),
             });
         };
         let text = text.to_string();

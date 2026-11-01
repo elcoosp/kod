@@ -154,26 +154,23 @@ async fn cancel_during_streaming_returns_promptly() {
     let first_opt = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("first chunk within 5s -- the engine did not send anything for 5s");
-    let first = match first_opt {
-        Some(s) => s,
-        None => {
-            // Channel closed before a chunk. The engine task must
-            // have returned. Join it to surface the error.
-            let joined = tokio::time::timeout(Duration::from_secs(1), run)
-                .await
-                .expect("engine task returned but its JoinHandle did not resolve");
-            match joined {
-                Ok(Ok(resp)) => {
-                    panic!("engine returned Ok before sending a chunk; response: {resp:?}",)
-                }
-                Ok(Err(e)) => panic!(
-                    "engine returned Err before sending a chunk: {e}
-                     (likely cause: the registry is not wired the way \
-                     stream_round expects, or the first round errored \
-                     before reaching the provider stream)",
-                ),
-                Err(join_err) => panic!("engine task panicked: {join_err:?}"),
+    let first = if let Some(s) = first_opt { s } else {
+        // Channel closed before a chunk. The engine task must
+        // have returned. Join it to surface the error.
+        let joined = tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .expect("engine task returned but its JoinHandle did not resolve");
+        match joined {
+            Ok(Ok(resp)) => {
+                panic!("engine returned Ok before sending a chunk; response: {resp:?}")
             }
+            Ok(Err(e)) => panic!(
+                "engine returned Err before sending a chunk: {e}
+                 (likely cause: the registry is not wired the way \
+                 stream_round expects, or the first round errored \
+                 before reaching the provider stream)",
+            ),
+            Err(join_err) => panic!("engine task panicked: {join_err:?}"),
         }
     };
     assert_eq!(first, "hello");

@@ -22,9 +22,7 @@ impl KodEngine {
                 let job = runner.allocate_id();
                 let id_str = job.0.to_string();
 
-                let dir = dirs::home_dir()
-                    .map(|h| h.join(".kod").join("background"))
-                    .unwrap_or_else(std::env::temp_dir);
+                let dir = dirs::home_dir().map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
                 sweep_background_spools(&dir);
                 let spool_path = dir.join(format!("{}.log", job.0));
 
@@ -63,20 +61,17 @@ impl KodEngine {
                     )
                     .ok()
                     .flatten();
-                let mut cmd = match &sandbox_inv {
-                    Some(inv) => {
-                        let mut c = tokio::process::Command::new(&inv.program);
-                        c.args(&inv.args);
-                        c.arg(shell_program);
-                        c.arg(shell_flag);
-                        c.arg(&full);
-                        c
-                    }
-                    None => {
-                        let mut c = tokio::process::Command::new(shell_program);
-                        c.arg(shell_flag).arg(&full);
-                        c
-                    }
+                let mut cmd = if let Some(inv) = &sandbox_inv {
+                    let mut c = tokio::process::Command::new(&inv.program);
+                    c.args(&inv.args);
+                    c.arg(shell_program);
+                    c.arg(shell_flag);
+                    c.arg(&full);
+                    c
+                } else {
+                    let mut c = tokio::process::Command::new(shell_program);
+                    c.arg(shell_flag).arg(&full);
+                    c
                 };
                 cmd.current_dir(&working_dir);
                 cmd.stdout(std::process::Stdio::piped());
@@ -148,23 +143,20 @@ impl KodEngine {
 
                     loop {
                         let read = match stall_dur {
-                            Some(d) => match tokio::time::timeout(d, stdout.read(&mut buf)).await {
-                                Ok(r) => r,
-                                Err(_) => {
-                                    if !stall_reported {
-                                        push_background_interrupt(
-                                            &steers_task,
-                                            &holder,
-                                            format!(
-                                                "background job {id_task} has produced no output for {secs}s",
-                                                secs = stall_secs.unwrap_or(0),
-                                            ),
-                                        )
-                                        .await;
-                                        stall_reported = true;
-                                    }
-                                    continue;
+                            Some(d) => if let Ok(r) = tokio::time::timeout(d, stdout.read(&mut buf)).await { r } else {
+                                if !stall_reported {
+                                    push_background_interrupt(
+                                        &steers_task,
+                                        &holder,
+                                        format!(
+                                            "background job {id_task} has produced no output for {secs}s",
+                                            secs = stall_secs.unwrap_or(0),
+                                        ),
+                                    )
+                                    .await;
+                                    stall_reported = true;
                                 }
+                                continue;
                             },
                             None => stdout.read(&mut buf).await,
                         };
@@ -181,17 +173,13 @@ impl KodEngine {
                         }
                     }
 
-                    let status = match tokio::time::timeout(
+                    let status = if let Ok(s) = tokio::time::timeout(
                         std::time::Duration::from_secs(60),
                         child.wait(),
                     )
-                    .await
-                    {
-                        Ok(s) => s,
-                        Err(_) => {
-                            let _ = child.start_kill();
-                            child.wait().await
-                        }
+                    .await { s } else {
+                        let _ = child.start_kill();
+                        child.wait().await
                     };
                     let preview = spool.preview();
                     let summary = match status {
@@ -255,9 +243,7 @@ impl KodEngine {
             let job = runner.allocate_id();
             let id_str = job.0.to_string();
 
-            let dir = dirs::home_dir()
-                .map(|h| h.join(".kod").join("background"))
-                .unwrap_or_else(std::env::temp_dir);
+            let dir = dirs::home_dir().map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
             sweep_background_spools(&dir);
             let spool_path = dir.join(format!("{}.log", job.0));
 
@@ -344,14 +330,10 @@ impl KodEngine {
                     }
                 }
                 let status =
-                    match tokio::time::timeout(std::time::Duration::from_secs(60), child.wait())
-                        .await
-                    {
-                        Ok(s) => s,
-                        Err(_) => {
-                            let _ = child.start_kill();
-                            child.wait().await
-                        }
+                    if let Ok(s) = tokio::time::timeout(std::time::Duration::from_secs(60), child.wait())
+                        .await { s } else {
+                        let _ = child.start_kill();
+                        child.wait().await
                     };
                 let preview = spool.preview();
                 let summary = match status {

@@ -143,9 +143,7 @@ async fn serve_starts_and_stops() {
     }
     if !stopped {
         handle.abort();
-        let msg = last_err
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "(no error recorded)".to_string());
+        let msg = last_err.map_or_else(|| "(no error recorded)".to_string(), |e| e.to_string());
         panic!(
             "stop_daemon must succeed against a live daemon; \
              gave up after 5s of retries. last error: {msg}",

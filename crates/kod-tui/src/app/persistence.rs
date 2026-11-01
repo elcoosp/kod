@@ -114,8 +114,7 @@ impl KodApp {
             // in the same instant.
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         let serialized = match serde_json::to_string(&entries) {
             Ok(s) => s,
@@ -182,8 +181,7 @@ impl KodApp {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         if std::fs::write(&tmp, raw.as_bytes()).is_err() {
             let _ = std::fs::remove_file(&tmp);

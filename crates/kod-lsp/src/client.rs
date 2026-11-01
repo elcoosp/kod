@@ -356,19 +356,16 @@ impl LspClient {
                 .await
                 .unwrap_or_else(|_| path.to_path_buf())
         };
-        let sent_version = match self.opened.get_mut(&key) {
-            Some(version) => {
-                *version += 1;
-                let v = *version;
-                self.did_change(&key, content, v).await?;
-                Some(v)
-            }
-            None => {
-                self.evict_if_full_preserving(&key).await?;
-                self.did_open(&key, content).await?;
-                self.opened.insert(key.clone(), 1);
-                Some(1)
-            }
+        let sent_version = if let Some(version) = self.opened.get_mut(&key) {
+            *version += 1;
+            let v = *version;
+            self.did_change(&key, content, v).await?;
+            Some(v)
+        } else {
+            self.evict_if_full_preserving(&key).await?;
+            self.did_open(&key, content).await?;
+            self.opened.insert(key.clone(), 1);
+            Some(1)
         };
         self.collect_diagnostics(&key, overall_timeout, sent_version)
             .await
@@ -1060,16 +1057,13 @@ fn try_parse_frame(
     max_message_bytes: usize,
 ) -> Result<Option<(serde_json::Value, usize)>, LspError> {
     // Locate the header/body separator.
-    let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
-        Some(i) => i,
-        None => {
-            if buf.len() > max_header_bytes {
-                return Err(LspError::Protocol(format!(
-                    "LSP header exceeded {max_header_bytes} bytes",
-                )));
-            }
-            return Ok(None);
+    let header_end = if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { i } else {
+        if buf.len() > max_header_bytes {
+            return Err(LspError::Protocol(format!(
+                "LSP header exceeded {max_header_bytes} bytes",
+            )));
         }
+        return Ok(None);
     };
     if header_end > max_header_bytes {
         return Err(LspError::Protocol(format!(
@@ -1113,8 +1107,7 @@ mod tests {
     /// is not installed, rather than failing with a spawn error.
     fn binary_on_path(name: &str) -> bool {
         std::env::var_os("PATH")
-            .map(|path| std::env::split_paths(&path).any(|d| d.join(name).is_file()))
-            .unwrap_or(false)
+            .is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(name).is_file()))
     }
 
     #[test]
@@ -1677,8 +1670,7 @@ mod lsp_document_cap_regression {
         let close_tail = &src[close_start..];
         let close_end = close_tail
             .find("\n    }")
-            .map(|i| close_start + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| close_start + i);
         let close_body = &src[close_start..close_end];
         assert!(
             close_body.contains("textDocument/didClose"),
@@ -1702,8 +1694,7 @@ mod lsp_document_cap_regression {
         let diag_tail = &src[diag..];
         let diag_end = diag_tail
             .find("\n    }\n")
-            .map(|i| diag + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| diag + i);
         let diag_body = &src[diag..diag_end];
         assert!(
             diag_body.contains("evict_if_full_preserving"),

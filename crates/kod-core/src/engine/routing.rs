@@ -466,15 +466,14 @@ impl KodEngine {
                 .cache_ledger
                 .lock()
                 .ok()
-                .map(|l| {
+                .map_or(0.0, |l| {
                     l.switch_penalty_usd(
                         &preferred.endpoint,
                         head_fingerprint,
                         &p,
                         transcript_tokens,
                     )
-                })
-                .unwrap_or(0.0),
+                }),
             // No pricing → cannot estimate; treat as zero penalty so
             // the classification's choice is honoured (local
             // endpoints have no cost, and the switch is free).
@@ -500,12 +499,10 @@ impl KodEngine {
         let chosen = self
             .cache_ledger
             .lock()
-            .ok()
-            .map(|l| {
+            .ok().map_or_else(|| preferred.endpoint.clone(), |l| {
                 l.gate(&preferred.endpoint, &sticky, per_turn_saving, penalty)
                     .to_string()
-            })
-            .unwrap_or_else(|| preferred.endpoint.clone());
+            });
         if chosen == sticky {
             // Hop declined; move the warm endpoint to the front of
             // the chain. The preferred endpoint stays as a fallback
@@ -748,15 +745,12 @@ impl KodEngine {
         }
 
         // The `"auto"` sentinel. Build a judge.
-        let client = match self.resolve_judge_client().await {
-            Some(c) => c,
-            None => {
-                tracing::debug!(
-                    endpoint = %model_ref.endpoint,
-                    "effort = \"auto\" but no judge role is configured; leaving effort unset",
-                );
-                return None;
-            }
+        let client = if let Some(c) = self.resolve_judge_client().await { c } else {
+            tracing::debug!(
+                endpoint = %model_ref.endpoint,
+                "effort = \"auto\" but no judge role is configured; leaving effort unset",
+            );
+            return None;
         };
         let supported = self.supported_efforts_for(model_ref);
         let classifier = kod_core_quality::auto_thinking::AutoThinking::new(client);
@@ -832,15 +826,12 @@ impl KodEngine {
             return;
         }
 
-        let client = match self.resolve_judge_client().await {
-            Some(c) => c,
-            None => {
-                tracing::debug!(
-                    holder = %holder,
-                    "unexpected-stop candidate but no judge role configured",
-                );
-                return;
-            }
+        let client = if let Some(c) = self.resolve_judge_client().await { c } else {
+            tracing::debug!(
+                holder = %holder,
+                "unexpected-stop candidate but no judge role configured",
+            );
+            return;
         };
         let classifier = crate::unexpected_stop::UnexpectedStopClassifier::new(client);
         match classifier.classify(request, reply).await {
@@ -894,8 +885,7 @@ impl KodEngine {
                 .read()
                 .await
                 .get(holder)
-                .map(|turns| turns.len().saturating_sub(1))
-                .unwrap_or(0);
+                .map_or(0, |turns| turns.len().saturating_sub(1));
             self.gauge_observe(holder, covers_through, usage).await;
         }
 
@@ -985,8 +975,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             let cost = pricing.cost_for_usage(usage);
             self.cost_tracker.record(cost);
             let entry = kod_core_state::session_log::SessionEntry::Cost {
@@ -1014,8 +1003,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             let entry = kod_core_state::session_log::SessionEntry::SessionExit {
                 timestamp_ms: now_ms,
                 holder: DEFAULT_TRANSCRIPT_KEY.to_string(),
@@ -1042,8 +1030,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             let entry = kod_core_state::session_log::SessionEntry::ToolExecutionStart {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
@@ -1071,8 +1058,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             let entry = kod_core_state::session_log::SessionEntry::ModelFallback {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),

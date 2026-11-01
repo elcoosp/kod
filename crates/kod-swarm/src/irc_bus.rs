@@ -407,8 +407,7 @@ impl IrcBus {
             .await
             .agents
             .get(id)
-            .map(|s| s.mailbox.len())
-            .unwrap_or(0)
+            .map_or(0, |s| s.mailbox.len())
     }
 
     /// Whether an agent is dead.
@@ -418,8 +417,7 @@ impl IrcBus {
             .await
             .agents
             .get(id)
-            .map(|s| s.dead)
-            .unwrap_or(false)
+            .is_some_and(|s| s.dead)
     }
 
     /// Number of senders currently parked on a reply.

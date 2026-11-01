@@ -147,7 +147,7 @@ async fn stable_prefix_survives_a_history_only_change() {
     let (c1, v1) = split_cacheable(&p1);
     let (c2, v2) = split_cacheable(&p2);
 
-    assert_eq!(c1, c2, "cacheable prefix must not depend on history",);
+    assert_eq!(c1, c2, "cacheable prefix must not depend on history");
     assert_ne!(
         v1, v2,
         "volatile region should have absorbed the history change",

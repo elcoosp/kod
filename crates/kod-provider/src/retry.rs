@@ -82,8 +82,7 @@ impl RetryPolicy {
         // Deterministic pseudo-jitter from nanos; avoids pulling in `rand`.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos() as u64);
         let jitter = Self::jitter_for(nanos);
         let factor = 1.0 + jitter * self.jitter_fraction;
         let secs = capped.as_secs_f64() * factor;
@@ -591,8 +590,7 @@ fn parse_rate_limit_reset(v: &str) -> Option<Duration> {
     let n: i64 = v.trim().parse().ok()?;
     let now_ms: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis() as i64);
     if n > 1_000_000_000_000 {
         let delta = n.saturating_sub(now_ms);
         Some(Duration::from_millis(delta.max(0) as u64))
@@ -948,7 +946,7 @@ mod text_hint_proptests {
         fn prop_no_digits_after_cue_returns_none(filler in "[a-zA-Z ]{1,20}") {
             let text = format!("retry after {filler}");
             // Filler starts with a letter, so no digits follow the cue.
-            prop_assume!(filler.chars().next().map(|c| !c.is_ascii_digit()).unwrap_or(true));
+            prop_assume!(filler.chars().next().map_or(true, |c| !c.is_ascii_digit()));
             prop_assert_eq!(text_hint_secs(&text), None);
         }
     }

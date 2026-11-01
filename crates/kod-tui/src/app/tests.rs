@@ -15,7 +15,7 @@ mod tests {
         // last timestamps are the same instant. The accessor must
         // return `None` rather than compute a divide-by-zero or an
         // absurd instantaneous rate.
-        assert!(app.tokens_per_sec().is_none(), "one chunk yields no rate",);
+        assert!(app.tokens_per_sec().is_none(), "one chunk yields no rate");
     }
 
     #[test]

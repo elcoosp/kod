@@ -983,8 +983,7 @@ impl TaskRouter {
         // had a manager, i.e. always since `enable_memory` defaults on.
         let memory_used = memory_context
             .as_ref()
-            .map(|c| !c.working_memory.is_empty() || !c.long_term.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|c| !c.working_memory.is_empty() || !c.long_term.is_empty());
 
         // 4. The router does not generate text.
         //
@@ -1380,7 +1379,7 @@ impl TaskRouter {
             };
             if !resolved.is_empty() {
                 prompt.push_str("## Relevant Skills\n\n");
-                let skill_budget = budget.map(|a| a.skills).unwrap_or(usize::MAX);
+                let skill_budget = budget.map_or(usize::MAX, |a| a.skills);
                 let mut skill_used = 0usize;
                 for skill in resolved.iter().take(self.config.max_skills_per_query) {
                     // Each skill's instructions count against the
@@ -1396,9 +1395,7 @@ impl TaskRouter {
                     // guessing relative to the project root.
                     let base_dir = skill
                         .path
-                        .parent()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| ".".to_string());
+                        .parent().map_or_else(|| ".".to_string(), |p| p.display().to_string());
                     prompt.push_str(&format!(
                         "### {}\nSkill location: {}\n\n{}\n\n",
                         skill.metadata.name, base_dir, skill.instructions
@@ -1788,8 +1785,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i128)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos() as i128);
         let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         entries.push((rel, mtime, meta.len()));
     }

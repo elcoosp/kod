@@ -196,7 +196,7 @@ pub fn check(
     }
     if q.per_turn > 0 && t.saturating_mul(100) >= q.per_turn.saturating_mul(80) {
         return QuotaVerdict::Soft {
-            reason: format!("`{tool}` has used {t}/{} of its per-turn quota", q.per_turn,),
+            reason: format!("`{tool}` has used {t}/{} of its per-turn quota", q.per_turn),
         };
     }
     QuotaVerdict::Ok

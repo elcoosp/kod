@@ -118,8 +118,8 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
     let re = citation_regex();
     let mut out: Vec<Citation> = Vec::new();
     for cap in re.captures_iter(text) {
-        let path = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let ext = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        let path = cap.get(1).map_or("", |m| m.as_str());
+        let ext = cap.get(2).map_or("", |m| m.as_str());
         let line: u32 = match cap.get(3).and_then(|m| m.as_str().parse().ok()) {
             Some(n) if n > 0 => n,
             _ => continue,

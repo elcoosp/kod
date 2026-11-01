@@ -80,7 +80,7 @@ impl KodEngine {
             Err(_) => return 0,
         };
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let p = rows.first().map(|(_, p)| *p).unwrap_or(0.0);
+        let p = rows.first().map_or(0.0, |(_, p)| *p);
         if p < 0.7 {
             return 0;
         }
@@ -186,8 +186,7 @@ impl KodEngine {
             let p = rows
                 .iter()
                 .find(|(id, _)| id == &format!("skill_{i}"))
-                .map(|(_, p)| *p)
-                .unwrap_or(0.0);
+                .map_or(0.0, |(_, p)| *p);
             answers.insert(format!("skill_{i}"), serde_json::json!(p));
             if p >= threshold && !merged.contains(name) {
                 merged.push(name.clone());
@@ -266,8 +265,7 @@ impl KodEngine {
             let p = rows
                 .iter()
                 .find(|(id, _)| id == &format!("hit_{i}"))
-                .map(|(_, p)| *p)
-                .unwrap_or(1.0);
+                .map_or(1.0, |(_, p)| *p);
             answers.insert(format!("hit_{i}"), serde_json::json!(p));
             if p >= threshold {
                 keep_idx.insert(i);
@@ -388,8 +386,7 @@ impl KodEngine {
             let p = rows
                 .iter()
                 .find(|(id, _)| id == &format!("hunk_{i}"))
-                .map(|(_, p)| *p)
-                .unwrap_or(1.0);
+                .map_or(1.0, |(_, p)| *p);
             answers.insert(format!("hunk_{i}"), serde_json::json!(p));
             if p < threshold {
                 elided += h.len();
@@ -511,8 +508,7 @@ impl KodEngine {
             let entry = kod_core_state::session_log::SessionEntry::ToolOutcome {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_millis() as u64),
                 holder: holder.to_string(),
                 tool_name: call.tool_name.clone(),
                 outcome: outcome_label,
@@ -550,7 +546,7 @@ impl KodEngine {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let (p_yes, source) = match result {
             Ok(rows) => (
-                rows.first().map(|(_, p)| *p).unwrap_or(1.0),
+                rows.first().map_or(1.0, |(_, p)| *p),
                 crate::jev::DecisionSource::Jev,
             ),
             Err(_) => (1.0, crate::jev::DecisionSource::Heuristic),
@@ -717,7 +713,7 @@ impl KodEngine {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let (p_amb, source) = match result {
             Ok(rows) => (
-                rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                rows.first().map_or(0.0, |(_, p)| *p),
                 crate::jev::DecisionSource::Jev,
             ),
             Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
@@ -880,8 +876,7 @@ impl KodEngine {
             let get = |prefix: &str| {
                 rows.iter()
                     .find(|(id, _)| id == &format!("{prefix}_{i}"))
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0)
+                    .map_or(0.0, |(_, p)| *p)
             };
             let mut tags: Vec<&str> = Vec::new();
             if get("decision") >= threshold {
@@ -961,13 +956,10 @@ impl KodEngine {
             .collect();
         let state = crate::jev::build_state(input, &[]);
         let started = std::time::Instant::now();
-        let rows = match jev.evaluate_yes_no_batch(&state, &questions).await {
-            Ok(r) => r,
-            Err(_) => {
-                let mut out = other;
-                out.extend(mcp);
-                return out;
-            }
+        let rows = if let Ok(r) = jev.evaluate_yes_no_batch(&state, &questions).await { r } else {
+            let mut out = other;
+            out.extend(mcp);
+            return out;
         };
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let threshold = jev.thresholds().tool_filter_min;
@@ -979,8 +971,7 @@ impl KodEngine {
                 let p = rows
                     .iter()
                     .find(|(id, _)| id == &format!("tool_{i}"))
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |(_, p)| *p);
                 (i, p)
             })
             .collect();
@@ -1151,8 +1142,7 @@ impl KodEngine {
             let p = rows
                 .iter()
                 .find(|(id, _)| id == &format!("line_{i}"))
-                .map(|(_, p)| *p)
-                .unwrap_or(1.0);
+                .map_or(1.0, |(_, p)| *p);
             answers.insert(format!("line_{i}"), serde_json::json!(p));
             if p >= threshold {
                 keep_idx.insert(i);
@@ -1282,8 +1272,7 @@ impl KodEngine {
         let get = |k: &str| {
             rows.iter()
                 .find(|(id, _)| id == k)
-                .map(|(_, p)| *p)
-                .unwrap_or(1.0)
+                .map_or(1.0, |(_, p)| *p)
         };
         let wants = [
             get("needs_history"),
@@ -1547,7 +1536,7 @@ impl KodEngine {
 
             let (p_yes, yes_source) = match yes {
                 Ok(rows) => (
-                    rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                    rows.first().map_or(0.0, |(_, p)| *p),
                     crate::jev::DecisionSource::Jev,
                 ),
                 Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
@@ -1571,7 +1560,7 @@ impl KodEngine {
 
             let risk_blocking = matches!(
                 risk_label.as_deref(),
-                Some("destructive") | Some("irreversible")
+                Some("destructive" | "irreversible")
             );
             let final_decision = p_yes >= threshold && !risk_blocking;
 

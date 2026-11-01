@@ -6,9 +6,7 @@ fn main() {
         .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .and_then(|output| String::from_utf8(output.stdout).ok()).map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
 
     // Get build timestamp
     let build_time = chrono::Utc::now().format("%Y-%m-%d_%H:%M:%S");

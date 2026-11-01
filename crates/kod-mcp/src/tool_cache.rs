@@ -123,8 +123,7 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
     let entry: CacheEntry = serde_json::from_str(&data).ok()?;
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     // Bug-hunt post-v0.1.9 (P3): `saturating_sub` on a future
     // `cached_at_unix_nanos` yields 0 and the entry is treated as
     // fresh forever — the TTL never fires. Reject a timestamp that
@@ -156,8 +155,7 @@ pub fn write_to(dir: &Path, key: &str, tools: &[McpToolDef]) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let entry = CacheEntry {
         cached_at_unix_nanos: now_nanos,
         tools: tools.to_vec(),
@@ -176,8 +174,7 @@ pub fn write_to(dir: &Path, key: &str, tools: &[McpToolDef]) -> io::Result<()> {
         next_temp_seq(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
+            .map_or(0, |d| d.as_nanos()),
     ));
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, &path)?;
@@ -375,8 +372,7 @@ fn future_timestamped_entry_is_rejected() {
     // future — clearly outside any legitimate clock-skew window.
     let one_hour_ahead_nanos: u128 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_nanos())
         + 3_600u128 * 1_000_000_000u128;
     let json = format!(r#"{{"cached_at_unix_nanos":{one_hour_ahead_nanos},"tools":[]}}"#);
     let path = dir.path().join(format!("{key}.json"));

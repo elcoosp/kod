@@ -55,7 +55,7 @@ fn describe_path_error(path: &std::path::Path, err: &std::io::Error) -> String {
              not listed yet is the common cause.",
         ),
         std::io::ErrorKind::PermissionDenied => {
-            format!("permission denied: {p}. The process does not have read access.",)
+            format!("permission denied: {p}. The process does not have read access.")
         }
         std::io::ErrorKind::IsADirectory => format!(
             "is a directory, not a file: {p}. Use list_files to see its \
@@ -342,7 +342,7 @@ impl Tool for ReadFileTool {
         );
 
         // Total size from metadata (the byte cap below can hide it).
-        let total_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        let total_size = std::fs::metadata(&resolved).map_or(0, |m| m.len());
 
         // Reject directories up front with a structured message. The
         // downstream open would fail with "Is a directory" (or a
@@ -398,22 +398,19 @@ impl Tool for ReadFileTool {
         // in the type system, and inconsistent with how directories
         // were handled. One shape for "the model should reason about
         // this," one shape for "the tool itself failed."
-        let mut buf: Vec<u8> = match prefetched {
-            Some(b) => b,
-            None => {
-                let mut file = match std::fs::File::open(&resolved) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
-                    }
-                };
-                let mut b: Vec<u8> = Vec::with_capacity(8192);
-                file.by_ref()
-                    .take(MAX_READ_BYTES as u64 + 1)
-                    .read_to_end(&mut b)
-                    .map_err(KodError::Io)?;
-                b
-            }
+        let mut buf: Vec<u8> = if let Some(b) = prefetched { b } else {
+            let mut file = match std::fs::File::open(&resolved) {
+                Ok(f) => f,
+                Err(e) => {
+                    return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+                }
+            };
+            let mut b: Vec<u8> = Vec::with_capacity(8192);
+            file.by_ref()
+                .take(MAX_READ_BYTES as u64 + 1)
+                .read_to_end(&mut b)
+                .map_err(KodError::Io)?;
+            b
         };
         let truncated = buf.len() > MAX_READ_BYTES;
         if truncated {
@@ -515,8 +512,7 @@ impl Tool for ReadFileTool {
             let tag = context.edit_store.as_ref().map(|store| {
                 store
                     .lock()
-                    .map(|mut g| g.record_snapshot(&resolved, &raw_content, seen))
-                    .unwrap_or([0, 0])
+                    .map_or([0, 0], |mut g| g.record_snapshot(&resolved, &raw_content, seen))
             });
             // The rendered `N:line` rows shown to the model use the
             // REDACTED content (the model must not see a secret the
@@ -1709,10 +1705,9 @@ impl Tool for PatchFileTool {
             // Anything else against a missing file is a real error.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let new_file_patch = crate::patch::parse_unified_diff(patch)
-                    .map(|hs| {
+                    .is_ok_and(|hs| {
                         !hs.is_empty() && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
-                    })
-                    .unwrap_or(false);
+                    });
                 if new_file_patch {
                     String::new()
                 } else {
@@ -2524,10 +2519,9 @@ mod tests {
                             .lines()
                             .filter(|l| {
                                 l.split_once(':')
-                                    .map(|(n, _)| {
+                                    .is_some_and(|(n, _)| {
                                         !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
                                     })
-                                    .unwrap_or(false)
                             })
                             .count();
                         assert_eq!(

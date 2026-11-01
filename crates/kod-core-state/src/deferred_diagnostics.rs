@@ -118,8 +118,7 @@ impl DeferredDiagnostics {
             .lock()
             .expect("deferred_diagnostics poisoned")
             .get(holder)
-            .map(|v| v.len())
-            .unwrap_or(0)
+            .map_or(0, |v| v.len())
     }
 
     /// True when nothing is queued for any transcript.

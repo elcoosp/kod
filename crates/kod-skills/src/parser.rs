@@ -140,8 +140,7 @@ impl SkillParser {
         // Find next section or end
         let end = content_after
             .find("\n## ")
-            .map(|pos| &content_after[..pos])
-            .unwrap_or(content_after);
+            .map_or(content_after, |pos| &content_after[..pos]);
 
         Some(end.trim().to_string())
     }

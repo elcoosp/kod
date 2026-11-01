@@ -83,7 +83,7 @@ impl KodApp {
 
     /// The index of the currently-selected palette item.
     pub fn palette_selected(&self) -> usize {
-        self.palette.as_ref().map(|p| p.selected).unwrap_or(0)
+        self.palette.as_ref().map_or(0, |p| p.selected)
     }
 
     /// The currently-selected entry, if any.

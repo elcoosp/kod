@@ -382,8 +382,7 @@ impl AgentRegistry {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, path)?;
@@ -482,8 +481,7 @@ impl Default for AgentRegistry {
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis())
 }
 
 /// Monotonic process-local counter used to break ties between

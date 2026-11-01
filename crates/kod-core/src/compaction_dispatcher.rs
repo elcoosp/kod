@@ -492,7 +492,7 @@ impl CompactionMethod for ShakeMethod {
         let plan = plan_shake(
             ctx.transcript,
             &merged,
-            |i| estimator(i),
+            estimator,
             ctx.prefix_is_warm,
         );
         if plan.is_empty() {
@@ -543,7 +543,7 @@ impl CompactionMethod for PruneMethod {
         let plan = kod_core_quality::prune::plan_prune(
             ctx.transcript,
             &merged,
-            |i| estimator(i),
+            estimator,
             ctx.prefix_is_warm,
         );
         if plan.is_empty() {
@@ -684,7 +684,7 @@ impl CompactionMethod for RemoteMethod {
                 })
             }
             Ok(None) => MethodOutcome::NoChange,
-            Err(e) => MethodOutcome::Failed(format!("provider-native compaction failed: {e}",)),
+            Err(e) => MethodOutcome::Failed(format!("provider-native compaction failed: {e}")),
         }
     }
 }

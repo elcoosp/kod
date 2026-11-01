@@ -80,11 +80,11 @@ pub fn language_id_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|s| s.to_str()) {
         Some("rs") => "rust",
         Some("py") => "python",
-        Some("ts") | Some("tsx") => "typescript",
-        Some("js") | Some("jsx") => "javascript",
+        Some("ts" | "tsx") => "typescript",
+        Some("js" | "jsx") => "javascript",
         Some("go") => "go",
-        Some("c") | Some("h") => "c",
-        Some("cc") | Some("cpp") | Some("hpp") | Some("cxx") => "cpp",
+        Some("c" | "h") => "c",
+        Some("cc" | "cpp" | "hpp" | "cxx") => "cpp",
         _ => "plaintext",
     }
 }

@@ -90,8 +90,7 @@ pub async fn run_init(force: bool) -> Result<()> {
                 next_temp_seq(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_nanos()),
             ));
             if let Err(e) = std::fs::copy(&path, &backup) {
                 eprintln!(
@@ -1054,34 +1053,31 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                 return Ok(());
             }
             let defs = registry.get_definitions().await;
-            match defs.iter().find(|d| d.name == name) {
-                Some(d) => {
-                    let json = serde_json::json!({
-                        "name": d.name,
-                        "description": d.description,
-                        "category": format!("{:?}", d.category),
-                        "parameters_schema": d.parameters_schema,
-                        "permissions": {
-                            "read_files": d.permissions.read_files,
-                            "write_files": d.permissions.write_files,
-                            "execute_commands": d.permissions.execute_commands,
-                            "network_access": d.permissions.network_access,
-                            "git_operations": d.permissions.git_access,
-                            "allowed_paths": d.permissions.allowed_paths,
-                            "forbidden_paths": d.permissions.forbidden_paths,
-                        }
-                    });
-                    let s = serde_json::to_string_pretty(&json)
-                        .map_err(|e| KodError::Serialization(e.to_string()))?;
-                    println!("{s}");
-                    Ok(())
-                }
-                None => {
-                    eprintln!("No tool named {name:?}. Try `kod tools`.");
-                    return Err(kod_error::KodError::Internal(
-                        "admin: fatal check failed".to_string(),
-                    ));
-                }
+            if let Some(d) = defs.iter().find(|d| d.name == name) {
+                let json = serde_json::json!({
+                    "name": d.name,
+                    "description": d.description,
+                    "category": format!("{:?}", d.category),
+                    "parameters_schema": d.parameters_schema,
+                    "permissions": {
+                        "read_files": d.permissions.read_files,
+                        "write_files": d.permissions.write_files,
+                        "execute_commands": d.permissions.execute_commands,
+                        "network_access": d.permissions.network_access,
+                        "git_operations": d.permissions.git_access,
+                        "allowed_paths": d.permissions.allowed_paths,
+                        "forbidden_paths": d.permissions.forbidden_paths,
+                    }
+                });
+                let s = serde_json::to_string_pretty(&json)
+                    .map_err(|e| KodError::Serialization(e.to_string()))?;
+                println!("{s}");
+                Ok(())
+            } else {
+                eprintln!("No tool named {name:?}. Try `kod tools`.");
+                return Err(kod_error::KodError::Internal(
+                    "admin: fatal check failed".to_string(),
+                ));
             }
         }
     }
@@ -1279,7 +1275,7 @@ pub async fn run_if_bench(
     }
     let depth = if_bench::depth(&replies, &initial);
     println!();
-    println!("depth: {depth} / {} (par {})", cfg.turns, cfg.par,);
+    println!("depth: {depth} / {} (par {})", cfg.turns, cfg.par);
     let pass = depth >= cfg.par;
     println!("{}", if pass { "PASS" } else { "FAIL" });
     // M-51: the command doc promises exit 1 below par; always Ok(())
@@ -1371,7 +1367,7 @@ pub async fn run_commit_check(
         Err(reason) => {
             eprintln!("rejected: {reason}");
             eprintln!();
-            eprintln!("Known types: {}", commit::TYPES.join(", "),);
+            eprintln!("Known types: {}", commit::TYPES.join(", "));
             eprintln!(
                 "Rules: summary <= {} chars, <= {} details, at least one path, \
                  and a type consistent with the paths (docs -> markdown, ci -> \

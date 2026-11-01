@@ -86,8 +86,7 @@ impl KodEngine {
         self.cancels
             .read()
             .get(key)
-            .map(|(e, _, _)| *e)
-            .unwrap_or(0)
+            .map_or(0, |(e, _, _)| *e)
     }
 
     /// Clear a transcript's cancel only if no newer fire has happened

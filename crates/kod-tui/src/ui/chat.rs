@@ -38,7 +38,7 @@ impl ChatWidget {
         if app.search_query().is_some() || app.show_tools() || m.role != MessageRole::Tool {
             return false;
         }
-        let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
+        let body = m.content.split_once('\n').map_or("", |x| x.1);
         !body.trim_start().starts_with("Error:")
     }
 
@@ -525,7 +525,7 @@ impl ChatWidget {
         width: usize,
     ) -> (usize, bool, std::sync::Arc<Vec<Line<'static>>>) {
         let lines = Self::message_lines_owned(app, m, width);
-        let tail_blank = lines.last().map(|l| l.width() == 0).unwrap_or(false);
+        let tail_blank = lines.last().is_some_and(|l| l.width() == 0);
         let width_u16 = width.min(u16::MAX as usize) as u16;
         #[allow(unstable_name_collisions)]
         let rows = Paragraph::new(Text::from((*lines).clone()))
@@ -597,7 +597,7 @@ impl ChatWidget {
         if app.search_query().is_none() && !app.show_tools() {
             for m in &ordered {
                 if m.role == MessageRole::Tool {
-                    let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
+                    let body = m.content.split_once('\n').map_or("", |x| x.1);
                     if !body.trim_start().starts_with("Error:") {
                         hidden_tools_total += 1;
                     }
@@ -839,7 +839,7 @@ impl ChatWidget {
                     continue;
                 }
                 if Self::starts_new_turn(app, message, i == 0)
-                    && lines.last().map(|l| l.width()).unwrap_or(1) > 0
+                    && lines.last().map_or(1, |l| l.width()) > 0
                 {
                     lines.push(Line::from(vec![Span::styled(
                         "─".repeat(text_width.min(120)),
@@ -1139,9 +1139,7 @@ mod coverage_chat_widget {
             .find(|l| {
                 let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
                 t.contains(needle)
-            })
-            .map(|l| l.spans.clone())
-            .unwrap_or_else(|| panic!("no row containing {needle:?}"))
+            }).map_or_else(|| panic!("no row containing {needle:?}"), |l| l.spans.clone())
     }
 
     #[test]

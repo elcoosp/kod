@@ -483,8 +483,7 @@ fn earliest_whole_word(haystack: &str, needle: &str) -> Option<usize> {
             haystack[..i]
                 .chars()
                 .next_back()
-                .map(|c| !is_word_char(c))
-                .unwrap_or(true)
+                .map_or(true, |c| !is_word_char(c))
         };
         let after = i + needle_len;
         let after_ok = if after >= haystack.len() {
@@ -493,8 +492,7 @@ fn earliest_whole_word(haystack: &str, needle: &str) -> Option<usize> {
             haystack[after..]
                 .chars()
                 .next()
-                .map(|c| !is_word_char(c))
-                .unwrap_or(true)
+                .map_or(true, |c| !is_word_char(c))
         };
         if before_ok && after_ok {
             return Some(i);

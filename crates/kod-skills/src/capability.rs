@@ -242,7 +242,7 @@ mod tests {
         static TMPDIR_COUNTER: std::sync::atomic::AtomicUsize =
             std::sync::atomic::AtomicUsize::new(0);
         let n = TMPDIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!("kod-skills-test-{}-{}", std::process::id(), n,));
+        let p = std::env::temp_dir().join(format!("kod-skills-test-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&p).ok();
         p
     }

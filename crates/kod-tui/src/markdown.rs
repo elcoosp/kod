@@ -74,8 +74,7 @@ pub fn render(markdown: &str, width: usize, theme: &Theme) -> Vec<Line<'static>>
     // would leave two rows of padding where one belongs.
     while out
         .last()
-        .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
-        .unwrap_or(false)
+        .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
     {
         out.pop();
     }
@@ -202,7 +201,7 @@ impl RenderCache {
 
     /// Number of live entries. Exposed for tests.
     pub fn len(&self) -> usize {
-        self.entries.lock().map(|e| e.len()).unwrap_or(0)
+        self.entries.lock().map_or(0, |e| e.len())
     }
 
     /// True when the cache holds no entries.
@@ -1227,7 +1226,7 @@ mod coverage_render_cache_corners {
         for i in 0..50 {
             let _ = c.get_or_render(&format!("content {i}"), 40, &t);
         }
-        assert!(c.len() <= 3, "cache grew past its capacity: {}", c.len(),);
+        assert!(c.len() <= 3, "cache grew past its capacity: {}", c.len());
     }
 
     #[test]

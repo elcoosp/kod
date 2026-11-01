@@ -182,8 +182,7 @@ impl Tool for MemorySearchTool {
         let k = params
             .get("k")
             .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(8)
+            .map_or(8, |n| n as usize)
             .min(30);
 
         let _ = context; // memory_search does not use the cwd

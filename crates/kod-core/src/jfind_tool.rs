@@ -406,8 +406,7 @@ mod tests {
         let has_notes = results.iter().any(|h| {
             h.get("file")
                 .and_then(|x| x.as_str())
-                .map(|s| s.contains("secret-notes.txt"))
-                .unwrap_or(false)
+                .is_some_and(|s| s.contains("secret-notes.txt"))
         });
         assert!(
             has_notes,
@@ -418,8 +417,7 @@ mod tests {
         let has_forbidden = results.iter().any(|h| {
             h.get("file")
                 .and_then(|x| x.as_str())
-                .map(|s| s.contains("secrets/"))
-                .unwrap_or(false)
+                .is_some_and(|s| s.contains("secrets/"))
         });
         assert!(
             !has_forbidden,
@@ -475,8 +473,7 @@ mod tests {
             results.iter().any(|h| h
                 .get("file")
                 .and_then(|x| x.as_str())
-                .map(|s| s.contains("secret-notes.txt"))
-                .unwrap_or(false)),
+                .is_some_and(|s| s.contains("secret-notes.txt"))),
             "the unprotected file must still be found; got {results:?}",
         );
         // The protected file must not appear at all.
@@ -484,8 +481,7 @@ mod tests {
             !results.iter().any(|h| h
                 .get("file")
                 .and_then(|x| x.as_str())
-                .map(|s| s.contains("secret-credentials.env"))
-                .unwrap_or(false)),
+                .is_some_and(|s| s.contains("secret-credentials.env"))),
             "jfind must not report a Refuse-protected file; got {results:?}",
         );
     }

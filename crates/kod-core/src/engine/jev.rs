@@ -833,7 +833,7 @@ impl KodEngine {
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &pairs).await.ok()?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let p_yes = rows.first().map(|(_, p)| *p).unwrap_or(1.0);
+        let p_yes = rows.first().map_or(1.0, |(_, p)| *p);
         self.log_jev_decision(
             DEFAULT_TRANSCRIPT_KEY,
             "swarm_globs",
@@ -928,7 +928,7 @@ impl KodEngine {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let (p_yes, source) = match result {
             Ok(rows) => (
-                rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                rows.first().map_or(0.0, |(_, p)| *p),
                 crate::jev::DecisionSource::Jev,
             ),
             Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
@@ -1105,13 +1105,11 @@ impl KodEngine {
                 let c = rows
                     .iter()
                     .find(|(k, _)| k == "is_complete")
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |(_, p)| *p);
                 let o = rows
                     .iter()
                     .find(|(k, _)| k == "is_off_track")
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |(_, p)| *p);
                 (c, o, crate::jev::DecisionSource::Jev)
             }
             Err(_) => (0.0, 0.0, crate::jev::DecisionSource::Heuristic),
@@ -1222,8 +1220,7 @@ impl KodEngine {
             let entry = kod_core_state::session_log::SessionEntry::JevDecision {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_millis() as u64),
                 holder: holder.to_string(),
                 purpose: purpose.to_string(),
                 state_preview: crate::jev::preview_chars(state_preview, 200),

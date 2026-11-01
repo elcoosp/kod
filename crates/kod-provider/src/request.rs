@@ -739,7 +739,7 @@ mod one_hour_tier_regression {
             .find("let write_1h_rate")
             .expect("write_1h_rate present");
         let tail = &src[start..];
-        let end = tail.find(';').map(|i| start + i).unwrap_or(src.len());
+        let end = tail.find(';').map_or(src.len(), |i| start + i);
         let region = &src[start..end];
         assert!(
             region.contains("unwrap_or(2.0 * self.input_per_mtok_usd)"),

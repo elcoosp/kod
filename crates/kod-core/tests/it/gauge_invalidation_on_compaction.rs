@@ -152,7 +152,7 @@ async fn an_all_pinned_transcript_is_not_compacted() {
     let (engine, _tmp) = seeded_engine(8).await;
 
     let mut turns = engine.history_for("").await;
-    for t in turns.iter_mut() {
+    for t in &mut turns {
         t.metadata.pinned = true;
     }
     engine.set_history_for_tests("", turns).await;

@@ -149,14 +149,11 @@ impl Server {
             })),
         )
         .await;
-        match sent {
-            Ok(Ok(_)) => {}
-            Ok(Err(_)) | Err(_) => {
-                self.pending.lock().await.remove(&id);
-                return Err(KodError::Internal(
-                    "writer channel closed or backpressured past the send timeout".to_string(),
-                ));
-            }
+        if let Ok(Ok(_)) = sent {} else {
+            self.pending.lock().await.remove(&id);
+            return Err(KodError::Internal(
+                "writer channel closed or backpressured past the send timeout".to_string(),
+            ));
         }
         // ACP requests have no client-side timeout in the spec; the
         // engine's own approval timeout would fire if the client never
@@ -1347,7 +1344,7 @@ mod coverage_acp_frame_errors {
         let mut buf: Vec<u8> = Vec::new();
         write_frame(&mut buf, &json!({"a": 1})).await.unwrap();
         let s = String::from_utf8(buf.clone()).unwrap();
-        assert!(s.starts_with("Content-Length: "), "header line, got: {s:?}",);
+        assert!(s.starts_with("Content-Length: "), "header line, got: {s:?}");
         assert!(
             s.contains("\r\n\r\n"),
             "header must terminate with \\r\\n\\r\\n, got: {s:?}",

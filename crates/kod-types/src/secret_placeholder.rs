@@ -266,8 +266,7 @@ impl SecretVault {
                 .inner
                 .forward
                 .read()
-                .map(|g| !g.contains_key(&s))
-                .unwrap_or(true);
+                .map_or(true, |g| !g.contains_key(&s));
             let placeholder = self.register(s);
             if is_new {
                 out.push(RegisteredSecret {
@@ -281,7 +280,7 @@ impl SecretVault {
 
     /// How many secrets are registered.
     pub fn len(&self) -> usize {
-        self.inner.forward.read().map(|g| g.len()).unwrap_or(0)
+        self.inner.forward.read().map_or(0, |g| g.len())
     }
 
     /// True when no secrets are registered.
@@ -315,20 +314,17 @@ impl SecretVault {
             Ok(g) => g.clone(),
             Err(_) => None,
         };
-        let sorted = match cached {
-            Some(v) => v,
-            None => {
-                let mut v: Vec<(String, String)> = match self.inner.forward.read() {
-                    Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
-                    Err(_) => return text.to_string(),
-                };
-                v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
-                let v = std::sync::Arc::new(v);
-                if let Ok(mut g) = self.inner.sorted.write() {
-                    *g = Some(v.clone());
-                }
-                v
+        let sorted = if let Some(v) = cached { v } else {
+            let mut v: Vec<(String, String)> = match self.inner.forward.read() {
+                Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
+                Err(_) => return text.to_string(),
+            };
+            v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
+            let v = std::sync::Arc::new(v);
+            if let Ok(mut g) = self.inner.sorted.write() {
+                *g = Some(v.clone());
             }
+            v
         };
         if sorted.is_empty() {
             return text.to_string();

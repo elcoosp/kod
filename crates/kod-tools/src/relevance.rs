@@ -149,7 +149,7 @@ impl SearchBackend for RipgrepBackend {
                         results.hits.push(hit);
                     }
                 }
-                Some("begin") | Some("end") | Some("context") | Some("summary") => {}
+                Some("begin" | "end" | "context" | "summary") => {}
                 _ => {}
             }
         }

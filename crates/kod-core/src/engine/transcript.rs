@@ -15,14 +15,14 @@ impl KodEngine {
     #[cfg(test)]
     pub(crate) async fn remember_turn(&self, user: bool, text: &str) {
         self.remember_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text)
-            .await
+            .await;
     }
 
     /// Test-only wrapper for the default transcript.
     #[cfg(test)]
     pub(crate) async fn record_turn(&self, user: bool, text: &str) {
         self.record_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text)
-            .await
+            .await;
     }
 
     /// Test-only wrapper for the default transcript.
@@ -162,8 +162,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             let entry = kod_core_state::session_log::SessionEntry::MemoryWrite {
                 timestamp_ms: now_ms,
                 memory_id: memory_id.to_string(),
@@ -346,7 +345,7 @@ impl KodEngine {
     /// Seed a turn into the default transcript. Used by the TUI after
     /// restoring a saved session.
     pub async fn seed_turn(&self, user: bool, text: &str) {
-        self.seed_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text).await
+        self.seed_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text).await;
     }
 
     /// Seed a turn into the transcript identified by `key`.
@@ -531,7 +530,7 @@ impl KodEngine {
     /// Compact the default transcript to the last `max_turns` turns.
     pub async fn compact_history(&self, max_turns: usize) {
         self.compact_history_for(DEFAULT_TRANSCRIPT_KEY, max_turns)
-            .await
+            .await;
     }
 
     /// Compact the transcript for `key` to the last `max_turns` turns.
@@ -565,8 +564,7 @@ impl KodEngine {
         let window = self
             .budget_hint
             .read()
-            .map(|g| g.0 as u64)
-            .unwrap_or(0)
+            .map_or(0, |g| g.0 as u64)
             .max(1);
 
         // Take and release the history lock before touching the gauge,
@@ -721,7 +719,7 @@ impl KodEngine {
         let (count, tail) = {
             let guard = self.history.read().await;
             let turns = guard.get(key);
-            let count = turns.map(|t| t.len()).unwrap_or(0);
+            let count = turns.map_or(0, |t| t.len());
             let mut out = String::new();
             if let Some(turns) = turns {
                 // The last 20 turns, newest-last, matching the order

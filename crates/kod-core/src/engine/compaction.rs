@@ -72,8 +72,7 @@ impl KodEngine {
             // across processes.
             let turn = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_secs());
             l.observe(turn, endpoint, head_fingerprint, usage);
         }
     }
@@ -713,7 +712,7 @@ impl KodEngine {
     pub(crate) async fn maybe_compact_for(&self, key: &str) -> usize {
         // Budget from the cached window; the `0` case (no registry
         // installed) makes `decide` return `None` and nothing runs.
-        let (window, _max_out) = self.budget_hint.read().map(|g| *g).unwrap_or((0, 0));
+        let (window, _max_out) = self.budget_hint.read().map_or((0, 0), |g| *g);
         if window == 0 {
             return 0;
         }
@@ -732,16 +731,12 @@ impl KodEngine {
         // disk without a preceding call.
         let used = match self.anchored_context_tokens(key).await {
             Some(n) => n,
-            None => match self.observed_usage.read().await.get(key) {
-                Some(&n) => n,
-                None => {
-                    let guard = self.history.read().await;
-                    let chars: usize = guard
-                        .get(key)
-                        .map(|t| t.iter().map(|m| m.content.len()).sum())
-                        .unwrap_or(0);
-                    (chars / 4) as u64
-                }
+            None => if let Some(&n) = self.observed_usage.read().await.get(key) { n } else {
+                let guard = self.history.read().await;
+                let chars: usize = guard
+                    .get(key)
+                    .map_or(0, |t| t.iter().map(|m| m.content.len()).sum());
+                (chars / 4) as u64
             },
         };
 
@@ -891,8 +886,7 @@ impl KodEngine {
             .read()
             .await
             .get(key)
-            .map(Vec::len)
-            .unwrap_or(0);
+            .map_or(0, Vec::len);
         self.compact_history_for(key, max_turns).await;
         // Count the messages that were dropped, not the net change:
         // compaction now inserts a summary message, so `before - after`
@@ -902,8 +896,7 @@ impl KodEngine {
             .read()
             .await
             .get(key)
-            .map(Vec::len)
-            .unwrap_or(0);
+            .map_or(0, Vec::len);
         if after == 0 {
             return before;
         }

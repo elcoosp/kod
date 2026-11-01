@@ -72,7 +72,7 @@ impl ReplayProvider {
 
     /// Number of rounds remaining.
     pub fn remaining(&self) -> usize {
-        let cur = self.cursor.lock().map(|g| *g).unwrap_or(0);
+        let cur = self.cursor.lock().map_or(0, |g| *g);
         self.rounds.len().saturating_sub(cur)
     }
 
@@ -151,8 +151,11 @@ impl LlmProvider for ReplayProvider {
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         use futures::StreamExt;
         let answer = self
-            .take()
-            .map(|r| {
+            .take().map_or_else(|| {
+                vec![Err(KodError::InvalidState(
+                    "replay fixture exhausted".to_string(),
+                ))]
+            }, |r| {
                 let mut chunks: Vec<Result<StreamChunk>> = Vec::new();
                 if !r.text.is_empty() {
                     chunks.push(Ok(StreamChunk::Text(r.text.clone())));
@@ -174,11 +177,6 @@ impl LlmProvider for ReplayProvider {
                 }
                 chunks.push(Ok(StreamChunk::Done));
                 chunks
-            })
-            .unwrap_or_else(|| {
-                vec![Err(KodError::InvalidState(
-                    "replay fixture exhausted".to_string(),
-                ))]
             });
         futures::stream::iter(answer).boxed()
     }

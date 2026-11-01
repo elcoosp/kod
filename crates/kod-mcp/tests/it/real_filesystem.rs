@@ -43,8 +43,7 @@ use tempfile::TempDir;
 /// cheap to duplicate rather than lift into `kod-mcp`'s public API.
 fn npx_available() -> bool {
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join("npx").is_file()))
-        .unwrap_or(false)
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("npx").is_file()))
 }
 
 /// Spawn the reference filesystem MCP server rooted at `dir`.

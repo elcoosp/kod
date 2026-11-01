@@ -723,8 +723,7 @@ mod coverage_lsp_tools {
             assert!(
                 def.parameters_schema["required"]
                     .as_array()
-                    .map(|a| a.iter().any(|v| v == "path"))
-                    .unwrap_or(false),
+                    .is_some_and(|a| a.iter().any(|v| v == "path")),
                 "{}: 'path' must be required",
                 def.name,
             );

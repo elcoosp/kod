@@ -295,8 +295,7 @@ impl WorktreeManager {
             next_worktree_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.subsec_nanos()),
         );
         let slug = format!("wt-{token}");
         let branch = format!("wt/{token}");
@@ -663,7 +662,7 @@ impl WorktreeManager {
             .map_err(KodError::Io)?;
         // Ensure a newline before appending so we do not merge with a
         // missing final newline.
-        let prefix = if gitignore.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+        let prefix = if gitignore.metadata().is_ok_and(|m| m.len() > 0) {
             "\n"
         } else {
             ""
@@ -792,22 +791,19 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
     let effective = timeout_secs.max(1);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(effective);
     let status = loop {
-        match child.try_wait().map_err(KodError::Io)? {
-            Some(s) => break s,
-            None => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = out_thread.join();
-                    let _ = err_thread.join();
-                    return Err(KodError::Internal(format!(
-                        "git {}: did not finish within {}s (killed)",
-                        args.join(" "),
-                        effective,
-                    )));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Some(s) = child.try_wait().map_err(KodError::Io)? { break s } else {
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = out_thread.join();
+                let _ = err_thread.join();
+                return Err(KodError::Internal(format!(
+                    "git {}: did not finish within {}s (killed)",
+                    args.join(" "),
+                    effective,
+                )));
             }
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
     };
     let stdout = out_thread.join().unwrap_or_default();
@@ -869,8 +865,7 @@ mod tests {
 
     fn binary_on_path(name: &str) -> bool {
         std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
-            .unwrap_or(false)
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
     }
 
     fn init_repo() -> Option<tempfile::TempDir> {
@@ -943,8 +938,7 @@ mod tests {
                 next_worktree_seq(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.subsec_nanos())
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.subsec_nanos()),
             );
             seen.insert(token);
         }
@@ -1269,8 +1263,7 @@ mod merge_refusal_tests {
 
     fn binary_on_path(name: &str) -> bool {
         std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
-            .unwrap_or(false)
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
     }
 
     /// A minimal git repo with one commit. Mirrors the private
@@ -1312,8 +1305,7 @@ mod merge_refusal_tests {
             .args(args)
             .current_dir(repo)
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     }
 
     /// **H-D3 ancestor refusal.** After the swarm's base commit is no

@@ -556,8 +556,7 @@ pub fn parse_sse_line(
                     .get("cache_creation")
                     .and_then(|c| c.get("ephemeral_1h_input_tokens"))
                     .and_then(|n| n.as_u64())
-                    .map(|n| n as usize)
-                    .unwrap_or(0)
+                    .map_or(0, |n| n as usize)
                     .min(cache_creation);
                 state.cache_read_input_tokens = cache_read;
                 state.cache_creation_input_tokens = cache_creation;
@@ -1856,7 +1855,7 @@ mod coverage_wire_builders {
         // One merged user turn.
         assert_eq!(arr.as_array().unwrap().len(), 1);
         let blocks = arr[0]["content"].as_array().unwrap();
-        assert!(blocks.len() >= 2, "expected merged blocks, got {blocks:?}",);
+        assert!(blocks.len() >= 2, "expected merged blocks, got {blocks:?}");
         assert_eq!(
             blocks[0].get("type").and_then(|t| t.as_str()),
             Some("tool_result"),

@@ -72,8 +72,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         for (i, call) in calls.iter().enumerate() {
             let Some((result, ms)) = raw_results.get(i) else {
                 continue;
@@ -317,9 +316,7 @@ impl KodEngine {
             {
                 let ctx = kod_risk::RiskContext {
                     working_dir: working_dir.to_path_buf(),
-                    home_dir: std::env::var_os("HOME")
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::path::PathBuf::from("/")),
+                    home_dir: std::env::var_os("HOME").map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from),
                     scratch_dir: std::env::temp_dir(),
                 };
                 let assessment = kod_risk::assess(cmd, &ctx);
@@ -421,8 +418,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         for (i, d) in decisions {
             let Some(call) = calls.get(*i) else { continue };
             let outcome = match d.outcome {
@@ -574,8 +570,7 @@ impl KodEngine {
                     {
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
+                            .map_or(0, |d| d.as_millis() as u64);
                         let entry = kod_core_state::session_log::SessionEntry::Approval {
                             timestamp_ms: now_ms,
                             holder: holder.to_string(),
@@ -719,8 +714,7 @@ impl KodEngine {
             {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_millis() as u64);
                 let edit_snapshot = edited_args.get(&i).cloned();
                 let entry = kod_core_state::session_log::SessionEntry::Approval {
                     timestamp_ms: now_ms,
@@ -1009,17 +1003,14 @@ impl KodEngine {
                             .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
                             .cloned()
                     });
-                    match crate::tool_quota::check(&counts, tool, quota.as_ref(), command) {
-                        crate::tool_quota::QuotaVerdict::Hard { reason } => {
-                            Err(kod_error::KodError::PermissionDenied {
-                                action: "quota".to_string(),
-                                reason,
-                            })
-                        }
-                        _ => {
-                            counts.record(tool, command);
-                            Ok(())
-                        }
+                    if let crate::tool_quota::QuotaVerdict::Hard { reason } = crate::tool_quota::check(&counts, tool, quota.as_ref(), command) {
+                        Err(kod_error::KodError::PermissionDenied {
+                            action: "quota".to_string(),
+                            reason,
+                        })
+                    } else {
+                        counts.record(tool, command);
+                        Ok(())
                     }
                 },
             ));
@@ -1179,7 +1170,7 @@ impl KodEngine {
         // secret lives only inside this function's dispatch loop;
         // `calls` is untouched, so the message built at S10 phase 4
         // still carries the placeholder.
-        for call in calls_for_dispatch.iter_mut() {
+        for call in &mut calls_for_dispatch {
             let n = self.deobfuscate_json(&mut call.arguments).await;
             if n > 0 {
                 tracing::debug!(
@@ -1359,7 +1350,7 @@ impl KodEngine {
             // run. Enforcement (refusal) is serial-only; a
             // read-only round that hits a hard cap still runs its
             // peers so the model gets a complete answer.
-            for call in calls.iter() {
+            for call in calls {
                 self.tool_counts.record(&call.tool_name, None);
             }
             // P0-2: honour policy / hook denials in the parallel
@@ -1439,7 +1430,7 @@ impl KodEngine {
         // the mutating-tool trigger that fires an armed prewalk. The
         // engine splices the nudge, switches the model, and pushes
         // the checklist — once per prewalk.
-        for call in calls.iter() {
+        for call in calls {
             self.maybe_fire_prewalk(effective_holder, &call.tool_name)
                 .await;
         }
@@ -1454,7 +1445,7 @@ impl KodEngine {
         // Tier 1.1 — every tool that ran escalates the round's
         // taint to the worse of the current level and the tool's
         // declared trust. The escalation is synchronous and cheap.
-        for call in calls.iter() {
+        for call in calls {
             if let Some(t) = self.tool_trust_level(&call.tool_name).await {
                 self.escalate_taint(t);
             }
@@ -1621,7 +1612,7 @@ impl KodEngine {
         }
         // Tier 3.5 — publish every file the round touched to the
         // blackboard so sibling agents can see it.
-        for call in calls.iter() {
+        for call in calls {
             let path = call.arguments.get("path").and_then(|v| v.as_str());
             if let Some(p) = path {
                 self.note_file_seen(
@@ -1728,8 +1719,7 @@ impl KodEngine {
                 // per-write diagnostics cost.
                 let lsp_config_auto = kod_config::KodConfig::load_cached()
                     .ok()
-                    .map(|c| c.lsp.auto_diagnostics)
-                    .unwrap_or(true);
+                    .map_or(true, |c| c.lsp.auto_diagnostics);
                 let lsp_wanted = self.auto_lsp_setting() && lsp_config_auto;
                 let compiler_wanted = self.auto_check_setting();
                 // Delta 7.2 batch mode: a round that writes several
@@ -1756,8 +1746,7 @@ impl KodEngine {
                     // default 1500 ms if the config is unreadable.
                     let settle_ms = kod_config::KodConfig::load_cached()
                         .ok()
-                        .map(|c| c.lsp.settle_ms)
-                        .unwrap_or(500);
+                        .map_or(500, |c| c.lsp.settle_ms);
                     // Batch rounds take a shorter inline wait: the
                     // model wants a fast answer on the last file, not
                     // a thorough one. Deferred diagnostics still cover
@@ -1777,8 +1766,7 @@ impl KodEngine {
                     if lsp_diags.is_empty() {
                         let (deferred_enabled, deferred_ms) = kod_config::KodConfig::load_cached()
                             .ok()
-                            .map(|c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms))
-                            .unwrap_or((true, 12_000));
+                            .map_or((true, 12_000), |c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms));
                         if deferred_enabled && deferred_ms > 0 {
                             let mtime_at_spawn =
                                 std::fs::metadata(path).and_then(|m| m.modified()).ok();
@@ -1945,7 +1933,7 @@ impl KodEngine {
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        block.push_str(&format!("`{source}`: no diagnostics on this file.\n",));
+                        block.push_str(&format!("`{source}`: no diagnostics on this file.\n"));
                     } else {
                         block.push_str(&format!(
                             "`{}` reported {} diagnostic(s) on this file:\n\n",
@@ -2019,8 +2007,7 @@ impl KodEngine {
                         }
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
+                            .map_or(0, |d| d.as_millis() as u64);
                         for (file, (errs, warns)) in per_file {
                             let entry = kod_core_state::session_log::SessionEntry::Diagnostics {
                                 timestamp_ms: now_ms,
@@ -2049,8 +2036,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis() as u64);
             for (call, result) in calls.iter().zip(results.iter()) {
                 if call.tool_name != "memory_save" {
                     continue;

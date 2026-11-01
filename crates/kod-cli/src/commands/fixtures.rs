@@ -67,8 +67,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
         next_temp_seq(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
+            .map_or(0, |d| d.as_nanos()),
     ));
     std::fs::create_dir_all(&tmp_root).map_err(KodError::Io)?;
     let cfg = kod_core::RouterConfig {
@@ -111,8 +110,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
             .rounds
             .iter()
             .position(|r| !r.user_prompt.is_empty())
-            .map(|i| i + 1)
-            .unwrap_or(fixture.rounds.len())
+            .map_or(fixture.rounds.len(), |i| i + 1)
     } else {
         fixture.rounds.len()
     };
@@ -190,7 +188,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
     }
 
     if divergent == 0 {
-        eprintln!("✓ replay clean: {cmp_len} round(s) matched",);
+        eprintln!("✓ replay clean: {cmp_len} round(s) matched");
         Ok(0)
     } else {
         eprintln!("✗ replay diverged on {divergent} round(s)");
@@ -208,13 +206,10 @@ pub async fn run_fixture_save_v2(
     turns: Option<std::path::PathBuf>,
     force: bool,
 ) -> Result<()> {
-    let turns_path = match turns {
-        Some(p) => p,
-        None => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
-            home.join(".kod").join("sessions").join("turns.jsonl")
-        }
+    let turns_path = if let Some(p) = turns { p } else {
+        let home = dirs::home_dir()
+            .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
+        home.join(".kod").join("sessions").join("turns.jsonl")
     };
     if !turns_path.exists() {
         return Err(KodError::Config(format!(
@@ -293,7 +288,7 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
     for (i, t) in traces.iter().enumerate() {
         let summary = kod_core::RequestSummary {
             system_chars: t.prompt_chars,
-            message_count: t.rounds.first().map(|_| 1).unwrap_or(0),
+            message_count: t.rounds.first().map_or(0, |_| 1),
             tool_names: Vec::new(),
             model: "unknown".to_string(),
             endpoint: "unknown".to_string(),

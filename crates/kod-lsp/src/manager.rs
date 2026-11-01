@@ -50,7 +50,7 @@ pub fn binary_for_path(path: &Path) -> Option<&'static str> {
         Some("rs") if which("rust-analyzer") => Some("rust-analyzer"),
         Some("py") if which("pyright-langserver") => Some("pyright-langserver"),
         Some("py") if which("pylsp") => Some("pylsp"),
-        Some("ts") | Some("tsx") | Some("js") | Some("jsx")
+        Some("ts" | "tsx" | "js" | "jsx")
             if which("typescript-language-server") =>
         {
             Some("typescript-language-server")

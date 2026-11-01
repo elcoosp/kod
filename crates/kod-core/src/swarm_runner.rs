@@ -856,9 +856,7 @@ impl SwarmRunner {
             };
             let name = pool_handles
                 .iter()
-                .find(|h| h.id == chosen)
-                .map(|h| h.name.clone())
-                .unwrap_or_else(|| format!("agent-{}", st.name));
+                .find(|h| h.id == chosen).map_or_else(|| format!("agent-{}", st.name), |h| h.name.clone());
             // M-22: the subtask's own worktree, not the pool agent's.
             let worktree = worktree_created.get(st_idx).cloned();
 
@@ -1164,7 +1162,7 @@ impl SwarmRunner {
                 .send(SwarmEvent::AgentFailed {
                     id: kod_types::AgentId::new(),
                     name: "(run)".to_string(),
-                    error: format!("overall run timeout ({timeout_secs}s) reached",),
+                    error: format!("overall run timeout ({timeout_secs}s) reached"),
                 })
                 .await;
         }
@@ -1733,22 +1731,19 @@ impl SwarmRunner {
                             .await;
                         break;
                     }
-                    match tokio::time::timeout(remaining_time, join_all(wave_tasks)).await {
-                        Ok(v) => v,
-                        Err(_) => {
-                            tracing::warn!(
-                                secs = self.swarm_timeout_secs,
-                                "swarm: wave hit the global deadline;                                  aborting agents mid-flight"
-                            );
-                            // `ready` futures were dropped by the
-                            // timeout; `blocked` never started. Both
-                            // need a terminal event.
-                            let mut all: Vec<usize> = ready.clone();
-                            all.extend(blocked.iter().copied());
-                            report_run_timeout(chunk_tx, &handles, &all, self.swarm_timeout_secs)
-                                .await;
-                            break;
-                        }
+                    if let Ok(v) = tokio::time::timeout(remaining_time, join_all(wave_tasks)).await { v } else {
+                        tracing::warn!(
+                            secs = self.swarm_timeout_secs,
+                            "swarm: wave hit the global deadline;                                  aborting agents mid-flight"
+                        );
+                        // `ready` futures were dropped by the
+                        // timeout; `blocked` never started. Both
+                        // need a terminal event.
+                        let mut all: Vec<usize> = ready.clone();
+                        all.extend(blocked.iter().copied());
+                        report_run_timeout(chunk_tx, &handles, &all, self.swarm_timeout_secs)
+                            .await;
+                        break;
                     }
                 }
                 None => join_all(wave_tasks).await,
@@ -1868,9 +1863,7 @@ impl SwarmRunner {
             for raw_path in &writes {
                 let normalized = match &worktree_prefix {
                     Some(prefix) => std::path::Path::new(raw_path)
-                        .strip_prefix(prefix)
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_else(|_| raw_path.clone()),
+                        .strip_prefix(prefix).map_or_else(|_| raw_path.clone(), |p| p.to_string_lossy().into_owned()),
                     None => raw_path.clone(),
                 };
                 writers_per_file

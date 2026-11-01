@@ -55,7 +55,7 @@ async fn tool_inventory_only_touches_the_volatile_tail() {
     // byte-identical.
     let h1 = head_of(&one);
     let h2 = head_of(&two);
-    assert_eq!(h1, h2, "tool inventory change shifted the cacheable prefix",);
+    assert_eq!(h1, h2, "tool inventory change shifted the cacheable prefix");
     // Sanity: the tail really does mention both tools.
     assert!(one.contains("alpha"), "alpha must be listed");
     assert!(two.contains("beta"), "beta must be listed");

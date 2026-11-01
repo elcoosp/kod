@@ -343,7 +343,7 @@ async fn approved_tool_call_writes_the_file_and_completes() {
         .filter(|n| {
             matches!(
                 n["params"]["update"]["sessionUpdate"].as_str(),
-                Some("tool_call") | Some("tool_call_update"),
+                Some("tool_call" | "tool_call_update"),
             )
         })
         .collect();

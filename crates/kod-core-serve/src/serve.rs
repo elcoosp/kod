@@ -478,8 +478,7 @@ where
                     .params
                     .get("min")
                     .and_then(|v| v.as_u64())
-                    .map(|n| n.min(u8::MAX as u64) as u8)
-                    .unwrap_or(1);
+                    .map_or(1, |n| n.min(u8::MAX as u64) as u8);
                 // Bug-hunt: a client sending `max = 300` used to be
                 // truncated to `44` (300 as u8), breaking version
                 // negotiation silently. The `min` handler two lines
@@ -488,8 +487,7 @@ where
                     .params
                     .get("max")
                     .and_then(|v| v.as_u64())
-                    .map(|n| n.min(u8::MAX as u64) as u8)
-                    .unwrap_or(client_min);
+                    .map_or(client_min, |n| n.min(u8::MAX as u64) as u8);
                 let lo = client_min.max(MIN_PROTOCOL_VERSION);
                 let hi = client_max.min(MAX_PROTOCOL_VERSION);
                 let compatible = lo <= hi;
@@ -501,7 +499,7 @@ where
                     "compatible": compatible,
                     "use": if compatible { Some(hi) } else { None },
                 });
-                write_ok(&out_tx, &req.id, data).await?
+                write_ok(&out_tx, &req.id, data).await?;
             }
             "process" => {
                 // H-R4: spawn the non-streaming prompt so the read
@@ -655,8 +653,7 @@ where
                     .params
                     .get("max_agents")
                     .and_then(|v| v.as_u64())
-                    .map(|n| n as usize)
-                    .unwrap_or(5);
+                    .map_or(5, |n| n as usize);
                 let merge = req
                     .params
                     .get("merge")
@@ -707,7 +704,7 @@ where
                     .and_then(|v| v.as_u64())
                     .unwrap_or(4000) as usize;
                 let data = engine.peek_transcript(&key, max_chars).await;
-                write_ok(&out_tx, &req.id, data).await?
+                write_ok(&out_tx, &req.id, data).await?;
             }
             "shutdown" => {
                 write_ack(&out_tx, &req.id).await?;
@@ -728,7 +725,7 @@ where
                     // existing tooling read bare names.
                     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
                     let data = serde_json::json!({ "models": ids });
-                    write_ok(&out_tx, &req.id, data).await?
+                    write_ok(&out_tx, &req.id, data).await?;
                 }
                 Err(e) => write_error(&out_tx, &req.id, &e.to_string()).await?,
             },
@@ -1487,13 +1484,11 @@ mod version_tests {
         let client_min = v
             .get("min")
             .and_then(|x| x.as_u64())
-            .map(|n| n.min(u8::MAX as u64) as u8)
-            .unwrap_or(1);
+            .map_or(1, |n| n.min(u8::MAX as u64) as u8);
         let client_max = v
             .get("max")
             .and_then(|x| x.as_u64())
-            .map(|n| n.min(u8::MAX as u64) as u8)
-            .unwrap_or(1);
+            .map_or(1, |n| n.min(u8::MAX as u64) as u8);
         assert_eq!(client_min, u8::MAX);
         assert_eq!(client_max, u8::MAX);
     }

@@ -292,7 +292,7 @@ impl KodError {
     /// constructing the error (the earlier signature accepted and
     /// discarded them, which was worse than not accepting them).
     pub fn rate_limited(retry_after: Option<std::time::Duration>) -> Self {
-        let secs = retry_after.map(|d| d.as_secs()).unwrap_or(30);
+        let secs = retry_after.map_or(30, |d| d.as_secs());
         KodError::RateLimited {
             retry_after_secs: secs,
         }
@@ -302,7 +302,7 @@ impl KodError {
     /// Defaults to the tab-bridge overload cooldown (10 min) when the
     /// server sent no parseable hint.
     pub fn server_busy(retry_after: Option<std::time::Duration>) -> Self {
-        let secs = retry_after.map(|d| d.as_secs()).unwrap_or(600);
+        let secs = retry_after.map_or(600, |d| d.as_secs());
         KodError::ServerBusy {
             retry_after_secs: secs,
         }
@@ -354,10 +354,10 @@ impl KodError {
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
             408 => KodError::ProviderTimeout { timeout_ms: 0 },
             429 => KodError::RateLimited {
-                retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(30),
+                retry_after_secs: retry_after.map_or(30, |d| d.as_secs()),
             },
             503 if Self::is_server_busy_body(&snippet) => KodError::ServerBusy {
-                retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(600),
+                retry_after_secs: retry_after.map_or(600, |d| d.as_secs()),
             },
             500..=599 => KodError::Provider(format!("server error {status}: {snippet}")),
             _ => KodError::Provider(format!("http {status}: {snippet}")),

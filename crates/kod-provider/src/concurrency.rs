@@ -354,7 +354,7 @@ mod tests {
             }
         });
         let early = timeout(Duration::from_millis(60), waiter).await;
-        assert!(early.is_err(), "acquire must park while cap is reached",);
+        assert!(early.is_err(), "acquire must park while cap is reached");
     }
 
     #[tokio::test]

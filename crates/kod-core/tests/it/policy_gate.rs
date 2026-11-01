@@ -570,8 +570,7 @@ async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
     let has_notes = results.iter().any(|h| {
         h.get("file")
             .and_then(|x| x.as_str())
-            .map(|s| s.contains("secret-notes.txt"))
-            .unwrap_or(false)
+            .is_some_and(|s| s.contains("secret-notes.txt"))
     });
     assert!(
         has_notes,
@@ -580,8 +579,7 @@ async fn jfind_walks_skip_forbidden_paths_through_the_engine() {
     let has_forbidden = results.iter().any(|h| {
         h.get("file")
             .and_then(|x| x.as_str())
-            .map(|s| s.contains("secrets/"))
-            .unwrap_or(false)
+            .is_some_and(|s| s.contains("secrets/"))
     });
     assert!(
         !has_forbidden,
@@ -653,7 +651,7 @@ async fn search_files_walks_skip_forbidden_paths_through_the_engine() {
             "walk must not read files under `forbidden`; got hit in {file:?}",
         );
     }
-    assert!(results.is_empty(), "no match expected; got {results:?}",);
+    assert!(results.is_empty(), "no match expected; got {results:?}");
 }
 
 /// Bug-hunt addendum 20: the wiring fix at `c4c5f0df` installs the

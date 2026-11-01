@@ -357,7 +357,7 @@ mod tests {
         // they are distinct keys.
         for i in 0..(MAX_ENTRIES + 5) {
             let root = format!("/r{i}");
-            cache.get_or_walk(Path::new(&root), true, || vec![]);
+            cache.get_or_walk(Path::new(&root), true, std::vec::Vec::new);
         }
         assert!(
             cache.len() <= MAX_ENTRIES,

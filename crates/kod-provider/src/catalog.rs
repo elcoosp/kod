@@ -363,7 +363,7 @@ pub fn resolve(id: &str) -> Option<&'static ModelMeta> {
         let n = normalize(&m.id);
         if want.starts_with(&n) && (want.len() == n.len() || want.as_bytes()[n.len()] == b'-') {
             let len = n.len();
-            if best.map(|(_, l)| len > l).unwrap_or(true) {
+            if best.map_or(true, |(_, l)| len > l) {
                 best = Some((m, len));
             }
         }

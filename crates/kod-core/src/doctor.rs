@@ -137,9 +137,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                          add a .md skill to {} to get started",
                         dirs.len(),
                         if dirs.len() == 1 { "y" } else { "ies" },
-                        dirs.first()
-                            .map(|d| d.display().to_string())
-                            .unwrap_or_else(|| "~/.agents/skills".to_string()),
+                        dirs.first().map_or_else(|| "~/.agents/skills".to_string(), |d| d.display().to_string()),
                     ),
                 );
             } else {
@@ -194,7 +192,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                     report.push(
                         "skills",
                         CheckStatus::Warn,
-                        format!("{parsed}/{total} parsed; {} failed — {first}", failed.len(),),
+                        format!("{parsed}/{total} parsed; {} failed — {first}", failed.len()),
                     );
                 }
             }
@@ -204,7 +202,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
 
     match config.memory_db_path() {
         Ok(path) => {
-            let parent_ok = path.parent().map(|p| p.exists()).unwrap_or(false);
+            let parent_ok = path.parent().is_some_and(|p| p.exists());
             if parent_ok {
                 report.push(
                     "memory",
@@ -231,25 +229,22 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
         use kod_tools::context::{SandboxMode, SandboxOpts, SandboxResolver};
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let resolver = SandboxResolver::detect();
-        match resolver.invocation(SandboxMode::Require, &cwd, SandboxOpts::default()) {
-            Ok(Some(inv)) => report.push(
-                "sandbox",
-                CheckStatus::Ok,
-                format!(
-                    "{} available (Auto uses it; Require enforces it)",
-                    inv.backend.name()
-                ),
+        if let Ok(Some(inv)) = resolver.invocation(SandboxMode::Require, &cwd, SandboxOpts::default()) { report.push(
+            "sandbox",
+            CheckStatus::Ok,
+            format!(
+                "{} available (Auto uses it; Require enforces it)",
+                inv.backend.name()
             ),
-            _ => {
-                #[cfg(target_os = "linux")]
-                let advice = "install bubblewrap (apt/dnf/pacman/apk) to enable sandboxing";
-                #[cfg(target_os = "macos")]
-                let advice = "sandbox-exec is not available; `xcode-select --install` may fix it";
-                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-                let advice = "no sandbox primitive on this platform";
+        ); } else {
+            #[cfg(target_os = "linux")]
+            let advice = "install bubblewrap (apt/dnf/pacman/apk) to enable sandboxing";
+            #[cfg(target_os = "macos")]
+            let advice = "sandbox-exec is not available; `xcode-select --install` may fix it";
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            let advice = "no sandbox primitive on this platform";
 
-                report.push("sandbox", CheckStatus::Warn, advice);
-            }
+            report.push("sandbox", CheckStatus::Warn, advice);
         }
     }
 
@@ -269,8 +264,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
         .iter()
         .filter(|(bin, _)| {
             std::env::var_os("PATH")
-                .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-                .unwrap_or(false)
+                .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
         })
         .map(|(b, l)| (*b, *l))
         .collect();
@@ -327,7 +321,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             report.push(
                 "lsp.auto_diagnostics",
                 CheckStatus::Warn,
-                format!("disabled — {}", disabled_by.join(" and "),),
+                format!("disabled — {}", disabled_by.join(" and ")),
             );
         }
 
@@ -398,7 +392,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             report.push(
                 "mcp",
                 CheckStatus::Ok,
-                format!("{spawnable} server(s) configured: {}", names.join(", "),),
+                format!("{spawnable} server(s) configured: {}", names.join(", ")),
             );
         }
     }
@@ -433,8 +427,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             .llm
             .routing
             .as_ref()
-            .map(|r| r.swarm.len())
-            .unwrap_or(0);
+            .map_or(0, |r| r.swarm.len());
         if swarm_routes == 0 {
             report.push(
                 "swarm.routing",

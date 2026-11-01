@@ -297,9 +297,7 @@ fn try_expand_import(
     let body = std::fs::read_to_string(&canonical).ok()?;
     visited.insert(canonical.clone());
     let parent = canonical
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| base_dir.to_path_buf());
+        .parent().map_or_else(|| base_dir.to_path_buf(), Path::to_path_buf);
     let expanded = expand_imports_rec(&body, &parent, depth_of_import, visited);
     // Allow siblings to reference the same file: the visited guard
     // is for cycles, not for de-duplication.
@@ -430,7 +428,7 @@ impl InstructionChain {
 fn guard_matches(when: &When, task: Option<&str>, paths: &[PathBuf], langs: &[&str]) -> bool {
     match when {
         When::Always => true,
-        When::TaskType(t) => task.map(|x| x.eq_ignore_ascii_case(t)).unwrap_or(false),
+        When::TaskType(t) => task.is_some_and(|x| x.eq_ignore_ascii_case(t)),
         When::Lang(l) => langs.iter().any(|x| x.eq_ignore_ascii_case(l)),
         When::Path(glob) => paths
             .iter()
@@ -611,8 +609,7 @@ mod tests {
         let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         let d = std::env::temp_dir().join(format!(
             "kod-insn-{}-{}-{}-{}",
             tag,

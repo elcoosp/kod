@@ -183,12 +183,10 @@ impl Goal {
         }
         let tokens_over = self
             .token_budget
-            .map(|b| self.tokens_used >= b)
-            .unwrap_or(false);
+            .is_some_and(|b| self.tokens_used >= b);
         let time_over = self
             .time_budget_seconds
-            .map(|b| self.time_used_seconds >= b)
-            .unwrap_or(false);
+            .is_some_and(|b| self.time_used_seconds >= b);
         if tokens_over || time_over {
             self.status = GoalStatus::BudgetLimited;
         }
@@ -220,7 +218,7 @@ impl Goal {
             Some(b) => format!("{} / {} s", self.time_used_seconds, b),
             None => format!("{} s", self.time_used_seconds),
         };
-        format!("goal {:?}: {token_part}, {time_part}", self.status,)
+        format!("goal {:?}: {token_part}, {time_part}", self.status)
     }
 }
 
@@ -338,8 +336,7 @@ impl GoalRuntime {
     pub fn wants_continuation(&self) -> bool {
         self.current
             .as_ref()
-            .map(|g| g.wants_continuation())
-            .unwrap_or(false)
+            .is_some_and(|g| g.wants_continuation())
     }
 }
 

@@ -119,7 +119,7 @@ impl CleanseScheduler {
         // set `released = false`, which made the file *less* claimable
         // — `take_batch`'s fresh filter admits only an unowned or
         // released file, so flipping the flag hid the work.
-        let released = self.owned.get(&file).map(|o| o.released).unwrap_or(false);
+        let released = self.owned.get(&file).is_some_and(|o| o.released);
         if released {
             self.owned.remove(&file);
         } else if let Some(owner) = self.owned.get_mut(&file) {
@@ -174,7 +174,7 @@ impl CleanseScheduler {
             .pending
             .keys()
             .filter(|f| {
-                !claimed.contains(f) && self.owned.get(*f).map(|o| o.released).unwrap_or(true)
+                !claimed.contains(f) && self.owned.get(*f).map_or(true, |o| o.released)
             })
             .cloned()
             .collect();

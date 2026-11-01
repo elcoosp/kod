@@ -365,9 +365,9 @@ impl PolicyEngine {
         //      passes `--preset yolo`.
         //   3. CLI override applied below (the last writer wins).
         effective.preset = match cfg.tools.preset.as_deref() {
-            Some("read-only") | Some("readonly") => Preset::ReadOnly,
-            Some("standard") | Some("default") => Preset::Standard,
-            Some("yolo") | Some("unrestricted") => Preset::Yolo,
+            Some("read-only" | "readonly") => Preset::ReadOnly,
+            Some("standard" | "default") => Preset::Standard,
+            Some("yolo" | "unrestricted") => Preset::Yolo,
             Some(other) => {
                 tracing::warn!(
                     value = %other,
@@ -640,7 +640,7 @@ impl PolicyEngine {
             {
                 return PolicyDecision {
                     outcome: Decision::Deny,
-                    rule: format!("{tool} allow-list {allowed:?} does not include {p:?}",),
+                    rule: format!("{tool} allow-list {allowed:?} does not include {p:?}"),
                     source: self.source_for(tool),
                 };
             }
@@ -677,9 +677,7 @@ impl PolicyEngine {
         } else {
             for (name, tp) in &self.effective.tools {
                 let mode = tp
-                    .mode
-                    .map(|m| format!("{m:?}"))
-                    .unwrap_or_else(|| "(preset)".to_string());
+                    .mode.map_or_else(|| "(preset)".to_string(), |m| format!("{m:?}"));
                 lines.push(format!("  {name}: mode = {mode}"));
             }
         }
@@ -2024,7 +2022,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
                 cur = raw[rest..].join(" ").replace(['\'', '"'], "");
                 continue;
             }
-            let pos_start = dd.map(|i| i + 1).unwrap_or(start + 1);
+            let pos_start = dd.map_or(start + 1, |i| i + 1);
             let positionals: Vec<usize> = (pos_start..raw.len())
                 .filter(|&pos_idx| {
                     let a = unquote(raw[pos_idx]);
@@ -2043,7 +2041,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
             .iter()
             .find(|(w, _, _)| *w == first.as_str());
         let flag_args: &[&str] = prefix_entry.map(|(_, f, _)| *f).unwrap_or(&[]);
-        let positional_skip: usize = prefix_entry.map(|(_, _, n)| *n).unwrap_or(0);
+        let positional_skip: usize = prefix_entry.map_or(0, |(_, _, n)| *n);
         let is_prefix_wrapper = prefix_entry.is_some();
         if !is_command_string_wrapper && !is_prefix_wrapper {
             break;

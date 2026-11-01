@@ -157,8 +157,7 @@ impl KodEngine {
         let considered_before_ttl = response
             .memory_context
             .as_ref()
-            .map(|c| c.working_memory.len() + c.long_term.len())
-            .unwrap_or(0);
+            .map_or(0, |c| c.working_memory.len() + c.long_term.len());
         let (ctx, ttl_drops) = self
             .apply_memory_injection_ttl_with_drops(key, response.memory_context)
             .await;
@@ -206,8 +205,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
 
         let mut guard = self.injected_memory_at.write().await;
         let seen = guard.entry(key.to_string()).or_default();
@@ -221,8 +219,7 @@ impl KodEngine {
             if within(&e.id) {
                 let mins = seen
                     .get(&e.id)
-                    .map(|&at| now_ms.saturating_sub(at) / 60_000)
-                    .unwrap_or(0);
+                    .map_or(0, |&at| now_ms.saturating_sub(at) / 60_000);
                 drops.push((e.id.to_string(), format!("injected {mins}m ago")));
             }
         }
@@ -675,7 +672,7 @@ impl KodEngine {
                     // never trained on.
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        let name = calls.get(i).map(|c| c.tool_name.as_str()).unwrap_or("tool");
+                        let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
                         summary_prompt.push_str(&format!(
                             "\n### Result {}\n{}\n",
                             i + 1,
@@ -1171,7 +1168,7 @@ impl KodEngine {
                     // never trained on.
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        let name = calls.get(i).map(|c| c.tool_name.as_str()).unwrap_or("tool");
+                        let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
                         summary_prompt.push_str(&format!(
                             "\n### Result {}\n{}\n",
                             i + 1,
@@ -1680,8 +1677,7 @@ impl KodEngine {
                     let mut rt = self.goal_runtime.write().await;
                     let steer = rt
                         .current_mut()
-                        .map(|g| g.take_budget_steer())
-                        .unwrap_or(false);
+                        .is_some_and(|g| g.take_budget_steer());
                     (rt.current().map(|g| g.status), steer)
                 };
                 if steer {

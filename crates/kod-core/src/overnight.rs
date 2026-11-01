@@ -217,7 +217,7 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
     let failed = cards.len() - done;
 
     let mut out = format!("# Overnight: {mission}\n\n");
-    out.push_str(&format!("{done} of {} subtasks completed", cards.len(),));
+    out.push_str(&format!("{done} of {} subtasks completed", cards.len()));
     if failed > 0 {
         out.push_str(&format!(", {failed} failed"));
     }

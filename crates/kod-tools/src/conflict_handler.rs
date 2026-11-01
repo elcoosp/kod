@@ -97,7 +97,7 @@ impl ConflictStore {
     /// The number of registered conflicts. For tests and a debug
     /// surface.
     pub fn len(&self) -> usize {
-        self.entries.lock().map(|g| g.len()).unwrap_or(0)
+        self.entries.lock().map_or(0, |g| g.len())
     }
 
     /// True when no conflicts are registered.

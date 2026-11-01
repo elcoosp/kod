@@ -95,7 +95,7 @@ fn cap_file_body(body: &str) -> String {
     }
     let head: String = body.chars().take(max_chars).collect();
     let elided = body.chars().count() - head.chars().count();
-    format!("{head}\n… [{elided} chars elided at MAX_FILE_TOKENS]",)
+    format!("{head}\n… [{elided} chars elided at MAX_FILE_TOKENS]")
 }
 
 /// Summarize each file section (map), then the per-file summaries

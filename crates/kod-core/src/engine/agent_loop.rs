@@ -269,8 +269,7 @@ impl KodEngine {
             .read()
             .await
             .get(key)
-            .map(|v| v.len())
-            .unwrap_or(0)
+            .map_or(0, |v| v.len())
     }
 
     /// M-16: truncate a transcript's history back to `len` messages.
@@ -1541,7 +1540,7 @@ impl KodEngine {
                             .collect(),
                     };
                     let mut messages: Vec<kod_types::ChatMessage> = messages;
-                    for m in messages.iter_mut() {
+                    for m in &mut messages {
                         m.content = v.obfuscate(&m.content);
                     }
                     // A tool call's `arguments` also reach the
@@ -1551,8 +1550,8 @@ impl KodEngine {
                     // leaked on every subsequent request. This runs on
                     // the outgoing copy only — the transcript keeps
                     // the placeholder form.
-                    for m in messages.iter_mut() {
-                        for call in m.tool_calls.iter_mut() {
+                    for m in &mut messages {
+                        for call in &mut m.tool_calls {
                             let _ = self.obfuscate_json(&mut call.arguments).await;
                         }
                     }
@@ -1718,7 +1717,7 @@ impl KodEngine {
         // replayed transcript.
         let has_history = {
             let h = self.history.read().await;
-            h.get(key).map(|t| !t.is_empty()).unwrap_or(false)
+            h.get(key).is_some_and(|t| !t.is_empty())
         };
         if has_history {
             return;
@@ -1760,8 +1759,7 @@ impl KodEngine {
             .lines()
             .rev()
             .find(|l| !l.trim().is_empty())
-            .map(|l| l.trim_end().ends_with('?'))
-            .unwrap_or(false);
+            .is_some_and(|l| l.trim_end().ends_with('?'));
         let async_wakes_pending = self.async_delivery.lock().queued_for(key) > 0;
         let mut trackers = self.todo_trackers.write().await;
         let tracker = trackers

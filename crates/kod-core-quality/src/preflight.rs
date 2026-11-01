@@ -42,7 +42,7 @@ impl PreflightSample {
             && total > 0
             && (free as f64 / total as f64) < 0.10
         {
-            out.push(format!("less than 10% RAM free ({free} of {total} bytes)",));
+            out.push(format!("less than 10% RAM free ({free} of {total} bytes)"));
         }
         if let Some(swap) = self.swap_used_bytes
             && swap > 2 * 1024 * 1024 * 1024

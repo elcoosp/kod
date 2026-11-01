@@ -44,7 +44,7 @@ fn a_path_that_escapes_the_workspace_is_refused() {
     // lives outside the working directory.
     let tmp = TempDir::new().unwrap();
     let out = expand_at_references("see @../etc/passwd", tmp.path());
-    assert!(!out.contains("<file"), "escape expanded: {out}",);
+    assert!(!out.contains("<file"), "escape expanded: {out}");
     assert!(out.contains("@../etc/passwd"), "token eaten: {out}");
 }
 

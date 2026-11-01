@@ -191,8 +191,7 @@ fn current_start_token() -> String {
     }
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
     format!("wall:{now_ms}")
 }
 
@@ -266,8 +265,7 @@ mod tests {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         fs::create_dir_all(&dir).unwrap();
         dir

@@ -443,8 +443,7 @@ impl SessionRecorder {
                 let entry = SessionEntry::Redaction {
                     timestamp_ms: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0),
+                        .map_or(0, |d| d.as_millis() as u64),
                     rules,
                 };
                 let line = serde_json::to_string(&entry)
@@ -677,8 +676,7 @@ pub fn default_session_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
     // Two `kod chat` processes started in the same millisecond used
     // to produce the same filename. `SessionRecorder::open` uses
     // `create(true).append(true)` — no `create_new` — so both

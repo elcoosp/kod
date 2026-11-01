@@ -98,8 +98,7 @@ impl KodApp {
     pub fn delete_to_line_start(&mut self) {
         let line_start = self.input[..self.cursor_position]
             .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i + 1);
         self.shift_paste_blocks(line_start, self.cursor_position, 0);
         self.input.drain(line_start..self.cursor_position);
         self.cursor_position = line_start;
@@ -296,8 +295,7 @@ impl KodApp {
         self.cursor_position = cursor;
         let end = self.input[cursor..]
             .find('\n')
-            .map(|i| cursor + i)
-            .unwrap_or(self.input.len());
+            .map_or(self.input.len(), |i| cursor + i);
         self.shift_paste_blocks(cursor, end, 0);
         self.input.drain(cursor..end);
     }

@@ -109,8 +109,7 @@ impl KodEngine {
         }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         // Hash the query so the log carries a stable identity without
         // storing the (potentially sensitive) text itself.
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -209,7 +208,7 @@ impl KodEngine {
     /// Drop a decision by id.
     pub async fn drop_decision(&self, key: &str, id: u64) -> bool {
         let mut g = self.decision_logs.write().await;
-        let r = g.get_mut(key).map(|l| l.drop(id)).unwrap_or(false);
+        let r = g.get_mut(key).is_some_and(|l| l.drop(id));
         drop(g);
         if r {
             self.persist_state().await;

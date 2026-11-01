@@ -94,7 +94,7 @@ impl OutputSpool {
         // M-25: the doc promised a 4 KiB tail read; the code did
         // `std::fs::read` (the WHOLE file) then sliced — a multi-GB
         // spool allocated fully on every background-job completion.
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let len = f.metadata().map_or(0, |m| m.len());
         let start = len.saturating_sub(PREVIEW_BYTES as u64);
         if f.seek(SeekFrom::Start(start)).is_err() {
             return String::new();

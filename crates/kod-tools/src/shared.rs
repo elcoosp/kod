@@ -30,8 +30,7 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
         .unwrap_or_else(|| std::path::Path::new("."));
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     // Unique temp per process + a monotonic in-process counter +
     // nanosecond clock. The pre-fix shape used only pid + nanos,
     // which is not enough on macOS: `gettimeofday` has microsecond
@@ -41,7 +40,7 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
     // already renamed the temp away), and the second write is lost.
     // Same shape as the tool_cache / state / persistence fixes.
     let seq = next_temp_seq();
-    let tmp = parent.join(format!(".kod-tmp-{}-{seq}-{nanos:x}", std::process::id(),));
+    let tmp = parent.join(format!(".kod-tmp-{}-{seq}-{nanos:x}", std::process::id()));
     // F2f-17: the rename replaces the inode, so the destination's
     // mode (notably the exec bit on a script overwrite) would be lost
     // — the temp file's default 0644 would win. Capture the existing

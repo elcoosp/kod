@@ -398,77 +398,74 @@ impl KodConfig {
                     // parse the file into a `toml::Table`, deserialize
                     // each known section independently, and keep the
                     // ones that work.
-                    match Self::recover_sections(&config_path) {
-                        Ok(Some(mut cfg)) => {
-                            tracing::error!(
-                                path = %config_path.display(),
-                                error = %whole_file_err,
-                                "Config file could not be parsed as a whole; \
-                                 recovered the sections that parse cleanly. \
-                                 Broken fields use their built-in defaults.",
-                            );
-                            cfg.llm.validate();
-                            cfg.skills.validate();
-                            cfg.limits.clamp();
-                            // Preserve the broken file for inspection.
-                            //
-                            // Unique name per recovery: `config.toml.broken`
-                            // was a fixed name, so a second broken load
-                            // renamed the (already-renamed) recovered file
-                            // onto the first backup and the original
-                            // broken content was lost. The pid + sequence
-                            // suffix keeps every broken file — a caller
-                            // diagnosing a regression may need the exact
-                            // bytes from the failing run.
-                            let backup = config_path.with_extension(format!(
-                                "toml.broken.{}.{}",
+                    if let Ok(Some(mut cfg)) = Self::recover_sections(&config_path) {
+                        tracing::error!(
+                            path = %config_path.display(),
+                            error = %whole_file_err,
+                            "Config file could not be parsed as a whole; \
+                             recovered the sections that parse cleanly. \
+                             Broken fields use their built-in defaults.",
+                        );
+                        cfg.llm.validate();
+                        cfg.skills.validate();
+                        cfg.limits.clamp();
+                        // Preserve the broken file for inspection.
+                        //
+                        // Unique name per recovery: `config.toml.broken`
+                        // was a fixed name, so a second broken load
+                        // renamed the (already-renamed) recovered file
+                        // onto the first backup and the original
+                        // broken content was lost. The pid + sequence
+                        // suffix keeps every broken file — a caller
+                        // diagnosing a regression may need the exact
+                        // bytes from the failing run.
+                        let backup = config_path.with_extension(format!(
+                            "toml.broken.{}.{}",
+                            std::process::id(),
+                            next_temp_seq(),
+                        ));
+                        let _ = std::fs::rename(&config_path, &backup);
+                        // T5-C30: after renaming the broken file, write the
+                        // recovered config back so a subsequent load reads the
+                        // recovered shape instead of a fresh default that
+                        // discards the recovered sections.
+                        //
+                        // Atomic write: `std::fs::write` truncates the
+                        // destination before writing, so a crash mid-write
+                        // left a zero-byte or partial config — the *user's*
+                        // config, not a temp. A temp + rename gives the
+                        // atomic guarantee the rest of the codebase already
+                        // applies to session and trace files. The `save_to`
+                        // path below uses the same shape.
+                        if let Ok(toml_str) = toml::to_string_pretty(&cfg) {
+                            let tmp = config_path.with_extension(format!(
+                                "toml.recover.{}.{}.tmp",
                                 std::process::id(),
                                 next_temp_seq(),
                             ));
-                            let _ = std::fs::rename(&config_path, &backup);
-                            // T5-C30: after renaming the broken file, write the
-                            // recovered config back so a subsequent load reads the
-                            // recovered shape instead of a fresh default that
-                            // discards the recovered sections.
-                            //
-                            // Atomic write: `std::fs::write` truncates the
-                            // destination before writing, so a crash mid-write
-                            // left a zero-byte or partial config — the *user's*
-                            // config, not a temp. A temp + rename gives the
-                            // atomic guarantee the rest of the codebase already
-                            // applies to session and trace files. The `save_to`
-                            // path below uses the same shape.
-                            if let Ok(toml_str) = toml::to_string_pretty(&cfg) {
-                                let tmp = config_path.with_extension(format!(
-                                    "toml.recover.{}.{}.tmp",
-                                    std::process::id(),
-                                    next_temp_seq(),
-                                ));
-                                if std::fs::write(&tmp, toml_str).is_ok()
-                                    && std::fs::rename(&tmp, &config_path).is_err()
-                                {
-                                    let _ = std::fs::remove_file(&tmp);
-                                }
+                            if std::fs::write(&tmp, toml_str).is_ok()
+                                && std::fs::rename(&tmp, &config_path).is_err()
+                            {
+                                let _ = std::fs::remove_file(&tmp);
                             }
-                            eprintln!(
-                                "kod: config parse error in {}: {}. The \
-                                 recoverable sections were kept; the broken \
-                                 file is saved as {}.",
-                                config_path.display(),
-                                whole_file_err,
-                                backup.display(),
-                            );
-                            Ok(cfg)
                         }
-                        _ => {
-                            tracing::warn!(
-                                path = %config_path.display(),
-                                error = %whole_file_err,
-                                "Config file present but unreadable; using built-in defaults. \
-                                 Fix or delete the file to silence this warning."
-                            );
-                            Ok(Self::default())
-                        }
+                        eprintln!(
+                            "kod: config parse error in {}: {}. The \
+                             recoverable sections were kept; the broken \
+                             file is saved as {}.",
+                            config_path.display(),
+                            whole_file_err,
+                            backup.display(),
+                        );
+                        Ok(cfg)
+                    } else {
+                        tracing::warn!(
+                            path = %config_path.display(),
+                            error = %whole_file_err,
+                            "Config file present but unreadable; using built-in defaults. \
+                             Fix or delete the file to silence this warning."
+                        );
+                        Ok(Self::default())
                     }
                 }
             }
@@ -526,8 +523,7 @@ impl KodConfig {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         {
             use std::io::Write as _;
@@ -1069,8 +1065,7 @@ mod coverage_hooks_config {
         // depending on the recovery branch taken).
         let broken = cfg_path.with_extension("toml.broken");
         let path_has_content = std::fs::metadata(&cfg_path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false);
+            .is_ok_and(|m| m.len() > 0);
         let broken_exists = broken.exists();
         assert!(
             path_has_content || broken_exists,
@@ -1221,7 +1216,7 @@ mod proptests {
             // serializes this test against itself; no other test in
             // this crate reads `KOD_CONFIG_DIR`.
             unsafe { std::env::set_var("KOD_CONFIG_DIR", tmp.path()) };
-            let outcome = std::panic::catch_unwind(|| KodConfig::load_default());
+            let outcome = std::panic::catch_unwind(KodConfig::load_default);
             unsafe { std::env::remove_var("KOD_CONFIG_DIR") };
             prop_assert!(
                 outcome.is_ok(),

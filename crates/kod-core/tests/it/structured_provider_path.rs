@@ -95,9 +95,7 @@ impl LlmProvider for StructuredProvider {
         self.recorder.completes.lock().unwrap().push(Recorded {
             system_len: req.system.render_text().len(),
             messages_len: req.messages.len(),
-            last_role: last
-                .map(|m| format!("{:?}", m.role))
-                .unwrap_or_else(|| "(none)".into()),
+            last_role: last.map_or_else(|| "(none)".into(), |m| format!("{:?}", m.role)),
             last_content: last.map(|m| m.content.clone()).unwrap_or_default(),
         });
         Ok(GenerationResponse::Text {
@@ -122,9 +120,7 @@ impl LlmProvider for StructuredProvider {
         self.recorder.streams.lock().unwrap().push(Recorded {
             system_len: req.system.render_text().len(),
             messages_len: req.messages.len(),
-            last_role: last
-                .map(|m| format!("{:?}", m.role))
-                .unwrap_or_else(|| "(none)".into()),
+            last_role: last.map_or_else(|| "(none)".into(), |m| format!("{:?}", m.role)),
             last_content: last.map(|m| m.content.clone()).unwrap_or_default(),
         });
         Box::pin(async_stream::stream! {

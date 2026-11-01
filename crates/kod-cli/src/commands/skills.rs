@@ -156,8 +156,7 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
         .iter()
         .find(|d| {
             cwd.as_ref()
-                .map(|c| d.starts_with(c) || d.parent().map(|p| p.starts_with(c)).unwrap_or(false))
-                .unwrap_or(false)
+                .is_some_and(|c| d.starts_with(c) || d.parent().is_some_and(|p| p.starts_with(c)))
         })
         .or_else(|| dirs.first())
         .cloned()

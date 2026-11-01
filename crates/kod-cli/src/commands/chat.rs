@@ -346,8 +346,7 @@ pub async fn run_chat(
                 }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_millis() as u64);
                 let prev = LAST.swap(now, Ordering::SeqCst);
                 if prev != 0 && now.saturating_sub(prev) < 2_000 {
                     eprintln!();
@@ -503,12 +502,9 @@ pub async fn run_chat(
                         .unwrap_or_else(|_| kod_core::engine::ApprovalBatch { items: Vec::new() });
                     let total = batch.items.len();
                     for (n, item) in batch.items.iter().enumerate() {
-                        let item_id = match item.id {
-                            Some(i) => i,
-                            None => {
-                                println!("(approval item {}/{} has no id; skipping)", n + 1, total);
-                                continue;
-                            }
+                        let item_id = if let Some(i) = item.id { i } else {
+                            println!("(approval item {}/{} has no id; skipping)", n + 1, total);
+                            continue;
                         };
                         println!();
                         println!("── approval required ({}/{}) ──", n + 1, total);

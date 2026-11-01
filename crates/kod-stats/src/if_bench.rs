@@ -442,15 +442,12 @@ where
     let mut current = initial.clone();
     for turn in 0..config.turns {
         let prompt = prompt_for_turn(turn, &initial);
-        let reply = match run_turn(&prompt) {
-            Ok(r) => r,
-            Err(_) => {
-                replies.push(TurnReply {
-                    reported: None,
-                    sound_ok: false,
-                });
-                break;
-            }
+        let reply = if let Ok(r) = run_turn(&prompt) { r } else {
+            replies.push(TurnReply {
+                reported: None,
+                sound_ok: false,
+            });
+            break;
         };
         let reported = parse_reported_array(&reply);
         let pos = SoundPosition::for_turn(turn);

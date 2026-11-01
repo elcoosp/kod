@@ -24,7 +24,7 @@ pub(crate) fn redact_tool_call_arguments(
     }
     let mut n = 0_usize;
     for m in messages.iter_mut() {
-        for call in m.tool_calls.iter_mut() {
+        for call in &mut m.tool_calls {
             if kod_config::policy::arguments_path_matches_redact_list(
                 patterns,
                 &call.arguments,
@@ -813,7 +813,7 @@ impl KodEngine {
             .map(|m| {
                 let mut m = m.clone();
                 m.content = vault.obfuscate(&m.content);
-                for call in m.tool_calls.iter_mut() {
+                for call in &mut m.tool_calls {
                     fn walk(
                         v: &mut serde_json::Value,
                         vault: &kod_types::secret_placeholder::SecretVault,
@@ -1157,7 +1157,7 @@ mod redaction_memo_tests {
         let mut msgs = make();
         let start = Instant::now();
         for _ in 0..40 {
-            for m in msgs.iter_mut() {
+            for m in &mut msgs {
                 let (out, _) = r.redact(&m.content);
                 m.content = out;
             }

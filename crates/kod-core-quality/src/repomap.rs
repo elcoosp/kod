@@ -1012,14 +1012,12 @@ pub struct Engine;
             .rank
             .iter()
             .find(|(k, _)| k.ends_with("hub.rs"))
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+            .map_or(0.0, |(_, v)| *v);
         let alone_rank = map
             .rank
             .iter()
             .find(|(k, _)| k.ends_with("aaa_only.rs"))
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
+            .map_or(0.0, |(_, v)| *v);
         assert!(
             hub_rank > alone_rank,
             "hub ({hub_rank}) should outrank an unimported file ({alone_rank})"

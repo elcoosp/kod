@@ -468,16 +468,12 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             return format!(
                 "{}: no change (content identical)",
                 v.get("path")
-                    .and_then(|p| p.as_str())
-                    .map(shorten_path)
-                    .unwrap_or_else(|| name.to_string())
+                    .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path)
             );
         }
         let path = v
             .get("path")
-            .and_then(|p| p.as_str())
-            .map(shorten_path)
-            .unwrap_or_else(|| name.to_string());
+            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
         let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
         return format!("{path}:\n{body}");
     }
@@ -523,9 +519,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     if name == "read_file" && v.get("binary").and_then(|b| b.as_bool()).unwrap_or(false) {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str())
-            .map(shorten_path)
-            .unwrap_or_else(|| name.to_string());
+            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
         let size = v.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0);
         return format!("{path} · binary ({size} bytes) — not shown as text");
     }
@@ -538,9 +532,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str())
-            .map(shorten_path)
-            .unwrap_or_else(|| name.to_string());
+            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
         let lines = content.lines().count();
         // When the file was larger than the reader's byte cap, the tool
         // sets "truncated": true. Without surfacing it, the row reads
@@ -574,9 +566,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     if name == "list_files" && v.get("path_kind").and_then(|k| k.as_str()) == Some("file") {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str())
-            .map(shorten_path)
-            .unwrap_or_else(|| name.to_string());
+            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
         return format!("{path} · is a file, not a directory");
     }
 

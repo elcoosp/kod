@@ -84,7 +84,7 @@ impl KodApp {
             .iter()
             .filter(|m| {
                 m.role == MessageRole::Tool
-                    && m.content.split_once('\n').map(|x| x.1).unwrap_or("").trim()
+                    && m.content.split_once('\n').map_or("", |x| x.1).trim()
                         == Self::LIVE_TOOL_BODY_PLACEHOLDER
             })
             .count()
@@ -139,9 +139,7 @@ impl KodApp {
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == *msg_id) {
             let body = m
                 .content
-                .split_once('\n')
-                .map(|x| x.1.to_string())
-                .unwrap_or_else(|| Self::LIVE_TOOL_BODY_PLACEHOLDER.to_string());
+                .split_once('\n').map_or_else(|| Self::LIVE_TOOL_BODY_PLACEHOLDER.to_string(), |x| x.1.to_string());
             m.content = format!("[{header}]\n{body}");
         }
     }
@@ -176,7 +174,7 @@ impl KodApp {
             if m.role != MessageRole::Tool {
                 return false;
             }
-            let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("").trim();
+            let body = m.content.split_once('\n').map_or("", |x| x.1).trim();
             body == Self::LIVE_TOOL_BODY_PLACEHOLDER
         })
     }
@@ -219,8 +217,7 @@ impl KodApp {
             let body = self.messages[i]
                 .content
                 .split_once('\n')
-                .map(|x| x.1)
-                .unwrap_or(Self::LIVE_TOOL_BODY_PLACEHOLDER);
+                .map_or(Self::LIVE_TOOL_BODY_PLACEHOLDER, |x| x.1);
             let body = body.to_string();
             self.messages[i].content = format!("[{display}]\n{body}");
         }
@@ -259,8 +256,7 @@ impl KodApp {
             let body = self.messages[i]
                 .content
                 .split_once('\n')
-                .map(|x| x.1)
-                .unwrap_or("")
+                .map_or("", |x| x.1)
                 .trim();
             if !body.is_empty() && body != Self::LIVE_TOOL_BODY_PLACEHOLDER {
                 return;
@@ -291,26 +287,23 @@ impl KodApp {
         };
         let content = format!("[{header}]\n{body}");
 
-        let msg_id = match msg_id {
-            Some(msg_id) => {
-                if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
-                    m.content = content;
-                }
-                msg_id
+        let msg_id = if let Some(msg_id) = msg_id {
+            if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+                m.content = content;
             }
-            None => {
-                let msg = Message {
-                    id: MessageId::new(),
-                    role: MessageRole::Tool,
-                    content,
-                    timestamp: Utc::now(),
-                    metadata: MessageMetadata::default(),
-                    sequence: 0,
-                };
-                let msg_id = msg.id.clone();
-                self.add_message(msg);
-                msg_id
-            }
+            msg_id
+        } else {
+            let msg = Message {
+                id: MessageId::new(),
+                role: MessageRole::Tool,
+                content,
+                timestamp: Utc::now(),
+                metadata: MessageMetadata::default(),
+                sequence: 0,
+            };
+            let msg_id = msg.id.clone();
+            self.add_message(msg);
+            msg_id
         };
 
         if !id.is_empty() {
@@ -338,8 +331,7 @@ impl KodApp {
             let body = self.messages[i]
                 .content
                 .split_once('\n')
-                .map(|x| x.1)
-                .unwrap_or("")
+                .map_or("", |x| x.1)
                 .trim();
             if !body.is_empty() && body != Self::LIVE_TOOL_BODY_PLACEHOLDER {
                 return;
@@ -358,26 +350,23 @@ impl KodApp {
 
         let body = format!("Error: {}", error.trim());
         let content = format!("[{tool_name}]\n{body}");
-        let msg_id = match self.resolve_tool_row(id, tool_name) {
-            Some(msg_id) => {
-                if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
-                    m.content = content;
-                }
-                msg_id
+        let msg_id = if let Some(msg_id) = self.resolve_tool_row(id, tool_name) {
+            if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+                m.content = content;
             }
-            None => {
-                let msg = Message {
-                    id: MessageId::new(),
-                    role: MessageRole::Tool,
-                    content,
-                    timestamp: Utc::now(),
-                    metadata: MessageMetadata::default(),
-                    sequence: 0,
-                };
-                let msg_id = msg.id.clone();
-                self.add_message(msg);
-                msg_id
-            }
+            msg_id
+        } else {
+            let msg = Message {
+                id: MessageId::new(),
+                role: MessageRole::Tool,
+                content,
+                timestamp: Utc::now(),
+                metadata: MessageMetadata::default(),
+                sequence: 0,
+            };
+            let msg_id = msg.id.clone();
+            self.add_message(msg);
+            msg_id
         };
         if !id.is_empty() {
             self.tool_rows_by_call.remove(id);

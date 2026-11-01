@@ -223,7 +223,7 @@ impl JevDecider for JevClient {
         JevClient::reasoning_timeout(self)
     }
     fn clear_cache(&self) {
-        JevClient::clear_cache(self)
+        JevClient::clear_cache(self);
     }
     fn cache_len(&self) -> usize {
         JevClient::cache_len(self)
@@ -635,21 +635,17 @@ fn redact_state_paths(value: &Value, enabled: bool) -> Value {
                 let mut out = String::with_capacity(s.len());
                 let mut rest = s.as_str();
                 while !rest.is_empty() {
-                    match rest.find(|c: char| c.is_whitespace()) {
-                        Some(i) => {
-                            out.push_str(&redact_token(&rest[..i]));
-                            // Preserve the whitespace char(s).
-                            let ws_end = rest[i..]
-                                .find(|c: char| !c.is_whitespace())
-                                .map(|j| i + j)
-                                .unwrap_or(rest.len());
-                            out.push_str(&rest[i..ws_end]);
-                            rest = &rest[ws_end..];
-                        }
-                        None => {
-                            out.push_str(&redact_token(rest));
-                            rest = "";
-                        }
+                    if let Some(i) = rest.find(|c: char| c.is_whitespace()) {
+                        out.push_str(&redact_token(&rest[..i]));
+                        // Preserve the whitespace char(s).
+                        let ws_end = rest[i..]
+                            .find(|c: char| !c.is_whitespace())
+                            .map_or(rest.len(), |j| i + j);
+                        out.push_str(&rest[i..ws_end]);
+                        rest = &rest[ws_end..];
+                    } else {
+                        out.push_str(&redact_token(rest));
+                        rest = "";
                     }
                 }
                 Value::String(out)

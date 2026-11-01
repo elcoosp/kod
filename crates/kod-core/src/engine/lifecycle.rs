@@ -286,8 +286,7 @@ impl KodEngine {
         let system_prompt_hash = self.surface_fingerprint(&tool_names).await;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         let entry = kod_core_state::session_log::SessionEntry::SessionInit {
             timestamp_ms: now_ms,
             holder: String::new(),
@@ -716,13 +715,10 @@ impl KodEngine {
         // engine — and returns the `Arc` back on the shared path,
         // in which case we fall back to the previous behaviour
         // (the OS file lock releases when the last reference drops).
-        match Arc::try_unwrap(self.router.clone()) {
-            Ok(router) => router.close_memory(),
-            Err(_) => tracing::debug!(
-                "router Arc still shared at shutdown; redb will close when \
-                 the last reference drops"
-            ),
-        }
+        if let Ok(router) = Arc::try_unwrap(self.router.clone()) { router.close_memory() } else { tracing::debug!(
+            "router Arc still shared at shutdown; redb will close when \
+             the last reference drops"
+        ); }
 
         tracing::info!("KOD engine shutdown complete");
         Ok(())

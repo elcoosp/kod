@@ -131,8 +131,7 @@ impl StateStore {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         std::fs::write(&tmp, raw.as_bytes())?;
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
@@ -229,8 +228,7 @@ mod tests {
                 e.path()
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|n| n.contains("tmp"))
-                    .unwrap_or(false)
+                    .is_some_and(|n| n.contains("tmp"))
             })
             .collect();
         assert!(leftovers.is_empty(), "found temp files: {leftovers:?}");

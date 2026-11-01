@@ -36,9 +36,7 @@ impl RiskContext {
     /// Build from the process environment. `HOME` is required; a
     /// missing one falls back to `/` so the classifier never panics.
     pub fn from_env() -> Self {
-        let home_dir = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
+        let home_dir = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
         let working_dir = std::env::current_dir().unwrap_or_else(|_| home_dir.clone());
         let scratch_dir = std::env::temp_dir();
         Self {

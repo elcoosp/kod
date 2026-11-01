@@ -123,6 +123,5 @@ async fn shutdown_all_on_empty_pool_is_a_noop() {
 /// against the runtime environment rather than a fixed assumption.
 fn which(program: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(program).is_file()))
-        .unwrap_or(false)
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(program).is_file()))
 }

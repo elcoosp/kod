@@ -85,8 +85,7 @@ fn migrate_brings_a_v1_config_to_v2_with_a_backup() {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("config.toml.bak-"))
-                .unwrap_or(false)
+                .is_some_and(|n| n.starts_with("config.toml.bak-"))
         })
         .collect();
     assert_eq!(
@@ -129,8 +128,7 @@ fn migrate_is_idempotent_on_a_v2_config() {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("config.toml.bak-"))
-                .unwrap_or(false)
+                .is_some_and(|n| n.starts_with("config.toml.bak-"))
         })
         .count();
     assert_eq!(backups, 0, "an already-v2 file must not be re-migrated");

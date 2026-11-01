@@ -186,7 +186,7 @@ async fn git_status_is_minimized_and_raw_offloads_to_an_artifact() {
     );
 
     // The handler's store is shared: exactly one artifact.
-    assert_eq!(handler.len().await, 1, "one command produced one artifact",);
+    assert_eq!(handler.len().await, 1, "one command produced one artifact");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -253,7 +253,7 @@ async fn a_piped_command_is_not_minimized_even_with_a_minimizer_installed() {
         v["stdout_artifact"].is_null(),
         "no rewrite means no offload; result = {v}",
     );
-    assert_eq!(handler.len().await, 0, "no rewrite means no artifact",);
+    assert_eq!(handler.len().await, 0, "no rewrite means no artifact");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

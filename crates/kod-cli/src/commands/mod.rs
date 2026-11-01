@@ -52,9 +52,9 @@ pub(crate) use fixtures::*;
 fn parse_preset(s: Option<&str>) -> Result<Option<kod_config::Preset>> {
     match s {
         None => Ok(None),
-        Some("read-only") | Some("readonly") => Ok(Some(kod_config::Preset::ReadOnly)),
-        Some("standard") | Some("default") => Ok(Some(kod_config::Preset::Standard)),
-        Some("yolo") | Some("unrestricted") => Ok(Some(kod_config::Preset::Yolo)),
+        Some("read-only" | "readonly") => Ok(Some(kod_config::Preset::ReadOnly)),
+        Some("standard" | "default") => Ok(Some(kod_config::Preset::Standard)),
+        Some("yolo" | "unrestricted") => Ok(Some(kod_config::Preset::Yolo)),
         Some(other) => Err(kod_error::KodError::Config(format!(
             "unknown --preset {other:?}. Known presets: read-only, standard, yolo"
         ))),
@@ -144,19 +144,14 @@ pub async fn engine_from_config(
     // Model selection: explicit override wins; otherwise the config's
     // default endpoint.
     let model_name = opts
-        .model_override
-        .map(String::from)
-        .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
+        .model_override.map_or_else(|| config.llm.default_endpoint().model.clone(), String::from);
 
     // DB path: caller override first, then the default under home.
-    let db_path = match opts.db_path {
-        Some(p) => p,
-        None => {
-            let home = dirs::home_dir().ok_or_else(|| {
-                KodError::Config("Could not determine home directory".to_string())
-            })?;
-            home.join(".kod").join("data").join("kod.redb")
-        }
+    let db_path = if let Some(p) = opts.db_path { p } else {
+        let home = dirs::home_dir().ok_or_else(|| {
+            KodError::Config("Could not determine home directory".to_string())
+        })?;
+        home.join(".kod").join("data").join("kod.redb")
     };
     // Parent dir must exist before `KodEngine::new` opens the db.
     let _ = std::fs::create_dir_all(db_path.parent().unwrap_or(std::path::Path::new(".")));
@@ -204,15 +199,12 @@ pub async fn engine_from_config(
             .saturating_mul(3),
     );
 
-    match opts.provider_override {
-        Some((registry, default_model, routing)) => {
-            engine.set_registry(registry, default_model, routing).await;
-        }
-        None => {
-            let (registry, default_model, routing) =
-                kod_core::build_registry(&config.llm, Some(&model_name))?;
-            engine.set_registry(registry, default_model, routing).await;
-        }
+    if let Some((registry, default_model, routing)) = opts.provider_override {
+        engine.set_registry(registry, default_model, routing).await;
+    } else {
+        let (registry, default_model, routing) =
+            kod_core::build_registry(&config.llm, Some(&model_name))?;
+        engine.set_registry(registry, default_model, routing).await;
     }
 
     // H-RL1: rate-limit auto-retry budget from the endpoint config
@@ -896,12 +888,8 @@ impl Cli {
                             if existing.is_empty() {
                                 println!(
                                     "Skills:  none found — put .md skills in {} or {}",
-                                    dirs.first()
-                                        .map(|d| d.display().to_string())
-                                        .unwrap_or_else(|| "~/.kod/skills".to_string()),
-                                    dirs.get(1)
-                                        .map(|d| d.display().to_string())
-                                        .unwrap_or_else(|| "~/.agents/skills".to_string()),
+                                    dirs.first().map_or_else(|| "~/.kod/skills".to_string(), |d| d.display().to_string()),
+                                    dirs.get(1).map_or_else(|| "~/.agents/skills".to_string(), |d| d.display().to_string()),
                                 );
                             } else {
                                 println!("Skills:  {}", existing.join(", "));

@@ -186,7 +186,7 @@ impl KodApp {
     /// marked Running (error / cancel paths). Without this the indicator
     /// sticks around and later messages land around it unpredictably.
     fn settle_running_tools(&mut self, status: ToolStatus, note: &str) {
-        for execution in self.tool_executions.iter_mut() {
+        for execution in &mut self.tool_executions {
             if execution.status == ToolStatus::Running {
                 execution.status = status;
                 execution.result = Some(note.to_string());
@@ -194,7 +194,7 @@ impl KodApp {
         }
         // Stamp live rows too so cancel/error never leaves a stale
         // "running…" row behind.
-        for m in self.messages.iter_mut() {
+        for m in &mut self.messages {
             if m.role != MessageRole::Tool {
                 continue;
             }

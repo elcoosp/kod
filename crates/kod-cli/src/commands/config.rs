@@ -241,8 +241,7 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
     // class.
     let now_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let backup = dir.join(format!(
         "config.toml.bak-{}.{}.{}",
         std::process::id(),
@@ -421,8 +420,7 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
             next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_nanos()),
         ));
         std::fs::copy(&path, &backup).map_err(KodError::Io)?;
         println!("Backed up {} -> {}", path.display(), backup.display());

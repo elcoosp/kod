@@ -18,7 +18,7 @@ async fn empty_prompt_is_rejected_before_connecting() {
     let err = run_prompt_remote("   ".to_string(), None)
         .await
         .expect_err("an empty prompt must be an error");
-    assert!(err.to_string().contains("empty"), "unexpected error: {err}",);
+    assert!(err.to_string().contains("empty"), "unexpected error: {err}");
 }
 
 /// A whitespace-only prompt (tabs and newlines) is also empty after
@@ -28,5 +28,5 @@ async fn whitespace_only_prompt_is_rejected() {
     let err = run_prompt_remote("\t\n  ".to_string(), None)
         .await
         .expect_err("a whitespace-only prompt must be an error");
-    assert!(err.to_string().contains("empty"), "unexpected error: {err}",);
+    assert!(err.to_string().contains("empty"), "unexpected error: {err}");
 }

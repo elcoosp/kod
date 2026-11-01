@@ -163,8 +163,7 @@ impl Redactor {
                         matched
                             .char_indices()
                             .nth(rule.head)
-                            .map(|(i, _)| i)
-                            .unwrap_or(matched.len())
+                            .map_or(matched.len(), |(i, _)| i)
                     };
                     let tail_start = if rule.tail == 0 {
                         matched.len()
@@ -176,8 +175,7 @@ impl Redactor {
                             matched
                                 .char_indices()
                                 .nth(chars - rule.tail)
-                                .map(|(i, _)| i)
-                                .unwrap_or(matched.len())
+                                .map_or(matched.len(), |(i, _)| i)
                         }
                     };
                     if head_end > 0 {
@@ -386,7 +384,7 @@ pub fn shannon_entropy(s: &str) -> f64 {
     }
     let len = s.len() as f64;
     let mut h = 0.0_f64;
-    for &c in counts.iter() {
+    for &c in &counts {
         if c == 0 {
             continue;
         }

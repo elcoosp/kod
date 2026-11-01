@@ -459,7 +459,7 @@ mod tests {
         let i = intercept("grep pattern 'my file.txt'").unwrap();
         // The tokenizer strips the outer quotes; the message quotes
         // the result with `{:?}`.
-        assert!(i.message.contains("my file.txt"), "got: {}", i.message,);
+        assert!(i.message.contains("my file.txt"), "got: {}", i.message);
     }
 
     #[test]

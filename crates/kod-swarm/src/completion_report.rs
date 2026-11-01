@@ -114,8 +114,7 @@ pub fn parse(text: &str) -> CompletionReport {
     let after_open = &text[open_at..];
     let open_line_end = after_open
         .find('>')
-        .map(|i| i + 1)
-        .unwrap_or(after_open.len());
+        .map_or(after_open.len(), |i| i + 1);
     let open_line = &after_open[..open_line_end];
     let status = extract_status(open_line);
 
@@ -124,8 +123,7 @@ pub fn parse(text: &str) -> CompletionReport {
     let body_start = open_at + open_line_end;
     let body_end = text[body_start..]
         .find(CLOSE_TAG)
-        .map(|i| body_start + i)
-        .unwrap_or(text.len());
+        .map_or(text.len(), |i| body_start + i);
     let body = text[body_start..body_end].trim();
 
     // The prose before the block is the agent's visible answer; keep

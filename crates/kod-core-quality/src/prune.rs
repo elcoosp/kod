@@ -787,7 +787,7 @@ mod tests {
             tool_result("c2", "fresh"),
         ];
         let plan = plan_prune(&log, &cfg, const_suffix(100_000), false);
-        assert!(plan.is_empty(), "one candidate cannot clear the gate alone",);
+        assert!(plan.is_empty(), "one candidate cannot clear the gate alone");
     }
 
     #[test]
@@ -969,7 +969,7 @@ mod tests {
             let mut out = transcript.to_vec();
             for (id, action) in &plan.actions {
                 let PruneAction::Blank { placeholder } = action;
-                for msg in out.iter_mut() {
+                for msg in &mut out {
                     if msg.id == *id {
                         msg.content = placeholder.clone();
                     }

@@ -375,8 +375,7 @@ mod post_semaphore_is_bounded {
         let tail = &src[start..];
         let end = tail
             .find("\n    }\n")
-            .map(|i| start + i)
-            .unwrap_or(src.len());
+            .map_or(src.len(), |i| start + i);
         let region = &src[start..end];
         assert!(
             !region.contains("no queue cap"),

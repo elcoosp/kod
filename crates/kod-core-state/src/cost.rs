@@ -488,7 +488,7 @@ mod spend_window_uses_monotonic_clock {
             .find("impl SpendWindow")
             .expect("impl SpendWindow present");
         let tail = &src[start..];
-        let end = tail.find("\n}\n").map(|i| start + i).unwrap_or(src.len());
+        let end = tail.find("\n}\n").map_or(src.len(), |i| start + i);
         let body = &src[start..end];
 
         assert!(

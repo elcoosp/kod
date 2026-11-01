@@ -152,7 +152,7 @@ impl EndpointHealth {
         let now = Instant::now();
         self.states
             .iter()
-            .filter(|(_, s)| s.cooldown_until.map(|u| u > now).unwrap_or(false))
+            .filter(|(_, s)| s.cooldown_until.is_some_and(|u| u > now))
             .map(|(name, s)| {
                 (
                     name.clone(),

@@ -156,9 +156,7 @@ impl KodApp {
         if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
             let header = msg
                 .content
-                .split_once('\n')
-                .map(|(h, _)| h.to_string())
-                .unwrap_or_else(|| msg.content.clone());
+                .split_once('\n').map_or_else(|| msg.content.clone(), |(h, _)| h.to_string());
             let body = Self::trim_blank_lines(result);
             msg.content = if body.is_empty() {
                 header
@@ -210,9 +208,7 @@ impl KodApp {
         if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
             let header = msg
                 .content
-                .split_once('\n')
-                .map(|(h, _)| h.to_string())
-                .unwrap_or_else(|| msg.content.clone());
+                .split_once('\n').map_or_else(|| msg.content.clone(), |(h, _)| h.to_string());
             msg.content = format!("{header}\n(failed: {})", error.trim());
         }
         view.finished = true;

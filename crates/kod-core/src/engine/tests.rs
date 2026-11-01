@@ -101,7 +101,7 @@ async fn background_mode_allows_a_read_tool() {
         .await;
     match r {
         Ok(kod_types::ToolResult::Error(e)) => {
-            assert!(!e.contains("policy denied"), "read_file must not be denied")
+            assert!(!e.contains("policy denied"), "read_file must not be denied");
         }
         Ok(_) => {}  // a real read succeeded
         Err(_) => {} // the tool errored before running

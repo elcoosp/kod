@@ -514,8 +514,7 @@ fn find_fences(content: &str) -> Vec<Region> {
                     // marker to the end of the line, trimmed.
                     let info_end = content[k..]
                         .find('\n')
-                        .map(|n| k + n)
-                        .unwrap_or(bytes.len());
+                        .map_or(bytes.len(), |n| k + n);
                     let info = content[k..info_end].trim().to_string();
                     opened = Some((ch, marker_len, info));
                 }
@@ -607,8 +606,7 @@ fn find_fence_closer(
             if k - j >= marker_len {
                 let line_end = content[k..]
                     .find('\n')
-                    .map(|n| k + n)
-                    .unwrap_or(bytes.len());
+                    .map_or(bytes.len(), |n| k + n);
                 if content[k..line_end].trim().is_empty() {
                     let end = if line_end < bytes.len() {
                         line_end + 1
@@ -746,7 +744,7 @@ fn find_close_tag(content: &str, from: usize, name: &str) -> Option<usize> {
     while let Some(rel) = content[search_from..].find(&needle) {
         let abs = search_from + rel;
         // Is the closer at the start of a line (after whitespace)?
-        let line_start = content[..abs].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_start = content[..abs].rfind('\n').map_or(0, |i| i + 1);
         let before = &content[line_start..abs];
         if before.chars().all(|c| c == ' ' || c == '\t') {
             return Some(abs + needle.len());
@@ -1398,7 +1396,7 @@ mod shake_parser_proptests {
             prop_assert_eq!(&content[end - 1..end], ">", "closer");
             prop_assert!(!name.is_empty(), "empty name");
             prop_assert!(
-                name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false),
+                name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_'),
                 "name lead {:?}", name.chars().next(),
             );
             for c in name.chars() {
@@ -1460,7 +1458,7 @@ mod shake_parser_proptests {
                 "close-tag slice",
             );
             let abs = end - needle.len();
-            let line_start = content[..abs].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let line_start = content[..abs].rfind('\n').map_or(0, |i| i + 1);
             prop_assert!(
                 content[line_start..abs].chars().all(|c| c == ' ' || c == '\t'),
                 "close-tag not at line-start: before={:?}",

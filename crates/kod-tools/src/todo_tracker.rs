@@ -92,7 +92,7 @@ impl TodoTracker {
             return false;
         }
         let last = input.trim_end().chars().last();
-        !matches!(last, Some('?') | Some('!'))
+        !matches!(last, Some('?' | '!'))
     }
 
     /// Mark that the prelude was offered. Called once by the engine

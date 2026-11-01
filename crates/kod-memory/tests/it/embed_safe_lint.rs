@@ -31,8 +31,7 @@ fn body_range(src: &str, start_marker: &str, end_marker: &str) -> (usize, usize)
     let tail = &src[start..];
     let end = tail
         .find(end_marker)
-        .map(|i| start + i)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |i| start + i);
     (start, end)
 }
 
@@ -60,8 +59,8 @@ fn every_foreground_embed_call_goes_through_embed_safe() {
         let abs = pos + i;
         // Skip comment lines — the file documents the panic case with
         // an `embedder.embed(...)` mention in prose.
-        let line_start = src[..abs].rfind('\n').map(|n| n + 1).unwrap_or(0);
-        let line_end = src[abs..].find('\n').map(|n| abs + n).unwrap_or(src.len());
+        let line_start = src[..abs].rfind('\n').map_or(0, |n| n + 1);
+        let line_end = src[abs..].find('\n').map_or(src.len(), |n| abs + n);
         let trimmed = src[line_start..line_end].trim_start();
         if trimmed.starts_with("//") {
             pos = abs + needle.len();

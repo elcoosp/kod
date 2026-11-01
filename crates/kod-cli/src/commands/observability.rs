@@ -448,7 +448,7 @@ pub async fn run_trace_replay(
     // the engine will run only the first round and stop.
     let want = kod_core::RequestSummary {
         system_chars: t.prompt_chars,
-        message_count: t.rounds.first().map(|_| 1).unwrap_or(0),
+        message_count: t.rounds.first().map_or(0, |_| 1),
         tool_names: Vec::new(),
         model: t
             .rounds
@@ -479,7 +479,7 @@ pub async fn run_trace_replay(
     };
     let got = kod_core::RequestSummary::from_request(&captured_first);
     if want.hash() == got.hash() {
-        println!("✓ turn {id} replay matches (hash {})", &want.hash()[..8],);
+        println!("✓ turn {id} replay matches (hash {})", &want.hash()[..8]);
         return Ok(());
     }
     eprintln!(
@@ -553,8 +553,7 @@ pub(super) async fn drive_prompt_through_fresh_engine(
         next_temp_seq(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
+            .map_or(0, |d| d.as_nanos()),
     ));
     if let Err(e) = std::fs::create_dir_all(&tmp) {
         return (Vec::new(), Some(format!("tempdir: {e}")));

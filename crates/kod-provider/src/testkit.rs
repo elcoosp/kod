@@ -281,7 +281,7 @@ async fn contract_generate_with_tools_text(provider: &Arc<dyn LlmProvider>) {
         .await
     {
         Ok(GenerationResponse::Text { .. }) => {}
-        Ok(other) => panic!("generate_with_tools on a text-answering provider returned {other:?}",),
+        Ok(other) => panic!("generate_with_tools on a text-answering provider returned {other:?}"),
         Err(_) => {
             // Same tolerance as above.
         }
@@ -291,17 +291,13 @@ async fn contract_generate_with_tools_text(provider: &Arc<dyn LlmProvider>) {
 async fn contract_generate_with_tools_calls(provider: &Arc<dyn LlmProvider>) {
     let opts = GenerationOptions::default();
     let empty_tools: Vec<ToolDefinition> = Vec::new();
-    match provider
+    if let Ok(GenerationResponse::ToolCalls { calls, .. }) = provider
         .generate_with_tools("hello", &empty_tools, &opts)
-        .await
-    {
-        Ok(GenerationResponse::ToolCalls { calls, .. }) => {
-            assert!(!calls.is_empty(), "ToolCalls variant must carry ≥ 1 call");
-        }
-        Ok(_) | Err(_) => {
-            // Only the caller that scripted Calls cares; a
-            // provider that scripted text is not being tested here.
-        }
+        .await {
+        assert!(!calls.is_empty(), "ToolCalls variant must carry ≥ 1 call");
+    } else {
+        // Only the caller that scripted Calls cares; a
+        // provider that scripted text is not being tested here.
     }
 }
 

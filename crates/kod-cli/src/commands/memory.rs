@@ -334,7 +334,7 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     continue;
                 }
                 count += 1;
-                total_bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+                total_bytes += e.metadata().map_or(0, |m| m.len());
                 earliest = Some(match earliest {
                     Some(prev) if prev < p => prev,
                     _ => p.clone(),
@@ -403,8 +403,7 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                 next_temp_seq(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_nanos()),
             ));
             std::fs::write(&tmp, raw.as_bytes()).map_err(KodError::Io)?;
             std::fs::rename(&tmp, &path).map_err(KodError::Io)?;
@@ -619,7 +618,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
         for (i, (name, args, _, _, _)) in &destructive {
             println!("  {}. {} ({})", i + 1, name, args);
         }
-        println!("\nRe-run with --execute --yes to acknowledge and proceed.",);
+        println!("\nRe-run with --execute --yes to acknowledge and proceed.");
         return Err(KodError::PermissionDenied {
             action: "replay --execute".to_string(),
             reason: "the --yes flag is required to re-run destructive tool calls".to_string(),

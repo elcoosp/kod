@@ -97,9 +97,7 @@ fn write_outside_workspace_is_refused() {
     // the write succeeded because it was allowed by design, not
     // because the sandbox leaked. The escape target is now under
     // `$HOME`, which the default profile leaves denied.
-    let home = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let home = std::env::var_os("HOME").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
     let outside = home.join(format!("kod-sandbox-escape-{}", std::process::id()));
     let _ = std::fs::remove_file(&outside);
 
@@ -138,7 +136,7 @@ fn write_outside_workspace_is_refused() {
 #[test]
 fn write_inside_workspace_succeeds() {
     let Some(backend) = has_backend() else {
-        eprintln!("skipping: no sandbox primitive on this host.",);
+        eprintln!("skipping: no sandbox primitive on this host.");
         return;
     };
     eprintln!("running with backend {backend:?}");

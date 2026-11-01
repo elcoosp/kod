@@ -369,7 +369,7 @@ mod case_insensitivity {
         for body in ["oneof", "ONEOF", "OneOf", "oneOf"] {
             let text = format!("the {body} keyword is unsupported");
             let r = classify_rejection(400, &text);
-            assert_eq!(r.keyword.as_deref(), Some("oneOf"), "body {text:?}",);
+            assert_eq!(r.keyword.as_deref(), Some("oneOf"), "body {text:?}");
         }
     }
 

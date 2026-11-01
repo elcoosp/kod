@@ -82,7 +82,7 @@ impl Tool for FileInfoTool {
             "size": metadata.len(),
             "is_file": metadata.is_file(),
             "is_dir": metadata.is_dir(),
-            "modified": metadata.modified().map(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)).unwrap_or(0),
+            "modified": metadata.modified().map_or(0, |t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs())),
         })))
     }
 }
