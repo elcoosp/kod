@@ -16,6 +16,7 @@ categories = ["command-line-utilities", "command-line-interface"]
 all-features = true
 
 [dependencies]
+num-traits = { workspace = true }
 kod-core-tools = { path = "../kod-core-tools", version = "0.1.27" }
 kod-core-quality = { path = "../kod-core-quality", version = "0.1.27" }
 kod-core-routing = { path = "../kod-core-routing", version = "0.1.27" }
