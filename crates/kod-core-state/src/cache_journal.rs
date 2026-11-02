@@ -182,7 +182,14 @@ mod tests {
     #[test]
     fn truncation_preserves_the_trailing_newline() {
         // Simulate the truncation input: many well-formed JSONL lines.
-        let original: String = (0..20).map(|i| format!("{{\"n\":{i}}}\n")).collect();
+        let original: String = {
+            use std::fmt::Write as _;
+            let mut s = String::new();
+            for i in 0..20 {
+                let _ = write!(s, "{{\"n\":{i}}}\n");
+            }
+            s
+        };
         // Apply the truncation logic (the same code the fix uses).
         let total = original.lines().count();
         let keep: String = original

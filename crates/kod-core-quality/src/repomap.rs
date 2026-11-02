@@ -1430,7 +1430,14 @@ mod repomap_proptests {
         /// itself on the pure regex path.
         #[test]
         fn prop_rust_respects_symbol_cap(n in 200usize..=300) {
-            let src: String = (0..n).map(|i| format!("fn f{i}() {{}}\n")).collect();
+            let src: String = {
+                use std::fmt::Write as _;
+                let mut s = String::new();
+                for i in 0..n {
+                    let _ = write!(s, "fn f{i}() {{}}\n");
+                }
+                s
+            };
             let syms = extract_rust(&src);
             prop_assert!(
                 syms.len() <= 200,

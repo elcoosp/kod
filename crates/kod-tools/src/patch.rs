@@ -755,7 +755,14 @@ mod coverage_render_unified {
     fn two_adjacent_hunks_are_rendered_separately() {
         // A change at line 1 and a change at line 20 with no
         // overlap produce two hunks in one diff. Both must apply.
-        let old: String = (1..=25).map(|i| format!("{i}\n")).collect();
+        let old: String = {
+            use std::fmt::Write as _;
+            let mut s = String::new();
+            for i in 1..=25 {
+                let _ = write!(s, "{i}\n");
+            }
+            s
+        };
         let mut new = String::new();
         for i in 1..=25 {
             if i == 1 {

@@ -443,8 +443,10 @@ mod coverage_message_render {
 
     #[test]
     fn pinned_flag_round_trips_through_json() {
-        let mut m = MessageMetadata::default();
-        m.pinned = true;
+        let m = MessageMetadata {
+            pinned: true,
+            ..MessageMetadata::default()
+        };
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"pinned\":true"), "got: {json}");
         let parsed: MessageMetadata = serde_json::from_str(&json).unwrap();
@@ -455,8 +457,10 @@ mod coverage_message_render {
     fn turn_duration_round_trips_through_json() {
         // The `took …` row under an assistant bubble reads this field;
         // it must survive the session-file round trip.
-        let mut m = MessageMetadata::default();
-        m.turn_duration_ms = Some(4200);
+        let m = MessageMetadata {
+            turn_duration_ms: Some(4200),
+            ..MessageMetadata::default()
+        };
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"turn_duration_ms\":4200"), "got: {json}");
         let parsed: MessageMetadata = serde_json::from_str(&json).unwrap();

@@ -812,7 +812,14 @@ mod instructions_proptests {
             prop_assert_eq!(sections.len(), 1, "src={:?}", src);
             prop_assert!(matches!(sections[0].when, When::Always));
             prop_assert!(sections[0].name.is_none());
-            let expected: String = src.lines().map(|l| format!("{l}\n")).collect();
+            let expected: String = {
+                use std::fmt::Write as _;
+                let mut s = String::new();
+                for l in src.lines() {
+                    let _ = write!(s, "{l}\n");
+                }
+                s
+            };
             prop_assert_eq!(&sections[0].body, &expected, "src={:?}", src);
         }
 

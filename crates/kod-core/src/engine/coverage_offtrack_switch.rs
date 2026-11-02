@@ -248,8 +248,10 @@ async fn off_track_verdict_switches_to_fallback_mid_stream() {
         .await;
 
     // Scripted Jev: off-track fires on the first check.
-    let mut jev_cfg = kod_config::JevConfig::default();
-    jev_cfg.enabled = true;
+    let jev_cfg = kod_config::JevConfig {
+        enabled: true,
+        ..kod_config::JevConfig::default()
+    };
     engine.set_jev_decider(Arc::new(ScriptedJev {
         config: jev_cfg,
         off_track_p: 0.99,

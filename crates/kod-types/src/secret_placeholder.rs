@@ -227,10 +227,14 @@ impl SecretVault {
             HmacSha256::new_from_slice(&self.inner.key).expect("HMAC accepts any key length");
         mac.update(secret.as_bytes());
         let digest = mac.finalize().into_bytes();
-        let hex: String = digest[..DIGEST_BYTES]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let hex: String = {
+            use std::fmt::Write as _;
+            let mut s = String::with_capacity(DIGEST_BYTES * 2);
+            for b in &digest[..DIGEST_BYTES] {
+                let _ = write!(s, "{b:02x}");
+            }
+            s
+        };
         format!("{OPEN}{PREFIX}{hex}{CLOSE}")
     }
 

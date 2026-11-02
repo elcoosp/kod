@@ -648,7 +648,14 @@ mod tests {
 
     #[test]
     fn truncate_drops_lines_past_the_ceiling() {
-        let body: String = (0..200).map(|i| format!("line {i}\n")).collect();
+        let body: String = {
+            use std::fmt::Write as _;
+            let mut s = String::new();
+            for i in 0..200 {
+                let _ = write!(s, "line {i}\n");
+            }
+            s
+        };
         let out = truncate_to_ceiling(&body);
         assert_eq!(out.lines().count(), FILE_LINE_CEILING);
         assert!(out.contains("line 119"), "got: {out}");

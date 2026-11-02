@@ -106,7 +106,14 @@ pub fn fact_content_id(subject: &str, predicate: &str, object: &str) -> String {
         h.update(part.as_bytes());
     }
     let digest = h.finalize();
-    let hex: String = digest[..12].iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = {
+        use std::fmt::Write as _;
+        let mut s = String::with_capacity(24);
+        for b in &digest[..12] {
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    };
     format!("cf_{hex}")
 }
 
