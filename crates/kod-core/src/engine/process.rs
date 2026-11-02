@@ -1025,7 +1025,6 @@ impl KodEngine {
                         {
                             Ok(Some(())) => {
                                 rate_limit_attempt += 1;
-                                continue;
                             }
                             Ok(None) => break Err(e),
                             Err(cancelled) => break Err(cancelled),
@@ -1087,7 +1086,6 @@ impl KodEngine {
                         }
                         last_err = Some(e);
                         i += 1;
-                        continue;
                     }
                     Err(e) => {
                         // Delta section 9.7: the static chain has no
@@ -1623,7 +1621,6 @@ impl KodEngine {
                             {
                                 Ok(Some(())) => {
                                     rate_limit_attempt += 1;
-                                    continue;
                                 }
                                 Ok(None) => break Err(e),
                                 Err(cancelled) => break Err(cancelled),
@@ -1666,7 +1663,6 @@ impl KodEngine {
                             self.record_model_fallback(key, model_ref, next, &e.to_string())
 ;
                             turn_err = Some(e);
-                            continue;
                         }
                         Err(e) => return Err(e),
                     }

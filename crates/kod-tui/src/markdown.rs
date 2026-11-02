@@ -528,8 +528,7 @@ fn header_style(level: u8, theme: &Theme) -> Style {
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
     match level {
-        1 => base,
-        2 => base,
+        1 | 2 => base,
         _ => base.add_modifier(Modifier::ITALIC),
     }
 }

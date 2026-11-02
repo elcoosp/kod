@@ -507,7 +507,6 @@ impl EventHandler {
                 }
                 _ = wake_notify().notified() => {
                     // Priority queue may have a new entry; loop.
-                    continue;
                 }
                 _ = tokio::time::sleep_until(deadline) => {
                     return Event::Tick;

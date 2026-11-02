@@ -435,14 +435,12 @@ impl CompactionDispatcher {
                 MethodOutcome::NoChange => continue,
                 MethodOutcome::Unavailable(reason) => {
                     notices.push(format!("`{}` unavailable: {reason}", method.name()));
-                    continue;
                 }
                 MethodOutcome::Failed(err) => {
                     notices.push(format!(
                         "`{}` failed: {err}; falling through",
                         method.name()
                     ));
-                    continue;
                 }
             }
         }

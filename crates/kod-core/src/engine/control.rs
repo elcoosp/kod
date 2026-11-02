@@ -173,8 +173,7 @@ impl KodEngine {
         err: &KodError,
     ) -> Option<std::time::Duration> {
         let hint_secs = match err {
-            KodError::RateLimited { retry_after_secs } => *retry_after_secs,
-            KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
+            KodError::RateLimited { retry_after_secs } | KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
             other => {
                 match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
                     kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {

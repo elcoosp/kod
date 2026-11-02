@@ -306,8 +306,7 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
         TurnFailure::TransportTimeout | TurnFailure::TransportNetwork => {
             RetryAction::SameEndpointBackoff
         }
-        TurnFailure::TransportRateLimit { .. } => RetryAction::SameEndpointBackoff,
-        TurnFailure::TransportServerBusy { .. } => RetryAction::SameEndpointBackoff,
+        TurnFailure::TransportRateLimit { .. } | TurnFailure::TransportServerBusy { .. } => RetryAction::SameEndpointBackoff,
         TurnFailure::ProviderRefused { .. } => RetryAction::SameEndpointLowerTemp,
         TurnFailure::ProviderAuthError { .. } => RetryAction::NoRetry,
         TurnFailure::ContextWindowExceeded { .. } => RetryAction::ShrinkHistory,

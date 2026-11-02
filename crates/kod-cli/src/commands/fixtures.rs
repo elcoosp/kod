@@ -125,7 +125,6 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
         if let Err(e) = engine.process_for("session", &round.user_prompt).await {
             eprintln!("  round {idx}: engine error: {e}");
             divergent += 1;
-            continue;
         }
     }
     // Bug-hunt: the pre-fix shape dropped a shutdown

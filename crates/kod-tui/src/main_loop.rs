@@ -6160,8 +6160,7 @@ impl TuiLoop {
             }
             KeyCode::Tab => match self.app.mode() {
                 AppMode::Normal => self.app.set_mode(AppMode::AgentPanel),
-                AppMode::AgentPanel => self.app.set_mode(AppMode::Normal),
-                _ => self.app.set_mode(AppMode::Normal),
+                AppMode::AgentPanel | _ => self.app.set_mode(AppMode::Normal),
             },
             KeyCode::F(1) => {
                 self.app.toggle_help();

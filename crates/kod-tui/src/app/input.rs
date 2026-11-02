@@ -572,7 +572,6 @@ impl KodApp {
                             if pos > lend {
                                 break;
                             }
-                            continue;
                         } else {
                             let e = b.end.min(lend);
                             let base = cells(&row);

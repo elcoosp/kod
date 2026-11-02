@@ -432,7 +432,6 @@ pub fn parse(text: &str) -> Result<(String, Tag, Vec<Op>), EditError> {
                 return Err(EditError::Malformed("payload without a PUT".to_string()));
             };
             op.payload.push(payload.to_string());
-            continue;
         }
         // A blank line or anything else between ops: ignore.
     }

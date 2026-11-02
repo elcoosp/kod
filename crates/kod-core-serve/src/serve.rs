@@ -1772,7 +1772,6 @@ mod panic_guard_tests {
                 _ => {
                     // Streaming may emit chunks before the error;
                     // keep reading.
-                    continue;
                 }
             }
         }
