@@ -576,9 +576,8 @@ async fn swarm_requires_a_provider() {
     // No set_provider.
     // `unwrap_err` needs `Debug` on the Ok type; matching explicitly
     // avoids adding a `Debug` impl to `SwarmRunner` just for a test.
-    let err = match SwarmRunner::new(engine, 3, true).await {
-        Ok(_) => panic!("SwarmRunner::new should fail without a provider"),
-        Err(e) => e,
+    let Err(err) = SwarmRunner::new(engine, 3, true).await else {
+        panic!("SwarmRunner::new should fail without a provider");
     };
     assert!(
         matches!(err, kod_error::KodError::InvalidState(_)),

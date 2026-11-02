@@ -953,7 +953,7 @@ impl KodEngine {
             .collect();
         let state = crate::jev::build_state(input, &[]);
         let started = std::time::Instant::now();
-        let rows = if let Ok(r) = jev.evaluate_yes_no_batch(&state, &questions).await { r } else {
+        let Ok(rows) = jev.evaluate_yes_no_batch(&state, &questions).await else {
             let mut out = other;
             out.extend(mcp);
             return out;

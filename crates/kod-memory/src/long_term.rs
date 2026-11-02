@@ -148,10 +148,8 @@ impl LongTermMemory {
             let txn = db.begin_read().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to start read transaction: {e}"))
             })?;
-            let table = match txn.open_table(HASH_INDEX_TABLE) {
-                Ok(t) => t,
-                // Table absent on an old db: no hit, caller rescans.
-                Err(_) => return Ok(None),
+            let Ok(table) = txn.open_table(HASH_INDEX_TABLE) else {
+                return Ok(None);
             };
             let Some(v) = table
                 .get(key.as_slice())
@@ -192,9 +190,8 @@ impl LongTermMemory {
             let read_txn = db
                 .begin_read()
                 .map_err(|e| KodError::MemoryDatabase(format!("migration read txn: {e}")))?;
-            let idx_table = match read_txn.open_table(HASH_INDEX_TABLE) {
-                Ok(t) => t,
-                Err(_) => return Ok(()), // no index table yet — nothing to migrate
+            let Ok(idx_table) = read_txn.open_table(HASH_INDEX_TABLE) else {
+                return Ok(());
             };
             let idx_len = idx_table.len().unwrap_or(0);
             let mem_table = read_txn

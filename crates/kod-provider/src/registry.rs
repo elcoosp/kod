@@ -217,9 +217,8 @@ mod tests {
         r.insert("local", Arc::new(Stub("local")), caps(), "test-model");
         // `Arc<dyn LlmProvider>` is not Debug, so `expect_err` (which
         // requires `T: Debug`) cannot be used. Match instead.
-        let err = match r.resolve(&ModelRef::new("nope", "m")) {
-            Ok(_) => panic!("unknown endpoint must error"),
-            Err(e) => e,
+        let Err(err) = r.resolve(&ModelRef::new("nope", "m")) else {
+            panic!("unknown endpoint must error");
         };
         let msg = err.to_string();
         assert!(msg.contains("nope"), "got: {msg}");

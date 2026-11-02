@@ -154,7 +154,7 @@ async fn cancel_during_streaming_returns_promptly() {
     let first_opt = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("first chunk within 5s -- the engine did not send anything for 5s");
-    let first = if let Some(s) = first_opt { s } else {
+    let Some(first) = first_opt else {
         // Channel closed before a chunk. The engine task must
         // have returned. Join it to surface the error.
         let joined = tokio::time::timeout(Duration::from_secs(1), run)
@@ -191,9 +191,8 @@ async fn cancel_during_streaming_returns_promptly() {
 
     let joined = finished.expect("run returned");
     let result = joined.expect("task did not panic");
-    let err = match result {
-        Ok(_) => panic!("a cancelled turn must not return Ok"),
-        Err(e) => e,
+    let Err(err) = result else {
+        panic!("a cancelled turn must not return Ok");
     };
     assert!(
         err.to_string().contains("cancel"),

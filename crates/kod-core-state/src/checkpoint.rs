@@ -510,9 +510,8 @@ fn is_valid_id(id: &str) -> bool {
     // snapshot minted before this change still works. The strict
     // allow-list is what keeps a caller-supplied id from escaping
     // the checkpoint directory.
-    let (ts, rest) = match id.split_once('-') {
-        Some(p) => p,
-        None => return false,
+    let Some((ts, rest)) = id.split_once('-') else {
+        return false;
     };
     if ts.len() != 13 || !ts.bytes().all(|b| b.is_ascii_digit()) {
         return false;

@@ -130,9 +130,8 @@ impl KodApp {
     /// Filesystem entries matching the path token (dirs get `/` suffix).
     #[must_use]
     pub fn path_candidates(&self) -> Vec<String> {
-        let (_, token) = match self.path_token() {
-            Some(t) => t,
-            None => return Vec::new(),
+        let Some((_, token)) = self.path_token() else {
+            return Vec::new();
         };
         let raw = token.strip_prefix('@').unwrap_or(&token);
         let raw = Self::expand_tilde(raw);
@@ -289,9 +288,8 @@ impl KodApp {
             return;
         }
         let selected = paths[self.completion_index % paths.len()].clone();
-        let (start, token) = match self.path_token() {
-            Some(t) => t,
-            None => return,
+        let Some((start, token)) = self.path_token() else {
+            return;
         };
         let at = token.starts_with('@');
         let mut replacement = if at && !selected.starts_with('@') {

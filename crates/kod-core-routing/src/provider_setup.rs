@@ -283,9 +283,8 @@ mod tests {
         // Arc<ProviderRegistry> is not Debug (it contains
         // Arc<dyn LlmProvider>), so unwrap_err cannot be called.
         // Match instead.
-        let err = match build_registry(&cfg, None) {
-            Ok(_) => panic!("missing API key must error"),
-            Err(e) => e,
+        let Err(err) = build_registry(&cfg, None) else {
+            panic!("missing API key must error");
         };
         let msg = err.to_string();
         assert!(msg.contains("Anthropic API key"), "got: {msg}");

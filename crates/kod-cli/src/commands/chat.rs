@@ -510,7 +510,7 @@ pub async fn run_chat(
                         .unwrap_or_else(|_| kod_core::engine::ApprovalBatch { items: Vec::new() });
                     let total = batch.items.len();
                     for (n, item) in batch.items.iter().enumerate() {
-                        let item_id = if let Some(i) = item.id { i } else {
+                        let Some(item_id) = item.id else {
                             println!("(approval item {}/{} has no id; skipping)", n + 1, total);
                             continue;
                         };

@@ -451,7 +451,7 @@ where
     let mut current = initial.clone();
     for turn in 0..config.turns {
         let prompt = prompt_for_turn(turn, &initial);
-        let reply = if let Ok(r) = run_turn(&prompt) { r } else {
+        let Ok(reply) = run_turn(&prompt) else {
             replies.push(TurnReply {
                 reported: None,
                 sound_ok: false,

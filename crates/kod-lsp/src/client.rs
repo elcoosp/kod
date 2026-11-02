@@ -1097,7 +1097,7 @@ fn try_parse_frame(
     max_message_bytes: usize,
 ) -> Result<Option<(serde_json::Value, usize)>, LspError> {
     // Locate the header/body separator.
-    let header_end = if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { i } else {
+    let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
         if buf.len() > max_header_bytes {
             return Err(LspError::Protocol(format!(
                 "LSP header exceeded {max_header_bytes} bytes",

@@ -744,7 +744,7 @@ impl KodEngine {
         }
 
         // The `"auto"` sentinel. Build a judge.
-        let client = if let Some(c) = self.resolve_judge_client().await { c } else {
+        let Some(client) = self.resolve_judge_client().await else {
             tracing::debug!(
                 endpoint = %model_ref.endpoint,
                 "effort = \"auto\" but no judge role is configured; leaving effort unset",
@@ -825,7 +825,7 @@ impl KodEngine {
             return;
         }
 
-        let client = if let Some(c) = self.resolve_judge_client().await { c } else {
+        let Some(client) = self.resolve_judge_client().await else {
             tracing::debug!(
                 holder = %holder,
                 "unexpected-stop candidate but no judge role configured",

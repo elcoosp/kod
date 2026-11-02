@@ -2110,15 +2110,14 @@ fn version_is_older(candidate: &str, running: &str) -> bool {
 fn parse_kv_args(args: &[String]) -> Result<serde_json::Value> {
     let mut obj = serde_json::Map::new();
     for token in args {
-        let (k, v) = match token.split_once('=') {
-            Some(pair) => pair,
-            None => {
-                return Err(KodError::InvalidParameters {
-                    reason: format!(
-                        "argument {token:?} is not key=value. Use `key=value` for every argument, or pass a JSON object as a single token."
-                    ),
-                });
-            }
+        let Some((k, v)) = token.split_once('=') else {
+            {
+                            return Err(KodError::InvalidParameters {
+                                reason: format!(
+                                    "argument {token:?} is not key=value. Use `key=value` for every argument, or pass a JSON object as a single token."
+                                ),
+                            });
+                        }
         };
         if k.is_empty() {
             return Err(KodError::InvalidParameters {

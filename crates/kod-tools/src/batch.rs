@@ -140,7 +140,7 @@ impl Tool for BatchTool {
 
         let mut results: Vec<Value> = Vec::with_capacity(invocations.len());
         for (i, inv) in invocations.iter().enumerate() {
-            let name = if let Some(n) = inv.get("tool").and_then(Value::as_str) { n } else {
+            let Some(name) = inv.get("tool").and_then(Value::as_str) else {
                 results.push(serde_json::json!({
                     "index": i,
                     "error": "missing 'tool' field",
