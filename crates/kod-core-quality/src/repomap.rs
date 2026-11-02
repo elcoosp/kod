@@ -632,8 +632,8 @@ fn ast_or_regex(content: &str, ext: &str, fallback: fn(&str) -> Vec<Symbol>) -> 
 
 /// Kept for the Rust agreement test; delegates to `ast_or_regex`.
 #[cfg(test)]
-fn extract_rust_via_ast(content: &str) -> Option<Vec<Symbol>> {
-    Some(ast_or_regex(content, "rs", extract_rust))
+fn extract_rust_via_ast(content: &str) -> Vec<Symbol> {
+    ast_or_regex(content, "rs", extract_rust)
 }
 
 fn extract_rust(content: &str) -> Vec<Symbol> {
@@ -812,7 +812,7 @@ fn a_test() {}
 async fn an_async_test() {}
 ";
         let regex = extract_rust(src);
-        let ast = extract_rust_via_ast(src).expect("tree-sitter parse");
+        let ast = extract_rust_via_ast(src);
         // Same names, kinds, and lines.
         let r: Vec<(&str, String, usize)> = regex
             .iter()
@@ -836,7 +836,7 @@ async fn an_async_test() {}
         // dispatch's `.unwrap_or_else(regex)` does not fire. If the
         // grammar ever failed to load, this would return None and the
         // map would silently fall back.
-        assert!(extract_rust_via_ast("fn x() {}").is_some());
+        assert!(!extract_rust_via_ast("fn x() {}").is_empty());
     }
 
     #[test]
@@ -1402,7 +1402,7 @@ mod repomap_proptests {
         /// fixture the existing example test uses.
         #[test]
         fn prop_rust_ast_and_regex_agree(s in arb_rust_fn_src()) {
-            let ast = extract_rust_via_ast(&s).expect("valid Rust always parses");
+            let ast = extract_rust_via_ast(&s);
             let regex = extract_rust(&s);
             prop_assert_eq!(
                 sig(&ast), sig(&regex),

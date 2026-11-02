@@ -230,7 +230,7 @@ impl WorktreeManager {
         // already exceeds the cap (a very large checkout). Real
         // enforcement during the run is a follow-up; today this is a
         // clear signal at create time.
-        let used_mb = directory_size_mb(&path).unwrap_or(0);
+        let used_mb = directory_size_mb(&path);
         if used_mb > self.disk_cap_mb {
             // Roll back the worktree we just created; leaving a
             // half-state would be worse than a clean failure.
@@ -852,7 +852,7 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
 
 /// Approximate directory size in MB. Walks shallowly (max depth 3)
 /// and caps the entry count so a huge tree does not stall the check.
-fn directory_size_mb(path: &Path) -> Option<u64> {
+fn directory_size_mb(path: &Path) -> u64 {
     let mut total: u64 = 0;
     let mut count = 0usize;
     let mut stack = vec![(path.to_path_buf(), 0usize)];
@@ -875,7 +875,7 @@ fn directory_size_mb(path: &Path) -> Option<u64> {
             }
         }
     }
-    Some(total / (1024 * 1024))
+    total / (1024 * 1024)
 }
 
 #[cfg(test)]
