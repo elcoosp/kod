@@ -3579,7 +3579,7 @@ impl TuiLoop {
                                     return Ok(());
                                 }
                                 let rate = if total > 0 {
-                                    with_refs as f64 / total as f64 * 100.0
+                                    f64::from(u32::try_from(with_refs).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) * 100.0
                                 } else {
                                     0.0
                                 };
@@ -4832,13 +4832,13 @@ impl TuiLoop {
                                 }
                                 let mut msg = format!("Jev decisions this session: {total}\n");
                                 for (src, n) in &by_source {
-                                    let pct = (*n as f64 / total as f64) * 100.0;
+                                    let pct = (f64::from(u32::try_from(*n).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX))) * 100.0;
                                     msg.push_str(&format!("  {src:<10} {n:>4}  ({pct:.0}%)\n"));
                                 }
                                 msg.push_str(&format!(
                                     "\nCache hits:      {cached} ({}%)\n",
                                     if total > 0 {
-                                        (cached as f64 / total as f64 * 100.0).round() as u64
+                                        (f64::from(u32::try_from(cached).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) * 100.0).round() as u64
                                     } else {
                                         0
                                     },

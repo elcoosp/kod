@@ -1230,7 +1230,7 @@ pub fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     println!("Jev decisions in {}", path.display());
     println!("  total:      {total}");
     for (src, n) in &by_source {
-        let pct = f64::from(u32::try_from(*n).unwrap_or(u32::MAX)) / total as f64 * 100.0;
+        let pct = f64::from(u32::try_from(*n).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) * 100.0;
         println!("  {src:<10} {n:>5}  ({pct:.0}%)");
     }
     println!("  cached:     {cached} ({}%)", cached * 100 / total);
