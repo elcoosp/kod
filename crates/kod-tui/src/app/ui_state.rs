@@ -46,7 +46,7 @@ impl KodApp {
                         format!(
                             "rate-limited — retry in {}…",
                             kod_core::engine::format_duration_ms(
-                                remaining.as_millis().min(u128::from(u64::MAX)) as u64
+                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX) as u64
                             )
                         )
                     }
@@ -62,7 +62,7 @@ impl KodApp {
                         format!(
                             "server-busy — retry in {}…",
                             kod_core::engine::format_duration_ms(
-                                remaining.as_millis().min(u128::from(u64::MAX)) as u64
+                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX) as u64
                             )
                         )
                     }
@@ -469,7 +469,7 @@ impl KodApp {
     /// plus an hour tier (turns and rate-limit waits outgrow minutes).
     #[must_use]
     pub fn format_friendly_duration(d: std::time::Duration) -> String {
-        let ms = d.as_millis().min(u128::from(u64::MAX)) as u64;
+        let ms = u64::try_from(d.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX) as u64;
         if ms < 1000 {
             format!("{ms}ms")
         } else {
@@ -545,7 +545,7 @@ impl KodApp {
         else {
             return;
         };
-        reply.metadata.turn_duration_ms = Some(d.as_millis().min(u128::from(u64::MAX)) as u64);
+        reply.metadata.turn_duration_ms = Some(u64::try_from(d.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX) as u64);
     }
 
     /// Milliseconds from `begin_generation` to the first non-empty

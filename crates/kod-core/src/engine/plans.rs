@@ -109,7 +109,7 @@ impl KodEngine {
         }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX) as u64);
         // Hash the query so the log carries a stable identity without
         // storing the (potentially sensitive) text itself.
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;

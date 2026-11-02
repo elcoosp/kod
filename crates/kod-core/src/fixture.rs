@@ -174,7 +174,7 @@ impl Fixture {
             name: name.into(),
             created_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64),
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX) as u64),
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
             rounds: Vec::new(),
         }

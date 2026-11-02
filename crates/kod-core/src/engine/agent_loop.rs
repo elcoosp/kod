@@ -451,7 +451,7 @@ impl KodEngine {
             // returned), so the turn is recorded with a None reason
             // and the cost-unavailable signal derived from usage.
             {
-                let elapsed = round_started.elapsed().as_millis() as u64;
+                let elapsed = u64::try_from(round_started.elapsed().as_millis()).unwrap_or(u64::MAX) as u64;
                 let cost_unavailable = match usage.as_ref() {
                     None => Some(crate::run_collector::CostUnavailable::NoUsage),
                     Some(_) => None,
@@ -867,7 +867,7 @@ impl KodEngine {
                 Ok(None) => break,
                 Err(_) => {
                     stream_error = Some(kod_error::KodError::ProviderTimeout {
-                        timeout_ms: stream_idle_timeout.as_millis() as u64,
+                        timeout_ms: u64::try_from(stream_idle_timeout.as_millis()).unwrap_or(u64::MAX) as u64,
                     });
                     break;
                 }

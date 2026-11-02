@@ -290,7 +290,7 @@ impl KodEngine {
         let system_prompt_hash = self.surface_fingerprint(&tool_names).await;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX) as u64);
         let entry = kod_core_state::session_log::SessionEntry::SessionInit {
             timestamp_ms: now_ms,
             holder: String::new(),

@@ -1047,7 +1047,7 @@ impl TaskRouter {
         // and leaves generation to whoever called it.
 
         // 5. Record execution time
-        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+        let execution_time_ms = u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX) as u64;
 
         Ok(TaskResponse {
             task_type,
@@ -1864,7 +1864,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos() as i128);
+            .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX) as i128);
         let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         entries.push((rel, mtime, meta.len()));
     }
