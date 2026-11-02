@@ -575,6 +575,7 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
+        const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
         let url = format!("{}/models", self.base_url);
         let response = self
             .client
@@ -612,7 +613,6 @@ impl LlmProvider for OpenAICompatProvider {
         // SEC-B-04: stream the body with a byte cap. `resp.json()`
         // buffers the whole body unbounded; a hostile `base_url`
         // answering 200 with a multi-GB JSON grows RSS until OOM.
-        const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
         let mut response = response;
         let mut bytes: Vec<u8> = Vec::with_capacity(4096);
         while let Some(chunk) = response

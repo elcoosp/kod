@@ -131,6 +131,7 @@ pub fn decide(used_tokens: u64, budget_tokens: u64) -> Action {
 /// else. The caller then leaves the transcript alone.
 #[must_use]
 pub fn safe_cutoff(turns: &[ChatMessage], keep_recent: usize) -> Option<usize> {
+    use std::collections::HashMap;
     if turns.is_empty() {
         return None;
     }
@@ -148,7 +149,6 @@ pub fn safe_cutoff(turns: &[ChatMessage], keep_recent: usize) -> Option<usize> {
     // drops the opener while keeping its result — the straddle the
     // loop searched for. Merge those ranges and take the largest cut
     // ≤ nominal outside them.
-    use std::collections::HashMap;
     let mut open_first: HashMap<&str, usize> = HashMap::new();
     let mut close_first: HashMap<&str, usize> = HashMap::new();
     for (i, m) in turns.iter().enumerate() {

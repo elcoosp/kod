@@ -193,6 +193,7 @@ impl LspClient {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn initialize(&mut self) -> Result<(), LspError> {
+        const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
         let root_uri = path_to_uri(&self.workspace_root);
         let id = self
             .request(
@@ -219,7 +220,6 @@ impl LspClient {
         // H-R7a: bound the handshake. Every other path in this file
         // has a 30 s timeout; the initialize loop did not, so a
         // spawned-but-stalled server hung the tool call indefinitely.
-        const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
         let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -839,6 +839,7 @@ impl LspClient {
         const MAX_HEADER_BYTES: usize = 64 * 1024;
         const MAX_MESSAGE_BYTES: usize = 50 * 1024 * 1024;
         loop {
+            use tokio::io::AsyncReadExt;
             if let Some((value, consumed)) =
                 try_parse_frame(&self.read_buf, MAX_HEADER_BYTES, MAX_MESSAGE_BYTES)?
             {
@@ -858,7 +859,6 @@ impl LspClient {
                 )));
             }
             let mut chunk = [0u8; 8192];
-            use tokio::io::AsyncReadExt;
             let n = self.stdout.read(&mut chunk).await?;
             if n == 0 {
                 return Err(LspError::Io(std::io::Error::new(

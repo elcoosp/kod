@@ -470,6 +470,7 @@ impl KodEngine {
     /// Fail-open: on Jev error, the original text is returned and
     /// the failure is logged at `Heuristic`.
     pub(crate) async fn semantic_verify_citations(&self, key: &str, text: &str) -> String {
+        const MAX_CITATIONS: usize = 10;
         let Some(jev) = self.jev_client() else {
             return text.to_string();
         };
@@ -478,7 +479,6 @@ impl KodEngine {
             return text.to_string();
         }
         // Bound the batch — a reply with 100 citations is pathological.
-        const MAX_CITATIONS: usize = 10;
         let slice: Vec<_> = citations.iter().take(MAX_CITATIONS).collect();
 
         // Read each cited file and capture the surrounding line(s).
@@ -1258,13 +1258,13 @@ impl KodEngine {
 ///   - no arguments that look like script injection (`eval`, `exec`,
 ///     `source`, `.`, `:`)
 fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
+    const UNSAFE_TOKENS: &[&str] = &[";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r"];
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return false;
     }
     // Structural: any of these means we cannot cheaply reason about
     // what the command does.
-    const UNSAFE_TOKENS: &[&str] = &[";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r"];
     if UNSAFE_TOKENS.iter().any(|t| trimmed.contains(t)) {
         return false;
     }

@@ -209,6 +209,7 @@ async fn snapshot_research_task_no_context() {
 /// characterization suite is self-contained.
 #[tokio::test]
 async fn cacheable_prefix_does_not_drift_between_turns() {
+    const MARKER: &str = "## Volatile suffix (not cached)";
     let tmp = TempDir::new().unwrap();
     // The repomap walk requires a project marker; without one
     // the fixture produces an empty map and the snapshot does not
@@ -216,7 +217,6 @@ async fn cacheable_prefix_does_not_drift_between_turns() {
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let router = make_router(tmp.path());
-    const MARKER: &str = "## Volatile suffix (not cached)";
 
     let p1 = router
         .build_prompt_with_context("first", &TaskType::Simple, "(start of conversation)", None)

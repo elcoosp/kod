@@ -347,6 +347,7 @@ impl LlmProvider for AnthropicProvider {
                 // Bound the whole round-trip: the engine's non-streaming
                 // path applies no timeout of its own, so a server that
                 // accepts the connection and stalls would hang the turn.
+                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
                 let resp = tokio::time::timeout(
                     std::time::Duration::from_secs(self.timeout_secs.max(1)),
                     self.client
@@ -422,7 +423,6 @@ impl LlmProvider for AnthropicProvider {
                 // answer 200 with a multi-GB JSON and grow RSS until
                 // OOM. 16 MiB is far above any legitimate Messages
                 // reply.
-                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
                 let mut resp = resp;
                 let mut bytes: Vec<u8> = Vec::with_capacity(8192);
                 while let Some(chunk) = resp
@@ -491,6 +491,7 @@ impl LlmProvider for AnthropicProvider {
                 // SEC-B-03: bound the whole request; the shared client
                 // has only a connect timeout, so a wedged proxy would
                 // park here forever and never consume the retry budget.
+                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
                 let resp = tokio::time::timeout(
                     std::time::Duration::from_secs(self.timeout_secs.max(1)),
                     client
@@ -517,7 +518,6 @@ impl LlmProvider for AnthropicProvider {
                     return Err(KodError::provider_status(status.as_u16(), &text));
                 }
                 // SEC-B-04: same bounded read as `complete`.
-                const MAX_JSON_BODY_BYTES: usize = 16 * 1024 * 1024;
                 let mut resp = resp;
                 let mut bytes: Vec<u8> = Vec::with_capacity(8192);
                 while let Some(chunk) = resp
@@ -818,6 +818,7 @@ impl LlmProvider for AnthropicProvider {
                     };
                     match chunk {
                         Ok(bytes) => {
+                            const MAX_SSE_LINE_BYTES: usize = 64 * 1024 * 1024;
                             buf.extend_from_slice(&bytes);
                             // Cap the accumulated buffer: an SSE
                             // line that never terminates must not
@@ -828,7 +829,6 @@ impl LlmProvider for AnthropicProvider {
                             // reader bounds; 64 MiB is generous for
                             // any real Anthropic SSE frame (a large
                             // tool-use JSON is a few hundred KB).
-                            const MAX_SSE_LINE_BYTES: usize = 64 * 1024 * 1024;
                             if buf.len() > MAX_SSE_LINE_BYTES {
                                 transport_error = Some(KodError::Provider(format!(
                                     "anthropic stream: SSE line exceeded {MAX_SSE_LINE_BYTES} bytes without a newline"

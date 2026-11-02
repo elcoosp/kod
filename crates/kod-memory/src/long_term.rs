@@ -226,11 +226,11 @@ impl LongTermMemory {
                     .iter()
                     .map_err(|e| KodError::MemoryDatabase(format!("migration iter: {e}")))?;
                 for entry in iter {
+                    use std::hash::{Hash, Hasher};
                     let Ok((_k, v)) = entry else { continue };
                     let Ok(e) = serde_json::from_slice::<MemoryEntry>(v.value()) else {
                         continue;
                     };
-                    use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     e.content.hash(&mut h);
                     let hash = h.finish();
@@ -1000,6 +1000,7 @@ mod supersession_tests {
     /// and the caller silently drops the fresh fact.
     #[tokio::test]
     async fn update_content_retires_the_old_index_key() {
+        use std::hash::{Hash, Hasher};
         let (_tmp, m) = fixture();
         let mut e = entry("alpha content here");
         let id = e.id.clone();
@@ -1011,7 +1012,6 @@ mod supersession_tests {
 
         // The old content must NOT be found by hash lookup; the id is
         // still there, but it no longer carries that content.
-        use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         "alpha content here".hash(&mut h);
         let found = m
@@ -1038,12 +1038,12 @@ mod supersession_tests {
     /// `find_by_content_hash` keeps returning dangling ids.
     #[tokio::test]
     async fn remove_retires_the_index_key() {
+        use std::hash::{Hash, Hasher};
         let (_tmp, m) = fixture();
         let e = entry("gamma content here");
         let id = e.id.clone();
         m.store(e.clone()).await.unwrap();
 
-        use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         "gamma content here".hash(&mut h);
         let key_hash = h.finish();

@@ -1492,6 +1492,7 @@ impl KodEngine {
         let mut elapsed_ms = Vec::with_capacity(calls.len());
         let mut block = String::from("## Tool results\n");
         for (i, (call, (res, ms))) in calls.iter().zip(raw_results).enumerate() {
+            const RENDERED_RESULT_CAP: usize = 8_000;
             elapsed_ms.push(ms);
             let result = match res {
                 Ok(r) => r,
@@ -1509,7 +1510,6 @@ impl KodEngine {
             // thumb this is ≈2k tokens — comfortably under any model's
             // per-round budget once history, identity, and tools are
             // added on top.
-            const RENDERED_RESULT_CAP: usize = 8_000;
             // P2.4 — for write_file / patch_file, ask Jev to
             // triage the diff's hunks before the prompt block is
             // built. `None` means "leave the diff alone" and the

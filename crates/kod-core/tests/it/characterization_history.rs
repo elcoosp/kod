@@ -184,6 +184,8 @@ async fn history_rendering_shape_is_stable_across_turns() {
 /// exactly which turns survived, not just whether "some marker" did.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn history_budget_drops_oldest_first() {
+    const PAD: usize = 620;
+    const TURNS: usize = 10;
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let capture = Arc::new(CaptureProvider::new());
@@ -196,8 +198,6 @@ async fn history_budget_drops_oldest_first() {
     // oldest three or four turns are dropped.
     engine.set_history_budget(4_000);
 
-    const TURNS: usize = 10;
-    const PAD: usize = 620;
     for i in 0..TURNS {
         let user = format!("UNIQ_{i:04}_USER_{}", "x".repeat(PAD));
         let asst = format!("UNIQ_{i:04}_ASST_{}", "x".repeat(PAD));

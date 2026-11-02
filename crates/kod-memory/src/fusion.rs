@@ -163,6 +163,7 @@ pub fn classify_intent(query: &str) -> QueryIntent {
 /// should use [`blend_weights`] with this confidence.
 #[must_use]
 pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
+    const PREFERENCE_WORDS: &[&str] = &["prefer", "always", "never", "convention", "style"];
     let lower = query.to_ascii_lowercase();
     let trimmed = lower.trim();
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
@@ -170,7 +171,6 @@ pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
     const QUESTION_WORDS: &[&str] = &[
         "what", "why", "how", "when", "where", "who", "which", "does", "do", "is", "are",
     ];
-    const PREFERENCE_WORDS: &[&str] = &["prefer", "always", "never", "convention", "style"];
     const TEMPORAL_WORDS: &[&str] = &[
         "when",
         "last time",

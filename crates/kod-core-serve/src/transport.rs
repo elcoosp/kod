@@ -107,6 +107,7 @@ mod imp {
 
     impl SocketLock {
         fn acquire(socket_path: &Path) -> Result<Self> {
+            use std::os::unix::io::AsRawFd;
             let lock_path = socket_path.with_extension("lock");
             let file = std::fs::OpenOptions::new()
                 .create(true)
@@ -115,7 +116,6 @@ mod imp {
                 .truncate(false)
                 .open(&lock_path)
                 .map_err(KodError::Io)?;
-            use std::os::unix::io::AsRawFd;
             // SAFETY: valid fd; flock is the standard advisory lock.
             let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
             if rc != 0 {

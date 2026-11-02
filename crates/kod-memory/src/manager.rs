@@ -510,6 +510,7 @@ impl MemoryManager {
         // leak forever, and the write path is the only place to stop
         // it. Redaction runs before the dedup check so the dedup
         // comparison is over the form that actually gets stored.
+        const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content_owned = self.redact_text(content);
         // Delta §12.5: never store a `<memories>` block. A recalled
         // block the model saw is prompt scaffolding, not a fact; if
@@ -524,7 +525,6 @@ impl MemoryManager {
         // agent can mint a fresh 100 KB entry per call and grow the
         // global DB without bound. 4 KiB is larger than any fact the
         // extraction pass produces.
-        const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content = if content.len() > MAX_CONTENT_BYTES {
             kod_types::strutil::truncate_bytes(content, MAX_CONTENT_BYTES)
         } else {
@@ -861,6 +861,7 @@ impl MemoryManager {
         // Same redaction as the store path — an update can introduce a
         // secret that the original store did not carry. See the
         // module doc for the "replayed forever" rationale.
+        const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content_owned = self.redact_text(content);
         // F2i-9: apply the same hygiene the store path enforces. An
         // update could otherwise smuggle a `<memories>` block (prompt
@@ -869,7 +870,6 @@ impl MemoryManager {
         // production caller — but the public method must not be a
         // bypass.
         let content_owned = crate::hygiene::strip_memory_tags(&content_owned);
-        const MAX_CONTENT_BYTES: usize = 4 * 1024;
         let content_owned: String = if content_owned.len() > MAX_CONTENT_BYTES {
             kod_types::strutil::truncate_bytes(&content_owned, MAX_CONTENT_BYTES).to_string()
         } else {
@@ -1001,6 +1001,7 @@ impl MemoryManager {
     ///
     /// Panics if an internal invariant is violated.
     pub async fn retrieve_long_term_hybrid(&self, query: &str) -> Result<Vec<MemoryEntry>> {
+        const MIN_SCORE: f32 = 0.15;
         let all_arc = self.long_term_entries_cached().await?;
         if all_arc.is_empty() {
             return Ok(Vec::new());
@@ -1245,7 +1246,6 @@ impl MemoryManager {
         // does not return the entire store in a stable-but-meaningless
         // order. 0.15 lets recency+keyword-only entries through but
         // filters obvious noise.
-        const MIN_SCORE: f32 = 0.15;
         let top: Vec<MemoryEntry> = scored
             .into_iter()
             .filter(|(s, _)| *s >= MIN_SCORE)

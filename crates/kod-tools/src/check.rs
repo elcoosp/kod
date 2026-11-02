@@ -432,6 +432,7 @@ impl CheckTool {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn run_check(workdir: &Path, timeout_secs: u64) -> Result<CheckOutcome> {
+        use tokio::io::AsyncReadExt;
         let kind = ProjectKind::detect(workdir).ok_or_else(|| KodError::ToolExecution {
             tool_name: "check".to_string(),
             reason: format!(
@@ -472,7 +473,6 @@ impl CheckTool {
         // Drain both pipes CONCURRENTLY with the wait. A child that
         // fills the ~64 KiB pipe buffer blocks writing and never
         // exits, so `wait()` alone would deadlock until the timeout.
-        use tokio::io::AsyncReadExt;
         let mut stdout_pipe = child.stdout.take();
         let mut stderr_pipe = child.stderr.take();
         let drain = async {

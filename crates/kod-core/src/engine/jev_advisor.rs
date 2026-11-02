@@ -317,6 +317,7 @@ impl KodEngine {
         holder: &str,
         result: &ToolResult,
     ) -> Option<ToolResult> {
+        const MAX_HUNKS: usize = 20;
         let jev = self.jev_client()?;
         let request = self.current_request(holder).await?;
         let ToolResult::Success(v) = result else {
@@ -355,7 +356,6 @@ impl KodEngine {
 
         // One score per hunk, in a single batch of yes/no for the
         // binary "is this context-only vs relevant?".
-        const MAX_HUNKS: usize = 20;
         let evaluated = hunks.iter().take(MAX_HUNKS);
         let questions: Vec<(String, String)> = evaluated
             .enumerate()
@@ -919,6 +919,7 @@ impl KodEngine {
         input: &str,
         definitions: Vec<ToolDefinition>,
     ) -> Vec<ToolDefinition> {
+        const MAX_TOOL_NAMES: usize = 30;
         const MIN_MCP_TOOLS_TO_FILTER: usize = 5;
         const KEEP_TOP_N: usize = 3;
         // Partition into MCP and non-MCP. The non-MCP half is
@@ -938,7 +939,6 @@ impl KodEngine {
         };
         // One yes/no per MCP tool name. Bounded to avoid a
         // pathological request.
-        const MAX_TOOL_NAMES: usize = 30;
         let slice: Vec<ToolDefinition> = mcp.iter().take(MAX_TOOL_NAMES).cloned().collect();
         let questions: Vec<(String, String)> = slice
             .iter()
@@ -1404,6 +1404,7 @@ impl KodEngine {
         &self,
         entries: Vec<(String, String)>,
     ) -> Vec<(String, String)> {
+        const MAX_ENTRIES: usize = 30;
         if entries.is_empty() {
             return entries;
         }
@@ -1418,7 +1419,6 @@ impl KodEngine {
         // Build one yes/no per entry, keyed by id. Bounded to 30
         // entries per call so a runaway memory store cannot produce
         // a pathological round-trip.
-        const MAX_ENTRIES: usize = 30;
         let slice: Vec<(String, String)> = entries.iter().take(MAX_ENTRIES).cloned().collect();
         let state = crate::jev::build_state(&request, &[]);
         let questions: Vec<(String, String)> = slice

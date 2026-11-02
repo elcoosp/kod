@@ -38,6 +38,7 @@ impl KodEngine {
         // WS-C: policy gate first (defense in depth — the TUI checks
         // `prewarm_enabled` before spawning, but direct callers land
         // here too).
+        const VOLATILE_MARKER: &str = "## Volatile suffix";
         if !self.prewarm_enabled() {
             return;
         }
@@ -62,7 +63,6 @@ impl KodEngine {
         // Only the cacheable head is worth sending: the volatile tail
         // (environment, tool inventory, memory) differs every turn and
         // would not be a cache hit anyway.
-        const VOLATILE_MARKER: &str = "## Volatile suffix";
         let cacheable = match trace.text.find(VOLATILE_MARKER) {
             Some(i) => trace.text[..i].trim_end(),
             None => return,

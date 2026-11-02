@@ -348,6 +348,7 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
     // A compile *error* is not cached: a bad pattern is a config bug
     // the caller must see every time, and it is rare enough that the
     // re-compile cost is irrelevant.
+    const MAX_CACHED_PATTERNS: usize = 256;
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
@@ -368,7 +369,6 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
     // T5-C12: bound the process-wide regex cache. A long session
     // loading many defs (or a model registering new ones at runtime)
     // otherwise accumulates every pattern ever compiled.
-    const MAX_CACHED_PATTERNS: usize = 256;
     if let Ok(mut g) = cache.lock() {
         if g.len() >= MAX_CACHED_PATTERNS
             && let Some(k) = g.keys().next().cloned() {

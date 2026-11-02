@@ -424,6 +424,7 @@ async fn contract_error_propagates(_provider: &Arc<dyn LlmProvider>) {
 /// without a terminator, fails here. The engine's assembly loop relies
 /// on both facts.
 async fn contract_stream_completion_text(_provider: &Arc<dyn LlmProvider>) {
+    use futures::StreamExt;
     let mock = MockProvider::new("stream-text", Script::Text("hello world".into()));
     let mut req = CompletionRequest::new(ModelRef::new("mock", "m"));
     req.system = SystemPrompt::new();
@@ -434,7 +435,6 @@ async fn contract_stream_completion_text(_provider: &Arc<dyn LlmProvider>) {
         OffsetDateTime::now_utc(),
     )];
 
-    use futures::StreamExt;
     let mut stream = mock.stream_completion(&req);
     let mut saw_text = String::new();
     let mut saw_done = false;
@@ -465,6 +465,7 @@ async fn contract_stream_completion_text(_provider: &Arc<dyn LlmProvider>) {
 /// `ToolCallStart` + one `ToolCallDelta` per call, in order, and a
 /// terminal `Done`.
 async fn contract_stream_completion_calls(_provider: &Arc<dyn LlmProvider>) {
+    use futures::StreamExt;
     let call = ToolCall {
         id: Some("call_1".into()),
         tool_name: "read_file".into(),
@@ -480,7 +481,6 @@ async fn contract_stream_completion_calls(_provider: &Arc<dyn LlmProvider>) {
         OffsetDateTime::now_utc(),
     )];
 
-    use futures::StreamExt;
     let mut stream = mock.stream_completion(&req);
     let mut starts = 0usize;
     let mut deltas = 0usize;
@@ -506,6 +506,7 @@ async fn contract_stream_completion_calls(_provider: &Arc<dyn LlmProvider>) {
 /// returning `Ok(empty)` for a failing call would strand the engine's
 /// loop; the contract is "either a chunk or an error, never silence".
 async fn contract_stream_completion_error(_provider: &Arc<dyn LlmProvider>) {
+    use futures::StreamExt;
     let mock = MockProvider::new(
         "stream-err",
         Script::Error("simulated transport failure".into()),
@@ -519,7 +520,6 @@ async fn contract_stream_completion_error(_provider: &Arc<dyn LlmProvider>) {
         OffsetDateTime::now_utc(),
     )];
 
-    use futures::StreamExt;
     let mut stream = mock.stream_completion(&req);
     let mut saw_err = false;
     while let Some(chunk) = stream.next().await {

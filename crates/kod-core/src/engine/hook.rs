@@ -135,8 +135,8 @@ impl KodEngine {
                     // unmanaged case — a `run_in_background` request
                     // that outlives its job — is bounded by
                     // `prune_old` on the `/jobs` read path.
-                    let _permit = runner_task.acquire_permit().await;
                     use tokio::io::AsyncReadExt as _;
+                    let _permit = runner_task.acquire_permit().await;
                     let mut buf = [0u8; 4096];
                     let mut stall_reported = false;
                     let stall_dur = stall_secs.map(std::time::Duration::from_secs);
@@ -292,8 +292,8 @@ impl KodEngine {
             runner_for_watch.spawn_guarded(job, async move {
                 // Same concurrency cap as the spawn hook. See that
                 // call for the full note.
-                let _permit = runner_task.acquire_permit().await;
                 use tokio::io::AsyncReadExt as _;
+                let _permit = runner_task.acquire_permit().await;
                 // Two buffers: the two `select!` arms must not borrow
                 // the same slice mutably.
                 let mut stdout_buf = [0u8; 4096];

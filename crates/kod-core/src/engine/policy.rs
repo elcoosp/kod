@@ -356,10 +356,10 @@ pub struct LearnedAllow {
 
 impl LearnedAllow {
     pub fn from_call(call: &ToolCall) -> Self {
+        use sha2::{Digest, Sha256};
         let bytes = serde_json::to_vec(&call.arguments).unwrap_or_default();
         // T3-C3: SHA-256-derived u64 instead of FNV-1a so collisions are
         // cryptographically hard rather than trivially brute-forceable.
-        use sha2::{Digest, Sha256};
         let mut sha = Sha256::new();
         sha.update(&bytes);
         let digest = sha.finalize();

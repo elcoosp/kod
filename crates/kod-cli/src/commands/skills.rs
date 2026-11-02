@@ -258,8 +258,8 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     }
 
     if !yes {
-        eprint!("Delete {}? [y/N] ", path.display());
         use std::io::Write;
+        eprint!("Delete {}? [y/N] ", path.display());
         let _ = std::io::stderr().flush();
         let mut line = String::new();
         std::io::stdin()

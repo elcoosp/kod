@@ -134,6 +134,8 @@ impl SkillMatcher {
 
     /// Score a single skill against a query
     fn score_skill(&self, skill: &Skill, query: &str) -> (f32, Vec<MatchReason>) {
+        const MIN_NAME_MATCH_CHARS: usize = 3;
+        const MIN_TAG_MATCH_CHARS: usize = 3;
         let mut score: f32 = 0.0;
         let mut reasons = Vec::new();
 
@@ -149,7 +151,6 @@ impl SkillMatcher {
         }
 
         // 2. Tag matching (medium weight: 0.4)
-        const MIN_TAG_MATCH_CHARS: usize = 3;
         for tag in &skill.metadata.tags {
             let tag_lower = tag.to_lowercase();
             // M-10: the reversed check (tag contains query) needs a
@@ -184,7 +185,6 @@ impl SkillMatcher {
         // matching every skill whose name happens to contain those letters
         // ("this-tool", "history-writer", "hint-helper").
         let name_lower = skill.metadata.name.to_lowercase();
-        const MIN_NAME_MATCH_CHARS: usize = 3;
         let name_hit = name_lower == query
             || (name_lower.contains(query) && query.chars().count() >= MIN_NAME_MATCH_CHARS)
             || (query.contains(&name_lower) && name_lower.chars().count() >= MIN_NAME_MATCH_CHARS);

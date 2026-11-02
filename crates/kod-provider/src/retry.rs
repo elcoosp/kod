@@ -112,6 +112,7 @@ impl RetryPolicy {
         // 429 at the same wall-clock instant computed identical jitter
         // and retried in lockstep — the exact failure mode jitter
         // exists to prevent.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let tid = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -127,7 +128,6 @@ impl RetryPolicy {
         // problem jitter exists to prevent. The counter is a global
         // atomic; a per-instance counter would collide across
         // `RetryPolicy` values that share a nanos.
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Fold `seq` into the state through the golden-ratio
         // constant (Knuth's multiplier) so adjacent counters do not
@@ -621,8 +621,8 @@ fn scan_suffix_hint(body: &str) -> Option<Duration> {
 /// Scans a fixed list of cue phrases; each cue is followed by a
 /// number and an optional unit.
 fn scan_text_hint(body: &str) -> Option<Duration> {
-    let lower = body.to_ascii_lowercase();
     const CUES: &[&str] = &["try again in", "retry after", "retry in", "wait "];
+    let lower = body.to_ascii_lowercase();
     for cue in CUES {
         let Some(pos) = lower.find(cue) else { continue };
         let after = &lower[pos + cue.len()..];

@@ -84,13 +84,13 @@ pub fn strip_memory_tags(text: &str) -> String {
 /// punctuation. A turn that fails this check is not extracted.
 #[must_use]
 pub fn has_substantive_content(text: &str) -> bool {
+    const PLACEHOLDERS: &[&str] = &["ok", "done", "n/a", "na", "...", "…", "nothing"];
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return false;
     }
     // A word of at least two alphanumeric characters is the bar.
     let lower = trimmed.to_ascii_lowercase();
-    const PLACEHOLDERS: &[&str] = &["ok", "done", "n/a", "na", "...", "…", "nothing"];
     if PLACEHOLDERS.contains(&lower.as_str()) {
         return false;
     }

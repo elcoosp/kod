@@ -296,6 +296,7 @@ impl KodApp {
         &mut self,
         threshold: std::time::Duration,
     ) -> Option<std::time::Duration> {
+        use std::io::IsTerminal as _;
         if !self.notify_bell_enabled {
             // Still clear the timestamp so the state does not leak
             // into the next turn's measurement.
@@ -310,7 +311,6 @@ impl KodApp {
         // F2g-13: only ring when stderr is a terminal. Writing raw
         // control bytes to a piped or redirected stderr corrupts the
         // captured output, and the TUI already owns the screen.
-        use std::io::IsTerminal as _;
         if std::io::stderr().is_terminal() {
             // Terminal bell.
             eprint!("\x07"); // tripwire:allow — bell

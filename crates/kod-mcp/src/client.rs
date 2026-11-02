@@ -478,6 +478,7 @@ impl McpClient {
     /// blocked send stalls the reader's server-reply path too — the
     /// timeout releases the guard and lets the caller recover.
     async fn send(&self, msg: &serde_json::Value) -> Result<(), McpError> {
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         use std::sync::atomic::Ordering;
         if self.poisoned.load(Ordering::Relaxed) {
             return Err(McpError::Protocol(
@@ -486,7 +487,6 @@ impl McpClient {
                     .to_string(),
             ));
         }
-        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let mut line = serde_json::to_string(msg)?;
         line.push('\n');
         let mut stdin = self.stdin.lock().await;
@@ -528,6 +528,7 @@ async fn read_loop(
     let mut reader = BufReader::new(stdout);
     let mut line_buf: Vec<u8> = Vec::new();
     loop {
+        use tokio::io::AsyncReadExt;
         line_buf.clear();
         // Bug-hunt: `read_until` grows `line_buf` until `\n` or EOF,
         // so the pre-fix `MAX_LINE_BYTES` check only fired after the
@@ -535,7 +536,6 @@ async fn read_loop(
         // never emits `\n` (or emits megabytes without one) drove the
         // process to OOM. Bound the read with `.take()`; the length
         // check below stays as a secondary guard.
-        use tokio::io::AsyncReadExt;
         let mut limited = (&mut reader).take((MAX_LINE_BYTES + 1) as u64);
         let next_line: std::io::Result<Option<String>> =
             match limited.read_until(b'\n', &mut line_buf).await {

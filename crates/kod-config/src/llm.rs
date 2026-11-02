@@ -153,6 +153,7 @@ impl LlmConfig {
         }
         for e in &mut self.endpoints {
             // Temperature: 0.0..=2.0.
+            const MIN_CONTEXT_WINDOW: usize = 2_000;
             match e.temperature {
                 Some(t) if !t.is_finite() => {
                     tracing::warn!(
@@ -183,7 +184,6 @@ impl LlmConfig {
             // Context window: `usize` (required by the schema). 0
             // means "use the default"; below the coherent minimum
             // means "clamp up".
-            const MIN_CONTEXT_WINDOW: usize = 2_000;
             if e.context_window == 0 {
                 tracing::warn!(
                     endpoint = %e.name,

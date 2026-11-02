@@ -1635,6 +1635,7 @@ mod panic_guard_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn process_request_with_panicking_provider_gets_error_frame() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
         let temp = tempfile::TempDir::new().unwrap();
         let engine = engine_with_panicking_provider(&temp).await;
 
@@ -1662,7 +1663,6 @@ mod panic_guard_tests {
             cw.flush().await.unwrap();
         }
 
-        use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(client_r);
         let mut buf = String::new();
         let read = tokio::time::timeout(
@@ -1713,6 +1713,7 @@ mod panic_guard_tests {
     // rather than the engine's), not the fix for this bug.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn streaming_request_with_panicking_provider_gets_error_frame() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
         let temp = tempfile::TempDir::new().unwrap();
         let engine = engine_with_panicking_provider(&temp).await;
 
@@ -1740,7 +1741,6 @@ mod panic_guard_tests {
             cw.flush().await.unwrap();
         }
 
-        use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(client_r);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {

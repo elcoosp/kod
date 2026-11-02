@@ -161,12 +161,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn journal_file_is_owner_only() {
+        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("cache_journal.jsonl");
         let mut opts = std::fs::OpenOptions::new();
         opts.create(true).append(true);
-        use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
         let _f = opts.open(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;

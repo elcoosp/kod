@@ -931,12 +931,12 @@ impl TuiLoop {
         // ResponseChunks starved it and the stream froze.
         let mut last_render = std::time::Instant::now();
         while !self.app.should_quit() {
+            const MAX_EVENTS_PER_FRAME: usize = 256;
             let event = self.event_handler.next_event().await;
             let mut render_now = event.requires_render();
             let mut saw_chunk = matches!(event, Event::ResponseChunk(_));
             self.handle_event(event).await?;
 
-            const MAX_EVENTS_PER_FRAME: usize = 256;
             let mut _yield_counter: usize = 0;
             for _ in 0..MAX_EVENTS_PER_FRAME {
                 // T4-H3: yield to the runtime every 32 events so a
@@ -6099,8 +6099,8 @@ impl TuiLoop {
                 // Shift+↑/↓ instead. Keyboard scroll works in both
                 // modes; `y` / `/copy` copies the last reply without
                 // any selection.
-                self.mouse_captured = !self.mouse_captured;
                 use crossterm::execute;
+                self.mouse_captured = !self.mouse_captured;
                 let result = if self.mouse_captured {
                     execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)
                 } else {

@@ -132,13 +132,13 @@ impl Server {
 
     /// Send a request to the client and await its response.
     async fn request(&self, method: &str, params: Value) -> Result<Value> {
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
         // H-R2: the send itself must be bounded. A dead writer that
         // never drains the channel would otherwise hang `request`
         // before the response timeout even starts.
-        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let sent = tokio::time::timeout(
             SEND_TIMEOUT,
             self.out.send(json!({
@@ -890,6 +890,7 @@ pub fn read_frame_for_fuzz(data: &[u8]) -> Option<serde_json::Value> {
 async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut BufReader<R>,
 ) -> Result<Option<Value>> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
     let mut content_length: Option<usize> = None;
     // F2d-14: bound the header loop. A peer that streams an unbounded
     // run of lines with no terminating blank line grew `line` without
@@ -901,16 +902,15 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
     // but still called `read_line` unbounded, so the counter only
     // fired after the buffer had already grown. Bound each read via
     // `.take()` and keep the accumulator as a secondary check.
-    const MAX_HEADER_BYTES: usize = 64 * 1024;
     let mut header_bytes: usize = 0;
     loop {
+        use tokio::io::AsyncReadExt;
         let remaining = MAX_HEADER_BYTES.saturating_sub(header_bytes);
         if remaining == 0 {
             return Err(KodError::InvalidParameters {
                 reason: format!("ACP header exceeds {MAX_HEADER_BYTES} bytes"),
             });
         }
-        use tokio::io::AsyncReadExt;
         let mut line = String::new();
         let mut limited = (&mut *reader).take((remaining + 1) as u64);
         let n = limited.read_line(&mut line).await.map_err(KodError::Io)?;

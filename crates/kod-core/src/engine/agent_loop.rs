@@ -1011,6 +1011,7 @@ impl KodEngine {
                     }
                 }
                 StreamChunk::ToolCallDelta { index, arguments } => {
+                    const MAX_TOOL_ARGS_BYTES: usize = 8 * 1024 * 1024;
                     let entry = partials.entry(index).or_default();
                     entry.args.push_str(&arguments);
                     // Bug-hunt 2026-10-23: unbounded args accumulation.
@@ -1028,7 +1029,6 @@ impl KodEngine {
                     // oversized partial is an unrecoverable round, and
                     // going through `partial_error` would run the
                     // partial tool calls.
-                    const MAX_TOOL_ARGS_BYTES: usize = 8 * 1024 * 1024;
                     if entry.args.len() > MAX_TOOL_ARGS_BYTES {
                         return Err(kod_error::KodError::InvalidState(format!(
                             "tool call {} streamed {} bytes of arguments, \
@@ -1405,6 +1405,7 @@ impl KodEngine {
                 Some(f) => f,
                 None => match kod_core_quality::snapcompact::rasterize_to_png(&m.content) {
                     Ok(png) => {
+                        const MAX_IMAGE_RENDER_CACHE: usize = 32;
                         let f = kod_types::RasterizedImage {
                             png_base64: kod_core_quality::snapcompact::base64_encode(&png),
                             media_type: "image/png".to_string(),
@@ -1417,7 +1418,6 @@ impl KodEngine {
                         // the number of images in any one compaction
                         // plan; eviction is arbitrary, which is fine
                         // for a cache.
-                        const MAX_IMAGE_RENDER_CACHE: usize = 32;
                         let mut g = self.image_render_cache.write().await;
                         if g.len() >= MAX_IMAGE_RENDER_CACHE
                             && !g.contains_key(&cache_key)
@@ -1450,6 +1450,7 @@ impl KodEngine {
         // (`## User Request`). Both are already passed as `messages`
         // — duplicating them inside the system prompt wastes tokens
         // and confuses a model that sees the same turn twice.
+        const VOLATILE_MARKER: &str = "## Volatile suffix";
         let head = strip_conversation_tail(system_text);
 
         // Split the head at the router's own marker. Everything before
@@ -1459,7 +1460,6 @@ impl KodEngine {
         // A provider with explicit cache support places a breakpoint at
         // the last cacheable segment; this two-segment shape is what
         // makes that breakpoint meaningful.
-        const VOLATILE_MARKER: &str = "## Volatile suffix";
         let (cacheable, volatile_tail) = match head.find(VOLATILE_MARKER) {
             Some(i) => (head[..i].trim_end().to_string(), head[i..].to_string()),
             None => {

@@ -311,11 +311,11 @@ fn benchmark_repo_map(c: &mut Criterion) {
 // memory_retrieval — new, 10 000 entries
 // ==================================================================
 fn benchmark_memory_retrieval(c: &mut Criterion) {
+    const N: usize = 10_000;
     let rt = rt();
     let env = BenchEnvironment::new();
     let db_path = env.working_dir.join("bench_retrieve.redb");
 
-    const N: usize = 10_000;
     let manager = MemoryManager::new(db_path, 100).expect("memory manager");
     rt.block_on(async {
         for i in 0..N {

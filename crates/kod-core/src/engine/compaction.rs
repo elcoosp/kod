@@ -385,6 +385,7 @@ impl KodEngine {
                 // frame store so a rejected plan does not leave a
                 // stray frame attached to a transcript it did not
                 // shrink.
+                const MAX_IMAGE_FRAMES_PER_KEY: usize = 4;
                 if png_base64.is_empty() {
                     return 0;
                 }
@@ -424,7 +425,6 @@ impl KodEngine {
                 // PERF-03: bound the frames per transcript. Pre-fix
                 // every image-compaction event pushed a frame with no
                 // trim; a long session grew this map unbounded.
-                const MAX_IMAGE_FRAMES_PER_KEY: usize = 4;
                 let mut g = self.image_frames.write().await;
                 let frames = g.entry(key.to_string()).or_default();
                 frames.push(kod_provider::request::ImageFrame {

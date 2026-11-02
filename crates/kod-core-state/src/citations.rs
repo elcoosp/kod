@@ -173,6 +173,7 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
     // Strip a leading `/` from an absolute citation so containment
     // can apply uniformly. The empty string after stripping (a
     // citation of just `/`) is not a file.
+    use std::io::BufRead;
     let stripped = citation
         .raw_path
         .strip_prefix('/')
@@ -218,7 +219,6 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
     // `min(file_lines, n)`, which is exactly the two outcomes we
     // need: equal to `line` means the line exists; less than `line`
     // means the file is shorter and `count` is its true length.
-    use std::io::BufRead;
     let take = citation.line.min(MAX_SCAN_LINES) as usize;
     let count = std::io::BufReader::new(f).lines().take(take).count() as u32;
 

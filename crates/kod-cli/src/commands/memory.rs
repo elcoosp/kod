@@ -222,8 +222,8 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
         }
         MemoryAction::Clear { yes } => {
             if !yes {
-                eprint!("Delete all long-term memory entries? This cannot be undone. [y/N] ");
                 use std::io::Write;
+                eprint!("Delete all long-term memory entries? This cannot be undone. [y/N] ");
                 let _ = std::io::stderr().flush();
                 let mut line = String::new();
                 std::io::stdin()

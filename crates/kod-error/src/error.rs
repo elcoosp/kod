@@ -211,6 +211,7 @@ pub enum KodError {
 /// whole retry budget on something that will never succeed.
 #[must_use]
 pub fn is_transient_transport_error(msg: &str) -> bool {
+    const STATUS_CODES: &[u16] = &[429, 500, 502, 503, 504];
     let m = msg.to_lowercase();
     // Multi-character prose patterns: substring matching is the
     // intended semantics (a phrase like "connection reset" appears
@@ -268,7 +269,6 @@ pub fn is_transient_transport_error(msg: &str) -> bool {
     // as substrings, so `"server error 5001"` (a totally different
     // status) reported transient and burned the retry budget on a
     // permanent failure.
-    const STATUS_CODES: &[u16] = &[429, 500, 502, 503, 504];
     PROSE_PATTERNS.iter().any(|p| m.contains(p))
         || STATUS_CODES.iter().any(|c| has_status_code(&m, *c))
 }

@@ -540,6 +540,7 @@ impl ArtifactHandler {
         mime: impl Into<String>,
         owner: impl Into<String>,
     ) -> std::result::Result<String, ProtocolError> {
+        const MAX_ARTIFACTS: usize = 512;
         let id = id.into();
         let url = format!("artifact://{id}");
         let text = text.into();
@@ -572,7 +573,6 @@ impl ArtifactHandler {
         // generous cap; artifact URLs are re-readable only within the
         // window the model is actually working, and a dropped one
         // re-offloads on demand.
-        const MAX_ARTIFACTS: usize = 512;
         store.insert(id.clone(), StoredArtifact { text, mime, owner });
         while store.len() > MAX_ARTIFACTS {
             // Evict an arbitrary (first) key; the store is a cache,

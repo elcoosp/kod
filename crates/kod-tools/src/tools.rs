@@ -218,6 +218,7 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        use std::io::Read as _;
         let path = params["path"]
             .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
@@ -390,7 +391,6 @@ impl Tool for ReadFileTool {
         // Read with a hard byte cap instead of `read_to_string`, so a
         // huge file (log, generated lock file, binary) can't exhaust
         // memory before the engine's prompt-side truncation kicks in.
-        use std::io::Read as _;
         // Missing files are a model mistake, not a tool-level I/O
         // failure. Return them as Ok(ToolResult::Error(...)) so the
         // message reaches the model as the tool's answer, matching
@@ -788,6 +788,7 @@ impl Tool for WriteFileTool {
         }
 
         if append {
+            use std::io::Write;
             let mut file = match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -798,7 +799,6 @@ impl Tool for WriteFileTool {
                     return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
                 }
             };
-            use std::io::Write;
             if let Err(e) = write!(file, "{content}") {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
@@ -1931,6 +1931,7 @@ impl Tool for GrepTool {
         let allowed_owned = context.permissions.allowed_paths.clone();
         let (mut results, skipped_large_files, skipped_large_total, hit_cap_fired) =
             tokio::task::spawn_blocking(move || {
+                use std::io::BufRead as _;
                 let mut results: Vec<serde_json::Value> = Vec::new();
                 let mut skipped_large_files: Vec<String> = Vec::new();
                 let mut skipped_large_total: usize = 0;
@@ -1940,7 +1941,6 @@ impl Tool for GrepTool {
                     rp.enabled.then_some(())?;
                     rp.matches(p).then_some(rp.mode)
                 };
-                use std::io::BufRead as _;
                 for file_path in gitaware_walk_arc(&resolved_c, recursive_c).iter() {
                     if results.len() >= MAX_GREP_MATCHES {
                         hit_cap_fired = true;
@@ -2631,6 +2631,7 @@ mod tests {
     /// tag guard needs the snapshot the numbered path records.
     #[tokio::test]
     async fn speculative_read_still_honors_numbered() {
+        use crate::edit_hashline::EditStore;
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("plain.rs");
         std::fs::write(&path, "fn main() {}\n// second\n").unwrap();
@@ -2639,7 +2640,6 @@ mod tests {
             read_files: true,
             ..Default::default()
         });
-        use crate::edit_hashline::EditStore;
         ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
         let canonical = std::fs::canonicalize(&path).unwrap();
         ctx.prefetched_read = Some(crate::context::PrefetchedRead {
@@ -2671,6 +2671,7 @@ mod tests {
     /// the model line numbers that point at the wrong content.
     #[tokio::test]
     async fn multiline_redaction_disables_numbering() {
+        use crate::edit_hashline::EditStore;
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("key.pem");
         let raw =
@@ -2681,7 +2682,6 @@ mod tests {
             read_files: true,
             ..Default::default()
         });
-        use crate::edit_hashline::EditStore;
         ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
         ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
         ctx.read_protection = Some(kod_config::ReadProtection {
@@ -2722,6 +2722,7 @@ mod tests {
     /// content.
     #[tokio::test]
     async fn numbered_redaction_preserves_raw_line_numbers() {
+        use crate::edit_hashline::EditStore;
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("secret.env");
         let raw = "OPENAI=sk-abcdef1234567890ABCDEFGH\ncomment = \"x\"\n";
@@ -2731,7 +2732,6 @@ mod tests {
             read_files: true,
             ..Default::default()
         });
-        use crate::edit_hashline::EditStore;
         ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
         ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
         ctx.read_protection = Some(kod_config::ReadProtection {

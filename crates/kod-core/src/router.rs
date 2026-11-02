@@ -1448,6 +1448,8 @@ impl TaskRouter {
                     // Each skill's instructions count against the
                     // skills share. When the share is exhausted, stop
                     // adding skills rather than truncate one mid-way.
+                    const MAX_EXAMPLE_CHARS: usize = 1_500;
+                    const MAX_SKILL_EXAMPLES: usize = 5;
                     let cost = skill.instructions.len() + skill.metadata.name.len();
                     if skill_used + cost > skill_budget {
                         break;
@@ -1476,8 +1478,6 @@ impl TaskRouter {
                     // These are secondary; cap them so a verbose skill
                     // cannot dominate the prompt. The instructions are
                     // the primary content and stay uncapped.
-                    const MAX_SKILL_EXAMPLES: usize = 5;
-                    const MAX_EXAMPLE_CHARS: usize = 1_500;
                     if !skill.examples.is_empty() {
                         prompt.push_str("Examples:\n\n");
                         for ex in skill.examples.iter().take(MAX_SKILL_EXAMPLES) {

@@ -231,6 +231,7 @@ async fn complete_serializes_tools_as_functions() {
 
 #[tokio::test]
 async fn stream_completion_posts_to_chat_completions() {
+    use futures::StreamExt;
     let mock = MockServer::start_async().await;
     let _endpoint = mock
         .mock_async(|when, then| {
@@ -243,7 +244,6 @@ async fn stream_completion_posts_to_chat_completions() {
 
     let provider = provider_for(&mock);
     let req = request_with(vec![user("hi")], SystemPrompt::default());
-    use futures::StreamExt;
     let mut stream = provider.stream_completion(&req);
     // Drain the stream; the request has been made by the time the
     // first poll returns.

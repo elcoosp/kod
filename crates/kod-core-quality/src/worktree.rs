@@ -665,6 +665,7 @@ impl WorktreeManager {
     /// worktrees still get created, they just show as untracked in the
     /// parent.
     fn ensure_gitignored(&self) -> Result<()> {
+        use std::io::Write;
         let gitignore = self.repo.join(".gitignore");
         let marker = ".kod/";
         if gitignore.is_file()
@@ -673,7 +674,6 @@ impl WorktreeManager {
         {
             return Ok(());
         }
-        use std::io::Write;
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -772,6 +772,7 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
     // tiny output (`git worktree add` prints at most a few lines), so
     // polling without a concurrent reader is safe: the child cannot
     // fill its pipe buffer before exiting.
+    use std::io::Read;
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(repo)
@@ -789,7 +790,6 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
     // blocked on write never exits, so polling try_wait alone deadlocks
     // until the deadline (and the swallowed error then ran a merge on a
     // dirty index).
-    use std::io::Read;
     let mut stdout_pipe = child
         .stdout
         .take()

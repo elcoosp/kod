@@ -296,12 +296,12 @@ pub(crate) fn append_round_text(buf: &mut String, text: &str) {
 /// capped so headers and the spinner stay one-liners. `None` when
 /// the model sent no usable intent.
 pub(crate) fn tool_intent(args: &serde_json::Value) -> Option<String> {
+    const CAP: usize = 80;
     let raw = args.get("intent")?.as_str()?;
     let one_line: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.is_empty() {
         return None;
     }
-    const CAP: usize = 80;
     Some(truncate_with_ellipsis(&one_line, CAP, "…"))
 }
 
@@ -317,6 +317,7 @@ fn append_intent(base: &str, args: &serde_json::Value) -> String {
 }
 
 fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
+    const KEYS: [&str; 4] = ["path", "pattern", "file", "content"];
     if name == "execute_command" {
         if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
             // Multi-line shell snippets read as their first line only.
@@ -329,7 +330,6 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
         }
         return name.to_string();
     }
-    const KEYS: [&str; 4] = ["path", "pattern", "file", "content"];
     if let Some(obj) = args.as_object() {
         for key in KEYS {
             if let Some(v) = obj.get(key) {

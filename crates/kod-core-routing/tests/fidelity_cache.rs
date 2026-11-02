@@ -17,6 +17,7 @@ fn msg(text: &str) -> ChatMessage {
 /// tail kept its fresh `Full` rating and never left the prompt.
 #[test]
 fn aged_message_is_not_served_a_stale_fidelity() {
+    use std::hash::{Hash, Hasher};
     let scorer = LexicalScorer::new().with_tail(2);
     let q = Query::from_text("retry backoff");
     let m = msg("unrelated chatter about lunch");
@@ -51,7 +52,6 @@ fn aged_message_is_not_served_a_stale_fidelity() {
     let _ = render_scored(&older, q.clone(), &scorer, &mut cache, 100_000, false);
 
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::{Hash, Hasher};
     m.content.hash(&mut h);
     // After the fix the age is part of the key, so the stale entry is
     // a miss (re-scored at its new age) rather than a wrong hit.
@@ -69,6 +69,7 @@ fn aged_message_is_not_served_a_stale_fidelity() {
 /// message's age has changed.
 #[test]
 fn a_repeat_render_in_the_same_turn_hits() {
+    use std::hash::{Hash, Hasher};
     let scorer = LexicalScorer::new().with_tail(2);
     let q = Query::from_text("retry backoff");
     let turns: Vec<ChatMessage> = (0..10).map(|i| msg(&format!("chatter {i}"))).collect();
@@ -77,7 +78,6 @@ fn a_repeat_render_in_the_same_turn_hits() {
     let _ = render_scored(&turns, q.clone(), &scorer, &mut cache, 100_000, false);
 
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::{Hash, Hasher};
     turns[0].content.hash(&mut h);
     // age of turns[0] in a 10-message transcript is 9.
     assert!(

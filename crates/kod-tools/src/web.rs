@@ -302,6 +302,7 @@ impl Tool for WebFetchTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        use futures::StreamExt;
         let url_str = params["url"]
             .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
@@ -480,7 +481,6 @@ impl Tool for WebFetchTool {
         // Stream the body with a hard byte cap. `response.bytes()`
         // would allocate the whole body before we could check its
         // size; a 1 GB video served as text/plain would OOM us.
-        use futures::StreamExt;
         let mut body = Vec::new();
         let mut truncated = false;
         let mut stream = response.bytes_stream();
