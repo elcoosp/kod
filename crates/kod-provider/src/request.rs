@@ -599,7 +599,7 @@ mod coverage_prompt_types {
     #[test]
     fn pricing_zero_tokens_is_zero_cost() {
         let p = ModelPricing::new(3.0, 15.0);
-        assert!(f64::from(p.cost_usd(0, 0)).to_bits() == f64::from(0.0_f32).to_bits());
+        assert!(p.cost_usd(0, 0).to_bits() == f64::from(0.0_f32).to_bits());
     }
 
     #[test]

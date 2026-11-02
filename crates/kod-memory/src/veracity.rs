@@ -170,11 +170,11 @@ mod tests {
 
     #[test]
     fn the_weights_match_the_design_table() {
-        assert!(f64::from(Veracity::Stated.weight()).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(Veracity::Inferred.weight()).to_bits() == f64::from(0.7_f32).to_bits());
-        assert!(f64::from(Veracity::Imported.weight()).to_bits() == f64::from(0.6_f32).to_bits());
-        assert!(f64::from(Veracity::Unknown.weight()).to_bits() == f64::from(0.8_f32).to_bits());
-        assert!(f64::from(Veracity::Tool.weight()).to_bits() == f64::from(0.5_f32).to_bits());
+        assert!(Veracity::Stated.weight().to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(Veracity::Inferred.weight().to_bits() == f64::from(0.7_f32).to_bits());
+        assert!(Veracity::Imported.weight().to_bits() == f64::from(0.6_f32).to_bits());
+        assert!(Veracity::Unknown.weight().to_bits() == f64::from(0.8_f32).to_bits());
+        assert!(Veracity::Tool.weight().to_bits() == f64::from(0.5_f32).to_bits());
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn a_stated_fact_starts_at_a_half() {
-        assert!(f64::from(Veracity::Stated.base_confidence()).to_bits() == f64::from(0.5_f32).to_bits());
+        assert!(Veracity::Stated.base_confidence().to_bits() == f64::from(0.5_f32).to_bits());
     }
 
     #[test]
@@ -224,12 +224,12 @@ mod tests {
 
     #[test]
     fn confidence_never_exceeds_one() {
-        assert!(f64::from(raise_confidence(2.0, 1.0)).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(raise_confidence(2.0, 1.0).to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
     fn base_confidence_fn_matches_the_enum() {
-        assert!(f64::from(base_confidence(Veracity::Stated)).to_bits() == f64::from(Veracity::Stated.base_confidence()).to_bits());
+        assert!(base_confidence(Veracity::Stated).to_bits() == Veracity::Stated.base_confidence().to_bits());
     }
 
     #[test]
@@ -354,13 +354,13 @@ mod veracity_proptests {
         /// `raise_confidence` saturates at 1.0 for any weight.
         #[test]
         fn prop_raise_saturates_at_one(w in finite_unit()) {
-            prop_assert!(f64::from(raise_confidence(1.0, w)).to_bits() == f64::from(1.0_f32).to_bits(), "w = {}", w);
+            prop_assert!(raise_confidence(1.0, w).to_bits() == f64::from(1.0_f32).to_bits(), "w = {}", w);
         }
 
         /// A zero weight is a fixed point.
         #[test]
         fn prop_raise_zero_weight_fixed_point(c in finite_unit()) {
-            prop_assert!(f64::from(raise_confidence(c, 0.0)).to_bits() == f64::from(c).to_bits(), "c = {}", c);
+            prop_assert!(raise_confidence(c, 0.0).to_bits() == c.to_bits(), "c = {}", c);
         }
 
         /// `should_supersede` is strictly greater: no value

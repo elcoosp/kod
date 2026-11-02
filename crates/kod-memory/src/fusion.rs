@@ -489,9 +489,9 @@ mod tests {
     #[test]
     fn general_weights_are_neutral() {
         let w = intent_weights(QueryIntent::General);
-        assert!(f64::from(w.vector).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(w.keyword).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(w.importance).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(w.vector.to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(w.keyword.to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(w.importance.to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -562,10 +562,10 @@ mod tests {
             temporal: 0.9,
         };
         let b = blend_weights(w, 0.0);
-        assert!(f64::from(b.vector).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(b.keyword).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(b.importance).to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(f64::from(b.temporal).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(b.vector.to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(b.keyword.to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(b.importance.to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(b.temporal.to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -577,10 +577,10 @@ mod tests {
             temporal: 0.9,
         };
         let b = blend_weights(w, 1.0);
-        assert!(f64::from(b.vector).to_bits() == f64::from(w.vector).to_bits());
-        assert!(f64::from(b.keyword).to_bits() == f64::from(w.keyword).to_bits());
-        assert!(f64::from(b.importance).to_bits() == f64::from(w.importance).to_bits());
-        assert!(f64::from(b.temporal).to_bits() == f64::from(w.temporal).to_bits());
+        assert!(b.vector.to_bits() == w.vector.to_bits());
+        assert!(b.keyword.to_bits() == w.keyword.to_bits());
+        assert!(b.importance.to_bits() == w.importance.to_bits());
+        assert!(b.temporal.to_bits() == w.temporal.to_bits());
     }
 
     #[test]
