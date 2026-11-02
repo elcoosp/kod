@@ -446,10 +446,8 @@ impl TuiLoop {
         // when the caller asked for Require and no primitive exists).
         let (mode, backend) = engine.sandbox_status();
         let sandbox_label = match (mode, backend) {
-            (kod_tools::context::SandboxMode::Disabled, _) => "off".to_string(),
-            (kod_tools::context::SandboxMode::Auto, Some(b)) => b.to_string(),
-            (kod_tools::context::SandboxMode::Auto, None) => "off".to_string(),
-            (kod_tools::context::SandboxMode::Require, Some(b)) => b.to_string(),
+(kod_tools::context::SandboxMode::Disabled, _) | (kod_tools::context::SandboxMode::Auto, None) => "off".to_string(),
+(kod_tools::context::SandboxMode::Auto, Some(b)) | (kod_tools::context::SandboxMode::Require, Some(b)) => b.to_string(),
             (kod_tools::context::SandboxMode::Require, None) => "require-missing".to_string(),
         };
         self.app.set_sandbox_label(sandbox_label);

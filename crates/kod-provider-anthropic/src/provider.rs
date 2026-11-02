@@ -1352,8 +1352,7 @@ mod coverage_provider_parse {
 
     fn text_of(r: &GenerationResponse) -> &str {
         match r {
-            GenerationResponse::Text { content, .. } => content,
-            GenerationResponse::Mixed { content, .. } => content,
+GenerationResponse::Text { content, .. } | GenerationResponse::Mixed { content, .. } => content,
             GenerationResponse::ToolCalls { .. } => {
                 panic!("expected a text-carrying variant")
             }

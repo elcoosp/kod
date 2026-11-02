@@ -1312,9 +1312,8 @@ impl KodEngine {
                     use crate::run_collector::ToolStatus;
                     let status = match &res {
                         Ok(ToolResult::Success(_)) => ToolStatus::Ok,
-                        Ok(ToolResult::Error(_)) => ToolStatus::Error,
+Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                         Ok(ToolResult::RequiresConfirmation { .. }) => ToolStatus::Skipped,
-                        Err(_) => ToolStatus::Error,
                     };
                     self.run_collector
                         .lock()

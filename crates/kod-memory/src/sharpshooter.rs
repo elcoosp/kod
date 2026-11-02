@@ -78,10 +78,9 @@ impl DecisionKind {
     #[must_use]
     pub fn target_file(self) -> &'static str {
         match self {
-            Self::Architecture | Self::Constraint | Self::RejectedApproach => "architecture.md",
+Self::Architecture | Self::Constraint | Self::RejectedApproach | Self::Correction => "architecture.md",
             Self::Product => "product.md",
             Self::Style => "style.md",
-            Self::Correction => "architecture.md",
         }
     }
 }

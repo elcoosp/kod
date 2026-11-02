@@ -805,12 +805,11 @@ impl KodApp {
         let kind = self.pending_confirm.take()?;
         if confirmed {
             match kind {
-                ConfirmKind::Clear => self.clear_messages(),
-                ConfirmKind::Quit => self.should_quit = true,
-                // The actual memory+checkpoint clear happens in the
+ConfirmKind::Clear | // The actual memory+checkpoint clear happens in the
                 // main loop, which owns the engine handle. Resolving
                 // here just clears the visible chat.
                 ConfirmKind::ClearAll => self.clear_messages(),
+                ConfirmKind::Quit => self.should_quit = true,
             }
         }
         Some(kind)

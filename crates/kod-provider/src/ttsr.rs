@@ -279,23 +279,17 @@ enum MatchSite {
 
 fn scope_allows(scope: &RuleScope, site: MatchSite) -> bool {
     match (scope, site) {
-        (RuleScope::Text, MatchSite::Text) => true,
-        // `Thinking` shares the text site: the caller that wants to
+(RuleScope::Text, MatchSite::Text) | // `Thinking` shares the text site: the caller that wants to
         // separate reasoning does so before calling.
-        (RuleScope::Thinking, MatchSite::Text) => true,
-        (RuleScope::Tool { .. }, MatchSite::Tool) => true,
+        (RuleScope::Thinking, MatchSite::Text) | (RuleScope::Tool { .. }, MatchSite::Tool) => true,
         _ => false,
     }
 }
 
 fn interrupt_allows(mode: InterruptMode, site: MatchSite) -> bool {
     match (mode, site) {
-        (InterruptMode::Never, _) => false,
-        (InterruptMode::Always, _) => true,
-        (InterruptMode::ProseOnly, MatchSite::Text) => true,
-        (InterruptMode::ProseOnly, MatchSite::Tool) => false,
-        (InterruptMode::ToolOnly, MatchSite::Tool) => true,
-        (InterruptMode::ToolOnly, MatchSite::Text) => false,
+(InterruptMode::Never, _) | (InterruptMode::ProseOnly, MatchSite::Tool) | (InterruptMode::ToolOnly, MatchSite::Text) => false,
+(InterruptMode::Always, _) | (InterruptMode::ProseOnly, MatchSite::Text) | (InterruptMode::ToolOnly, MatchSite::Tool) => true,
     }
 }
 

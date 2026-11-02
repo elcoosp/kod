@@ -82,19 +82,16 @@ pub const EMPTY_COMPLETION_BASE_DELAY_MS: u64 = 500;
 pub fn chunk_commits(chunk: &StreamChunk) -> bool {
     match chunk {
         StreamChunk::Text(t) => !t.is_empty(),
-        // The `ToolCallStart` marker alone does not commit: the model
+// The `ToolCallStart` marker alone does not commit: the model
         // announced a call but has not specified its arguments. A
         // stream that dies before any `ToolCallDelta` can be retried
         // cleanly, provided the caller discards the marker it may
         // already have rendered (a "calling read_file..." spinner,
         // for example).
-        StreamChunk::ToolCallStart { .. } => false,
-        StreamChunk::ToolCallDelta { arguments, .. } => !arguments.is_empty(),
-        // `Usage`, `StopReason`, and `Done` describe the stream, not
+        StreamChunk::ToolCallStart { .. } | // `Usage`, `StopReason`, and `Done` describe the stream, not
         // the model's output. None of them commits.
-        StreamChunk::Usage(_) => false,
-        StreamChunk::StopReason(_) => false,
-        StreamChunk::Done => false,
+        StreamChunk::Usage(_) | StreamChunk::StopReason(_) | StreamChunk::Done => false,
+        StreamChunk::ToolCallDelta { arguments, .. } => !arguments.is_empty(),
     }
 }
 

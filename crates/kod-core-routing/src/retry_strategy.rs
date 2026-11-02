@@ -308,14 +308,10 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
         }
         TurnFailure::TransportRateLimit { .. } | TurnFailure::TransportServerBusy { .. } => RetryAction::SameEndpointBackoff,
         TurnFailure::ProviderRefused { .. } => RetryAction::SameEndpointLowerTemp,
-        TurnFailure::ProviderAuthError { .. } => RetryAction::NoRetry,
+TurnFailure::ProviderAuthError { .. } | TurnFailure::ContentFiltered { .. } | TurnFailure::UserCancelled | TurnFailure::BudgetExhausted | TurnFailure::PolicyDenied { .. } => RetryAction::NoRetry,
         TurnFailure::ContextWindowExceeded { .. } => RetryAction::ShrinkHistory,
         TurnFailure::MalformedJson { .. } => RetryAction::SameEndpointConstrained,
         TurnFailure::HallucinatedTool { .. } => RetryAction::ReinjectTools,
-        TurnFailure::ContentFiltered { .. } => RetryAction::NoRetry,
-        TurnFailure::UserCancelled => RetryAction::NoRetry,
-        TurnFailure::BudgetExhausted => RetryAction::NoRetry,
-        TurnFailure::PolicyDenied { .. } => RetryAction::NoRetry,
         TurnFailure::Unknown { .. } => RetryAction::NextEndpoint,
     }
 }

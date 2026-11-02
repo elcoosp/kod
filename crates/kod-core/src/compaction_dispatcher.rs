@@ -251,8 +251,7 @@ impl CompactionPlan {
         match self {
             Self::Shake(p) => p.is_empty(),
             Self::Prune(p) => p.is_empty(),
-            Self::Summary { text, .. } => text.trim().is_empty(),
-            Self::NativeSummary { text, .. } => text.trim().is_empty(),
+Self::Summary { text, .. } | Self::NativeSummary { text, .. } => text.trim().is_empty(),
             Self::Image { png_base64, .. } => png_base64.trim().is_empty(),
         }
     }

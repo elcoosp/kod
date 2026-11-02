@@ -176,10 +176,9 @@ impl KodEngine {
             KodError::RateLimited { retry_after_secs } | KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
             other => {
                 match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
-                    kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {
+kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {
                         retry_after_secs,
-                    } => retry_after_secs?,
-                    kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy {
+                    } | kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy {
                         retry_after_secs,
                     } => retry_after_secs?,
                     _ => return None,

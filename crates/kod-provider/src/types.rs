@@ -164,9 +164,7 @@ impl GenerationResponse {
     #[must_use]
     pub fn usage(&self) -> Option<&TokenUsage> {
         match self {
-            GenerationResponse::Text { usage, .. } => usage.as_ref(),
-            GenerationResponse::ToolCalls { usage, .. } => usage.as_ref(),
-            GenerationResponse::Mixed { usage, .. } => usage.as_ref(),
+GenerationResponse::Text { usage, .. } | GenerationResponse::ToolCalls { usage, .. } | GenerationResponse::Mixed { usage, .. } => usage.as_ref(),
         }
     }
 }

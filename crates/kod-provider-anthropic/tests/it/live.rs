@@ -152,8 +152,7 @@ async fn live_tool_use_round_trip() {
     }];
     let resp = provider.complete(&req).await.expect("complete");
     let calls = match resp {
-        GenerationResponse::ToolCalls { calls, .. } => calls,
-        GenerationResponse::Mixed { calls, .. } => calls,
+GenerationResponse::ToolCalls { calls, .. } | GenerationResponse::Mixed { calls, .. } => calls,
         other => panic!("expected a tool call, got {other:?}"),
     };
     assert_eq!(calls.len(), 1, "exactly one tool call expected");
