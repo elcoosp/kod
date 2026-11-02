@@ -471,8 +471,8 @@ mod tests {
             peak_windows: vec![(0, 8)],
             off_peak_multiplier: 0.5,
         };
-        assert_eq!(t.multiplier_for(4), 1.0);
-        assert_eq!(t.multiplier_for(12), 0.5);
+        assert!(f64::from(t.multiplier_for(4)).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(t.multiplier_for(12)).to_bits() == f64::from(0.5_f32).to_bits());
     }
 
     #[test]
