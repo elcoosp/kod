@@ -1203,8 +1203,8 @@ pub fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     let mut total = 0_usize;
     let mut cached = 0_usize;
     let mut total_latency_ms: u64 = 0;
-    let mut by_source: std::collections::BTreeMap<String, usize> = Default::default();
-    let mut by_purpose: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut by_source: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::default();
+    let mut by_purpose: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::default();
     for e in &entries {
         if let kod_core_state::session_log::SessionEntry::JevDecision {
             purpose,

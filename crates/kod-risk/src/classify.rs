@@ -124,7 +124,6 @@ impl Justification {
 /// `program = "30"`, `30` is not in `DESTRUCTIVE`, and the
 /// destructive half runs without risk classification. Same class as
 /// the env-assignment bypass fixed just above.
-
 /// SEC-A-04b: `script` / `su` share a shape — optional positional
 /// (file / user) before the program, plus `-c CMD` shell form.
 /// Returns `(None, [], false)` for the shell form (cannot de-compose

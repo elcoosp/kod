@@ -132,7 +132,6 @@ pub const PROTOCOL_METHODS: &[&str] = &[
 pub const MAX_PROTOCOL_VERSION: u8 = 1;
 
 /// Default socket path for this user.
-
 /// A request line.
 #[derive(Debug, Deserialize)]
 struct Request {

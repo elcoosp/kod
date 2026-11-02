@@ -101,7 +101,7 @@ impl Plan {
             goal: goal.into(),
             steps,
             current: 0,
-            notes: Default::default(),
+            notes: std::collections::BTreeMap::default(),
             created_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),

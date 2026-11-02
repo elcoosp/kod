@@ -2520,7 +2520,6 @@ fn collect_writes(resp: &crate::router::TaskResponse) -> Vec<String> {
 /// gets one job; the preamble says what that job is. A writer that
 /// tries to also test, or a tester that tries to fix, produces worse
 /// output than an agent that stays in its lane.
-
 /// Compose the text of a swarm file-touch notice.
 ///
 /// The notice names the file, the peer, the peer's operation, and

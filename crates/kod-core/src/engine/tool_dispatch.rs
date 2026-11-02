@@ -861,7 +861,6 @@ impl KodEngine {
     /// the read is guaranteed to observe the write. All-read-only rounds
     /// still run concurrently — their results cannot depend on each other
     /// or on external state they did not observe themselves.
-
     /// Run the `in_prompt` redactor over a rendered tool-result string
     /// when `[security.redact] in_prompt = true`; return it unchanged
     /// otherwise.

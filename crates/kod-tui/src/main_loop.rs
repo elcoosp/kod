@@ -2001,7 +2001,6 @@ impl TuiLoop {
     /// `dispatch_prompt`: a spawned task runs the runner, its events
     /// flow through the event channel, and Esc / Ctrl+C aborts the task
     /// via `gen_task`.
-
     async fn dispatch_swarm(&mut self, goal: String) -> Result<()> {
         self.dispatch_swarm_with(goal, None).await
     }
@@ -3931,7 +3930,7 @@ impl TuiLoop {
                     && let Some(path) = engine.session_log_path()
                     && let Ok(entries) = kod_core_state::session_log::read_session(&path)
                 {
-                    let mut by_rule: std::collections::BTreeMap<String, usize> = Default::default();
+                    let mut by_rule: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::default();
                     for e in &entries {
                         if let kod_core_state::session_log::SessionEntry::Redaction {
                             rules, ..

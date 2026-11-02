@@ -125,7 +125,7 @@ pub fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
     let entries = kod_core_state::session_log::read_session(&path)?;
     let mut total_cost = 0.0_f64;
     let mut per_endpoint: std::collections::BTreeMap<String, (usize, usize, f64)> =
-        Default::default();
+        std::collections::BTreeMap::default();
     for e in &entries {
         if let kod_core_state::session_log::SessionEntry::Cost {
             endpoint,

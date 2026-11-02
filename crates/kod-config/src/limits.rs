@@ -162,7 +162,7 @@ on_exhausted = "stop"
             max_output_tokens_per_turn: 0,
             on_exhausted: OnExhausted::Ask,
             soft_warn_at: 2.0,
-            tools: Default::default(),
+            tools: std::collections::BTreeMap::default(),
         };
         c.clamp();
         assert_eq!(c.max_cost_usd_per_session.to_bits(), f64::from(0.0_f32).to_bits());
