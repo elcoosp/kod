@@ -158,15 +158,15 @@ impl CostTracker {
         let turn_micro = self.inner.turn_micro.load(Ordering::Relaxed);
         let session_cap_micro = self.inner.session_cap_micro.load(Ordering::Relaxed);
         let turn_cap_micro = self.inner.turn_cap_micro.load(Ordering::Relaxed);
-        let soft = self.inner.soft_warn_milli.load(Ordering::Relaxed) as f64 / 1000.0;
+        let soft = f64::from(u32::try_from(self.inner.soft_warn_milli.load(Ordering::Relaxed)).unwrap_or(u32::MAX)) as f64 / 1000.0;
 
         let session_fraction = if session_cap_micro > 0 {
-            (session_micro as f64 / session_cap_micro as f64).min(1.0)
+            (f64::from(u32::try_from(session_micro).unwrap_or(u32::MAX)) as f64 / session_cap_micro as f64).min(1.0)
         } else {
             0.0
         };
         let turn_fraction = if turn_cap_micro > 0 {
-            (turn_micro as f64 / turn_cap_micro as f64).min(1.0)
+            (f64::from(u32::try_from(turn_micro).unwrap_or(u32::MAX)) as f64 / turn_cap_micro as f64).min(1.0)
         } else {
             0.0
         };
@@ -234,7 +234,7 @@ fn usd_to_micro(usd: f64) -> u64 {
 }
 
 fn micro_to_usd(micro: u64) -> f64 {
-    micro as f64 / 1_000_000.0
+    f64::from(u32::try_from(micro).unwrap_or(u32::MAX)) as f64 / 1_000_000.0
 }
 
 #[cfg(test)]
@@ -414,7 +414,7 @@ impl SpendWindow {
             g.pop_front();
         }
         let micro: u64 = g.iter().map(|(_, m)| *m).fold(0u64, u64::saturating_add);
-        micro as f64 / 1_000_000.0
+        f64::from(u32::try_from(micro).unwrap_or(u32::MAX)) as f64 / 1_000_000.0
     }
 
     /// Drop every entry. Used when a caller resets accounting.
@@ -462,7 +462,7 @@ mod window_tests {
         w.record(u64::MAX);
         w.record(u64::MAX);
         let total = w.spend_in(std::time::Duration::from_secs(3600));
-        let expected = u64::MAX as f64 / 1_000_000.0;
+        let expected = f64::from(u32::try_from(u64::MAX).unwrap_or(u32::MAX)) as f64 / 1_000_000.0;
         assert!(
             (total - expected).abs() < 1.0,
             "saturating sum must equal u64::MAX/1e6 = {expected}, got {total}",

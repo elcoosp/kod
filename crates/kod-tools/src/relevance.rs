@@ -248,7 +248,7 @@ pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
             let mut score = 0.0;
             for t in &terms {
                 if lower.contains(t.as_str()) {
-                    let n = *df.get(t.as_str()).unwrap_or(&1) as f64;
+                    let n = f64::from(u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX)) as f64;
                     score += (total / n).ln_1p();
                 }
             }
@@ -317,7 +317,7 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
             for t in &terms {
                 if lower.contains(t.as_str()) {
                     // Rarer terms score higher. `idf = ln(total / df)`.
-                    let n = *df.get(t.as_str()).unwrap_or(&1) as f64;
+                    let n = f64::from(u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX)) as f64;
                     score += (total / n).ln_1p();
                 }
             }

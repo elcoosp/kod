@@ -162,7 +162,7 @@ pub fn analyze(text: &str) -> BehavioralSignals {
     let repetition = count_cues(&lower, REPETITION_CUES);
     let blame = count_cues(&lower, BLAME_CUES);
     let anguish = count_cues(&lower, ANGUISH_CUES);
-    let yelling = text.lines().filter(|l| is_yelling(l)).count() as u32;
+    let yelling = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX) as u32;
     BehavioralSignals {
         negation,
         repetition,
@@ -291,7 +291,7 @@ mod behavioral_proptests {
             prop_assert_eq!(got.repetition, count_cues(&lower, REPETITION_CUES));
             prop_assert_eq!(got.blame, count_cues(&lower, BLAME_CUES));
             prop_assert_eq!(got.anguish, count_cues(&lower, ANGUISH_CUES));
-            let lines = text.lines().filter(|l| is_yelling(l)).count() as u32;
+            let lines = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX) as u32;
             prop_assert_eq!(got.yelling, lines);
         }
 

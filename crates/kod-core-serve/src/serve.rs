@@ -490,7 +490,7 @@ where
                     .params
                     .get("min")
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(1, |n| n.min(u8::MAX as u64) as u8);
+                    .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX) as u64)).unwrap_or(u8::MAX) as u8);
                 // Bug-hunt: a client sending `max = 300` used to be
                 // truncated to `44` (300 as u8), breaking version
                 // negotiation silently. The `min` handler two lines
@@ -499,7 +499,7 @@ where
                     .params
                     .get("max")
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(client_min, |n| n.min(u8::MAX as u64) as u8);
+                    .map_or(client_min, |n| u8::try_from(n.min(u64::from(u8::MAX) as u64)).unwrap_or(u8::MAX) as u8);
                 let lo = client_min.max(MIN_PROTOCOL_VERSION);
                 let hi = client_max.min(MAX_PROTOCOL_VERSION);
                 let compatible = lo <= hi;
@@ -665,7 +665,7 @@ where
                     .params
                     .get("max_agents")
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(5, |n| n as usize);
+                    .map_or(5, |n| usize::try_from(n).unwrap_or(usize::MAX) as usize);
                 let merge = req
                     .params
                     .get("merge")
@@ -1494,11 +1494,11 @@ mod version_tests {
         let client_min = v
             .get("min")
             .and_then(serde_json::Value::as_u64)
-            .map_or(1, |n| n.min(u8::MAX as u64) as u8);
+            .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX) as u64)).unwrap_or(u8::MAX) as u8);
         let client_max = v
             .get("max")
             .and_then(serde_json::Value::as_u64)
-            .map_or(1, |n| n.min(u8::MAX as u64) as u8);
+            .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX) as u64)).unwrap_or(u8::MAX) as u8);
         assert_eq!(client_min, u8::MAX);
         assert_eq!(client_max, u8::MAX);
     }

@@ -354,7 +354,7 @@ pub async fn run_chat(
                 }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as u64);
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX) as u64);
                 let prev = LAST.swap(now, Ordering::SeqCst);
                 if prev != 0 && now.saturating_sub(prev) < 2_000 {
                     eprintln!();

@@ -193,8 +193,8 @@ impl Tool for LspDefinitionTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_definition: 'path' is required".to_string(),
             })?;
-        let line = params["line"].as_u64().unwrap_or(0) as u32;
-        let column = params["column"].as_u64().unwrap_or(0) as u32;
+        let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_definition: line and column are 1-based and must be ≥ 1".to_string(),
@@ -284,8 +284,8 @@ impl Tool for LspReferencesTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_references: 'path' is required".to_string(),
             })?;
-        let line = params["line"].as_u64().unwrap_or(0) as u32;
-        let column = params["column"].as_u64().unwrap_or(0) as u32;
+        let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_references: line and column are 1-based and must be ≥ 1".to_string(),
@@ -375,8 +375,8 @@ impl Tool for LspHoverTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_hover: 'path' is required".to_string(),
             })?;
-        let line = params["line"].as_u64().unwrap_or(0) as u32;
-        let column = params["column"].as_u64().unwrap_or(0) as u32;
+        let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_hover: line and column are 1-based and must be ≥ 1".to_string(),

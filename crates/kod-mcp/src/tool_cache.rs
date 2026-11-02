@@ -140,7 +140,7 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
         return None;
     }
     let age_nanos = now_nanos.saturating_sub(entry.cached_at_unix_nanos);
-    if Duration::from_nanos(age_nanos.min(u128::from(u64::MAX)) as u64) > ttl {
+    if Duration::from_nanos(u64::try_from(age_nanos.min(u128::from(u64::MAX))).unwrap_or(u64::MAX) as u64) > ttl {
         let _ = std::fs::remove_file(&path);
         return None;
     }

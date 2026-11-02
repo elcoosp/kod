@@ -156,7 +156,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
             let diff = kod_core::diff_rounds(
                 &fixture.rounds[i],
                 &kod_core::RoundFixture {
-                    seq: i as u32,
+                    seq: u32::try_from(i).unwrap_or(u32::MAX) as u32,
                     user_prompt: fixture.rounds[i].user_prompt.clone(),
                     request_hash: got.hash(),
                     request_summary: got.clone(),
@@ -340,7 +340,7 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
             }
         }
         fixture.rounds.push(kod_core::RoundFixture {
-            seq: i as u32,
+            seq: u32::try_from(i).unwrap_or(u32::MAX) as u32,
             user_prompt: t.user_prompt.clone(),
             request_hash: hash,
             request_summary: summary,
