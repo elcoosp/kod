@@ -935,12 +935,12 @@ impl TuiLoop {
             let mut saw_chunk = matches!(event, Event::ResponseChunk(_));
             self.handle_event(event).await?;
 
-            let mut _yield_counter: usize = 0;
+            let mut yield_counter: usize = 0;
             for _ in 0..MAX_EVENTS_PER_FRAME {
                 // T4-H3: yield to the runtime every 32 events so a
                 // burst of ResponseChunks cannot starve other tasks.
-                _yield_counter += 1;
-                if _yield_counter.is_multiple_of(32) {
+                yield_counter += 1;
+                if yield_counter.is_multiple_of(32) {
                     tokio::task::yield_now().await;
                 }
                 let Some(next) = self.event_handler.try_next_event() else {
@@ -1223,7 +1223,7 @@ impl TuiLoop {
                 self.app
                     .note_session_usage(prompt_tokens, completion_tokens);
                 if let Some(c) = cost_usd {
-                    self.app.note_session_cost(c);
+                    let _ = self.app.note_session_cost(c);
                 }
             }
             Event::ToolStarted { id, name } => {
