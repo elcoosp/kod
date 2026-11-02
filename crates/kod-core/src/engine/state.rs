@@ -1,5 +1,9 @@
 use super::*;
 
+/// Payload returned by `session_init_from_log`:
+/// `(holder, endpoint, tool names, system-prompt hash)`.
+type SessionInitData = (String, String, Vec<String>, u64);
+
 /// Blank the `arguments` of every tool call whose path argument
 /// matches one of `patterns` (from
 /// `[security.redact] redact_argument_paths`).

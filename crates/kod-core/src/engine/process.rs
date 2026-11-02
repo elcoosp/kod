@@ -1,6 +1,15 @@
 use super::*;
 use kod_core_state::goals::GoalBudget;
 
+/// Result payload from one provider round: `(text, tool calls,
+/// tool results, usage)`.
+type RoundOutcome = (
+    String,
+    Vec<ToolCall>,
+    Vec<ToolResult>,
+    Option<kod_provider::TokenUsage>,
+);
+
 impl KodEngine {
     /// Process user input
     ///
