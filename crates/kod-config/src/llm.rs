@@ -223,7 +223,7 @@ impl LlmConfig {
                     endpoint = %e.name,
                     "base_url is empty; falling back to the default"
                 );
-                e.base_url = LlmConfig::default().endpoints[0].base_url.clone();
+                e.base_url = Default::default();
             }
             // model: non-empty.
             if e.model.trim().is_empty() {
@@ -231,7 +231,7 @@ impl LlmConfig {
                     endpoint = %e.name,
                     "model is empty; falling back to the default"
                 );
-                e.model = LlmConfig::default().endpoints[0].model.clone();
+                e.model = Default::default();
             }
         }
 

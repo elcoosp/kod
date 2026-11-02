@@ -556,7 +556,7 @@ mod tests {
             StallVerdict::Loop { detector } => {
                 assert_eq!(detector, "exact-cycle");
             }
-            other => panic!("expected Loop, got {other:?}"),
+            StallVerdict::Clean => panic!("expected Loop, got Clean"),
         }
     }
 
