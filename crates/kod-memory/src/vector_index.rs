@@ -270,6 +270,7 @@ mod coverage_vector_search {
     //! keep predicate leaks". A regression here silently reranks
     //! memory on every retrieval.
     use super::*;
+use num_traits::ToPrimitive;
 
     fn id() -> MemoryId {
         MemoryId::new()
@@ -387,7 +388,7 @@ mod coverage_vector_search {
         let mut idx = VectorIndex::new(2);
         let ids: Vec<MemoryId> = (0..5).map(|_| MemoryId::new()).collect();
         for (i, id) in ids.iter().enumerate() {
-            idx.insert(id.clone(), vec![i as f32 + 1.0, 0.0]).unwrap();
+            idx.insert(id.clone(), vec![i.to_f32().unwrap_or(f32::MAX) + 1.0, 0.0]).unwrap();
         }
         assert_eq!(idx.len(), 5);
 
