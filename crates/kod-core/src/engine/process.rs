@@ -363,12 +363,7 @@ impl KodEngine {
                 return Err(Self::no_provider_error());
             }
             let mut last_err: Option<KodError> = None;
-            let mut outcome: Option<(
-                String,
-                Vec<ToolCall>,
-                Vec<ToolResult>,
-                Option<kod_provider::TokenUsage>,
-            )> = None;
+            let mut outcome: Option<RoundOutcome> = None;
             // The provider that served the winning attempt, kept so the
             // tool-only-reply summary below calls through the same
             // endpoint the model response came from.
@@ -406,14 +401,7 @@ impl KodEngine {
                 // strategy adjusts the request (temperature, messages,
                 // or both) and reruns the same endpoint.
                 let mut same_endpoint_attempts: u8 = 0;
-                let mut result_opt: Option<
-                    Result<(
-                        String,
-                        Vec<ToolCall>,
-                        Vec<ToolResult>,
-                        Option<kod_provider::TokenUsage>,
-                    )>,
-                > = None;
+                let mut result_opt: Option<Result<RoundOutcome>> = None;
                 let mut last_failure: Option<KodError> = None;
                 // H-RL1: how many rate-limit windows this call has
                 // already slept out. Shared cap with the streaming path.
@@ -956,12 +944,7 @@ impl KodEngine {
                 return Err(Self::no_provider_error());
             }
             let mut last_err: Option<KodError> = None;
-            let mut outcome: Option<(
-                String,
-                Vec<ToolCall>,
-                Vec<ToolResult>,
-                Option<kod_provider::TokenUsage>,
-            )> = None;
+            let mut outcome: Option<RoundOutcome> = None;
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
             let mut winning_model: Option<ModelRef> = None;
             // Delta section 9.7: index-based so per-class retry-chain
@@ -1565,9 +1548,6 @@ impl KodEngine {
                     Vec<ToolCall>,
                     Vec<ToolResult>,
                     Option<kod_provider::TokenUsage>,
-                    // P5.6 — ignored in the goal loop; only the
-                    // streaming single-turn path uses the retry
-                    // signal.
                     bool,
                 )> = None;
                 let mut turn_err: Option<KodError> = None;

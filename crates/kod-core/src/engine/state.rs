@@ -402,7 +402,7 @@ impl KodEngine {
     pub fn session_init_from_log(
         log_path: &std::path::Path,
         holder: &str,
-    ) -> kod_error::Result<Option<(String, String, Vec<String>, u64)>> {
+    ) -> kod_error::Result<Option<SessionInitData>> {
         kod_core_state::session_log::session_init_for(log_path, holder)
     }
 
