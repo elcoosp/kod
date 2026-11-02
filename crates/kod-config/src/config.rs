@@ -1071,8 +1071,10 @@ mod coverage_hooks_config {
 
     #[test]
     fn hooks_config_round_trips_through_toml() {
-        let mut h = HooksConfig::default();
-        h.enabled = true;
+        let mut h = HooksConfig {
+            enabled: true,
+            ..HooksConfig::default()
+        };
         h.pre_tool_use.insert("write_file".into(), "fmt".into());
         let s = toml::to_string(&h).unwrap();
         let parsed: HooksConfig = toml::from_str(&s).unwrap();
@@ -1133,11 +1135,16 @@ mod proptests {
             prop::collection::hash_map("[a-z]{1,10}", "[ -~]{0,30}", 0..3),
         )
             .prop_map(|(version, commands, hooks_enabled, pre_tool_use)| {
-                let mut cfg = KodConfig::default();
-                cfg.config_version = version;
-                cfg.commands = commands;
-                cfg.hooks.enabled = hooks_enabled;
-                cfg.hooks.pre_tool_use = pre_tool_use;
+                let cfg = KodConfig {
+                    config_version: version,
+                    commands,
+                    hooks: crate::HooksConfig {
+                        enabled: hooks_enabled,
+                        pre_tool_use,
+                        ..Default::default()
+                    },
+                    ..KodConfig::default()
+                };
                 cfg
             })
     }

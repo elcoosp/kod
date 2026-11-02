@@ -257,8 +257,10 @@ mod coverage_memory_context {
 
     #[test]
     fn skills_render_under_relevant_skills() {
-        let mut c = Context::default();
-        c.skills = vec![skill("rust-refactor", "Do it well.")];
+        let c = Context {
+            skills: vec![skill("rust-refactor", "Do it well.")],
+            ..Context::default()
+        };
         let p = c.to_prompt();
         assert!(p.contains("## Relevant Skills"));
         assert!(p.contains("### rust-refactor"));
@@ -272,10 +274,12 @@ mod coverage_memory_context {
         // a deliberate difference (the memory crate is used by the
         // retrieval path, not the identity path). A regression
         // that moved the system block to the top would blur them.
-        let mut c = Context::default();
-        c.skills = vec![skill("a", "body")];
-        c.system_prompt = Some("You are kod.".to_string());
-        c.user_input = "hello".to_string();
+        let c = Context {
+            skills: vec![skill("a", "body")],
+            system_prompt: Some("You are kod.".to_string()),
+            user_input: "hello".to_string(),
+            ..Context::default()
+        };
         let p = c.to_prompt();
         let skills_pos = p.find("## Relevant Skills").unwrap();
         let sys_pos = p.find("## System").unwrap();
@@ -304,8 +308,10 @@ mod coverage_memory_context {
     fn estimated_tokens_counts_memory_and_skills() {
         let mut with_memory = Context::default();
         with_memory.memory_context.working_memory = vec![entry(&"x".repeat(400))];
-        let mut with_skill = Context::default();
-        with_skill.skills = vec![skill("a", &"y".repeat(400))];
+        let with_skill = Context {
+            skills: vec![skill("a", &"y".repeat(400))],
+            ..Context::default()
+        };
         // Both must contribute; a regression that dropped one
         // would under-report the prompt size.
         assert!(with_memory.estimated_tokens() >= 100);
@@ -327,8 +333,10 @@ mod coverage_memory_context {
     #[test]
     fn builder_with_memory_replaces_the_context() {
         use kod_types::MemoryContext;
-        let mut mem = MemoryContext::default();
-        mem.long_term = vec![entry("remembered")];
+        let mem = MemoryContext {
+            long_term: vec![entry("remembered")],
+            ..MemoryContext::default()
+        };
         let c = ContextBuilder::new().with_memory(mem).build();
         assert_eq!(c.memory_context.long_term.len(), 1);
     }

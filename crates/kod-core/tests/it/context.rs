@@ -54,7 +54,7 @@ fn test_context_to_prompt() {
             content: "User is working on auth system".to_string(),
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: kod_types::MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),

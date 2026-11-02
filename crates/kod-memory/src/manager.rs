@@ -487,7 +487,7 @@ impl MemoryManager {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn store(&self, memory_type: MemoryType, content: &str) -> Result<MemoryId> {
-        self.store_with_metadata(memory_type, content, Default::default())
+        self.store_with_metadata(memory_type, content, kod_types::MemoryMetadata::default())
             .await
     }
 
@@ -2723,7 +2723,7 @@ mod contradiction_resolution_tests {
 
         // Store: spawns a background embed that will panic.
         let _ = m
-            .store_with_metadata(MemoryType::LongTerm, "trigger embed", Default::default())
+            .store_with_metadata(MemoryType::LongTerm, "trigger embed", kod_types::MemoryMetadata::default())
             .await;
 
         // T1-H1: flush_embeddings must return within a bounded time

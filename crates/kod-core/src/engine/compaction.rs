@@ -12,6 +12,7 @@ impl KodEngine {
     /// * `Reinject` / `Constrained` prepend a system nudge to the
     ///   attempt's messages so the model sees what went wrong.
     /// * `ShrinkHistory` drops the oldest half of the messages.
+    ///
     /// FNV-1a hash of the bytes that determine whether a provider's
     /// cache is still valid for a request.
     ///

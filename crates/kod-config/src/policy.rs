@@ -2414,8 +2414,10 @@ mod proptests {
             ),
         )
             .prop_map(|(preset, tools_raw)| {
-                let mut p = Policy::default();
-                p.preset = preset;
+                let mut p = Policy {
+                    preset,
+                    ..Policy::default()
+                };
                 for (name, (mode, network)) in tools_raw {
                     p.tools.insert(
                         name,

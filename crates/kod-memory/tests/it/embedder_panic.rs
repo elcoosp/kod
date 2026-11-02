@@ -59,7 +59,7 @@ async fn panicking_embedder_does_not_kill_the_retrieval_path() {
     // caught by the existing isolation. What this test pins is the
     // *foreground* embed `rebuild_index` fires on retrieval.
     let _ = mgr
-        .store_with_metadata(MemoryType::LongTerm, "one stored entry", Default::default())
+        .store_with_metadata(MemoryType::LongTerm, "one stored entry", kod_types::MemoryMetadata::default())
         .await;
 
     // If the foreground embed call is not isolated, this `.await`

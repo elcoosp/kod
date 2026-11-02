@@ -765,7 +765,7 @@ mod tests {
             content: content.to_string(),
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: kod_types::MemoryMetadata::default(),
             superseded_by: None,
             contradicts: Vec::new(),
         }
@@ -819,7 +819,7 @@ mod tests {
             content: "Test fact".to_string(),
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: kod_types::MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),
@@ -869,7 +869,7 @@ mod tests {
                     content: format!("fact {i}"),
                     timestamp: time::OffsetDateTime::now_utc(),
                     relevance: 1.0,
-                    metadata: Default::default(),
+                    metadata: kod_types::MemoryMetadata::default(),
 
                     superseded_by: None,
                     contradicts: Vec::new(),
@@ -904,7 +904,7 @@ mod coverage_store_batch {
             content: content.to_string(),
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: kod_types::MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),
@@ -1171,7 +1171,7 @@ mod supersession_tests {
                     content: "x".into(),
                     timestamp: time::OffsetDateTime::now_utc(),
                     relevance: 1.0,
-                    metadata: Default::default(),
+                    metadata: kod_types::MemoryMetadata::default(),
                     superseded_by: None,
                     contradicts: Vec::new(),
                 })
