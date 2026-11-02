@@ -6,7 +6,7 @@
 //! candidates depend on external state (skills, models, cwd) while
 //! `input.rs` is purely textual.
 
-use super::*;
+use super::{CompletionKind, InputMode, KodApp, SLASH_COMMANDS, SlashCommand, fuzzy_match};
 
 impl KodApp {
     /// Candidates matching the current input (only when it starts with `/`).

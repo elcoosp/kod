@@ -9,7 +9,7 @@
 //! its call id so parallel calls fill *their own* rows. A call with no
 //! provider id (`""`) falls back to the pre-v2 text heuristics.
 
-use super::*;
+use super::{GenPhase, KodApp, Message, MessageId, MessageMetadata, MessageRole, ToolExecution, ToolStatus, Utc};
 
 impl KodApp {
     /// Bound on `tool_executions`. A long session can mint hundreds

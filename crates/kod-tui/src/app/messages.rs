@@ -4,7 +4,7 @@
 //! adding, clearing (with undo), pinning, editing, forking, and the
 //! scroll position that keeps the newest turn visible.
 
-use super::*;
+use super::{KodApp, Message, MessageId, MessageMetadata, MessageRole, Utc};
 
 impl KodApp {
     /// The chat messages.
