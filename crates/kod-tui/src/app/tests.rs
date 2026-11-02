@@ -494,15 +494,15 @@ mod tests {
         assert_eq!(app.session_cost_usd().to_bits(), f64::from(0.0_f32).to_bits());
         assert!(!app.cost_known(), "fresh session has no cost knowledge");
 
-        let _ = app.note_session_cost(0.0025);
-        let _ = app.note_session_cost(0.0125);
+        app.note_session_cost(0.0025);
+        app.note_session_cost(0.0125);
         assert!((app.session_cost_usd() - 0.015).abs() < 1e-9);
         assert!(app.cost_known());
 
         // Broken pricing blocks do not corrupt the accumulator.
-        let _ = app.note_session_cost(f64::NAN);
-        let _ = app.note_session_cost(-1.0);
-        let _ = app.note_session_cost(f64::INFINITY);
+        app.note_session_cost(f64::NAN);
+        app.note_session_cost(-1.0);
+        app.note_session_cost(f64::INFINITY);
         assert!(
             (app.session_cost_usd() - 0.015).abs() < 1e-9,
             "invalid values must be ignored, got {}",
@@ -515,7 +515,7 @@ mod tests {
     fn test_clear_resets_session_cost() {
         let mut app = KodApp::new();
         app.push_system_message("hello");
-        let _ = app.note_session_cost(1.25);
+        app.note_session_cost(1.25);
         assert!(app.cost_known());
 
         app.clear_messages();

@@ -558,8 +558,8 @@ mod tests {
 
     #[test]
     fn snapshot_before_missing_file_records_create() {
-        let (tmp, cp) = mgr();
-        let target = tmp.path().join("does-not-exist.txt");
+        let (_tmp, cp) = mgr();
+        let target = _tmp.path().join("does-not-exist.txt");
         let id = cp
             .snapshot_before(&target, "write_file")
             .unwrap()
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn restore_unknown_id_errors() {
-        let (tmp, cp) = mgr();
+        let (_tmp, cp) = mgr();
         let err = cp.restore("no-such-id").unwrap_err();
         match err {
             KodError::InvalidParameters { reason } => {
@@ -820,19 +820,19 @@ mod coverage_checkpoint_corners {
 
     #[test]
     fn list_on_never_written_manager_returns_empty() {
-        let (tmp, cp) = mgr();
+        let (_tmp, cp) = mgr();
         assert!(cp.list().unwrap().is_empty());
     }
 
     #[test]
     fn clear_on_never_written_manager_returns_zero() {
-        let (tmp, cp) = mgr();
+        let (_tmp, cp) = mgr();
         assert_eq!(cp.clear().unwrap(), 0);
     }
 
     #[test]
     fn find_returns_none_for_unknown_id() {
-        let (tmp, cp) = mgr();
+        let (_tmp, cp) = mgr();
         assert!(cp.find("no-such-id").unwrap().is_none());
     }
 
