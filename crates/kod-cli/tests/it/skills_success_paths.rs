@@ -78,7 +78,7 @@ async fn skills_new_writes_a_file() {
     let _guard = ConfigDirEnv::set(cfg.path());
 
     run_skills_new("fresh-skill")
-        .await
+
         .expect("creating a new skill must succeed");
 
     let path = skill_path(skills.path(), "fresh-skill");

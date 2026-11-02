@@ -34,7 +34,7 @@ impl SkillLoader {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn load_all(&mut self) -> Result<Vec<Skill>> {
-        let skills = self.scan_directory().await?;
+        let skills = self.scan_directory()?;
 
         // Update cache
         let mut cache = self.cache.write().await;
@@ -54,7 +54,7 @@ impl SkillLoader {
     /// depth, or a flat `.md` at the top of the directory. Resource
     /// files (`references/*.md`, `examples/*.md`, `README.md`) are
     /// not skills and never reach the parser.
-    async fn scan_directory(&self) -> Result<Vec<Skill>> {
+    fn scan_directory(&self) -> Result<Vec<Skill>> {
         if !self.skills_dir.exists() {
             return Err(KodError::SkillParseError {
                 path: self.skills_dir.display().to_string(),
@@ -184,7 +184,7 @@ impl SkillLoader {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn enable_hot_reload(&mut self) -> Result<()> {
+    pub fn enable_hot_reload(&mut self) -> Result<()> {
         if self.watcher.is_some() {
             return Ok(()); // Already enabled
         }
@@ -813,8 +813,8 @@ mod coverage_loader_api {
         let dir = tmp.path().join("skills");
         std::fs::create_dir_all(&dir).unwrap();
         let mut loader = SkillLoader::new(&dir);
-        loader.enable_hot_reload().await.unwrap();
-        loader.enable_hot_reload().await.unwrap();
+        loader.enable_hot_reload().unwrap();
+        loader.enable_hot_reload().unwrap();
     }
 
     #[tokio::test]
@@ -822,6 +822,6 @@ mod coverage_loader_api {
         let tmp = TempDir::new().unwrap();
         let missing = tmp.path().join("no-such-dir");
         let mut loader = SkillLoader::new(&missing);
-        assert!(loader.enable_hot_reload().await.is_err());
+        assert!(loader.enable_hot_reload().is_err());
     }
 }

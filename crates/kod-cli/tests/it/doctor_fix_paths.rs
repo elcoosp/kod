@@ -74,7 +74,7 @@ async fn doctor_fix_creates_directories_under_temp_roots() {
     write_config(cfg.path(), &skills, &db);
     let _guard = TempRoots::set(cfg.path(), &ckpt);
 
-    let _ = run_doctor_fix(false).await;
+    let _ = run_doctor_fix(false);
 
     // The fix creates the checkpoint dir it would otherwise leave to
     // the caller. Assert that — it is the only write the fix does
@@ -102,5 +102,5 @@ async fn doctor_fix_json_returns_without_panicking() {
     write_config(cfg.path(), &skills, &db);
     let _guard = TempRoots::set(cfg.path(), &ckpt);
 
-    let _ = run_doctor_fix(true).await;
+    let _ = run_doctor_fix(true);
 }

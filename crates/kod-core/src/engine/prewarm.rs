@@ -10,7 +10,7 @@ impl KodEngine {
     /// WS-A consults it for background-session stamping. Approximation:
     /// prewarm and background traffic both resolve through the default
     /// chain, so the default endpoint is the honest "active endpoint".
-    pub(crate) async fn tab_bridge_active(&self) -> bool {
+    pub(crate) fn tab_bridge_active(&self) -> bool {
         match kod_config::KodConfig::load_cached() {
             Ok(c) => c.llm.default_endpoint().tab_bridge,
             Err(_) => false,
@@ -20,7 +20,7 @@ impl KodEngine {
     /// WS-C: whether the keystroke prewarm probe may run. `auto`
     /// (default) disables it on tab-bridge endpoints, where the probe
     /// would warm the wrong tab.
-    pub async fn prewarm_enabled(&self) -> bool {
+    pub fn prewarm_enabled(&self) -> bool {
         let (mode, tab_bridge) = match kod_config::KodConfig::load_cached() {
             Ok(c) => (c.llm.prewarm, c.llm.default_endpoint().tab_bridge),
             // An unreadable config must not change runtime behavior.
@@ -38,7 +38,7 @@ impl KodEngine {
         // WS-C: policy gate first (defense in depth — the TUI checks
         // `prewarm_enabled` before spawning, but direct callers land
         // here too).
-        if !self.prewarm_enabled().await {
+        if !self.prewarm_enabled() {
             return;
         }
         // Latch first, so a burst of keystrokes does not queue a burst

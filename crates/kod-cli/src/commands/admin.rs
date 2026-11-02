@@ -32,7 +32,7 @@ pub async fn run_tui(
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_doctor(json: bool) -> Result<()> {
+pub fn run_doctor(json: bool) -> Result<()> {
     use kod_core::doctor::{CheckStatus, run_diagnostics};
 
     let config = KodConfig::load_default()?;
@@ -79,7 +79,7 @@ pub async fn run_doctor(json: bool) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_init(force: bool) -> Result<()> {
+pub fn run_init(force: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let config_dir = KodConfig::config_dir()?;
     let path = config_dir.join("config.toml");
@@ -362,7 +362,7 @@ pub async fn run_update() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_profile(action: ProfileAction) -> Result<()> {
+pub fn run_profile(action: ProfileAction) -> Result<()> {
     match action {
         ProfileAction::List { json } => {
             if json {
@@ -479,7 +479,7 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_policy(action: PolicyAction) -> Result<()> {
+pub fn run_policy(action: PolicyAction) -> Result<()> {
     let config = KodConfig::load_default()?;
     let cwd = std::env::current_dir()
         .map_err(|e| KodError::Config(format!("could not determine cwd: {e}")))?;
@@ -652,7 +652,7 @@ pub async fn run_tests() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_map(max_chars: usize) -> Result<()> {
+pub fn run_map(max_chars: usize) -> Result<()> {
     // `KOD_MAP_ROOT` overrides the directory the map is built from.
     // The command is a read of the repo the caller is in; a test needs
     // to point it at a temp dir without changing the process cwd (a
@@ -824,7 +824,7 @@ pub fn run_sandbox_exec(profile_path: std::path::PathBuf, cmd: Vec<String>) -> R
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_sandbox_check() -> Result<()> {
+pub fn run_sandbox_check() -> Result<()> {
     use kod_tools::context::{SandboxMode, sandbox_invocation};
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -880,7 +880,7 @@ pub async fn run_sandbox_check() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_doctor_fix(json: bool) -> Result<()> {
+pub fn run_doctor_fix(json: bool) -> Result<()> {
     use kod_core::doctor::run_diagnostics;
 
     let config = KodConfig::load_default()?;
@@ -1148,7 +1148,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_jev_status() -> Result<()> {
+pub fn run_jev_status() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     let jev = &cfg.jev;
     if !jev.enabled {
@@ -1192,7 +1192,7 @@ pub async fn run_jev_status() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     let path = match log {
         Some(p) => p,
         None => newest_session_log()?.ok_or_else(|| {
@@ -1372,7 +1372,7 @@ pub async fn run_if_bench(
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_commit_check(
+pub fn run_commit_check(
     type_: String,
     scope: Option<String>,
     summary: String,

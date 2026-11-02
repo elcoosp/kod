@@ -140,7 +140,7 @@ async fn skills_search_empty_query_is_err() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     let err = run_skills_search("")
-        .await
+
         .expect_err("an empty query must be a usage error");
     assert!(
         err.to_string().contains("usage"),

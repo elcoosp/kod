@@ -458,7 +458,7 @@ mod cancel_reason_tests {
     use super::*;
     use crate::router::RouterConfig;
 
-    async fn engine() -> KodEngine {
+    fn engine() -> KodEngine {
         let dir = tempfile::TempDir::new().unwrap();
         let cfg = RouterConfig {
             working_dir: dir.path().to_path_buf(),
@@ -473,14 +473,14 @@ mod cancel_reason_tests {
 
     #[tokio::test]
     async fn a_user_cancel_reports_user() {
-        let e = engine().await;
+        let e = engine();
         e.request_cancel_for("swarm:x");
         assert_eq!(e.cancel_reason_for("swarm:x"), Some(CancelReason::User),);
     }
 
     #[tokio::test]
     async fn a_watchdog_cancel_reports_watchdog_retry() {
-        let e = engine().await;
+        let e = engine();
         e.request_retry_cancel_for("swarm:x");
         assert_eq!(
             e.cancel_reason_for("swarm:x"),
@@ -490,7 +490,7 @@ mod cancel_reason_tests {
 
     #[tokio::test]
     async fn a_cleared_key_has_no_reason() {
-        let e = engine().await;
+        let e = engine();
         e.request_cancel_for("swarm:x");
         e.clear_cancel_for("swarm:x");
         assert_eq!(e.cancel_reason_for("swarm:x"), None);
@@ -500,7 +500,7 @@ mod cancel_reason_tests {
     /// that observed an older epoch — the epoch guard still holds.
     #[tokio::test]
     async fn a_newer_user_cancel_survives_a_scoped_clear() {
-        let e = engine().await;
+        let e = engine();
         let observed = e.cancel_epoch_for("swarm:x");
         e.request_cancel_for("swarm:x");
         e.clear_cancel_through("swarm:x", observed);

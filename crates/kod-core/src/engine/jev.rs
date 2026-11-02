@@ -204,7 +204,7 @@ impl KodEngine {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn update_jev_threshold(&self, name: &str, value: f32) -> Result<()> {
+    pub fn update_jev_threshold(&self, name: &str, value: f32) -> Result<()> {
         let Some(client) = self.jev_client() else {
             return Err(KodError::InvalidState(
                 "Jev is not enabled on this engine".to_string(),
@@ -1430,7 +1430,7 @@ mod redaction_wiring_tests {
         engine.set_jev_decider(rec.clone());
 
         // Rebuild via the threshold path.
-        let _ = engine.update_jev_threshold("task_classify_min", 0.5).await;
+        let _ = engine.update_jev_threshold("task_classify_min", 0.5);
 
         let client = engine.jev_client().expect("decider still installed");
         let state = serde_json::json!({"text": "key super-secret-value-1234"});

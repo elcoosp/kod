@@ -939,7 +939,7 @@ async fn test_remember_turn_writes_short_term_memory() {
     engine.start().await.unwrap();
 
     assert_eq!(
-        engine.router().get_all_short_term_len().await,
+        engine.router().get_all_short_term_len(),
         0,
         "short-term memory starts empty"
     );
@@ -952,7 +952,7 @@ async fn test_remember_turn_writes_short_term_memory() {
         .await;
 
     assert_eq!(
-        engine.router().get_all_short_term_len().await,
+        engine.router().get_all_short_term_len(),
         2,
         "both turns must land in short-term memory"
     );
@@ -983,7 +983,7 @@ async fn test_remember_turn_skips_empty_text() {
 
     engine.remember_turn(true, "   \n\t  ").await;
     assert_eq!(
-        engine.router().get_all_short_term_len().await,
+        engine.router().get_all_short_term_len(),
         0,
         "whitespace-only text must not be stored"
     );

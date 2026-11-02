@@ -191,7 +191,7 @@ impl Agent {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn start(&self) -> Result<()> {
+    pub fn start(&self) -> Result<()> {
         if self.state() != AgentState::Idle && self.state() != AgentState::Stopped {
             return Err(KodError::InvalidState(format!(
                 "Cannot start agent in state {:?}",
@@ -230,7 +230,7 @@ impl Agent {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn pause(&self) -> Result<()> {
+    pub fn pause(&self) -> Result<()> {
         if self.state() != AgentState::Running {
             return Err(KodError::InvalidState(format!(
                 "Cannot pause agent in state {:?}",
@@ -250,7 +250,7 @@ impl Agent {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn resume(&self) -> Result<()> {
+    pub fn resume(&self) -> Result<()> {
         if self.state() != AgentState::Paused {
             return Err(KodError::InvalidState(format!(
                 "Cannot resume agent in state {:?}",
@@ -272,7 +272,7 @@ impl Agent {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn stop(&self) -> Result<()> {
+    pub fn stop(&self) -> Result<()> {
         match self.state() {
             AgentState::Running | AgentState::Paused | AgentState::Starting => {
                 // Same reasoning as start(): no work happens between
@@ -415,16 +415,16 @@ mod tests {
 
         assert_eq!(agent.state(), AgentState::Idle);
 
-        agent.start().await.unwrap();
+        agent.start().unwrap();
         assert_eq!(agent.state(), AgentState::Running);
 
-        agent.pause().await.unwrap();
+        agent.pause().unwrap();
         assert_eq!(agent.state(), AgentState::Paused);
 
-        agent.resume().await.unwrap();
+        agent.resume().unwrap();
         assert_eq!(agent.state(), AgentState::Running);
 
-        agent.stop().await.unwrap();
+        agent.stop().unwrap();
         assert_eq!(agent.state(), AgentState::Stopped);
     }
 
@@ -442,7 +442,7 @@ mod tests {
         let budget = Duration::from_millis(100);
 
         let t0 = Instant::now();
-        agent.start().await.unwrap();
+        agent.start().unwrap();
         let start_elapsed = t0.elapsed();
         assert!(
             start_elapsed < budget,
@@ -450,7 +450,7 @@ mod tests {
         );
 
         let t0 = Instant::now();
-        agent.stop().await.unwrap();
+        agent.stop().unwrap();
         let stop_elapsed = t0.elapsed();
         assert!(
             stop_elapsed < budget,

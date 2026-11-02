@@ -3,7 +3,7 @@
 use super::*;
 use kod_core_state::decisions::{DecisionAuthor, DecisionKind, DecisionLog};
 
-async fn engine() -> KodEngine {
+fn engine() -> KodEngine {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = RouterConfig {
         working_dir: tmp.path().to_path_buf(),
@@ -18,14 +18,14 @@ async fn engine() -> KodEngine {
 
 #[tokio::test]
 async fn empty_log_is_the_default() {
-    let e = engine().await;
+    let e = engine();
     let log = e.decisions_for("session").await;
     assert!(log.entries.is_empty());
 }
 
 #[tokio::test]
 async fn add_then_read() {
-    let e = engine().await;
+    let e = engine();
     let id = e
         .add_decision(
             "session",
@@ -43,7 +43,7 @@ async fn add_then_read() {
 
 #[tokio::test]
 async fn drop_by_id() {
-    let e = engine().await;
+    let e = engine();
     let id = e
         .add_decision(
             "session",
@@ -60,7 +60,7 @@ async fn drop_by_id() {
 
 #[tokio::test]
 async fn set_decision_log_replaces() {
-    let e = engine().await;
+    let e = engine();
     e.add_decision(
         "session",
         1,
@@ -84,7 +84,7 @@ async fn set_decision_log_replaces() {
 
 #[tokio::test]
 async fn logs_are_per_key() {
-    let e = engine().await;
+    let e = engine();
     e.add_decision(
         "session",
         1,

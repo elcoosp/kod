@@ -74,7 +74,7 @@ async fn test_tick_events() {
 #[tokio::test]
 async fn test_send_event() {
     let handler = EventHandler::new(Duration::from_millis(100));
-    handler.send_event(Event::Tick).await.unwrap();
+    handler.send_event(Event::Tick).unwrap();
     assert_eq!(handler.pending_events(), 1);
     let event = handler.next_event().await;
     assert!(matches!(event, Event::Tick));

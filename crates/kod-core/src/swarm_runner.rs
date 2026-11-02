@@ -1197,7 +1197,7 @@ impl SwarmRunner {
         // rather than in a module-level helper.
         let parent_context = {
             let decisions = self.engine.recent_decisions("", 16).await;
-            let repomap_text = self.engine.repomap_text().await;
+            let repomap_text = self.engine.repomap_text();
             let expected_writes: Vec<String> = handles
                 .iter()
                 .flat_map(|h| h.subtask.expected_writes.iter().cloned())

@@ -116,7 +116,7 @@ impl LspClient {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn start(program: &str, workspace_root: &Path) -> Result<Self, LspError> {
+    pub fn start(program: &str, workspace_root: &Path) -> Result<Self, LspError> {
         let mut child = Command::new(program)
             .current_dir(workspace_root)
             .stdin(Stdio::piped())
@@ -1245,7 +1245,7 @@ mod tests {
         // actually have a working rust-analyzer — the exact failure the
         // previous `#[ignore]` was hiding. Probing the handshake is
         // the honest precondition.
-        let mut client = match LspClient::start("rust-analyzer", tmp.path()).await {
+        let mut client = match LspClient::start("rust-analyzer", tmp.path()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("skipping: could not spawn rust-analyzer: {e}");

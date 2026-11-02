@@ -46,7 +46,7 @@ async fn init_writes_a_config_file() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_init(false)
-        .await
+
         .expect("init on a fresh dir must succeed");
 
     let path = tmp.path().join("config.toml");
@@ -64,12 +64,12 @@ async fn init_force_backs_up_the_existing_config() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     // First init writes a config.
-    run_init(false).await.expect("first init");
+    run_init(false).expect("first init");
     let path = tmp.path().join("config.toml");
     assert!(path.exists());
 
     // Second init with --force must back up the existing one.
-    run_init(true).await.expect("init --force");
+    run_init(true).expect("init --force");
 
     let backups: Vec<_> = std::fs::read_dir(tmp.path())
         .unwrap()
@@ -97,7 +97,7 @@ async fn profile_list_text_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_profile(ProfileAction::List { json: false })
-        .await
+
         .expect("profile list text mode must succeed");
 }
 
@@ -109,7 +109,7 @@ async fn profile_list_json_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_profile(ProfileAction::List { json: true })
-        .await
+
         .expect("profile list json mode must succeed");
 }
 
@@ -124,7 +124,7 @@ async fn profile_show_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_profile(ProfileAction::Show)
-        .await
+
         .expect("profile show must succeed on any valid config");
 }
 
@@ -141,7 +141,7 @@ async fn policy_show_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_policy(kod_cli::commands::PolicyAction::Show)
-        .await
+
         .expect("policy show must succeed with a valid config");
 }
 
@@ -158,6 +158,6 @@ async fn policy_forget_with_no_daemon_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_policy(kod_cli::commands::PolicyAction::Forget { n: None })
-        .await
+
         .expect("policy forget with no daemon must return Ok");
 }

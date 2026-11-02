@@ -30,7 +30,7 @@ async fn plan_show_with_no_state_file_is_ok() {
     let path = tmp.path().join("state.json");
     assert!(!path.exists());
     run_plan_show(Some(path))
-        .await
+
         .expect("missing state file is the normal first-run case, not an error");
 }
 
@@ -41,7 +41,7 @@ async fn decisions_show_with_no_state_file_is_ok() {
     let path = tmp.path().join("state.json");
     assert!(!path.exists());
     run_decisions_show(Some(path), 10)
-        .await
+
         .expect("missing state file is not an error");
 }
 
@@ -53,7 +53,7 @@ async fn trace_list_on_missing_file_is_ok() {
     let path = tmp.path().join("turns.jsonl");
     assert!(!path.exists());
     run_trace_list(10, Some(path))
-        .await
+
         .expect("missing trace file is not an error");
 }
 
@@ -64,7 +64,7 @@ async fn trace_show_with_unknown_id_is_ok() {
     let path = tmp.path().join("turns.jsonl");
     std::fs::write(&path, "").unwrap();
     run_trace_show(1, Some(path))
-        .await
+
         .expect("unknown id is not an error");
 }
 
@@ -77,7 +77,7 @@ async fn plan_show_with_empty_state_object_is_ok() {
     let path = tmp.path().join("state.json");
     std::fs::write(&path, "{}").unwrap();
     run_plan_show(Some(path))
-        .await
+
         .expect("empty state object is not an error");
 }
 
@@ -88,6 +88,6 @@ async fn decisions_show_with_empty_state_object_is_ok() {
     let path = tmp.path().join("state.json");
     std::fs::write(&path, "{}").unwrap();
     run_decisions_show(Some(path), 10)
-        .await
+
         .expect("empty state object is not an error");
 }

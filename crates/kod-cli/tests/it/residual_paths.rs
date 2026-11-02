@@ -120,7 +120,7 @@ async fn skills_validate_with_a_valid_skill_is_ok() {
 
     let _g = EnvGuard::set("KOD_CONFIG_DIR", cfg.path());
     run_skills_validate()
-        .await
+
         .expect("a well-formed skill must validate without error");
 }
 
@@ -137,7 +137,7 @@ async fn skills_validate_strict_with_a_valid_skill_is_ok() {
 
     let _g = EnvGuard::set("KOD_CONFIG_DIR", cfg.path());
     run_skills_validate_strict()
-        .await
+
         .expect("a well-formed skill must validate under strict mode too");
 }
 
@@ -152,7 +152,7 @@ async fn checkpoint_list_on_empty_dir_is_ok() {
     let ckpt = tempfile::TempDir::new().unwrap();
     let _g = EnvGuard::set("KOD_CHECKPOINT_DIR", ckpt.path());
     run_checkpoint(CheckpointAction::List { limit: 20 })
-        .await
+
         .expect("listing an empty checkpoint dir must not error");
 }
 
@@ -168,7 +168,7 @@ async fn checkpoint_diff_with_unknown_id_is_invalid_parameters() {
     let err = run_checkpoint(CheckpointAction::Diff {
         id: "definitely-not-a-checkpoint".to_string(),
     })
-    .await
+
     .expect_err("an unknown checkpoint id must be an error");
     assert!(
         err.to_string().contains("no checkpoint"),

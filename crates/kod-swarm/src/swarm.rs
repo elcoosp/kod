@@ -116,7 +116,7 @@ impl AgentSwarm {
         // returns Ok; one that is Failed returns an error we do not
         // want to surface as a removal failure. The important
         // invariant is that the agent leaves the swarm.
-        if let Err(e) = agent.stop().await {
+        if let Err(e) = agent.stop() {
             tracing::warn!(
                 agent = %agent_id,
                 error = %e,
@@ -150,7 +150,7 @@ impl AgentSwarm {
         };
         let n = agents.len();
         for (id, agent) in &agents {
-            if let Err(e) = agent.stop().await {
+            if let Err(e) = agent.stop() {
                 tracing::warn!(
                     agent = %id,
                     error = %e,
@@ -184,7 +184,7 @@ impl AgentSwarm {
             .get_agent(agent_id)
             .await
             .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
-        agent.start().await
+        agent.start()
     }
 
     /// Pause the agent with the given ID, if it is present.
@@ -197,7 +197,7 @@ impl AgentSwarm {
             .get_agent(agent_id)
             .await
             .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
-        agent.pause().await
+        agent.pause()
     }
 
     /// Resume the agent with the given ID, if it is present.
@@ -210,7 +210,7 @@ impl AgentSwarm {
             .get_agent(agent_id)
             .await
             .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
-        agent.resume().await
+        agent.resume()
     }
 
     /// Stop the agent with the given ID, if it is present.
@@ -223,7 +223,7 @@ impl AgentSwarm {
             .get_agent(agent_id)
             .await
             .ok_or_else(|| KodError::InvalidState(format!("Agent {agent_id} not in swarm")))?;
-        agent.stop().await
+        agent.stop()
     }
 
     /// List all agents

@@ -129,5 +129,5 @@ async fn serve_stop_without_a_daemon_is_ok() {
 /// which never runs on the happy-path tests.
 #[tokio::test]
 async fn sandbox_check_returns() {
-    let _ = run_sandbox_check().await;
+    let _ = run_sandbox_check();
 }

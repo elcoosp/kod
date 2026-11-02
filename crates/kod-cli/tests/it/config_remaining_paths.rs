@@ -38,7 +38,7 @@ async fn config_show_raw_missing_file_is_err() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     let err = run_config_show_raw()
-        .await
+
         .expect_err("a missing config.toml must be an error, not an exit");
     let msg = err.to_string();
     assert!(
@@ -61,7 +61,7 @@ async fn config_validate_invalid_toml_is_err() {
     .unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     let err = run_config_validate()
-        .await
+
         .expect_err("an invalid config.toml must be an error, not an exit");
     let msg = err.to_string();
     assert!(
@@ -108,6 +108,6 @@ async fn config_show_merged_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _g = MergedConfigDir::set(tmp.path());
     run_config_show_merged()
-        .await
+
         .expect("show-merged over a fresh config dir must be Ok");
 }

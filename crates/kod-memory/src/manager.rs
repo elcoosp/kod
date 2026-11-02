@@ -2598,7 +2598,7 @@ mod contradiction_resolution_tests {
     use super::*;
     use kod_types::MemoryType;
 
-    async fn fixture() -> (tempfile::TempDir, MemoryManager) {
+    fn fixture() -> (tempfile::TempDir, MemoryManager) {
         let dir = tempfile::tempdir().expect("tempdir");
         let mgr = MemoryManager::new(dir.path().join("m.redb"), 16).expect("open");
         (dir, mgr)
@@ -2612,7 +2612,7 @@ mod contradiction_resolution_tests {
 
     #[tokio::test]
     async fn a_confidence_gap_resolves_a_contradiction() {
-        let (_dir, mgr) = fixture().await;
+        let (_dir, mgr) = fixture();
         let a = mgr
             .store(MemoryType::LongTerm, "the config lives in src/config.rs")
             .await
@@ -2647,7 +2647,7 @@ mod contradiction_resolution_tests {
 
     #[tokio::test]
     async fn a_tie_does_not_resolve() {
-        let (_dir, mgr) = fixture().await;
+        let (_dir, mgr) = fixture();
         let a = mgr.store(MemoryType::LongTerm, "fact alpha").await.unwrap();
         let b = mgr.store(MemoryType::LongTerm, "fact beta").await.unwrap();
         set_confidence(&mgr, &a, 0.6).await;
@@ -2665,7 +2665,7 @@ mod contradiction_resolution_tests {
 
     #[tokio::test]
     async fn an_unset_confidence_leaves_the_pair_alone() {
-        let (_dir, mgr) = fixture().await;
+        let (_dir, mgr) = fixture();
         let a = mgr.store(MemoryType::LongTerm, "fact one").await.unwrap();
         let b = mgr.store(MemoryType::LongTerm, "fact two").await.unwrap();
         set_confidence(&mgr, &a, 0.9).await;
@@ -2681,7 +2681,7 @@ mod contradiction_resolution_tests {
 
     #[tokio::test]
     async fn resolution_is_idempotent() {
-        let (_dir, mgr) = fixture().await;
+        let (_dir, mgr) = fixture();
         let a = mgr.store(MemoryType::LongTerm, "old truth").await.unwrap();
         let b = mgr.store(MemoryType::LongTerm, "new truth").await.unwrap();
         set_confidence(&mgr, &a, 0.2).await;

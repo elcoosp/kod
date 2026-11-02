@@ -553,7 +553,7 @@ impl EventHandler {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn send_event(&self, event: Event) -> Result<()> {
+    pub fn send_event(&self, event: Event) -> Result<()> {
         self.push_event(event);
         Ok(())
     }
@@ -564,7 +564,7 @@ impl EventHandler {
     }
 
     /// Start the input handling loop
-    pub async fn start_input_loop(&self) {
+    pub fn start_input_loop(&self) {
         let tx = self.event_tx.clone();
         let is_running = self.is_running.clone();
         let priority_tx = PrioritySender {

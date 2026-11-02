@@ -36,19 +36,19 @@ async fn test_agent_lifecycle() {
     assert_eq!(agent.state(), AgentState::Idle);
 
     // Start agent
-    agent.start().await.unwrap();
+    agent.start().unwrap();
     assert_eq!(agent.state(), AgentState::Running);
 
     // Pause agent
-    agent.pause().await.unwrap();
+    agent.pause().unwrap();
     assert_eq!(agent.state(), AgentState::Paused);
 
     // Resume
-    agent.resume().await.unwrap();
+    agent.resume().unwrap();
     assert_eq!(agent.state(), AgentState::Running);
 
     // Stop
-    agent.stop().await.unwrap();
+    agent.stop().unwrap();
     assert_eq!(agent.state(), AgentState::Stopped);
 }
 
@@ -71,7 +71,7 @@ async fn test_agent_capabilities() {
 async fn test_agent_heartbeat() {
     let agent = Agent::new("worker").build();
 
-    agent.start().await.unwrap();
+    agent.start().unwrap();
 
     // Agent should track last heartbeat
     let heartbeat = agent.last_heartbeat();
@@ -93,7 +93,7 @@ async fn test_agent_heartbeat() {
 #[tokio::test]
 async fn test_agent_is_idle_timeout() {
     let agent = Agent::new("worker").build();
-    agent.start().await.unwrap();
+    agent.start().unwrap();
 
     // Fresh heartbeat means not timed out
     agent.record_heartbeat();

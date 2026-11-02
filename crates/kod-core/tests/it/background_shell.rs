@@ -11,7 +11,7 @@ use kod_core::router::RouterConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-async fn engine() -> (TempDir, Arc<KodEngine>) {
+fn engine() -> (TempDir, Arc<KodEngine>) {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("test.redb");
     let cfg = RouterConfig {
@@ -43,7 +43,7 @@ async fn engine() -> (TempDir, Arc<KodEngine>) {
 )]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_background_command_delivers_an_interrupt_on_completion() {
-    let (_tmp, engine) = engine().await;
+    let (_tmp, engine) = engine();
     let hook = engine.build_background_hook();
 
     let job_id = hook

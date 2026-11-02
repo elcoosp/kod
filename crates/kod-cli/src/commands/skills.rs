@@ -69,7 +69,7 @@ pub async fn run_skills_list(json: bool) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_validate() -> Result<()> {
+pub fn run_skills_validate() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
     let parser = kod_skills::SkillParser::new();
@@ -137,7 +137,7 @@ pub async fn run_skills_validate() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_new(name: &str) -> Result<()> {
+pub fn run_skills_new(name: &str) -> Result<()> {
     // Validate the name: kebab-case, [a-z0-9-].
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -229,7 +229,7 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
-    let path = match find_skill_path(name).await? {
+    let path = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -282,7 +282,7 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_edit(name: &str) -> Result<()> {
-    let path = match find_skill_path(name).await? {
+    let path = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -321,7 +321,7 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_show(name: &str) -> Result<()> {
-    let path = match find_skill_path(name).await? {
+    let path = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -337,7 +337,7 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn find_skill_path(name: &str) -> Result<Option<std::path::PathBuf>> {
+pub(super) fn find_skill_path(name: &str) -> Result<Option<std::path::PathBuf>> {
     let config = KodConfig::load_default()?;
     let dirs = config.skills_dirs()?;
     for dir in &dirs {
@@ -410,7 +410,7 @@ pub(super) fn to_title_case(s: &str) -> String {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
-    let src = match find_skill_path(name).await? {
+    let src = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -463,7 +463,7 @@ pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_search(query: &str) -> Result<()> {
+pub fn run_skills_search(query: &str) -> Result<()> {
     let config = KodConfig::load_default()?;
     let dirs = config.skills_dirs()?;
     let q = query.to_lowercase();
@@ -547,7 +547,7 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_validate_strict() -> Result<()> {
+pub fn run_skills_validate_strict() -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
     let parser = kod_skills::SkillParser::new().strict();
@@ -623,7 +623,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
         )));
     }
 
-    let src = match find_skill_path(name).await? {
+    let src = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -694,7 +694,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
             "invalid new name {new_name:?}: lowercase letters, digits, and hyphens only"
         )));
     }
-    let src = match find_skill_path(name).await? {
+    let src = match find_skill_path(name)? {
         Some(p) => p,
         None => {
             return Err(KodError::InvalidParameters {
@@ -734,7 +734,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_source(name: &str) -> Result<()> {
-    match find_skill_path(name).await? {
+    match find_skill_path(name)? {
         Some(p) => {
             println!("{}", p.display());
             Ok(())

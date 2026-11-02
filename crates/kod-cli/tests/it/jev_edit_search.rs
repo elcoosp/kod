@@ -96,7 +96,7 @@ async fn jev_stats_with_a_decision_is_ok() {
         ],
     );
     run_jev_stats(Some(path))
-        .await
+
         .expect("two JevDecision entries must aggregate cleanly");
 }
 
@@ -108,7 +108,7 @@ async fn jev_stats_with_one_decision_is_ok() {
     let path = tmp.path().join("one.jsonl");
     write_log(&path, &[jev_decision_entry("auto_approve", 5, true)]);
     run_jev_stats(Some(path))
-        .await
+
         .expect("one entry, cached=true, must aggregate");
 }
 
@@ -166,7 +166,7 @@ async fn skills_search_finds_a_configured_skill() {
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", cfg.path());
 
     run_skills_search("demo")
-        .await
+
         .expect("a matching query over a populated skills dir must return Ok");
 }
 
@@ -189,7 +189,7 @@ async fn skills_search_with_no_matches_is_ok() {
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", cfg.path());
 
     run_skills_search("definitely-not-a-match")
-        .await
+
         .expect("no matches is not an error");
 }
 
@@ -205,7 +205,7 @@ async fn config_edit_runs_the_editor() {
     let _ed = EnvVar::set_str("EDITOR", ":");
 
     run_config_edit()
-        .await
+
         .expect("EDITOR=: must make the editor spawn exit 0");
     assert!(
         tmp.path().join("config.toml").exists(),

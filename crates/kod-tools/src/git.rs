@@ -799,7 +799,7 @@ mod tests {
     /// A temp dir initialized as a git repo with one commit. Returns the
     /// dir (kept alive) so the test can query status/diff against a
     /// known-good repository.
-    async fn init_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    fn init_repo() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().to_path_buf();
         // Best-effort: `git init` requires `git` on PATH; if it is not
@@ -852,7 +852,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_status_clean_repo_reports_no_changes() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         let tool = GitStatusTool::new();
         let result = tool
             .execute(&serde_json::json!({}), &git_ctx(&repo))
@@ -869,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_status_sees_untracked_file() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         std::fs::write(repo.join("new.txt"), "hi\n").unwrap();
         let tool = GitStatusTool::new();
         let result = tool
@@ -888,7 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_status_denied_without_permission() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         let ctx = ToolContext::new(&repo).with_permissions(ToolPermissions {
             read_files: true,
             git_access: kod_types::GitAccess::None,
@@ -906,7 +906,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_diff_shows_unstaged_change() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         std::fs::write(repo.join("seed.txt"), "seed\nmore\n").unwrap();
         let tool = GitDiffTool::new();
         let result = tool
@@ -933,7 +933,7 @@ mod tests {
     /// `read_file` would have redacted.
     #[tokio::test]
     async fn git_diff_does_not_leak_a_protected_path() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         // Commit a first version so a later change shows in `git diff`
         // (an untracked file produces no diff at all).
         std::fs::write(repo.join(".env"), "API_KEY=placeholder\n").unwrap();
@@ -973,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_diff_stat_returns_summary() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         std::fs::write(repo.join("seed.txt"), "seed\nmore\n").unwrap();
         let tool = GitDiffTool::new();
         let result = tool
@@ -994,7 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_diff_on_clean_repo_is_empty() {
-        let (_tmp, repo) = init_repo().await;
+        let (_tmp, repo) = init_repo();
         let tool = GitDiffTool::new();
         let result = tool
             .execute(&serde_json::json!({}), &git_ctx(&repo))

@@ -234,7 +234,7 @@ pub async fn run_fixture_save_v2(
             dest.display(),
         )));
     }
-    run_fixture_save(name, &turns_path).await
+    run_fixture_save(name, &turns_path)
 }
 
 /// Tier 1.5 — list the fixtures under `~/.kod/fixtures/`.
@@ -242,7 +242,7 @@ pub async fn run_fixture_save_v2(
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_fixture_list() -> Result<()> {
+pub fn run_fixture_list() -> Result<()> {
     let Some(dir) = kod_core::Fixture::fixtures_dir() else {
         return Err(KodError::Config("no home directory".to_string()));
     };
@@ -292,7 +292,7 @@ pub async fn run_fixture_list() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Result<()> {
+pub fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Result<()> {
     let traces = kod_core::read_traces(turns_path)
         .map_err(|e| KodError::Config(format!("could not read turn traces: {e}")))?;
     if traces.is_empty() {

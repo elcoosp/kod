@@ -133,7 +133,7 @@ impl LspManager {
             }
         }
 
-        let mut client = LspClient::start(binary, &self.workspace_root).await?;
+        let mut client = LspClient::start(binary, &self.workspace_root)?;
         client.initialize().await?;
         let arc = Arc::new(Mutex::new(client));
 

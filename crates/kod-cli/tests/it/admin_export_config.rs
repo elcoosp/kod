@@ -52,7 +52,7 @@ async fn config_display_returns_ok() {
     std::fs::write(tmp.path().join("config.toml"), "").unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     run_config_display()
-        .await
+
         .expect("config display must succeed on any valid config");
 }
 
@@ -71,7 +71,7 @@ async fn config_init_from_writes_config() {
         .expect("PRESETS is non-empty by construction")
         .name;
     run_config_init_from(name)
-        .await
+
         .expect("init-from a real profile must succeed");
     assert!(
         tmp.path().join("config.toml").exists(),
@@ -94,12 +94,12 @@ async fn config_init_from_backs_up_an_existing_config() {
         .name;
 
     // First write creates config.toml.
-    run_config_init_from(name).await.expect("first init-from");
+    run_config_init_from(name).expect("first init-from");
     let path = tmp.path().join("config.toml");
     assert!(path.exists());
 
     // Second write must back the first up.
-    run_config_init_from(name).await.expect("second init-from");
+    run_config_init_from(name).expect("second init-from");
     let backups = std::fs::read_dir(tmp.path())
         .unwrap()
         .filter_map(std::result::Result::ok)
@@ -120,7 +120,7 @@ async fn config_init_from_unknown_is_err() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     let err = run_config_init_from("definitely-not-a-profile")
-        .await
+
         .expect_err("an unknown profile must be rejected");
     assert!(
         err.to_string().contains("Unknown profile"),

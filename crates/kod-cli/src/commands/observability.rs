@@ -52,7 +52,7 @@ pub async fn run_jev_test() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_jev_tune_show() -> Result<()> {
+pub fn run_jev_tune_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     for line in jev_tune_lines(&cfg) {
         println!("{line}");
@@ -79,7 +79,7 @@ pub fn jev_tune_lines(cfg: &KodConfig) -> Vec<String> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
+pub fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
     let mut cfg = KodConfig::load_default()?;
     if !cfg.jev.thresholds.set(name, value) {
         return Err(KodError::InvalidParameters {
@@ -101,7 +101,7 @@ pub async fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_jev_tune_reset() -> Result<()> {
+pub fn run_jev_tune_reset() -> Result<()> {
     let mut cfg = KodConfig::load_default()?;
     cfg.jev.thresholds = kod_config::JevThresholds::default();
     let path = KodConfig::config_dir()?.join("config.toml");
@@ -115,7 +115,7 @@ pub async fn run_jev_tune_reset() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
     let path = match log {
         Some(p) => p,
         None => newest_session_log()?.ok_or_else(|| {
@@ -166,7 +166,7 @@ pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_limits_show() -> Result<()> {
+pub fn run_limits_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     for line in limits_lines(&cfg) {
         println!("{line}");
@@ -225,7 +225,7 @@ pub fn limits_lines(cfg: &KodConfig) -> Vec<String> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
     let path = match state {
         Some(p) => p,
         None => kod_core::StateStore::default_path()
@@ -259,7 +259,7 @@ pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let s = plan_json_string(state)?;
     println!("{s}");
     Ok(())
@@ -291,7 +291,7 @@ pub fn plan_json_string(state: Option<std::path::PathBuf>) -> Result<String> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize) -> Result<()> {
+pub fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize) -> Result<()> {
     let path = match state {
         Some(p) => p,
         None => kod_core::StateStore::default_path()
@@ -323,7 +323,7 @@ pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize)
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let s = decisions_json_string(state)?;
     println!("{s}");
     Ok(())
@@ -367,7 +367,7 @@ pub(super) fn resolve_trace_path(arg: Option<std::path::PathBuf>) -> Result<std:
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     if !path.exists() {
         eprintln!("no trace file at {}", path.display());
@@ -411,7 +411,7 @@ pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> R
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     let traces = kod_core::read_traces(&path)?;
     let Some(t) = traces.iter().find(|t| t.id == id) else {
@@ -669,7 +669,7 @@ pub(super) async fn drive_prompt_through_fresh_engine(
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
     let s = trace_json_string(path)?;
     println!("{s}");
     Ok(())

@@ -106,7 +106,7 @@ async fn save_writes_a_fixture_from_a_one_tool_trace() {
     write_one_turn(&trace_path);
 
     run_fixture_save("saved", &trace_path)
-        .await
+
         .expect("run_fixture_save over a valid trace");
 
     let fixture_path = Fixture::default_path("saved").expect("default_path('saved')");

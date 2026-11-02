@@ -187,7 +187,7 @@ impl KodEngine {
     /// non-tab endpoints (the default trait impl is a no-op and
     /// `OpenAICompatProvider` only stamps when asked).
     pub(crate) async fn install_background_session(&self) {
-        if !self.tab_bridge_active().await {
+        if !self.tab_bridge_active() {
             return;
         }
         let bg = self.background_session_id.to_prefixed_string();
@@ -1046,7 +1046,7 @@ impl KodEngine {
     /// Append a `SessionEntry::ModelFallback` to the recorder, if one is
     /// installed. Best-effort: a write failure logs and the run
     /// continues.
-    pub(crate) async fn record_model_fallback(
+    pub(crate) fn record_model_fallback(
         &self,
         holder: &str,
         from: &ModelRef,

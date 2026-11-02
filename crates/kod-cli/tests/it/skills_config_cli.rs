@@ -71,7 +71,7 @@ async fn config_path_resolves_under_the_override() {
     let dir = kod_config::KodConfig::config_dir().expect("config_dir");
     assert_eq!(dir.as_path(), cfg.path(), "KOD_CONFIG_DIR ignored");
     run_config_path()
-        .await
+
         .expect("run_config_path should succeed");
 }
 
@@ -81,7 +81,7 @@ async fn config_validate_on_valid_config_succeeds() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     run_config_validate()
-        .await
+
         .expect("a minimal valid config must validate");
 }
 
@@ -102,12 +102,12 @@ async fn config_export_writes_and_refuses_overwrite() {
     let dest = out_dir.path().join("export.toml");
 
     run_config_export(dest.clone(), false)
-        .await
+
         .expect("export to a fresh path should succeed");
     assert!(dest.exists(), "export did not create {dest:?}");
 
     let err = run_config_export(dest.clone(), false)
-        .await
+
         .expect_err("export over an existing file without --force must error");
     let msg = err.to_string();
     assert!(
@@ -117,7 +117,7 @@ async fn config_export_writes_and_refuses_overwrite() {
 
     // --force overwrites without error.
     run_config_export(dest, true)
-        .await
+
         .expect("export with --force should overwrite");
 }
 

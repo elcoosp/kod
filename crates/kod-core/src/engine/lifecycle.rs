@@ -287,7 +287,7 @@ impl KodEngine {
         let model = self.current_model().await;
         let defs = self.tools.get_definitions().await;
         let tool_names: Vec<String> = defs.into_iter().map(|d| d.name).collect();
-        let system_prompt_hash = self.surface_fingerprint(&tool_names).await;
+        let system_prompt_hash = self.surface_fingerprint(&tool_names);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
@@ -313,7 +313,7 @@ impl KodEngine {
     /// `record_session_init` (which writes it) and
     /// `verify_cold_revive_surface` (which compares against it), so
     /// the two cannot drift.
-    pub(crate) async fn surface_fingerprint(&self, tool_names: &[String]) -> u64 {
+    pub(crate) fn surface_fingerprint(&self, tool_names: &[String]) -> u64 {
         let mut input = format!("{}\n", self.working_dir.display());
         let mut sorted: Vec<&String> = tool_names.iter().collect();
         sorted.sort();
@@ -350,7 +350,7 @@ impl KodEngine {
             .into_iter()
             .map(|d| d.name)
             .collect();
-        let current_hash = self.surface_fingerprint(&current_names).await;
+        let current_hash = self.surface_fingerprint(&current_names);
         if current_hash == persisted_hash {
             ColdReviveVerdict::SurfaceMatches
         } else {
@@ -797,7 +797,7 @@ impl KodEngine {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
-        self.router.enable_hot_reload(skills_dir).await
+        self.router.enable_hot_reload(skills_dir)
     }
 
     /// Names of all loaded skills (for `/skills` listing).

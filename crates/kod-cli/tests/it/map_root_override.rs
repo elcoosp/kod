@@ -67,7 +67,7 @@ async fn map_with_a_kod_map_root_succeeds() {
     let _guard = MapRootEnv::set(tmp.path());
 
     run_map(500)
-        .await
+
         .expect("run_map against a seeded workspace must succeed");
 }
 
@@ -83,6 +83,6 @@ async fn map_on_a_non_repo_dir_is_ok() {
     let _guard = MapRootEnv::set(tmp.path());
 
     run_map(200)
-        .await
+
         .expect("a non-repo dir yields an empty map, not an error");
 }

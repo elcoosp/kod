@@ -231,7 +231,7 @@ impl McpHost {
             &spec.env,
             Some(&self.working_dir),
         )
-        .await
+
         .map_err(|e| {
             KodError::Internal(format!(
                 "MCP server {name:?} ({}) failed to spawn: {e}",

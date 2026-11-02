@@ -162,7 +162,7 @@ impl KodEngine {
     /// if a map was built. Used by the swarm runner (P5) so a
     /// subagent's brief carries the same view of the repository the
     /// parent has.
-    pub async fn repomap_text(&self) -> String {
+    pub fn repomap_text(&self) -> String {
         self.router
             .repo_map_text()
             .map(|s| s.as_str().to_string())

@@ -243,7 +243,7 @@ fn benchmark_task_classification(c: &mut Criterion) {
             input,
             |b, input| {
                 b.iter(|| {
-                    let task_type = rt.block_on(async { router.classify_task(input).await });
+                    let task_type = rt.block_on(async { router.classify_task(input) });
                     let _ = black_box(task_type);
                 });
             },

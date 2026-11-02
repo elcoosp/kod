@@ -693,7 +693,7 @@ impl TaskRouter {
     /// memory is disabled). Read-only; used by the engine's tests and
     /// by any future status display that wants to show working-set
     /// size.
-    pub async fn get_all_short_term_len(&self) -> usize {
+    pub fn get_all_short_term_len(&self) -> usize {
         match &self.memory_manager {
             Some(m) => m.get_all_short_term().len(),
             None => 0,
@@ -704,7 +704,7 @@ impl TaskRouter {
     /// so `/clear` forgets the session's turns in both stores (see
     /// that method's doc for the reasoning). Long-term memory is
     /// untouched.
-    pub async fn clear_short_term_memory(&self) {
+    pub fn clear_short_term_memory(&self) {
         if let Some(m) = &self.memory_manager {
             m.clear_short_term();
         }
@@ -735,7 +735,7 @@ impl TaskRouter {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
+    pub fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
         if !skills_dir.is_dir() {
             return Ok(());
         }
@@ -858,7 +858,7 @@ impl TaskRouter {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn classify_task(&self, input: &str) -> Result<TaskType> {
+    pub fn classify_task(&self, input: &str) -> Result<TaskType> {
         // Case-insensitive whole-word substring test.
         fn contains_word(haystack: &str, needle: &str) -> bool {
             if needle.is_empty() {
@@ -996,7 +996,7 @@ impl TaskRouter {
         let start_time = Instant::now();
 
         // 1. Classify the task
-        let task_type = self.classify_task(input).await?;
+        let task_type = self.classify_task(input)?;
 
         // 2. Retrieve memory when the caller did not supply any.
         //
@@ -1069,7 +1069,7 @@ impl TaskRouter {
     }
 
     /// Build context for processing
-    async fn build_context(
+    fn build_context(
         &self,
         _input: &str,
         memory_context: &Option<MemoryContext>,
@@ -1394,7 +1394,7 @@ impl TaskRouter {
         prompt.push_str(
             &self
                 .build_context(input, &memory_context, task_type)
-                .await?,
+?,
         );
 
         // Skill knowledge, two layers: the full name+description inventory is
@@ -1900,21 +1900,21 @@ mod tests {
         let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
 
         assert_eq!(
-            router.classify_task("What is 2+2?").await.unwrap(),
+            router.classify_task("What is 2+2?").unwrap(),
             TaskType::Simple
         );
         assert_eq!(
-            router.classify_task("Fix the bug").await.unwrap(),
+            router.classify_task("Fix the bug").unwrap(),
             TaskType::CodeModification
         );
         assert_eq!(
-            router.classify_task("Debug this error").await.unwrap(),
+            router.classify_task("Debug this error").unwrap(),
             TaskType::Debugging
         );
         assert_eq!(
             router
                 .classify_task("Research async patterns")
-                .await
+
                 .unwrap(),
             TaskType::Research
         );
@@ -2197,7 +2197,7 @@ mod tests {
         let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
         let task_type = router
             .classify_task("which skills do you have?")
-            .await
+
             .unwrap();
 
         // No skills loaded: identity + request still present.
@@ -2296,7 +2296,7 @@ mod tests {
         )
         .unwrap();
         let missing = temp_dir.path().join("no-such-dir");
-        router.enable_hot_reload(&missing).await.unwrap();
+        router.enable_hot_reload(&missing).unwrap();
         assert_eq!(
             router.skill_watchers.lock().unwrap().len(),
             0,
@@ -2326,8 +2326,8 @@ mod tests {
         let dir = temp_dir.path().join("skills");
         std::fs::create_dir_all(&dir).unwrap();
 
-        router.enable_hot_reload(&dir).await.unwrap();
-        router.enable_hot_reload(&dir).await.unwrap();
+        router.enable_hot_reload(&dir).unwrap();
+        router.enable_hot_reload(&dir).unwrap();
         assert_eq!(
             router.skill_watchers.lock().unwrap().len(),
             1,
@@ -2375,7 +2375,7 @@ mod tests {
         router.load_skills(&skills_dir).await.unwrap();
         assert_eq!(router.loaded_skill_names().await, vec!["first".to_string()]);
 
-        router.enable_hot_reload(&skills_dir).await.unwrap();
+        router.enable_hot_reload(&skills_dir).unwrap();
 
         // Add a second skill.
         std::fs::write(
@@ -2467,7 +2467,7 @@ mod coverage_classifier_edges {
         // classifier's documented priority puts Debugging first.
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("debug the create function").await.unwrap(),
+            r.classify_task("debug the create function").unwrap(),
             TaskType::Debugging,
         );
     }
@@ -2477,7 +2477,7 @@ mod coverage_classifier_edges {
         let (_tmp, r) = router();
         // "fix" is CodeMod; "create" is Complex. CodeMod wins.
         assert_eq!(
-            r.classify_task("fix the create helper").await.unwrap(),
+            r.classify_task("fix the create helper").unwrap(),
             TaskType::CodeModification,
         );
     }
@@ -2488,7 +2488,7 @@ mod coverage_classifier_edges {
         // "design and test the system" — Complex outranks Testing
         // per the documented ordering.
         assert_eq!(
-            r.classify_task("design and test the system").await.unwrap(),
+            r.classify_task("design and test the system").unwrap(),
             TaskType::Complex,
         );
     }
@@ -2497,7 +2497,7 @@ mod coverage_classifier_edges {
     async fn testing_outranks_documentation() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("write tests for the docs").await.unwrap(),
+            r.classify_task("write tests for the docs").unwrap(),
             TaskType::Testing,
         );
     }
@@ -2508,7 +2508,7 @@ mod coverage_classifier_edges {
         // "docs" (Documentation). Research wins per the design.
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("research the docs").await.unwrap(),
+            r.classify_task("research the docs").unwrap(),
             TaskType::Research,
         );
     }
@@ -2521,7 +2521,7 @@ mod coverage_classifier_edges {
         // matcher for a substring `contains` would classify this
         // as CodeModification.
         assert_eq!(
-            r.classify_task("add a prefix to the string").await.unwrap(),
+            r.classify_task("add a prefix to the string").unwrap(),
             TaskType::Simple,
         );
     }
@@ -2532,7 +2532,7 @@ mod coverage_classifier_edges {
         // "fix" in normal phrasing.
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("fix the bug").await.unwrap(),
+            r.classify_task("fix the bug").unwrap(),
             TaskType::CodeModification,
         );
     }
@@ -2541,11 +2541,11 @@ mod coverage_classifier_edges {
     async fn classification_is_case_insensitive() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("FIX THE BUG").await.unwrap(),
+            r.classify_task("FIX THE BUG").unwrap(),
             TaskType::CodeModification,
         );
         assert_eq!(
-            r.classify_task("Debug this").await.unwrap(),
+            r.classify_task("Debug this").unwrap(),
             TaskType::Debugging,
         );
     }
@@ -2553,14 +2553,14 @@ mod coverage_classifier_edges {
     #[tokio::test]
     async fn empty_input_falls_through_to_simple() {
         let (_tmp, r) = router();
-        assert_eq!(r.classify_task("").await.unwrap(), TaskType::Simple);
+        assert_eq!(r.classify_task("").unwrap(), TaskType::Simple);
     }
 
     #[tokio::test]
     async fn unclassified_input_defaults_to_simple() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("what's the weather?").await.unwrap(),
+            r.classify_task("what's the weather?").unwrap(),
             TaskType::Simple,
         );
     }
@@ -2570,7 +2570,7 @@ mod coverage_classifier_edges {
         let (_tmp, r) = router();
         assert_eq!(
             r.classify_task("the program has a panic at startup")
-                .await
+
                 .unwrap(),
             TaskType::Debugging,
         );
@@ -2580,7 +2580,7 @@ mod coverage_classifier_edges {
     async fn traceback_keyword_routes_to_debugging() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("here is the traceback").await.unwrap(),
+            r.classify_task("here is the traceback").unwrap(),
             TaskType::Debugging,
         );
     }
@@ -2589,7 +2589,7 @@ mod coverage_classifier_edges {
     async fn refactor_keyword_routes_to_code_modification() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("refactor the parser").await.unwrap(),
+            r.classify_task("refactor the parser").unwrap(),
             TaskType::CodeModification,
         );
     }
@@ -2668,7 +2668,7 @@ async fn a_semantic_only_skill_reaches_the_prompt() {
         "fixture must not match lexically, or it proves nothing: {lexical:?}",
     );
 
-    let task_type = router.classify_task(query).await.unwrap();
+    let task_type = router.classify_task(query).unwrap();
 
     // With the skill named only in `refined_skills`, its instructions
     // must still reach the prompt.

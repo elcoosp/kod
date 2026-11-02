@@ -171,7 +171,7 @@ impl TuiLoop {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn open_external_editor(&mut self, initial: &str) -> Result<String> {
+    pub fn open_external_editor(&mut self, initial: &str) -> Result<String> {
         use crossterm::execute;
 
         // Write the initial buffer to a temp file. The prefix keeps
@@ -707,7 +707,7 @@ impl TuiLoop {
         // so the tracing subscriber routes to ~/.kod/session.log.
         kod_types::term::set_tui_active(true);
 
-        self.event_handler.start_input_loop().await;
+        self.event_handler.start_input_loop();
 
         Ok(())
     }
@@ -717,7 +717,7 @@ impl TuiLoop {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn restore_terminal(&mut self) -> Result<()> {
+    pub fn restore_terminal(&mut self) -> Result<()> {
         // Release terminal ownership first: even if a later step here
         // errors, the subscriber must never keep writing to a file
         // while the user's shell expects the terminal.
@@ -888,7 +888,7 @@ impl TuiLoop {
         // error (best-effort at this point; we cannot retry once the
         // process is unwinding) so the cause is at least on record
         // under RUST_LOG=warn.
-        if let Err(e) = self.restore_terminal().await {
+        if let Err(e) = self.restore_terminal() {
             tracing::warn!(
                 error = %e,
                 "restore_terminal failed; the terminal may be left in raw mode",
@@ -924,7 +924,7 @@ impl TuiLoop {
     async fn main_loop(&mut self) -> Result<()> {
         // Render once before blocking so the initial screen is visible
         // without waiting for the first tick.
-        self.render().await?;
+        self.render()?;
 
         // M-42: render at most every 33ms during sustained streaming.
         // `Tick` only fires on an idle channel, so a flood of
@@ -966,7 +966,7 @@ impl TuiLoop {
             }
 
             if render_now && !self.app.should_quit() {
-                self.render().await?;
+                self.render()?;
                 last_render = std::time::Instant::now();
             }
         }
@@ -975,7 +975,7 @@ impl TuiLoop {
     }
 
     /// Render the UI: header / chat / completions / status / input(bottom)
-    async fn render(&mut self) -> Result<()> {
+    fn render(&mut self) -> Result<()> {
         if let Some(terminal) = &mut self.terminal {
             terminal
                 .draw(|f| {
@@ -3075,7 +3075,7 @@ impl TuiLoop {
                                     &id.as_uuid().to_string(),
                                     vec!["user".to_string()],
                                 )
-                                .await;
+;
                         }
                         self.app.push_system_message(&format!(
                             "Remembered ({}): {}",
@@ -4942,7 +4942,7 @@ impl TuiLoop {
                                 let value: Option<f32> = parts.next().and_then(|s| s.parse().ok());
                                 match (name, value) {
                                     (Some(n), Some(v)) => {
-                                        match engine.update_jev_threshold(&n, v).await {
+                                        match engine.update_jev_threshold(&n, v) {
                                             Ok(()) => {
                                                 let persisted = (|| -> kod_error::Result<()> {
                                                     let mut cfg = KodConfig::load_default()?;
@@ -4989,7 +4989,7 @@ impl TuiLoop {
                                 let mut all_ok = true;
                                 for name in kod_config::JevThresholds::NAMES {
                                     if let Some(v) = defaults.get(name)
-                                        && engine.update_jev_threshold(name, v).await.is_err()
+                                        && engine.update_jev_threshold(name, v).is_err()
                                     {
                                         all_ok = false;
                                     }
@@ -6077,7 +6077,7 @@ impl TuiLoop {
         if let KeyCode::Char(c) = key
             && let Some(action) = self.keybindings.get(&c).copied()
         {
-            return self.dispatch_key_action(action).await;
+            return self.dispatch_key_action(action);
         }
         match key {
             // Fixed single-char fallbacks not exposed through the
@@ -6195,7 +6195,7 @@ impl TuiLoop {
     /// The behaviour bodies are identical to what the old hardcoded
     /// match arms did; extracting them lets the binding table and the
     /// code path share one implementation.
-    async fn dispatch_key_action(&mut self, action: KeyAction) -> Result<()> {
+    fn dispatch_key_action(&mut self, action: KeyAction) -> Result<()> {
         match action {
             KeyAction::Insert => self.app.set_input_mode(InputMode::Insert),
             KeyAction::Quit => {
@@ -6333,7 +6333,7 @@ impl TuiLoop {
                 // system message is pushed — a broken editor must
                 // not eat the user's draft.
                 let current = self.app.input().to_string();
-                match self.open_external_editor(&current).await {
+                match self.open_external_editor(&current) {
                     Ok(content) => {
                         self.app.set_input(content.trim_end().to_string());
                     }
@@ -6403,7 +6403,7 @@ impl TuiLoop {
                         // probe on tab-bridge endpoints, where it would
                         // warm the wrong tab. Check before spawning so a
                         // disabled policy costs no task at all.
-                        if !engine.prewarm_enabled().await {
+                        if !engine.prewarm_enabled() {
                             return;
                         }
                         // `DEFAULT_TRANSCRIPT_KEY` is crate-private in

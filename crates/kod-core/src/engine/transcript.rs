@@ -156,7 +156,7 @@ impl KodEngine {
     /// channels: extraction, tool, and user.
     ///
     /// No-op when no recorder is installed (the CLI default).
-    pub async fn record_user_memory_write(&self, memory_id: &str, tags: Vec<String>) {
+    pub fn record_user_memory_write(&self, memory_id: &str, tags: Vec<String>) {
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
@@ -388,7 +388,7 @@ impl KodEngine {
     /// current shape.
     pub async fn clear_history(&self) {
         self.clear_history_for(DEFAULT_TRANSCRIPT_KEY).await;
-        self.router.clear_short_term_memory().await;
+        self.router.clear_short_term_memory();
     }
 
     /// Forget the transcript for `key`. Does NOT touch short-term
@@ -802,13 +802,13 @@ impl KodEngine {
 
 impl KodEngine {
     /// Test-only: how many async-job results are queued for `key`.
-    pub async fn queued_async_results_for_tests(&self, key: &str) -> usize {
+    pub fn queued_async_results_for_tests(&self, key: &str) -> usize {
         self.async_delivery.lock().queued_for(key)
     }
 
     /// Test-only: enqueue a job result as if a background job had
     /// just finished. Used to prove `clear_history_for` drops them.
-    pub async fn enqueue_async_result_for_tests(&self, owner_id: &str, job_id: u64, body: &str) {
+    pub fn enqueue_async_result_for_tests(&self, owner_id: &str, job_id: u64, body: &str) {
         let epoch = self.async_delivery.lock().epoch();
         self.async_delivery
             .lock()

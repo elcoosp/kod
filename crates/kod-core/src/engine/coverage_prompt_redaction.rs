@@ -3,7 +3,7 @@
 use super::*;
 use crate::engine::state::redact_tool_call_arguments;
 
-async fn engine() -> KodEngine {
+fn engine() -> KodEngine {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = RouterConfig {
         working_dir: tmp.path().to_path_buf(),
@@ -17,7 +17,7 @@ async fn engine() -> KodEngine {
 
 #[tokio::test]
 async fn redactor_is_a_noop_by_default() {
-    let e = engine().await;
+    let e = engine();
     let mut msgs = vec![kod_types::ChatMessage::text(
         kod_types::MessageId::new(),
         kod_types::MessageRole::User,
@@ -33,7 +33,7 @@ async fn redactor_is_a_noop_by_default() {
 
 #[tokio::test]
 async fn tool_result_redaction_is_a_noop_by_default() {
-    let e = engine().await;
+    let e = engine();
     let s = e.redact_tool_result_for_prompt("token=sk-abcdef1234567890ABCDEFGH".to_string());
     assert!(s.contains("sk-abcdef"));
 }
@@ -151,7 +151,7 @@ async fn e2e_argument_redaction_via_config() {
     // SAFETY: single-threaded test process under nextest.
     unsafe { std::env::set_var("KOD_CONFIG_DIR", dir.path()) };
 
-    let e = engine().await;
+    let e = engine();
     let mut msgs = vec![tool_call_msg(
         "write_file",
         serde_json::json!({"path": ".env", "content": "SECRET=abcdef"}),
@@ -222,7 +222,7 @@ async fn e2e_in_prompt_redacts_once_then_reuses() {
     // SAFETY: single-threaded test process under nextest.
     unsafe { std::env::set_var("KOD_CONFIG_DIR", dir.path()) };
 
-    let e = engine().await;
+    let e = engine();
     let mut msgs = vec![kod_types::ChatMessage::text(
         kod_types::MessageId::new(),
         kod_types::MessageRole::User,

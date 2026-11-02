@@ -573,7 +573,7 @@ impl KodEngine {
                                 next,
                                 &format!("{} ({})", e, failure.summary()),
                             )
-                            .await;
+;
                             // Hygiene 3.2: record the failure against
                             // the endpoint that produced it.
                             if let Ok(mut h) = self.endpoint_health.lock()
@@ -1047,7 +1047,7 @@ impl KodEngine {
                                 "Jev flagged the reply off-track; trying next endpoint"
                             );
                             self.record_model_fallback(key, &model_ref, next, "jev quality gate")
-                                .await;
+;
                             last_err = None;
                             i += 1;
                             continue;
@@ -1075,7 +1075,7 @@ impl KodEngine {
                             "retryable provider error; falling back"
                         );
                         self.record_model_fallback(key, &model_ref, next, &e.to_string())
-                            .await;
+;
                         // Hygiene 3.2: record the endpoint failure.
                         if let Ok(mut h) = self.endpoint_health.lock()
                             && h.record_failure(&model_ref.endpoint, e.to_string())
@@ -1664,7 +1664,7 @@ impl KodEngine {
                                 "retryable provider error; falling back"
                             );
                             self.record_model_fallback(key, model_ref, next, &e.to_string())
-                                .await;
+;
                             turn_err = Some(e);
                             continue;
                         }

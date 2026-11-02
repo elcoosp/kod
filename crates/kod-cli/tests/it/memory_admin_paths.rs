@@ -112,7 +112,7 @@ async fn jev_stats_with_missing_log_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("does-not-exist.jsonl");
     let err = run_jev_stats(Some(path))
-        .await
+
         .expect_err("a missing session log must be an error");
     let msg = err.to_string();
     assert!(
@@ -130,6 +130,6 @@ async fn jev_stats_with_no_jev_entries_is_ok() {
     let path = tmp.path().join("no-jev.jsonl");
     write_log(&path, &[tool_call("read_file")]);
     run_jev_stats(Some(path))
-        .await
+
         .expect("a log with no Jev decisions must not be an error");
 }

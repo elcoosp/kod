@@ -126,7 +126,7 @@ impl McpClient {
         args: &[String],
         env: &BTreeMap<String, String>,
     ) -> Result<Self, McpError> {
-        Self::spawn_stdio_in(cmd, args, env, None).await
+        Self::spawn_stdio_in(cmd, args, env, None)
     }
 
     /// Spawn a server with an explicit working directory. A relative
@@ -138,7 +138,7 @@ impl McpClient {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn spawn_stdio_in(
+    pub fn spawn_stdio_in(
         cmd: &str,
         args: &[String],
         env: &BTreeMap<String, String>,

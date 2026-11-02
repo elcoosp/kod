@@ -65,7 +65,7 @@ async fn list_on_empty_dir_succeeds() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = FixturesDirEnv::set(tmp.path());
     run_fixture_list()
-        .await
+
         .expect("an empty fixtures dir must not be an error");
 }
 
@@ -78,7 +78,7 @@ async fn list_reports_one_fixture() {
     let _guard = FixturesDirEnv::set(tmp.path());
     let path = tmp.path().join("demo.json");
     Fixture::new("demo").save_to(&path).expect("save fixture");
-    run_fixture_list().await.expect("list should succeed");
+    run_fixture_list().expect("list should succeed");
     assert!(
         path.exists(),
         "list must not consume or modify the fixture it lists",
@@ -93,7 +93,7 @@ async fn save_with_missing_turns_path_errors() {
     let _guard = FixturesDirEnv::set(tmp.path());
     let missing = tmp.path().join("does-not-exist.jsonl");
     let err = run_fixture_save("demo", &missing)
-        .await
+
         .expect_err("a missing turns file must be an error");
     let msg = err.to_string();
     assert!(
@@ -112,7 +112,7 @@ async fn save_with_empty_turns_path_errors() {
     let empty = tmp.path().join("turns.jsonl");
     std::fs::write(&empty, "").unwrap();
     let err = run_fixture_save("demo", &empty)
-        .await
+
         .expect_err("an empty turns file must be an error");
     assert!(
         err.to_string().contains("no turn traces"),

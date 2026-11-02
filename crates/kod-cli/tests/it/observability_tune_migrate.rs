@@ -92,8 +92,8 @@ async fn jev_test_with_jev_disabled_is_err() {
 async fn jev_tune_show_and_limits_show_return_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
-    run_jev_tune_show().await.expect("jev tune show");
-    run_limits_show().await.expect("limits show");
+    run_jev_tune_show().expect("jev tune show");
+    run_limits_show().expect("limits show");
 }
 
 // ---- run_jev_tune_set / run_jev_tune_reset -------------------------
@@ -115,7 +115,7 @@ async fn jev_tune_set_with_unknown_name_is_err() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     let err = run_jev_tune_set("definitely-not-a-threshold", 0.5)
-        .await
+
         .expect_err("an unknown threshold name must be rejected");
     assert!(
         err.to_string().contains("unknown threshold"),
@@ -136,7 +136,7 @@ async fn jev_tune_set_with_known_name_writes_config() {
         .first()
         .expect("NAMES is non-empty by construction");
     run_jev_tune_set(name, 0.5)
-        .await
+
         .expect("setting a real threshold must succeed");
     assert!(
         tmp.path().join("config.toml").exists(),
@@ -151,7 +151,7 @@ async fn jev_tune_set_with_known_name_writes_config() {
 async fn jev_tune_reset_writes_config() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
-    run_jev_tune_reset().await.expect("reset must succeed");
+    run_jev_tune_reset().expect("reset must succeed");
     assert!(
         tmp.path().join("config.toml").exists(),
         "reset must write config.toml",
@@ -168,7 +168,7 @@ async fn budget_show_empty_log_is_ok() {
     let path = tmp.path().join("empty.jsonl");
     std::fs::write(&path, "").unwrap();
     run_budget_show(Some(path))
-        .await
+
         .expect("an empty session log is a zero-cost run, not an error");
 }
 
@@ -188,7 +188,7 @@ async fn budget_show_with_cost_entries_is_ok() {
         ],
     );
     run_budget_show(Some(path))
-        .await
+
         .expect("a log with Cost entries must parse cleanly");
 }
 
@@ -204,7 +204,7 @@ async fn config_migrate_dry_run_does_not_write() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     run_config_migrate(true)
-        .await
+
         .expect("dry run on a fresh dir");
     assert!(
         !tmp.path().join("config.toml").exists(),
@@ -222,14 +222,14 @@ async fn config_migrate_writes_then_reports_no_migration() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_config_migrate(false)
-        .await
+
         .expect("migrate on a fresh dir");
     let path = tmp.path().join("config.toml");
     assert!(path.exists(), "migrate did not create {path:?}");
 
     // Second call is a no-op that must not error.
     run_config_migrate(false)
-        .await
+
         .expect("second migrate on an already-v2 file");
     assert!(path.exists(), "the v2 file survives the second call");
 }

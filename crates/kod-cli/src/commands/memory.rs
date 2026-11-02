@@ -718,7 +718,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
+pub fn run_checkpoint(action: CheckpointAction) -> Result<()> {
     use kod_core_state::checkpoint::CheckpointManager;
 
     let cwd = std::env::current_dir()

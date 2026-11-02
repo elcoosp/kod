@@ -51,7 +51,7 @@ async fn jev_status_disabled_returns_ok() {
     write_config(tmp.path(), "");
     let _guard = ConfigDirEnv::set(tmp.path());
     run_jev_status()
-        .await
+
         .expect("a disabled Jev is a first-run case, not an error");
 }
 
@@ -67,7 +67,7 @@ async fn jev_status_enabled_returns_ok() {
     write_config(tmp.path(), "[jev]\nenabled = true\n");
     let _guard = ConfigDirEnv::set(tmp.path());
     run_jev_status()
-        .await
+
         .expect("an enabled Jev status listing must return Ok");
 }
 
@@ -122,7 +122,7 @@ async fn doctor_runs_without_panicking() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_config(tmp.path(), "");
     let _guard = ConfigDirEnv::set(tmp.path());
-    let _ = run_doctor(false).await;
+    let _ = run_doctor(false);
 }
 
 /// The JSON mode (`kod doctor --json`) takes the same pipeline
@@ -134,5 +134,5 @@ async fn doctor_json_runs_without_panicking() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_config(tmp.path(), "");
     let _guard = ConfigDirEnv::set(tmp.path());
-    let _ = run_doctor(true).await;
+    let _ = run_doctor(true);
 }

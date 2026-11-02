@@ -7,7 +7,7 @@ use super::*;
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_display() -> Result<()> {
+pub fn run_config_display() -> Result<()> {
     let config = KodConfig::load_default()?;
 
     println!("KOD Configuration:");
@@ -133,7 +133,7 @@ pub async fn run_config_display() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_path() -> Result<()> {
+pub fn run_config_path() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     println!("{}", dir.join("config.toml").display());
     Ok(())
@@ -144,7 +144,7 @@ pub async fn run_config_path() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_edit() -> Result<()> {
+pub fn run_config_edit() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
     // Ensure the file exists so `$EDITOR` opens something.
@@ -193,7 +193,7 @@ pub async fn run_config_edit() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
+pub fn run_config_migrate(dry_run: bool) -> Result<()> {
     let dir = KodConfig::config_dir()?;
     std::fs::create_dir_all(&dir).map_err(KodError::Io)?;
     let path = dir.join("config.toml");
@@ -295,7 +295,7 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_validate() -> Result<()> {
+pub fn run_config_validate() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
 
@@ -418,7 +418,7 @@ pub(super) fn shell_quote(s: &str) -> String {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_init_from(name: &str) -> Result<()> {
+pub fn run_config_init_from(name: &str) -> Result<()> {
     let profile = kod_config::profiles::by_name(name).ok_or_else(|| {
         KodError::Config(format!(
             "Unknown profile {:?}. Known profiles: {}",
@@ -480,7 +480,7 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_show_raw() -> Result<()> {
+pub fn run_config_show_raw() -> Result<()> {
     let dir = KodConfig::config_dir()?;
     let path = dir.join("config.toml");
     if !path.exists() {
@@ -501,7 +501,7 @@ pub async fn run_config_show_raw() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_show_merged() -> Result<()> {
+pub fn run_config_show_merged() -> Result<()> {
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
     print!("{s}");
@@ -516,7 +516,7 @@ pub async fn run_config_show_merged() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<()> {
+pub fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
     if dest.as_os_str() == "-" {
