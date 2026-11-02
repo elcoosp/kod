@@ -6,6 +6,7 @@
 //! invalidated by an unrelated tool registration, and the cache
 //! savings this whole design rests on would silently vanish.
 use super::*;
+use kod_types::tool::LoadMode;
 
 fn head_of(prompt: &str) -> &str {
     const MARKER: &str = "## Volatile suffix";
@@ -24,7 +25,7 @@ fn make_tool(name: &str) -> ToolDefinition {
         parameters_schema: serde_json::json!({}),
         permissions: kod_types::ToolPermissions::default(),
         trust_level: kod_types::trust::TrustLevel::default(),
-        load_mode: Default::default(),
+        load_mode: LoadMode::default(),
     }
 }
 

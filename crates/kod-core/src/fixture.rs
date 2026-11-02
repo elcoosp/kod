@@ -12,6 +12,7 @@
 //! on exact message contents (which change with every run).
 
 use serde::{Deserialize, Serialize};
+use kod_types::tool::LoadMode;
 
 /// One round's captured request + response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,7 +369,7 @@ mod tests {
             parameters_schema: serde_json::json!({}),
             permissions: kod_types::ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         };
         let tool_a = kod_types::ToolDefinition {
             id: kod_types::ToolId::new(),
@@ -378,7 +379,7 @@ mod tests {
             parameters_schema: serde_json::json!({}),
             permissions: kod_types::ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         };
         let req = kod_provider::CompletionRequest {
             system: kod_provider::SystemPrompt::new().with("hello".to_string(), true),
