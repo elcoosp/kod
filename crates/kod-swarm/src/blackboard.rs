@@ -156,7 +156,6 @@ impl Blackboard {
     }
 
     /// Drop everything. Called between swarm runs.
-    #[must_use]
     pub fn clear(&self) {
         self.inner.write().clear();
     }

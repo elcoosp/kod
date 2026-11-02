@@ -627,7 +627,6 @@ impl KodApp {
     }
 
     /// Clear the stored raw error. The transcript keeps its copy.
-    #[must_use]
     pub fn clear_last_error(&mut self) {
         self.last_error = None;
     }
@@ -674,7 +673,6 @@ impl KodApp {
 
     /// Set the sandbox label. Called by `TuiLoop::init_engine`
     /// once the engine is up and the resolver's choice is known.
-    #[must_use]
     pub fn set_sandbox_label(&mut self, label: String) {
         self.sandbox_label = label;
     }

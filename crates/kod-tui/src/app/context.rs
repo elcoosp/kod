@@ -235,7 +235,6 @@ impl KodApp {
     /// Add a call's USD cost to the session total. Negative and NaN
     /// values are rejected — a broken pricing block should not
     /// corrupt the accumulator.
-    #[must_use]
     pub fn note_session_cost(&mut self, cost_usd: f64) {
         if cost_usd.is_finite() && cost_usd >= 0.0 {
             self.session_cost_usd += cost_usd;

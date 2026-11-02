@@ -227,7 +227,6 @@ impl EmissionGuard {
     /// Begin a new update. Clears the per-update budget but keeps
     /// the dedupe history — a note admitted in the last update is
     /// still a duplicate in this one.
-    #[must_use]
     pub fn begin_update(&mut self) {
         self.pending.clear();
     }
