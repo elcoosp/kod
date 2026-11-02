@@ -67,7 +67,7 @@ impl SessionSafeWriter {
 
     fn write_shared(&self, buf: &[u8]) -> std::io::Result<usize> {
         if !term::tui_active() {
-            return std::io::stderr().write_all(buf).map(|_| buf.len());
+            return std::io::stderr().write_all(buf).map(|()| buf.len());
         }
         let Ok(mut slot) = self.file.lock() else {
             return Ok(buf.len());
@@ -106,7 +106,7 @@ impl SessionSafeWriter {
             });
         }
         match slot.as_mut() {
-            Some(file) => file.write_all(buf).map(|_| buf.len()),
+            Some(file) => file.write_all(buf).map(|()| buf.len()),
             // Log unavailable: drop the line rather than garble the frame.
             None => Ok(buf.len()),
         }

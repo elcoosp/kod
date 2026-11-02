@@ -938,7 +938,7 @@ impl SwarmRunner {
             // Per-transcript working dir: the pool agent's worktree,
             // if any.
             if let Some(wt) = &worktree {
-                let _ = self
+                self
                     .engine
                     .set_transcript_working_dir(&dispatch_key, Some(wt.path.clone()))
                     .await;
@@ -946,13 +946,13 @@ impl SwarmRunner {
 
             // Per-transcript write set.
             if !st.expected_writes.is_empty() {
-                let _ = self
+                self
                     .engine
                     .set_transcript_write_globs(&dispatch_key, Some(st.expected_writes.clone()))
                     .await;
                 // Tier 3.5 — subscribe this agent to the shared
                 // blackboard so its prompt includes what the team knows.
-                let _ = self.engine.set_blackboard_viewer(&dispatch_key, true).await;
+                self.engine.set_blackboard_viewer(&dispatch_key, true).await;
                 // Publish each write claim to the shared blackboard.
                 // `note_write_claim`'s doc says "called by the swarm
                 // runner before an agent runs" — pre-fix nothing in
@@ -1446,7 +1446,7 @@ impl SwarmRunner {
                             // write claim, and without the team's
                             // blackboard.
                             if let Some(wt) = &worktree {
-                                let _ = engine
+                                engine
                                     .set_transcript_working_dir(
                                         &transcript_key,
                                         Some(wt.path.clone()),
@@ -1454,13 +1454,13 @@ impl SwarmRunner {
                                     .await;
                             }
                             if !subtask.expected_writes.is_empty() {
-                                let _ = engine
+                                engine
                                     .set_transcript_write_globs(
                                         &transcript_key,
                                         Some(subtask.expected_writes.clone()),
                                     )
                                     .await;
-                                let _ = engine.set_blackboard_viewer(&transcript_key, true).await;
+                                engine.set_blackboard_viewer(&transcript_key, true).await;
                             }
                             let _ = out
                                 .send(SwarmEvent::AgentStarted {
@@ -1944,7 +1944,7 @@ impl SwarmRunner {
                     let cr = kod_swarm::completion_report::parse(&text);
                     if cr.had_block {
                         for f_up in &cr.followups {
-                            let _ = self
+                            self
                                 .engine
                                 .steer_interrupt_for(
                                     crate::engine::DEFAULT_TRANSCRIPT_KEY,
