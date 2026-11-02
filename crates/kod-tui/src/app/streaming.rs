@@ -239,7 +239,7 @@ impl KodApp {
                 role: MessageRole::Assistant,
                 content: format!("{partial}\n(error - partial answer)"),
                 timestamp: Utc::now(),
-                metadata: Default::default(),
+                metadata: MessageMetadata::default(),
                 sequence: 0,
             });
             self.stream_flushed_bubble = true;
