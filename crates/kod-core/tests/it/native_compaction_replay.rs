@@ -40,7 +40,7 @@ struct RecordingProvider {
 
 #[async_trait]
 impl LlmProvider for RecordingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recording-native"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

@@ -28,7 +28,7 @@ struct ScriptedSwarmProvider {
 
 #[async_trait]
 impl LlmProvider for ScriptedSwarmProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "scripted-swarm"
     }
 
@@ -216,7 +216,7 @@ async fn test_decompose_sees_repo_context() {
 
     #[async_trait]
     impl LlmProvider for PromptCapture {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "capture"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -320,7 +320,7 @@ async fn test_swarm_detects_file_conflicts() {
 
     #[async_trait]
     impl LlmProvider for SharedWriter {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "shared-writer"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -495,7 +495,7 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
 
     #[async_trait]
     impl LlmProvider for NonJsonProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "non-json"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -616,7 +616,7 @@ async fn gated_subtask_does_not_leak_blackboard_viewer() {
 
     #[async_trait]
     impl LlmProvider for ChainProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "chain-leak"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -713,7 +713,7 @@ async fn swarm_run_leaves_no_per_transcript_state_behind() {
 
     #[async_trait]
     impl LlmProvider for OneToolProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "one-tool"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -829,7 +829,7 @@ async fn forget_then_reapply_restores_per_dispatch_state() {
 
     #[async_trait]
     impl LlmProvider for NullProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "null"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -930,7 +930,7 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
 
     #[async_trait]
     impl LlmProvider for BlockingProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "blocking"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1075,7 +1075,7 @@ async fn cancelled_swarm_run_leaves_no_bus_installed() {
 
     #[async_trait]
     impl LlmProvider for BlockingProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "blocking"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1193,7 +1193,7 @@ async fn cancelled_swarm_run_leaves_no_agents_on_the_hub() {
 
     #[async_trait]
     impl LlmProvider for BlockingProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "blocking"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1321,7 +1321,7 @@ async fn shutdown_drains_pending_approvals_and_questions() {
 
     #[async_trait]
     impl LlmProvider for NullProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "null"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1386,7 +1386,7 @@ async fn clear_history_drops_queued_background_job_results() {
 
     #[async_trait]
     impl LlmProvider for NullProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "null"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1464,7 +1464,7 @@ async fn tool_calls_are_recorded_in_the_turn_trace() {
 
     #[async_trait]
     impl LlmProvider for OneToolProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "one-tool"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1605,7 +1605,7 @@ async fn swarm_trace_rounds_are_classified_and_parented() {
 
     #[async_trait]
     impl LlmProvider for OneToolProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "one-tool"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1751,7 +1751,7 @@ async fn swarm_publishes_write_claims_and_completions() {
 
     #[async_trait]
     impl LlmProvider for PlainProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "plain"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1886,7 +1886,7 @@ async fn swarm_stress_repeated_runs_leave_no_state_behind() {
 
     #[async_trait]
     impl LlmProvider for StressProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stress"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -2127,7 +2127,7 @@ async fn a_watchdog_cancel_retries_but_a_user_cancel_does_not() {
 
     #[async_trait]
     impl LlmProvider for CancellingProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "cancelling"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -2256,7 +2256,7 @@ async fn a_retry_cancel_emits_no_bogus_retry_or_failure_event() {
 
     #[async_trait]
     impl LlmProvider for WatchdogShapeProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "watchdog-shape"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

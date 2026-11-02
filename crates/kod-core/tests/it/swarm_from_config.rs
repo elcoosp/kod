@@ -33,7 +33,7 @@ async fn engine() -> (TempDir, Arc<KodEngine>) {
     struct NopProvider;
     #[async_trait::async_trait]
     impl kod_provider::LlmProvider for NopProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "nop"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

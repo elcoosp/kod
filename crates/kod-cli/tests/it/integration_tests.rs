@@ -195,7 +195,7 @@ struct NoOpProvider {
 
 #[async_trait::async_trait]
 impl kod_provider::LlmProvider for NoOpProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "no-op"
     }
 

@@ -41,7 +41,7 @@ struct RecordingProvider {
 
 #[async_trait]
 impl LlmProvider for RecordingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recording"
     }
 

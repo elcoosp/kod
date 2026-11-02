@@ -39,7 +39,7 @@ struct BlockingStreamer;
 
 #[async_trait]
 impl LlmProvider for BlockingStreamer {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "blocking"
     }
 

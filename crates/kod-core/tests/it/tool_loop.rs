@@ -20,7 +20,7 @@ struct ScriptedProvider {
 
 #[async_trait]
 impl LlmProvider for ScriptedProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "scripted"
     }
 
@@ -205,7 +205,7 @@ struct CapturingProvider {
 
 #[async_trait]
 impl LlmProvider for CapturingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "capturing"
     }
 
@@ -343,7 +343,7 @@ struct GoalProvider {
 
 #[async_trait]
 impl LlmProvider for GoalProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "goal"
     }
 

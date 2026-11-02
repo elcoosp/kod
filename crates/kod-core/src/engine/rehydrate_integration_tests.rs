@@ -354,7 +354,7 @@ async fn a_turn_drains_the_mental_models_refresh_flag() {
 
     #[async_trait::async_trait]
     impl LlmProvider for NoopProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "noop"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

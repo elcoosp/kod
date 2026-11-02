@@ -163,7 +163,7 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for Stub {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             self.0
         }
         async fn list_models(&self) -> Result<Vec<crate::traits::ModelInfo>> {

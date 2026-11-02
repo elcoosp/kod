@@ -31,7 +31,7 @@ struct TwoTurnProvider {
 
 #[async_trait]
 impl LlmProvider for TwoTurnProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "two-turn"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
@@ -196,7 +196,7 @@ async fn goal_budget_flips_to_budget_limited_and_emits_one_steer() {
 
     #[async_trait]
     impl LlmProvider for BudgetBuster {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "budget-buster"
         }
         async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

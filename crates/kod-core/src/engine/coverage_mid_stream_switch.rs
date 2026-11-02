@@ -30,7 +30,7 @@ struct FixedTextProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for FixedTextProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fixed-text"
     }
     async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

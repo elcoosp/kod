@@ -49,7 +49,7 @@ impl RecordingProvider {
 
 #[async_trait]
 impl LlmProvider for RecordingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recording"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

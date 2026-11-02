@@ -31,7 +31,7 @@ impl ScriptedProvider {
 
 #[async_trait]
 impl LlmProvider for ScriptedProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "scripted"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

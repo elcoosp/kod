@@ -44,7 +44,7 @@ impl ScriptedLoop {
 
 #[async_trait]
 impl LlmProvider for ScriptedLoop {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "scripted-loop"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
@@ -201,7 +201,7 @@ async fn no_corrective_when_the_rounds_differ() {
     }
     #[async_trait]
     impl LlmProvider for DifferentCalls {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "different"
         }
         async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

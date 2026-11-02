@@ -41,7 +41,7 @@ impl CaptureProvider {
 
 #[async_trait]
 impl LlmProvider for CaptureProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "capture"
     }
 

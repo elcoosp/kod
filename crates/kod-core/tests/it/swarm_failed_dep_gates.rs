@@ -27,7 +27,7 @@ struct ChainProvider {
 
 #[async_trait]
 impl LlmProvider for ChainProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "chain"
     }
     async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

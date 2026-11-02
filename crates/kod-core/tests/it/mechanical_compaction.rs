@@ -51,7 +51,7 @@ struct TextProvider {
 
 #[async_trait]
 impl LlmProvider for TextProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "text-provider"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

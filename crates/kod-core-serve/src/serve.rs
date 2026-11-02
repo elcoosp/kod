@@ -1571,7 +1571,7 @@ mod panic_guard_tests {
 
     #[async_trait]
     impl LlmProvider for PanickingProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "panicking"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

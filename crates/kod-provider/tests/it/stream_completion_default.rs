@@ -58,7 +58,7 @@ impl CollectedOnlyProvider {
 
 #[async_trait]
 impl LlmProvider for CollectedOnlyProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "collected-only"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
@@ -183,7 +183,7 @@ async fn error_surfaces_as_one_err_chunk() {
     struct ErrProvider;
     #[async_trait]
     impl LlmProvider for ErrProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "err"
         }
         async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

@@ -64,7 +64,7 @@ struct StructuredProvider {
 
 #[async_trait]
 impl LlmProvider for StructuredProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "structured-test"
     }
 

@@ -268,7 +268,7 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for FixedJudge {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "fixed-judge"
         }
         async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {
@@ -550,7 +550,7 @@ mod tests {
         struct AlwaysFails;
         #[async_trait]
         impl LlmProvider for AlwaysFails {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "fails"
             }
             async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {

@@ -32,7 +32,7 @@ struct ReportingProvider {
 
 #[async_trait]
 impl LlmProvider for ReportingProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "reporting"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

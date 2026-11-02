@@ -41,7 +41,7 @@ struct HandoffProvider {
 
 #[async_trait]
 impl LlmProvider for HandoffProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "handoff-provider"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

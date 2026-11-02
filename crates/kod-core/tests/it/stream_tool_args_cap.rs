@@ -39,7 +39,7 @@ struct OversizedArgsStreamer;
 
 #[async_trait]
 impl LlmProvider for OversizedArgsStreamer {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "oversized-args"
     }
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {

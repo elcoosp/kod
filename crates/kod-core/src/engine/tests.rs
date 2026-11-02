@@ -742,7 +742,7 @@ async fn test_set_provider_not_blocked_by_running_generation() {
 
     #[async_trait::async_trait]
     impl LlmProvider for SlowProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "slow"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1119,7 +1119,7 @@ async fn test_last_prompt_is_captured() {
 
     #[async_trait::async_trait]
     impl LlmProvider for NopProvider {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "nop"
         }
         async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -1953,7 +1953,7 @@ struct PanicOnGenerate;
 
 #[async_trait]
 impl LlmProvider for PanicOnGenerate {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "panic-on-generate"
     }
     async fn list_models(&self) -> kod_error::Result<Vec<ModelInfo>> {
@@ -1990,7 +1990,7 @@ struct OkText(&'static str);
 
 #[async_trait]
 impl LlmProvider for OkText {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ok-text"
     }
     async fn list_models(&self) -> kod_error::Result<Vec<ModelInfo>> {
