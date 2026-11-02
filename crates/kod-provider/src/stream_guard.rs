@@ -324,8 +324,8 @@ mod tests {
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
             state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             out.push((((state >> 40) & 0x3f) as u8) + 0x20);
         }
         out

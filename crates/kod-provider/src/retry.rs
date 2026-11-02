@@ -138,8 +138,8 @@ impl RetryPolicy {
         let mut state =
             nanos ^ tid ^ u64::from(std::process::id()) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         // T2-H11 follow-up: the pre-fix formula was
         //     let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
         // `state >> 33` keeps 31 bits, but it was divided by

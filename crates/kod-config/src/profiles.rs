@@ -66,7 +66,7 @@ pub const PRESETS: &[ModelProfile] = &[
         description: "OpenAI cloud (requires OPENAI_API_KEY in the environment)",
         model: "gpt-4o-mini",
         base_url: "https://api.openai.com/v1",
-        context_window: 128000,
+        context_window: 128_000,
         max_tokens: 4096,
         install_command: None,
     },
