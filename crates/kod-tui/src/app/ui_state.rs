@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn friendly_duration_picks_tier_by_magnitude() {
         let f = KodApp::format_friendly_duration;
-        assert_eq!(f(Duration::from_millis(0)), "0ms");
+        assert_eq!(f(Duration::from_secs(0)), "0ms");
         assert_eq!(f(Duration::from_millis(340)), "340ms");
         assert_eq!(f(Duration::from_millis(999)), "999ms");
         assert_eq!(f(Duration::from_millis(1200)), "1.2s");
@@ -1034,7 +1034,7 @@ mod friendly_duration_boundaries {
         // 999ms is the last millisecond-tier value.
         assert_eq!(f(Duration::from_millis(999)), "999ms");
         // 1000ms is the first second-tier value.
-        assert_eq!(f(Duration::from_millis(1000)), "1.0s");
+        assert_eq!(f(Duration::from_secs(1)), "1.0s");
         // 59_999ms is the last second-tier value.
         assert_eq!(f(Duration::from_millis(59_999)), "60.0s");
         // 60_000ms is the first minute-tier value.
