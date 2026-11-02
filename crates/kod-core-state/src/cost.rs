@@ -161,12 +161,12 @@ impl CostTracker {
         let soft = f64::from(u32::try_from(self.inner.soft_warn_milli.load(Ordering::Relaxed)).unwrap_or(u32::MAX)) as f64 / 1000.0;
 
         let session_fraction = if session_cap_micro > 0 {
-            (f64::from(u32::try_from(session_micro).unwrap_or(u32::MAX)) as f64 / session_cap_micro as f64).min(1.0)
+            (f64::from(u32::try_from(session_micro).unwrap_or(u32::MAX)) / f64::from(u32::try_from(session_cap_micro).unwrap_or(u32::MAX))).min(1.0)
         } else {
             0.0
         };
         let turn_fraction = if turn_cap_micro > 0 {
-            (f64::from(u32::try_from(turn_micro).unwrap_or(u32::MAX)) as f64 / turn_cap_micro as f64).min(1.0)
+            (f64::from(u32::try_from(turn_micro).unwrap_or(u32::MAX)) / f64::from(u32::try_from(turn_cap_micro).unwrap_or(u32::MAX))).min(1.0)
         } else {
             0.0
         };
