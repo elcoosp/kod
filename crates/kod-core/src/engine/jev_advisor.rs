@@ -75,9 +75,8 @@ impl KodEngine {
                 .to_string(),
         )];
         let started = std::time::Instant::now();
-        let rows = match jev.evaluate_yes_no_batch(&state, &pairs).await {
-            Ok(r) => r,
-            Err(_) => return 0,
+        let Ok(rows) = jev.evaluate_yes_no_batch(&state, &pairs).await else {
+            return 0;
         };
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let p = rows.first().map_or(0.0, |(_, p)| *p);
@@ -797,9 +796,8 @@ impl KodEngine {
                     200,
                 ),
             );
-            let decision = match jev.evaluate_score(&state, &question, labels).await {
-                Ok(d) => d,
-                Err(_) => return out,
+            let Ok(decision) = jev.evaluate_score(&state, &question, labels).await else {
+                return out;
             };
             out.entry(decision.value).or_default().push(i);
         }
@@ -864,9 +862,8 @@ impl KodEngine {
             ));
         }
         let started = std::time::Instant::now();
-        let rows = match jev.evaluate_yes_no_batch(&state, &questions).await {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
+        let Ok(rows) = jev.evaluate_yes_no_batch(&state, &questions).await else {
+            return Vec::new();
         };
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().task_classify_min;
@@ -1264,9 +1261,8 @@ impl KodEngine {
             ),
         ];
         let started = std::time::Instant::now();
-        let rows = match jev.evaluate_yes_no_batch(&state, &pairs).await {
-            Ok(r) => r,
-            Err(_) => return *base,
+        let Ok(rows) = jev.evaluate_yes_no_batch(&state, &pairs).await else {
+            return *base;
         };
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let get = |k: &str| {

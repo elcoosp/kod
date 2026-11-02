@@ -424,9 +424,8 @@ fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
     {
         return (Vec::new(), Vec::new());
     }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return (Vec::new(), Vec::new()),
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return (Vec::new(), Vec::new());
     };
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let symbols = match ext {

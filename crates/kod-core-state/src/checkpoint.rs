@@ -349,9 +349,8 @@ impl CheckpointManager {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let raw = match std::fs::read_to_string(&path) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Ok(raw) = std::fs::read_to_string(&path) else {
+                continue;
             };
             match serde_json::from_str::<Snapshot>(&raw) {
                 Ok(s) => out.push(s),

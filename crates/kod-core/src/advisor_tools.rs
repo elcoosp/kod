@@ -233,23 +233,21 @@ impl Tool for AdviseTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let note = match params.get("note").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return Ok(ToolResult::Error(
-                    "advise: `note` is required and must be a string".to_string(),
-                ));
-            }
+        let Some(note) = params.get("note").and_then(|v| v.as_str()) else {
+            {
+                            return Ok(ToolResult::Error(
+                                "advise: `note` is required and must be a string".to_string(),
+                            ));
+                        }
         };
-        let severity_str = match params.get("severity").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return Ok(ToolResult::Error(
-                    "advise: `severity` is required and must be one of \
-                     \"nit\", \"concern\", \"blocker\""
-                        .to_string(),
-                ));
-            }
+        let Some(severity_str) = params.get("severity").and_then(|v| v.as_str()) else {
+            {
+                            return Ok(ToolResult::Error(
+                                "advise: `severity` is required and must be one of \
+                                 \"nit\", \"concern\", \"blocker\""
+                                    .to_string(),
+                            ));
+                        }
         };
         let Some(severity) = parse_severity(severity_str) else {
             return Ok(ToolResult::Error(format!(

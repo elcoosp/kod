@@ -269,9 +269,8 @@ impl KodConfig {
     /// (recovery cannot salvage anything), `Ok(Some(cfg))` when the
     /// file is valid TOML but at least one section failed.
     fn recover_sections(path: &std::path::Path) -> Result<Option<Self>> {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return Ok(None);
         };
         let table: toml::Table = match raw.parse::<toml::Table>() {
             Ok(t) => t,

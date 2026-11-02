@@ -127,9 +127,8 @@ async fn swarm_command_runs_end_to_end() {
     let mut saw_merging = false;
     loop {
         let timeout = tokio::time::timeout_at(deadline, tui.next_event()).await;
-        let event = match timeout {
-            Ok(e) => e,
-            Err(_) => panic!("swarm did not complete within 10s"),
+        let Ok(event) = timeout else {
+            panic!("swarm did not complete within 10s");
         };
         match &event {
             Event::SwarmDecomposed(subs) => {

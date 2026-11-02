@@ -186,13 +186,11 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
     // Canonicalize both sides before the prefix check. A path that
     // cannot be resolved (the citation points at a file that does
     // not exist) is a miss, not an error.
-    let canonical_candidate = match std::fs::canonicalize(&candidate) {
-        Ok(p) => p,
-        Err(_) => return Verification::MissingFile,
+    let Ok(canonical_candidate) = std::fs::canonicalize(&candidate) else {
+        return Verification::MissingFile;
     };
-    let canonical_root = match std::fs::canonicalize(root) {
-        Ok(p) => p,
-        Err(_) => return Verification::MissingFile,
+    let Ok(canonical_root) = std::fs::canonicalize(root) else {
+        return Verification::MissingFile;
     };
     if !canonical_candidate.starts_with(&canonical_root) {
         // A citation that resolves outside the working dir. The
@@ -202,9 +200,8 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
         return Verification::MissingFile;
     }
 
-    let meta = match std::fs::metadata(&canonical_candidate) {
-        Ok(m) => m,
-        Err(_) => return Verification::MissingFile,
+    let Ok(meta) = std::fs::metadata(&canonical_candidate) else {
+        return Verification::MissingFile;
     };
     if !meta.is_file() {
         return Verification::MissingFile;

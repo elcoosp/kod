@@ -860,9 +860,8 @@ fn directory_size_mb(path: &Path) -> Option<u64> {
         if depth > 3 || count > 50_000 {
             break;
         }
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => continue,
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
         };
         for e in entries.flatten() {
             count += 1;

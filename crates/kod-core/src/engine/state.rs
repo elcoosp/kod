@@ -171,9 +171,8 @@ impl KodEngine {
     /// redacted in place; `tool_call_id`, `role`, and `id` are
     /// untouched so the transcript stays coherent.
     pub fn redact_messages_for_prompt(&self, messages: &mut [kod_types::ChatMessage]) -> usize {
-        let cfg = match kod_config::KodConfig::load_cached() {
-            Ok(c) => c,
-            Err(_) => return 0,
+        let Ok(cfg) = kod_config::KodConfig::load_cached() else {
+            return 0;
         };
 
         let mut total = 0_usize;
@@ -216,9 +215,8 @@ impl KodEngine {
     /// result path, that is a decision about the engine's public
     /// surface, not a drive-by change.
     pub fn redact_tool_result_for_prompt(&self, rendered: String) -> String {
-        let cfg = match kod_config::KodConfig::load_cached() {
-            Ok(c) => c,
-            Err(_) => return rendered,
+        let Ok(cfg) = kod_config::KodConfig::load_cached() else {
+            return rendered;
         };
         if !cfg.security.redact.in_prompt {
             return rendered;

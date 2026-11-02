@@ -112,13 +112,12 @@ impl Tool for BatchTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let invocations = match params.get("invocations").and_then(Value::as_array) {
-            Some(v) => v,
-            None => {
-                return Ok(ToolResult::Error(
-                    "batch: missing 'invocations' array".to_string(),
-                ));
-            }
+        let Some(invocations) = params.get("invocations").and_then(Value::as_array) else {
+            {
+                            return Ok(ToolResult::Error(
+                                "batch: missing 'invocations' array".to_string(),
+                            ));
+                        }
         };
         if invocations.is_empty() {
             return Ok(ToolResult::Error(

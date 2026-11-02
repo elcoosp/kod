@@ -24,9 +24,8 @@ impl KodEngine {
         if !self.router.has_memory() {
             return;
         }
-        let config = match kod_config::KodConfig::load_cached() {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(config) = kod_config::KodConfig::load_cached() else {
+            return;
         };
         // WS-B: extraction is a policy choice. `off` silences every
         // pass here; `shutdown` keeps only the shutdown pass.

@@ -98,9 +98,8 @@ pub fn build_prompt(messages: &[ChatMessage], max_entries: usize) -> String {
 /// Parse the model's response into facts. Tolerant of prose around
 /// the JSON. Returns an empty vec on any parse failure.
 pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
-    let start = match reply.find('[') {
-        Some(i) => i,
-        None => return Vec::new(),
+    let Some(start) = reply.find('[') else {
+        return Vec::new();
     };
     let end = match reply.rfind(']') {
         Some(i) if i > start => i,
@@ -110,9 +109,8 @@ pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
-    let arr = match v.as_array() {
-        Some(a) => a,
-        None => return Vec::new(),
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
     };
     let mut out = Vec::new();
     for item in arr {
@@ -125,9 +123,8 @@ pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<ExtractedFact> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(String::from);
-        let content = match content {
-            Some(c) => c,
-            None => continue,
+        let Some(content) = content else {
+            continue;
         };
         let kind = item
             .get("type")

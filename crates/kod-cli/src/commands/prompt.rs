@@ -300,9 +300,8 @@ pub(super) fn newest_session_log() -> Result<Option<std::path::PathBuf>> {
         if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
             continue;
         }
-        let meta = match e.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
+        let Ok(meta) = e.metadata() else {
+            continue;
         };
         let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
         entries.push((mtime, path));

@@ -170,9 +170,8 @@ pub fn read_with_evidence(path: &Path) -> std::io::Result<(String, Evidence)> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub fn validate(path: &Path, evidence: &Evidence) -> std::io::Result<bool> {
-    let meta = match std::fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return Ok(false),
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Ok(false);
     };
     #[cfg(unix)]
     let (dev, ino) = {

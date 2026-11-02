@@ -1975,15 +1975,13 @@ impl Tool for GrepTool {
                         }
                         continue;
                     }
-                    let file = match std::fs::File::open(file_path) {
-                        Ok(f) => f,
-                        Err(_) => continue,
+                    let Ok(file) = std::fs::File::open(file_path) else {
+                        continue;
                     };
                     let reader = std::io::BufReader::new(file);
                     for (line_num, line_result) in reader.lines().enumerate() {
-                        let line = match line_result {
-                            Ok(l) => l,
-                            Err(_) => break,
+                        let Ok(line) = line_result else {
+                            break;
                         };
                         if regex_c.is_match(&line) {
                             let shown = truncate_entry(line.trim(), MAX_ENTRY_BYTES);

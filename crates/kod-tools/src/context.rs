@@ -609,9 +609,8 @@ pub fn sandbox_invocation(mode: SandboxMode, wd: &Path) -> Result<Option<Sandbox
 /// arms call this; gated so it is not dead code elsewhere.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn which(program: &str) -> bool {
-    let path = match std::env::var_os("PATH") {
-        Some(p) => p,
-        None => return false,
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
     };
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(program);

@@ -364,9 +364,8 @@ impl SecretVault {
     /// have.
     #[must_use]
     pub fn deobfuscate(&self, text: &str) -> (String, usize) {
-        let reverse = match self.inner.reverse.read() {
-            Ok(g) => g,
-            Err(_) => return (text.to_string(), 0),
+        let Ok(reverse) = self.inner.reverse.read() else {
+            return (text.to_string(), 0);
         };
         if reverse.is_empty() {
             return (text.to_string(), 0);

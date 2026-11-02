@@ -892,9 +892,8 @@ fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
     // recompiling on every call.
     let build = |pat: &str| -> Option<std::sync::Arc<globset::GlobMatcher>> { compiled_glob(pat) };
 
-    let matcher = match build(pattern) {
-        Some(m) => m,
-        None => return false,
+    let Some(matcher) = build(pattern) else {
+        return false;
     };
 
     // Form 1: verbatim.

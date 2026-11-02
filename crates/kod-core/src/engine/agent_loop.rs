@@ -1106,9 +1106,8 @@ impl KodEngine {
                         // canonical `gated` is what the read uses, so a
                         // `.`/`..` in the raw input cannot sneak past.
                         let abs_str = abs.to_string_lossy().to_string();
-                        let gated = match self.tool_context.resolve_path(&abs_str) {
-                            Ok(p) => p,
-                            Err(_) => continue,
+                        let Ok(gated) = self.tool_context.resolve_path(&abs_str) else {
+                            continue;
                         };
                         if self.tool_context.can_read(&gated).is_err() {
                             continue;

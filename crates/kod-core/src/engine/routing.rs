@@ -454,9 +454,8 @@ impl KodEngine {
         if sticky == preferred.endpoint {
             return chain;
         }
-        let sticky_idx = match chain.iter().position(|m| m.endpoint == sticky) {
-            Some(i) => i,
-            None => return chain,
+        let Some(sticky_idx) = chain.iter().position(|m| m.endpoint == sticky) else {
+            return chain;
         };
         // Projected penalty of using `preferred` on this turn's
         // prefix (cold → re-process the whole transcript).

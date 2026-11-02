@@ -229,13 +229,12 @@ pub fn run_skills_new(name: &str) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
-    let path = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?} in any configured skills directory."),
-            });
-        }
+    let Some(path) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?} in any configured skills directory."),
+                    });
+                }
     };
 
     // Safety check: the resolved path must live inside one of the
@@ -282,13 +281,12 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_edit(name: &str) -> Result<()> {
-    let path = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?} in any configured skills directory."),
-            });
-        }
+    let Some(path) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?} in any configured skills directory."),
+                    });
+                }
     };
 
     let editor = std::env::var("EDITOR")
@@ -321,13 +319,12 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_show(name: &str) -> Result<()> {
-    let path = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?} in any configured skills directory."),
-            });
-        }
+    let Some(path) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?} in any configured skills directory."),
+                    });
+                }
     };
     let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
     print!("{content}");
@@ -410,13 +407,12 @@ pub(super) fn to_title_case(s: &str) -> String {
 ///
 /// Returns `Err` when the underlying operation fails.
 pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
-    let src = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?} in any configured skills directory."),
-            });
-        }
+    let Some(src) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?} in any configured skills directory."),
+                    });
+                }
     };
     let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
 
@@ -491,9 +487,8 @@ pub fn run_skills_search(query: &str) -> Result<()> {
             if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
                 continue;
             }
-            let skill = match parser.parse_file(entry.path()) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Ok(skill) = parser.parse_file(entry.path()) else {
+                continue;
             };
             let mut score = 0i32;
             if skill.metadata.name.to_lowercase().contains(&q) {
@@ -623,13 +618,12 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
         )));
     }
 
-    let src = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?} in any configured skills directory."),
-            });
-        }
+    let Some(src) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?} in any configured skills directory."),
+                    });
+                }
     };
     let parent = src
         .parent()
@@ -694,13 +688,12 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
             "invalid new name {new_name:?}: lowercase letters, digits, and hyphens only"
         )));
     }
-    let src = match find_skill_path(name)? {
-        Some(p) => p,
-        None => {
-            return Err(KodError::InvalidParameters {
-                reason: format!("No skill named {name:?}."),
-            });
-        }
+    let Some(src) = find_skill_path(name)? else {
+        {
+                    return Err(KodError::InvalidParameters {
+                        reason: format!("No skill named {name:?}."),
+                    });
+                }
     };
     let parent = src
         .parent()

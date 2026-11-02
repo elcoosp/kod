@@ -199,9 +199,8 @@ impl Tool for SearchFilesTool {
                 {
                     continue;
                 }
-                let text = match std::fs::read_to_string(file) {
-                    Ok(t) => t,
-                    Err(_) => continue,
+                let Ok(text) = std::fs::read_to_string(file) else {
+                    continue;
                 };
                 let redact_line: Option<&kod_types::redact::Redactor> =
                     match (file_mode, redactor_owned.as_ref()) {

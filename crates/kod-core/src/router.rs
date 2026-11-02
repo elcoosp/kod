@@ -1856,9 +1856,8 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
         if !path.is_file() {
             continue;
         }
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue;
         };
         let mtime = meta
             .modified()

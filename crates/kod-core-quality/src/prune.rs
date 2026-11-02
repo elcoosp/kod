@@ -365,9 +365,8 @@ pub fn plan_prune(
         let Some((newest_id, _)) = index.newest_call_for(&path) else {
             continue;
         };
-        let this_id = match call.id.as_deref() {
-            Some(id) => id,
-            None => continue,
+        let Some(this_id) = call.id.as_deref() else {
+            continue;
         };
         if newest_id == this_id {
             continue;
