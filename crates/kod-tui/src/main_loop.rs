@@ -1384,7 +1384,7 @@ impl TuiLoop {
                     role: kod_types::MessageRole::Agent(kod_types::AgentId::new()),
                     content: format!("[{agent_name}] {message}"),
                     timestamp: chrono::Utc::now(),
-                    metadata: Default::default(),
+                    metadata: kod_types::MessageMetadata::default(),
                     sequence: 0,
                 });
             }
@@ -8870,7 +8870,7 @@ mod coverage_slash_dispatch_more {
             role: MessageRole::User,
             content: content.to_string(),
             timestamp: Utc::now(),
-            metadata: Default::default(),
+            metadata: kod_types::MessageMetadata::default(),
             sequence: 0,
         });
     }

@@ -19,7 +19,7 @@ fn test_add_message() {
         role: MessageRole::User,
         content: "Hello".to_string(),
         timestamp: chrono::Utc::now(),
-        metadata: Default::default(),
+        metadata: kod_types::MessageMetadata::default(),
         sequence: 0,
     };
 
@@ -167,7 +167,7 @@ fn test_scroll_position() {
             role: MessageRole::User,
             content: format!("Message {i}"),
             timestamp: chrono::Utc::now(),
-            metadata: Default::default(),
+            metadata: kod_types::MessageMetadata::default(),
             sequence: 0,
         });
     }
@@ -189,7 +189,7 @@ fn test_serialization() {
         role: MessageRole::User,
         content: "test".to_string(),
         timestamp: chrono::Utc::now(),
-        metadata: Default::default(),
+        metadata: kod_types::MessageMetadata::default(),
         sequence: 0,
     });
 
