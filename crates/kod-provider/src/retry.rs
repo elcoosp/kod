@@ -258,12 +258,10 @@ mod tests {
     fn jitter_for_identical_nanos_differs_per_call() {
         let a = RetryPolicy::jitter_for(12345);
         let b = RetryPolicy::jitter_for(12345);
-        assert_ne!(
-            a, b,
+        assert!(f64::from(a).to_bits() != f64::from(b).to_bits(),
             "jitter_for(12345) returned the same value twice; the seed \
              depends only on wall-clock nanos, which does not advance \
-             between back-to-back calls on a fast machine",
-        );
+             between back-to-back calls on a fast machine",);
     }
 
     #[test]

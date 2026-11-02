@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn test_session_cost_accumulation() {
         let mut app = KodApp::new();
-        assert_eq!(app.session_cost_usd(), 0.0);
+        assert!(f64::from(app.session_cost_usd()).to_bits() == f64::from(0.0_f32).to_bits());
         assert!(!app.cost_known(), "fresh session has no cost knowledge");
 
         app.note_session_cost(0.0025);
@@ -519,7 +519,7 @@ mod tests {
         assert!(app.cost_known());
 
         app.clear_messages();
-        assert_eq!(app.session_cost_usd(), 0.0);
+        assert!(f64::from(app.session_cost_usd()).to_bits() == f64::from(0.0_f32).to_bits());
         assert!(!app.cost_known(), "cost knowledge resets with the session");
     }
 

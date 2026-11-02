@@ -489,9 +489,9 @@ mod tests {
     #[test]
     fn general_weights_are_neutral() {
         let w = intent_weights(QueryIntent::General);
-        assert_eq!(w.vector, 1.0);
-        assert_eq!(w.keyword, 1.0);
-        assert_eq!(w.importance, 1.0);
+        assert!(f64::from(w.vector).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(w.keyword).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(w.importance).to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -562,10 +562,10 @@ mod tests {
             temporal: 0.9,
         };
         let b = blend_weights(w, 0.0);
-        assert_eq!(b.vector, 1.0);
-        assert_eq!(b.keyword, 1.0);
-        assert_eq!(b.importance, 1.0);
-        assert_eq!(b.temporal, 1.0);
+        assert!(f64::from(b.vector).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(b.keyword).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(b.importance).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(b.temporal).to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -577,10 +577,10 @@ mod tests {
             temporal: 0.9,
         };
         let b = blend_weights(w, 1.0);
-        assert_eq!(b.vector, w.vector);
-        assert_eq!(b.keyword, w.keyword);
-        assert_eq!(b.importance, w.importance);
-        assert_eq!(b.temporal, w.temporal);
+        assert!(f64::from(b.vector).to_bits() == f64::from(w.vector).to_bits());
+        assert!(f64::from(b.keyword).to_bits() == f64::from(w.keyword).to_bits());
+        assert!(f64::from(b.importance).to_bits() == f64::from(w.importance).to_bits());
+        assert!(f64::from(b.temporal).to_bits() == f64::from(w.temporal).to_bits());
     }
 
     #[test]

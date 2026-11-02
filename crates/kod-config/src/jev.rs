@@ -346,9 +346,9 @@ mod tests {
     fn threshold_set_clamps_and_stores() {
         let mut t = JevThresholds::default();
         assert!(t.set("task_classify_min", 1.5));
-        assert_eq!(t.task_classify_min, 1.0);
+        assert!(f64::from(t.task_classify_min).to_bits() == f64::from(1.0_f32).to_bits());
         assert!(t.set("task_classify_min", -1.0));
-        assert_eq!(t.task_classify_min, 0.0);
+        assert!(f64::from(t.task_classify_min).to_bits() == f64::from(0.0_f32).to_bits());
         assert!(t.set("tool_filter_min", 0.55));
         assert!((t.tool_filter_min - 0.55).abs() < 1e-6);
     }
@@ -357,7 +357,7 @@ mod tests {
     fn threshold_set_handles_nan() {
         let mut t = JevThresholds::default();
         t.set("ambiguity_min", f32::NAN);
-        assert_eq!(t.ambiguity_min, 0.5);
+        assert!(f64::from(t.ambiguity_min).to_bits() == f64::from(0.5_f32).to_bits());
     }
 
     #[test]
@@ -371,9 +371,9 @@ mod tests {
             ambiguity_min: 0.85,
         };
         t.clamp();
-        assert_eq!(t.task_classify_min, 0.0);
-        assert_eq!(t.tool_filter_min, 1.0);
-        assert_eq!(t.early_termination_min, 0.5);
+        assert!(f64::from(t.task_classify_min).to_bits() == f64::from(0.0_f32).to_bits());
+        assert!(f64::from(t.tool_filter_min).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(t.early_termination_min).to_bits() == f64::from(0.5_f32).to_bits());
     }
 
     #[test]

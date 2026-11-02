@@ -156,9 +156,9 @@ mod tests {
 
     #[test]
     fn weights_fall_with_tier() {
-        assert_eq!(Tier::One.weight(), 1.0);
-        assert_eq!(Tier::Two.weight(), 0.5);
-        assert_eq!(Tier::Three.weight(), 0.25);
+        assert!(f64::from(Tier::One.weight()).to_bits() == f64::from(1.0_f32).to_bits());
+        assert!(f64::from(Tier::Two.weight()).to_bits() == f64::from(0.5_f32).to_bits());
+        assert!(f64::from(Tier::Three.weight()).to_bits() == f64::from(0.25_f32).to_bits());
     }
 
     #[test]

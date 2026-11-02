@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn redistribute_moves_semantic_to_keyword() {
         let (ws, wk) = redistribute(0.6, 0.3);
-        assert_eq!(ws, 0.0);
+        assert!(f64::from(ws).to_bits() == f64::from(0.0_f32).to_bits());
         assert!((wk - 0.9).abs() < 1e-6);
     }
 
@@ -516,7 +516,7 @@ mod tests {
             half_life_days: 30.0,
             ..HybridScorer::default()
         };
-        assert_eq!(s.half_life_for(MemoryType::Episodic), 30.0);
+        assert!(f64::from(s.half_life_for(MemoryType::Episodic)).to_bits() == f64::from(30.0_f32).to_bits());
     }
 
     #[test]
@@ -580,8 +580,8 @@ mod tests {
         ] {
             let a = weibull_shape_for(t);
             let b = weibull_shape_for(t);
-            assert_eq!(a.eta_hours, b.eta_hours);
-            assert_eq!(a.k, b.k);
+            assert!(f64::from(a.eta_hours).to_bits() == f64::from(b.eta_hours).to_bits());
+            assert!(f64::from(a.k).to_bits() == f64::from(b.k).to_bits());
         }
     }
 
@@ -637,24 +637,24 @@ mod tests {
             eta_hours: 0.0,
             k: 1.0,
         };
-        assert_eq!(bad.decay(100.0), 0.0);
+        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
         let bad = DecayShape {
             eta_hours: -1.0,
             k: 1.0,
         };
-        assert_eq!(bad.decay(100.0), 0.0);
+        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
         let bad = DecayShape {
             eta_hours: 100.0,
             k: 0.0,
         };
-        assert_eq!(bad.decay(100.0), 0.0);
+        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
     }
 
     #[test]
     fn decay_at_age_zero_is_one() {
         let now = OffsetDateTime::now_utc();
         let shape = weibull_shape_for(MemoryType::LongTerm);
-        assert_eq!(decay_at(now, now, shape), 1.0);
+        assert!(f64::from(decay_at(now, now, shape)).to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod coverage_scoring_composition {
         // value: zero.
         let now = OffsetDateTime::now_utc();
         let e = entry_at("x", 1);
-        assert_eq!(recency(e.timestamp, now, 0.0), 0.0);
+        assert!(f64::from(recency(e.timestamp, now, 0.0)).to_bits() == f64::from(0.0_f32).to_bits());
     }
 }
 
@@ -891,7 +891,7 @@ mod decay_proptests {
         /// zero-age early return.
         #[test]
         fn prop_decay_zero_age_is_one(sh in shape()) {
-            prop_assert_eq!(sh.decay(0.0), 1.0, "eta={}, k={}", sh.eta_hours, sh.k);
+            prop_assert!(f64::from(sh.decay(0.0)).to_bits() == f64::from(1.0_f32).to_bits(), "eta={}, k={}", sh.eta_hours, sh.k);
         }
 
         /// `decay` is monotone non-increasing in age: an older
@@ -945,7 +945,7 @@ mod decay_proptests {
         ) {
             prop_assume!(age.is_finite());
             let sh = DecayShape { eta_hours: 0.0, k };
-            prop_assert_eq!(sh.decay(age), 0.0, "eta=0, age={}", age);
+            prop_assert!(f64::from(sh.decay(age)).to_bits() == f64::from(0.0_f32).to_bits(), "eta=0, age={}", age);
         }
 
         /// `weibull_shape_for` returns a well-formed shape for
@@ -971,8 +971,8 @@ mod decay_proptests {
             w_kw in 0.0f32..=10.0f32,
         ) {
             let (s, k) = redistribute(w_sem, w_kw);
-            prop_assert_eq!(s, 0.0);
-            prop_assert_eq!(k, w_sem + w_kw);
+            prop_assert!(f64::from(s).to_bits() == f64::from(0.0_f32).to_bits());
+            prop_assert!(f64::from(k).to_bits() == f64::from(w_sem + w_kw).to_bits());
         }
 
         /// `redistribute` is idempotent on its own output: the
@@ -985,8 +985,8 @@ mod decay_proptests {
         ) {
             let (s1, k1) = redistribute(w_sem, w_kw);
             let (s2, k2) = redistribute(s1, k1);
-            prop_assert_eq!(s2, s1);
-            prop_assert_eq!(k2, k1);
+            prop_assert!(f64::from(s2).to_bits() == f64::from(s1).to_bits());
+            prop_assert!(f64::from(k2).to_bits() == f64::from(k1).to_bits());
         }
     }
 

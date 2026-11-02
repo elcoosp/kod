@@ -851,7 +851,7 @@ mod tests {
             cfg.llm.default_endpoint().provider,
             crate::llm::ProviderKind::OpenAICompatible,
         );
-        assert_eq!(cfg.llm.default_endpoint().temperature.unwrap_or(0.7), 0.7);
+        assert!(f64::from(cfg.llm.default_endpoint().temperature.unwrap_or(0.7)).to_bits() == f64::from(0.7_f32).to_bits());
         assert_eq!(cfg.llm.default_endpoint().context_window, 8192);
         assert_eq!(cfg.skills.max_skills_per_query, 7);
         assert!(cfg.skills.enable_hot_reload);

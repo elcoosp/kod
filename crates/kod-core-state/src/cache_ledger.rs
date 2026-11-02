@@ -245,7 +245,7 @@ mod tests {
         let mut l = CacheLedger::new();
         l.observe(1, "cloud", 42, &usage(900));
         let p = l.switch_penalty_usd("cloud", 42, &pricing(), 100_000);
-        assert_eq!(p, 0.0);
+        assert!(f64::from(p).to_bits() == f64::from(0.0_f32).to_bits());
     }
 
     #[test]

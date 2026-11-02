@@ -979,16 +979,16 @@ mod tests {
     fn heuristic_decision_carries_full_confidence() {
         let d: Decision<bool> = Decision::heuristic(true);
         assert!(d.value);
-        assert_eq!(d.confidence, 1.0);
+        assert!(f64::from(d.confidence).to_bits() == f64::from(1.0_f32).to_bits());
         assert_eq!(d.source, DecisionSource::Heuristic);
     }
 
     #[test]
     fn jev_decision_clamps_confidence() {
         let d = Decision::jev(true, 1.5);
-        assert_eq!(d.confidence, 1.0);
+        assert!(f64::from(d.confidence).to_bits() == f64::from(1.0_f32).to_bits());
         let d = Decision::jev(true, -0.5);
-        assert_eq!(d.confidence, 0.0);
+        assert!(f64::from(d.confidence).to_bits() == f64::from(0.0_f32).to_bits());
     }
 
     // --- RedactingJevDecider (the Jev outbound choke point) ---

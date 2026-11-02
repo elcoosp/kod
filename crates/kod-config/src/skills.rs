@@ -99,7 +99,7 @@ mod coverage_threshold_validation {
             ..Default::default()
         };
         c.validate();
-        assert_eq!(c.match_threshold, 1.0);
+        assert!(f64::from(c.match_threshold).to_bits() == f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -109,7 +109,7 @@ mod coverage_threshold_validation {
             ..Default::default()
         };
         c.validate();
-        assert_eq!(c.match_threshold, 0.0);
+        assert!(f64::from(c.match_threshold).to_bits() == f64::from(0.0_f32).to_bits());
     }
 
     #[test]
