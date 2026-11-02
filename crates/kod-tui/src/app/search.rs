@@ -4,7 +4,7 @@
 //! match cursor, and the "target message" the chat widget centers
 //! on when a search is active.
 
-use super::*;
+use super::{KodApp, SearchStatus};
 
 impl KodApp {
     /// Start (or replace) a case-insensitive search; returns match count.

@@ -4,7 +4,7 @@
 //! fuzzy command finder; its state (`palette: Option<CommandPaletteState>`)
 //! and per-keystroke navigation live here.
 
-use super::*;
+use super::{CommandPaletteEntry, CommandPaletteState, KodApp, build_palette_entries};
 
 impl KodApp {
     /// The command palette state, if open.

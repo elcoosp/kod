@@ -2,7 +2,7 @@
 //!
 //! Extracted from `engine/mod.rs`.
 
-use super::*;
+use super::{KodEngine};
 
 impl KodEngine {
     /// WS-C: whether the default endpoint is a tab bridge. The TUI

@@ -55,7 +55,7 @@ impl Stream {
 
 #[cfg(unix)]
 mod imp {
-    use super::*;
+    use super::{Stream};
     use kod_error::{KodError, Result};
     use std::path::Path;
     use tokio::net::{UnixListener, UnixStream};

@@ -5,7 +5,7 @@
 //! `pub(crate)` so sibling engine modules can construct and read
 //! them; enum variants inherit the enum's visibility.
 
-use super::*;
+use super::{GenerationOptions, ModelRef, ToolCall, ToolDefinition, ToolResult};
 
 /// Why `stream_round` decided to stop reading chunks (P1.2 + P5.6).
 ///

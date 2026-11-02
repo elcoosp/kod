@@ -5,7 +5,7 @@
 //! owns the selection cursor and the "accept only the checked hunks"
 //! flow.
 
-use super::*;
+use super::{KodApp, PendingHunkSelection, split_hunks};
 
 impl KodApp {
     /// True when a hunk selection is in progress.

@@ -2,7 +2,7 @@
 //!
 //! Extracted from `engine/mod.rs`.
 
-use super::*;
+use super::{Arc, KodEngine, RwLock, ToolContext, push_background_interrupt, sweep_background_spools};
 
 impl KodEngine {
     /// Build the background spawner hook.

@@ -4,7 +4,7 @@
 //! (the up/down ring) and `tui_session.json` (the transcript, with a
 //! `schema_version` and a legacy bare-array fallback).
 
-use super::*;
+use super::{KodApp, Message, SESSION_SCHEMA_VERSION, SessionSnapshot};
 
 impl KodApp {
     /// The TUI's state directory (`$KOD_TUI_STATE_DIR` or `~/.kod`).
