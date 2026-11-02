@@ -162,7 +162,7 @@ pub fn analyze(text: &str) -> BehavioralSignals {
     let repetition = count_cues(&lower, REPETITION_CUES);
     let blame = count_cues(&lower, BLAME_CUES);
     let anguish = count_cues(&lower, ANGUISH_CUES);
-    let yelling = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX) as u32;
+    let yelling = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX);
     BehavioralSignals {
         negation,
         repetition,
