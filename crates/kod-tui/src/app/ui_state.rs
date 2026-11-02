@@ -1009,8 +1009,8 @@ mod tests {
         assert_eq!(f(Duration::from_millis(1200)), "1.2s");
         assert_eq!(f(Duration::from_secs(45)), "45.0s");
         assert_eq!(f(Duration::from_secs(65)), "1m05s");
-        assert_eq!(f(Duration::from_secs(1200)), "20m00s");
-        assert_eq!(f(Duration::from_secs(4500)), "1h15m");
+        assert_eq!(f(Duration::from_mins(20)), "20m00s");
+        assert_eq!(f(Duration::from_mins(75)), "1h15m");
     }
 }
 

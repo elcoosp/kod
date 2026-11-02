@@ -8302,7 +8302,7 @@ mod tests {
     fn hours_and_minutes_parse() {
         assert_eq!(
             parse_overnight_duration("30m"),
-            Some(Duration::from_secs(1800))
+            Some(Duration::from_mins(30))
         );
         assert_eq!(
             parse_overnight_duration("2h"),
@@ -8310,7 +8310,7 @@ mod tests {
         );
         assert_eq!(
             parse_overnight_duration("1h30m"),
-            Some(Duration::from_secs(5400)),
+            Some(Duration::from_mins(90)),
         );
     }
 
@@ -9271,7 +9271,7 @@ mod duration_parser_proptests {
         );
         assert_eq!(
             parse_overnight_duration("8"),
-            Some(Duration::from_secs(8 * 3600))
+            Some(Duration::from_hours(8))
         );
     }
 
@@ -9291,11 +9291,11 @@ mod duration_parser_proptests {
     fn prop_overnight_minutes_suffix() {
         assert_eq!(
             parse_overnight_duration("30m"),
-            Some(Duration::from_secs(1800))
+            Some(Duration::from_mins(30))
         );
         assert_eq!(
             parse_overnight_duration("90m"),
-            Some(Duration::from_secs(5400))
+            Some(Duration::from_mins(90))
         );
     }
 
@@ -9303,11 +9303,11 @@ mod duration_parser_proptests {
     fn prop_overnight_compound() {
         assert_eq!(
             parse_overnight_duration("1h30m"),
-            Some(Duration::from_secs(3600 + 1800)),
+            Some(Duration::from_mins(90)),
         );
         assert_eq!(
             parse_overnight_duration("2h15m"),
-            Some(Duration::from_secs(2 * 3600 + 15 * 60)),
+            Some(Duration::from_mins(135)),
         );
     }
 
