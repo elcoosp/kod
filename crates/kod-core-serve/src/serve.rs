@@ -1049,8 +1049,8 @@ mod tests {
 
 #[cfg(test)]
 mod coverage_serve_serde {
-    //! The daemon's wire shape is the contract any `kod
-    //! * --remote` client depends on. A regression that renamed
+    //! The daemon's wire shape is the contract any `kod --remote`
+    //! client depends on. A regression that renamed
     //! `type` to `kind` (or vice versa) breaks every client
     //! silently — the client skips unknown response types and the
     //! session appears to hang.

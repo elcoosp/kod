@@ -185,7 +185,7 @@ pub const MAX_IMPORT_DEPTH: usize = 5;
 ///
 /// # Rules
 ///
-/// * **Code fences suspend expansion.** A `@path` inside a ``` ``` ```
+/// * **Code fences suspend expansion.** A `@path` inside a \`\`\` code fence
 ///   or `~~~` block is documentation, not a reference. A doc example
 ///   of the syntax does not pull in a file.
 /// * **Depth-limited.** [`MAX_IMPORT_DEPTH`] nested imports expand;

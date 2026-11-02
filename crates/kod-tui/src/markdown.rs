@@ -8,7 +8,7 @@
 //! subset a coding agent actually emits — and a user actually reads —
 //! is small and stable:
 //!
-//! - fenced code blocks (```)
+//! - fenced code blocks (\`\`\`)
 //! - headers (# ## ###)
 //! - bullet and numbered lists
 //! - blockquotes (>)

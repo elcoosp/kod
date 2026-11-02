@@ -169,9 +169,9 @@ pub struct PromptTrace {
 
 impl PromptTrace {
     /// Total characters the prompt was budgeted for, or `None` when no
-    /// allocation was recorded. Equal to `alloc.request + alloc.history
-    /// + alloc.skills + alloc.memory + alloc.repomap` for a budgeted
-    ///   prompt.
+    /// allocation was recorded. Equal to
+    /// `alloc.request + alloc.history + alloc.skills + alloc.memory + alloc.repomap`
+    /// for a budgeted prompt.
     #[must_use]
     pub fn total_chars(&self) -> Option<usize> {
         self.alloc.map(|a| a.request + a.truncatable_total())

@@ -10,12 +10,12 @@
 //! this file.
 //!
 //! Two tests:
-//!   1. approve  — client answers `allow_once`; the file is written;
-//!                 the prompt completes with `end_turn`.
-//!   2. deny     — client answers `reject_once`; the file is NOT
-//!                 written; the tool result is an error; the prompt
-//!                 still completes (a denied call is not a failed
-//!                 turn).
+//! 1. approve  — client answers `allow_once`; the file is written;
+//!    the prompt completes with `end_turn`.
+//! 2. deny     — client answers `reject_once`; the file is NOT
+//!    written; the tool result is an error; the prompt
+//!    still completes (a denied call is not a failed
+//!    turn).
 //!
 //! The setup mirrors `acp_session.rs`: `serve_io` over a duplex pair, a
 //! `MockProvider`-backed engine, no subprocess or network.

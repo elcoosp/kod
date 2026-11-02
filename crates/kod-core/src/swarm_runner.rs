@@ -3277,8 +3277,8 @@ mod parse_subtasks_proptests {
     //!    ignored the JSON", which falls back to N identical copies
     //!    of the goal — so one malformed item replaces the whole
     //!    decomposition.
-    //! 3. `max = 0` still returns one item, because the `out.len()
-    //!    >= max` check is at the end of the loop body.
+    //! 3. `max = 0` still returns one item, because the
+    //!    `out.len() >= max` check is at the end of the loop body.
     //!
     //! Whether (1) and (2) should be changed depends on the decompose
     //! prompt's contract (are `name`/`description` required?), which
