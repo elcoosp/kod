@@ -43,7 +43,17 @@ use kod_swarm::coordination::Task;
 use kod_swarm::{AgentBuilder, AgentSwarm, Capability};
 use kod_types::{AgentId, Priority, TaskId};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+
+
+/// One spawned agent's dispatch slot: `(id, name, subtask, write
+/// globs, result)`.
+type DispatchSlot = (
+    kod_types::AgentId,
+    String,
+    Subtask,
+    Vec<String>,
+    std::result::Result<String, String>,
+);use tokio::sync::mpsc;
 
 /// One decomposed piece of the user's goal.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1049,13 +1059,7 @@ impl SwarmRunner {
         // warning — the merge-time conflict detector is the second
         // line of defence, and a stuck scheduler would be worse
         // than a racing subtask.
-        let mut raw: Vec<(
-            kod_types::AgentId,
-            String,
-            Subtask,
-            Vec<String>,
-            std::result::Result<String, String>,
-        )> = Vec::with_capacity(handles.len());
+        let mut raw: Vec<DispatchSlot> = Vec::with_capacity(handles.len());
         let mut completed: std::collections::HashSet<String> = std::collections::HashSet::new();
         // F2d-11 (real fix): names of subtasks that ran and failed.
         // A subtask whose dependency is in here is *failed*, not run —
