@@ -31,7 +31,7 @@ impl PaletteWidget {
     /// two for the border and one for the query line.
     #[must_use]
     pub fn height(app: &KodApp) -> u16 {
-        let n = app.palette_candidates().len().min(12) as u16;
+        let n = u16::try_from(app.palette_candidates().len().min(12)).unwrap_or(u16::MAX);
         (n + 4).min(20)
     }
 

@@ -263,7 +263,7 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                     })?;
                 let old_count = count;
                 let new_count = new_lines.len();
-                let new_start = (start as isize + new_side_offset).max(0) as usize;
+                let new_start = (isize::try_from(start).unwrap_or(isize::MAX) + new_side_offset).max(0) as usize;
                 out.push_str(&format!(
                     "@@ -{start},{old_count} +{new_start},{new_count} @@\n"
                 ));
@@ -290,7 +290,7 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                         out.push('\n');
                     }
                 }
-                new_side_offset += new_count as isize - old_count as isize;
+                new_side_offset += isize::try_from(new_count).unwrap_or(isize::MAX) - isize::try_from(old_count).unwrap_or(isize::MAX);
             }
             Ok(out)
         }

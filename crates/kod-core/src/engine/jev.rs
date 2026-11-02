@@ -323,7 +323,7 @@ impl KodEngine {
         let decision = jev
             .evaluate_score(&state, "Command risk level", labels)
             .await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (level, source) = match decision {
             Ok(d) => (d.value, crate::jev::DecisionSource::Jev),
             Err(_) => (String::new(), crate::jev::DecisionSource::Heuristic),
@@ -535,7 +535,7 @@ impl KodEngine {
         let state = crate::jev::build_state(text, &[]);
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &questions).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (rows, source) = match result {
             Ok(r) => (r, crate::jev::DecisionSource::Jev),
             Err(_) => (Vec::new(), crate::jev::DecisionSource::Heuristic),
@@ -737,7 +737,7 @@ impl KodEngine {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().memory_filter_min;
         let mut out: Vec<(usize, usize)> = Vec::new();
         let mut answers = serde_json::Map::new();
@@ -795,7 +795,7 @@ impl KodEngine {
             )
             .await
             .ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.log_jev_decision(
             DEFAULT_TRANSCRIPT_KEY,
             "swarm_capability",
@@ -836,7 +836,7 @@ impl KodEngine {
         )];
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &pairs).await.ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let p_yes = rows.first().map_or(1.0, |(_, p)| *p);
         self.log_jev_decision(
             DEFAULT_TRANSCRIPT_KEY,
@@ -929,7 +929,7 @@ impl KodEngine {
         )];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (p_yes, source) = match result {
             Ok(rows) => (
                 rows.first().map_or(0.0, |(_, p)| *p),
@@ -999,7 +999,7 @@ impl KodEngine {
         let question = "What kind of round is this?";
         let started = std::time::Instant::now();
         let decision = jev.evaluate_score(&state, question, labels).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (kind, source) = match decision {
             Ok(d) => (d.value, crate::jev::DecisionSource::Jev),
@@ -1102,7 +1102,7 @@ impl KodEngine {
         ];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (complete_p, off_track_p, source) = match result {
             Ok(rows) => {
@@ -1224,7 +1224,7 @@ impl KodEngine {
             let entry = kod_core_state::session_log::SessionEntry::JevDecision {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as u64),
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                 holder: holder.to_string(),
                 purpose: purpose.to_string(),
                 state_preview: crate::jev::preview_chars(state_preview, 200),

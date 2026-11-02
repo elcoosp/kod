@@ -46,10 +46,10 @@ impl RequestRecord {
     /// USD saved by cache reads minus the write premium.
     #[must_use]
     pub fn cache_savings_usd(&self) -> f64 {
-        let read_saved = (self.input_rate - self.cache_read_rate) * (self.cache_read_tokens as f64)
+        let read_saved = (self.input_rate - self.cache_read_rate) * (f64::from(u32::try_from(self.cache_read_tokens).unwrap_or(u32::MAX)))
             / 1_000_000.0;
         let write_premium = (self.cache_write_rate - self.input_rate)
-            * (self.cache_write_tokens as f64)
+            * (f64::from(u32::try_from(self.cache_write_tokens).unwrap_or(u32::MAX)))
             / 1_000_000.0;
         read_saved - write_premium
     }
@@ -61,7 +61,7 @@ impl RequestRecord {
         if total == 0 {
             return None;
         }
-        Some(self.cache_read_tokens as f64 / total as f64)
+        Some(f64::from(u32::try_from(self.cache_read_tokens).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)))
     }
 
     /// Output tokens per second. `None` with no duration or on error.
@@ -70,7 +70,7 @@ impl RequestRecord {
         if self.duration_ms == 0 || self.error {
             return None;
         }
-        Some(self.output_tokens as f64 / (self.duration_ms as f64 / 1000.0))
+        Some(f64::from(u32::try_from(self.output_tokens).unwrap_or(u32::MAX)) / (f64::from(u32::try_from(self.duration_ms).unwrap_or(u32::MAX)) / 1000.0))
     }
 }
 
@@ -130,7 +130,7 @@ impl Aggregates {
         if self.requests == 0 {
             return None;
         }
-        Some(self.errors as f64 / self.requests as f64)
+        Some(f64::from(u32::try_from(self.errors).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.requests).unwrap_or(u32::MAX)))
     }
 
     /// Average time to first token in milliseconds. None when no ttft
@@ -140,7 +140,7 @@ impl Aggregates {
         if self.ttft_count == 0 {
             return None;
         }
-        Some(self.ttft_sum_ms as f64 / self.ttft_count as f64)
+        Some(f64::from(u32::try_from(self.ttft_sum_ms).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.ttft_count).unwrap_or(u32::MAX)))
     }
 
     /// Fraction of the input window read from cache. None when no
@@ -151,7 +151,7 @@ impl Aggregates {
         if total == 0 {
             return None;
         }
-        Some(self.cache_read_tokens as f64 / total as f64)
+        Some(f64::from(u32::try_from(self.cache_read_tokens).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)))
     }
 }
 

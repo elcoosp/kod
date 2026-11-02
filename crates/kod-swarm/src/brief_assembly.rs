@@ -140,7 +140,7 @@ fn tokenize(s: &str) -> Vec<String> {
 /// Returns `Err` when the underlying operation fails.
 pub fn digest_file(path: &Path) -> std::io::Result<FileDigest> {
     let body = std::fs::read_to_string(path)?;
-    let line_count = body.lines().count() as u32;
+    let line_count = u32::try_from(body.lines().count()).unwrap_or(u32::MAX);
     let summary = body
         .lines()
         .filter(|l| !l.trim().is_empty())

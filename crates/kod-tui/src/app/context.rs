@@ -141,7 +141,7 @@ impl KodApp {
 
     pub(super) fn format_k(n: usize) -> String {
         if n >= 1_000 {
-            format!("{:.1}k", n as f64 / 1_000.0)
+            format!("{:.1}k", f64::from(u32::try_from(n).unwrap_or(u32::MAX)) / 1_000.0)
         } else {
             n.to_string()
         }

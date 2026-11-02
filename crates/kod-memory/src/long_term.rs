@@ -675,7 +675,7 @@ impl LongTermMemory {
             let n = table.len().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to read table len: {e}"))
             })?;
-            Ok(n as usize)
+            Ok(usize::try_from(n).unwrap_or(usize::MAX))
         })
         .await
     }

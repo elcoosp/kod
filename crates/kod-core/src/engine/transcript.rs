@@ -162,7 +162,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             let entry = kod_core_state::session_log::SessionEntry::MemoryWrite {
                 timestamp_ms: now_ms,
                 memory_id: memory_id.to_string(),

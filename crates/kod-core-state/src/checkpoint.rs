@@ -247,7 +247,7 @@ impl CheckpointManager {
                 (false, String::new())
             }
             Ok(meta) => {
-                if meta.len() as usize > MAX_SNAPSHOT_BYTES {
+                if usize::try_from(meta.len()).unwrap_or(usize::MAX) > MAX_SNAPSHOT_BYTES {
                     tracing::warn!(
                         path = %canonical.display(),
                         bytes = meta.len(),
@@ -284,7 +284,7 @@ impl CheckpointManager {
 
         let ts_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         // H-D7: the counter is zero-padded so `list` (which sorts
         // lexicographically, newest first) and `enforce_retention`
         // (which drops the lexicographically smallest) agree on

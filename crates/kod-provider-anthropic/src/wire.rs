@@ -549,7 +549,7 @@ pub fn parse_sse_line(
             // fields for cost math.
             if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
                 let get =
-                    |k: &str| -> usize { u.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0) as usize };
+                    |k: &str| -> usize { usize::try_from(u.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX) };
                 let base = get("input_tokens");
                 let cache_read = get("cache_read_input_tokens");
                 let cache_creation = get("cache_creation_input_tokens");
@@ -566,7 +566,7 @@ pub fn parse_sse_line(
                     .get("cache_creation")
                     .and_then(|c| c.get("ephemeral_1h_input_tokens"))
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(0, |n| n as usize)
+                    .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX))
                     .min(cache_creation);
                 state.cache_read_input_tokens = cache_read;
                 state.cache_creation_input_tokens = cache_creation;
@@ -578,7 +578,7 @@ pub fn parse_sse_line(
             Vec::new()
         }
         Some("content_block_start") => {
-            let index = v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+            let index = usize::try_from(v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
             let block = v.get("content_block").cloned().unwrap_or_default();
             let kind = block
                 .get("type")
@@ -607,7 +607,7 @@ pub fn parse_sse_line(
             }
         }
         Some("content_block_delta") => {
-            let index = v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+            let index = usize::try_from(v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
             let delta = v.get("delta").cloned().unwrap_or_default();
             match delta.get("type").and_then(|t| t.as_str()) {
                 Some("text_delta") => {

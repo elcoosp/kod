@@ -125,7 +125,7 @@ impl WorkerSlot {
         if self.context_window == 0 {
             1.0
         } else {
-            self.context_tokens as f64 / self.context_window as f64
+            f64::from(u32::try_from(self.context_tokens).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.context_window).unwrap_or(u32::MAX))
         }
     }
 }

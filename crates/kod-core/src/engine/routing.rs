@@ -492,7 +492,7 @@ impl KodEngine {
             (Some(a), Some(b)) => {
                 let m = 1_000_000.0;
                 let diff = b.input_per_mtok_usd - a.input_per_mtok_usd;
-                (transcript_tokens as f64 / m) * diff.max(0.0)
+                (f64::from(u32::try_from(transcript_tokens).unwrap_or(u32::MAX)) / m) * diff.max(0.0)
             }
             _ => 0.0,
         };
@@ -915,8 +915,8 @@ impl KodEngine {
                 // are `Option<u64>`; prompt_tokens is `usize`, so cast.
                 input_tokens: usage
                     .prompt_tokens
-                    .saturating_sub(usage.cache_read_tokens.unwrap_or(0) as usize)
-                    .saturating_sub(usage.cache_creation_tokens.unwrap_or(0) as usize)
+                    .saturating_sub(usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
+                    .saturating_sub(usize::try_from(usage.cache_creation_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
                     as u64,
                 output_tokens: usage.completion_tokens as u64,
                 cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
@@ -975,7 +975,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             let cost = pricing.cost_for_usage(usage);
             self.cost_tracker.record(cost);
             let entry = kod_core_state::session_log::SessionEntry::Cost {
@@ -1003,7 +1003,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             let entry = kod_core_state::session_log::SessionEntry::SessionExit {
                 timestamp_ms: now_ms,
                 holder: DEFAULT_TRANSCRIPT_KEY.to_string(),
@@ -1030,7 +1030,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             let entry = kod_core_state::session_log::SessionEntry::ToolExecutionStart {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
@@ -1058,7 +1058,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             let entry = kod_core_state::session_log::SessionEntry::ModelFallback {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),

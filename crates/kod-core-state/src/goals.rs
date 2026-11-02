@@ -756,7 +756,7 @@ mod goals_proptests {
         ) {
             let mut g = Goal::new(1, "goal").with_token_budget(budget);
             // Force into BudgetLimited by observing well over the cap.
-            g.observe_usage(&usage((budget as usize) * 2, None, 0));
+            g.observe_usage(&usage((usize::try_from(budget).unwrap_or(usize::MAX)) * 2, None, 0));
             if g.status != GoalStatus::BudgetLimited {
                 return Ok(());
             }
@@ -781,7 +781,7 @@ mod goals_proptests {
         ) {
             let mut g = Goal::new(1, "goal").with_token_budget(budget);
             // Push to BudgetLimited.
-            g.observe_usage(&usage((budget as usize) * 2, None, 0));
+            g.observe_usage(&usage((usize::try_from(budget).unwrap_or(usize::MAX)) * 2, None, 0));
             if g.status != GoalStatus::BudgetLimited {
                 return Ok(());
             }

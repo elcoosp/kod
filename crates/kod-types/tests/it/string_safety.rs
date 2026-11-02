@@ -128,7 +128,7 @@ proptest! {
         let h = kod_types::redact::shannon_entropy(&s);
         prop_assert!(h >= 0.0);
         if !s.is_empty() {
-            let upper = (s.len() as f64).log2();
+            let upper = (f64::from(u32::try_from(s.len()).unwrap_or(u32::MAX))).log2();
             prop_assert!(h <= upper + 1e-9, "h={h} upper={upper} s={s:?}");
         }
     }

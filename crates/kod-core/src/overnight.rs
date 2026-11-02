@@ -104,7 +104,7 @@ impl OvernightManifest {
         // The std type is what a caller without the `time` dependency
         // produces. Seconds is the common unit; a sub-second overnight
         // duration is not a thing.
-        let as_time = time::Duration::seconds(duration.as_secs() as i64);
+        let as_time = time::Duration::seconds(i64::try_from(duration.as_secs()).unwrap_or(i64::MAX));
         Self::for_duration(
             mission,
             as_time,

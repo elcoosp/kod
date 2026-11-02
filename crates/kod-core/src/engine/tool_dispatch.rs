@@ -72,7 +72,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         for (i, call) in calls.iter().enumerate() {
             let Some((result, ms)) = raw_results.get(i) else {
                 continue;
@@ -418,7 +418,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         for (i, d) in decisions {
             let Some(call) = calls.get(*i) else { continue };
             let outcome = match d.outcome {
@@ -570,7 +570,7 @@ impl KodEngine {
                     {
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0, |d| d.as_millis() as u64);
+                            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
                         let entry = kod_core_state::session_log::SessionEntry::Approval {
                             timestamp_ms: now_ms,
                             holder: holder.to_string(),
@@ -714,7 +714,7 @@ impl KodEngine {
             {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as u64);
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
                 let edit_snapshot = edited_args.get(&i).cloned();
                 let entry = kod_core_state::session_log::SessionEntry::Approval {
                     timestamp_ms: now_ms,
@@ -1334,11 +1334,11 @@ impl KodEngine {
                                 crate::run_collector::ToolStatus::Aborted => "aborted",
                             }
                             .to_string(),
-                            duration_ms: start.elapsed().as_millis() as u64,
+                            duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
                         });
                     }
                 }
-                out.push((res, start.elapsed().as_millis() as u64));
+                out.push((res, u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)));
             }
             out
         } else {
@@ -1403,7 +1403,7 @@ impl KodEngine {
                             .tools
                             .execute_tool(&call.tool_name, &call.arguments, &ctx)
                             .await;
-                        (res, start.elapsed().as_millis() as u64)
+                        (res, u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
                     }
                 })
                 .collect();
@@ -2007,7 +2007,7 @@ impl KodEngine {
                         }
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0, |d| d.as_millis() as u64);
+                            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
                         for (file, (errs, warns)) in per_file {
                             let entry = kod_core_state::session_log::SessionEntry::Diagnostics {
                                 timestamp_ms: now_ms,
@@ -2036,7 +2036,7 @@ impl KodEngine {
         {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             for (call, result) in calls.iter().zip(results.iter()) {
                 if call.tool_name != "memory_save" {
                     continue;

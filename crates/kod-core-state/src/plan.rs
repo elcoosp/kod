@@ -85,7 +85,7 @@ impl Plan {
             .into_iter()
             .enumerate()
             .map(|(i, text)| PlanStep {
-                id: i as u32,
+                id: u32::try_from(i).unwrap_or(u32::MAX),
                 text,
                 status: if i == 0 {
                     PlanStatus::InProgress
@@ -103,7 +103,7 @@ impl Plan {
             notes: Default::default(),
             created_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64),
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             jev_confidence: 0.0,
             reference_paths: Vec::new(),
         }
@@ -852,7 +852,7 @@ mod plan_proptests {
     /// Plan + a random step index (or none if empty).
     fn plan_with_index() -> impl Strategy<Value = (Plan, Option<u32>)> {
         plan_strategy().prop_flat_map(|plan| {
-            let n = plan.steps.len() as u32;
+            let n = u32::try_from(plan.steps.len()).unwrap_or(u32::MAX);
             let idx = if n == 0 {
                 Just(None).boxed()
             } else {
@@ -870,7 +870,7 @@ mod plan_proptests {
         #[test]
         fn prop_new_ids_are_sequential(plan in plan_strategy()) {
             for (i, s) in plan.steps.iter().enumerate() {
-                prop_assert_eq!(s.id, i as u32);
+                prop_assert_eq!(s.id, u32::try_from(i).unwrap_or(u32::MAX));
             }
             prop_assert_eq!(plan.current, 0);
         }

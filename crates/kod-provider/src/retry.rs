@@ -84,7 +84,7 @@ impl RetryPolicy {
         // Deterministic pseudo-jitter from nanos; avoids pulling in `rand`.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as u64);
+            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
         let jitter = Self::jitter_for(nanos);
         let factor = 1.0 + jitter * self.jitter_fraction;
         let secs = capped.as_secs_f64() * factor;
@@ -213,7 +213,7 @@ where
                 tracing::warn!(
                     attempt,
                     max_attempts = policy.max_attempts,
-                    delay_ms = delay.as_millis() as u64,
+                    delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
                     long_wait = long_wait_used,
                     error = %e,
                     "transient provider error; retrying"
@@ -446,7 +446,7 @@ mod tests {
         };
         for _ in 0..100 {
             let d = policy.delay_for(1);
-            let ms = d.as_millis() as i64;
+            let ms = i64::try_from(d.as_millis()).unwrap_or(i64::MAX);
             // base 1000 ms ± 25 % → [750, 1250] ms
             assert!((750..=1250).contains(&ms), "jitter out of range: {ms} ms");
         }
@@ -597,15 +597,15 @@ fn parse_rate_limit_reset(v: &str) -> Option<Duration> {
     let n: i64 = v.trim().parse().ok()?;
     let now_ms: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
     if n > 1_000_000_000_000 {
         let delta = n.saturating_sub(now_ms);
-        Some(Duration::from_millis(delta.max(0) as u64))
+        Some(Duration::from_millis(u64::try_from(delta.max(0)).unwrap_or(u64::MAX)))
     } else if n > 1_000_000_000 {
         let delta = n.saturating_sub(now_ms / 1000);
-        Some(Duration::from_secs(delta.max(0) as u64))
+        Some(Duration::from_secs(u64::try_from(delta.max(0)).unwrap_or(u64::MAX)))
     } else {
-        Some(Duration::from_secs(n.max(0) as u64))
+        Some(Duration::from_secs(u64::try_from(n.max(0)).unwrap_or(u64::MAX)))
     }
 }
 
@@ -825,10 +825,10 @@ mod hint_tests {
     #[test]
     fn jitter_stays_inside_the_configured_band() {
         let policy = RetryPolicy::default();
-        let base = policy.base_delay.as_nanos() as f64;
+        let base = f64::from(u32::try_from(policy.base_delay.as_nanos()).unwrap_or(u32::MAX));
         let j = policy.jitter_fraction;
         for _ in 0..40 {
-            let d = policy.delay_for(1).as_nanos() as f64;
+            let d = f64::from(u32::try_from(policy.delay_for(1).as_nanos()).unwrap_or(u32::MAX));
             assert!(
                 d >= base.mul_add(1.0 - j, -1.0) && d <= base.mul_add(1.0 + j, 1.0),
                 "delay {d} outside [{}, {}]",
@@ -1169,7 +1169,7 @@ mod extract_retry_hints_proptests {
     /// path.
     #[test]
     fn control_ms_boundary_is_exact() {
-        let cap_ms = HINT_CAP.as_millis() as u64;
+        let cap_ms = u64::try_from(HINT_CAP.as_millis()).unwrap_or(u64::MAX);
         let at_cap =
             extract_retry_hints(Some(429), &[hdr("retry-after-ms", &cap_ms.to_string())], "");
         assert_eq!(at_cap.delay, Some(HINT_CAP));

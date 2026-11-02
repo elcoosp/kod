@@ -812,7 +812,7 @@ impl CompactionMethod for SnapcompactMethod {
             return MethodOutcome::NoChange;
         }
         let frame_estimate = FRAME_TOKEN_ESTIMATE;
-        let ratio = frame_estimate as f64 / text_tokens as f64;
+        let ratio = f64::from(u32::try_from(frame_estimate).unwrap_or(u32::MAX)) / f64::from(u32::try_from(text_tokens).unwrap_or(u32::MAX));
         if ratio >= SAVINGS_MARGIN {
             return MethodOutcome::NoChange;
         }

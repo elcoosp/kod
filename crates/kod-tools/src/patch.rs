@@ -99,8 +99,8 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         // old_start == 0. `0 - 1 = -1` as usize wraps to a huge
         // number. Clamp at 0; a hunk that inserts into a new file
         // is a splice at position 0.
-        let raw_target = hunk.old_start as isize - 1 + offset;
-        let target = raw_target.max(0) as usize;
+        let raw_target = isize::try_from(hunk.old_start).unwrap_or(isize::MAX) - 1 + offset;
+        let target = usize::try_from(raw_target.max(0)).unwrap_or(usize::MAX);
         if target > lines.len() {
             return Err(KodError::InvalidParameters {
                 reason: format!(
@@ -184,7 +184,7 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         let reaches_eof = cursor == lines.len();
         let changed_last = matches!(hunk.last_line_tag, Some('+' | '-'));
         lines.splice(target..cursor, new_lines);
-        offset += hunk.new_lines as isize - hunk.old_lines as isize;
+        offset += isize::try_from(hunk.new_lines).unwrap_or(isize::MAX) - isize::try_from(hunk.old_lines).unwrap_or(isize::MAX);
         if reaches_eof {
             eof_trailing = Some(if changed_last {
                 !hunk.has_no_newline_marker

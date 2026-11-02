@@ -453,7 +453,7 @@ impl ModelPricing {
         let fresh = match self.cache_convention {
             crate::CacheConvention::Split => usage.uncached_input_tokens(),
             crate::CacheConvention::Subset => {
-                let read = usage.cache_read_tokens.unwrap_or(0) as usize;
+                let read = usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX);
                 usage.prompt_tokens.saturating_sub(read)
             }
         };
@@ -478,7 +478,7 @@ impl ModelPricing {
         let write_1h_rate = self
             .cache_write_1h_per_mtok_usd
             .unwrap_or(2.0 * self.input_per_mtok_usd);
-        (usage.completion_tokens as f64 / m).mul_add(self.output_per_mtok_usd, (write_1h as f64 / m).mul_add(write_1h_rate, (write_5m as f64 / m).mul_add(self.cache_write_per_mtok_usd, (read as f64 / m).mul_add(self.cache_read_per_mtok_usd, (fresh as f64 / m) * self.input_per_mtok_usd))))
+        (f64::from(u32::try_from(usage.completion_tokens).unwrap_or(u32::MAX)) / m).mul_add(self.output_per_mtok_usd, (f64::from(u32::try_from(write_1h).unwrap_or(u32::MAX)) / m).mul_add(write_1h_rate, (f64::from(u32::try_from(write_5m).unwrap_or(u32::MAX)) / m).mul_add(self.cache_write_per_mtok_usd, (f64::from(u32::try_from(read).unwrap_or(u32::MAX)) / m).mul_add(self.cache_read_per_mtok_usd, (f64::from(u32::try_from(fresh).unwrap_or(u32::MAX)) / m) * self.input_per_mtok_usd))))
     }
 }
 

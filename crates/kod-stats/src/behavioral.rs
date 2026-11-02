@@ -120,7 +120,7 @@ fn count_cues(lower: &str, cues: &[&str]) -> u32 {
 /// is a word or multi-word phrase that does not appear inside another.
 fn count_cue(lower: &str, cue: &str) -> u32 {
     if cue.len() > 3 {
-        return lower.matches(cue).count() as u32;
+        return u32::try_from(lower.matches(cue).count()).unwrap_or(u32::MAX);
     }
     let bytes = lower.as_bytes();
     let mut n = 0u32;

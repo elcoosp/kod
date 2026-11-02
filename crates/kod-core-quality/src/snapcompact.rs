@@ -209,8 +209,8 @@ pub fn rasterize_to_png(text: &str) -> Result<Vec<u8>, RasterizeError> {
         });
     }
 
-    let width = (MAX_COLS as u32) * CELL_W;
-    let height = (lines.len() as u32) * CELL_H;
+    let width = (u32::try_from(MAX_COLS).unwrap_or(u32::MAX)) * CELL_W;
+    let height = (u32::try_from(lines.len()).unwrap_or(u32::MAX)) * CELL_H;
 
     // Packed monochrome: 1 bit per pixel, MSB first within each byte,
     // rows byte-aligned. Every scanline is padded to a byte boundary.
@@ -218,12 +218,12 @@ pub fn rasterize_to_png(text: &str) -> Result<Vec<u8>, RasterizeError> {
     let mut pixels = vec![0xFFu8; row_bytes * height as usize]; // white
 
     for (line_idx, line) in lines.iter().enumerate() {
-        let y0 = line_idx as u32 * CELL_H;
+        let y0 = u32::try_from(line_idx).unwrap_or(u32::MAX) * CELL_H;
         for (col, ch) in line.chars().take(MAX_COLS).enumerate() {
-            let x0 = col as u32 * CELL_W;
+            let x0 = u32::try_from(col).unwrap_or(u32::MAX) * CELL_W;
             let glyph = glyph_for(ch);
             for (row, bits) in glyph.iter().enumerate() {
-                let y = y0 + row as u32;
+                let y = y0 + u32::try_from(row).unwrap_or(u32::MAX);
                 for bit in 0..8u32 {
                     // MSB-first.
                     if bits & (0x80 >> bit) == 0 {
@@ -300,7 +300,7 @@ fn encode_mono_png(width: u32, height: u32, pixels: &[u8], row_bytes: usize) -> 
 }
 
 fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(&(u32::try_from(data.len()).unwrap_or(u32::MAX)).to_be_bytes());
     out.extend_from_slice(kind);
     out.extend_from_slice(data);
     // CRC over kind + data.
@@ -326,8 +326,8 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
         let block = remaining.min(65535);
         let is_last = i + block == data.len();
         out.push(if is_last { 0x01 } else { 0x00 });
-        out.extend_from_slice(&(block as u16).to_le_bytes());
-        out.extend_from_slice(&(!(block as u16)).to_le_bytes());
+        out.extend_from_slice(&(u16::try_from(block).unwrap_or(u16::MAX)).to_le_bytes());
+        out.extend_from_slice(&(!(u16::try_from(block).unwrap_or(u16::MAX))).to_le_bytes());
         out.extend_from_slice(&data[i..i + block]);
         i += block;
     }
@@ -343,7 +343,7 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
     let mut a: u32 = 1;
     let mut b: u32 = 0;
     for &byte in data {
-        a = (a + byte as u32) % 65521;
+        a = (a + u32::try_from(byte).unwrap_or(u32::MAX)) % 65521;
         b = (b + a) % 65521;
     }
     let adler = (b << 16) | a;
@@ -355,7 +355,7 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
 fn crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     for &byte in data {
-        crc ^= byte as u32;
+        crc ^= u32::try_from(byte).unwrap_or(u32::MAX);
         for _ in 0..8 {
             let mask = if crc & 1 != 0 { 0xEDB8_8320 } else { 0 };
             crc = (crc >> 1) ^ mask;
@@ -443,7 +443,7 @@ mod tests {
         let ihdr_data = &png[16..16 + 13];
         let w = u32::from_be_bytes([ihdr_data[0], ihdr_data[1], ihdr_data[2], ihdr_data[3]]);
         let h = u32::from_be_bytes([ihdr_data[4], ihdr_data[5], ihdr_data[6], ihdr_data[7]]);
-        assert_eq!(w, MAX_COLS as u32 * CELL_W);
+        assert_eq!(w, u32::try_from(MAX_COLS).unwrap_or(u32::MAX) * CELL_W);
         assert_eq!(h, 2 * CELL_H);
         assert_eq!(ihdr_data[8], 1); // bit depth
         assert_eq!(ihdr_data[9], 0); // grayscale

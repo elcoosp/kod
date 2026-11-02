@@ -105,7 +105,7 @@ pub fn record(cause: InvalidationCause) {
     let Ok(mut file) = w.file.lock() else { return };
     let ts_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64);
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let line = serde_json::json!({
         "ts_ms": ts_ms,
         "kind": cause.kind(),

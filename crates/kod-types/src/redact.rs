@@ -388,7 +388,7 @@ pub fn shannon_entropy(s: &str) -> f64 {
     for b in s.bytes() {
         counts[b as usize] += 1;
     }
-    let len = s.len() as f64;
+    let len = f64::from(u32::try_from(s.len()).unwrap_or(u32::MAX));
     let mut h = 0.0_f64;
     for &c in &counts {
         if c == 0 {

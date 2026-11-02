@@ -192,8 +192,8 @@ async fn compaction_fires_off_the_anchored_number() {
     // it as such. (We don't drive the second turn here; the
     // decision-math test lives in `compaction::tests::decide_*`.)
     assert!(
-        anchored as f64 / 8_192.0 > 0.8,
+        f64::from(u32::try_from(anchored).unwrap_or(u32::MAX)) / 8_192.0 > 0.8,
         "7,000 / 8192 = {} should clear the soft threshold",
-        anchored as f64 / 8_192.0,
+        f64::from(u32::try_from(anchored).unwrap_or(u32::MAX)) / 8_192.0,
     );
 }

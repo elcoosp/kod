@@ -100,7 +100,7 @@ pub fn capture_evidence(path: &Path) -> std::io::Result<Evidence> {
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos() as i128);
+        .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
     let bytes = std::fs::read(path)?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     Ok(Evidence {
@@ -135,7 +135,7 @@ pub fn read_with_evidence(path: &Path) -> std::io::Result<(String, Evidence)> {
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos() as i128);
+        .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
     let bytes = std::fs::read(path)?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     let text = String::from_utf8_lossy(&bytes).into_owned();
@@ -185,7 +185,7 @@ pub fn validate(path: &Path, evidence: &Evidence) -> std::io::Result<bool> {
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos() as i128);
+        .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
     if dev != evidence.dev || ino != evidence.ino {
         return Ok(false);
     }
@@ -409,7 +409,7 @@ mod tests {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos() as i128);
+            .map_or(0, |d| i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
         e.size = meta.len();
         assert!(!validate(&p, &e).unwrap(), "digest must catch the edit");
     }

@@ -345,13 +345,13 @@ impl KodApp {
     /// text). Ranges after the edit shift; ranges overlapped by it are
     /// dropped — the chip dissolves and the text shows verbatim.
     fn shift_paste_blocks(&mut self, edit_start: usize, edit_end: usize, new_len: usize) {
-        let delta = new_len as isize - (edit_end - edit_start) as isize;
+        let delta = isize::try_from(new_len).unwrap_or(isize::MAX) - (edit_end - edit_start) as isize;
         self.pasted_blocks.retain_mut(|b| {
             if b.end <= edit_start {
                 true
             } else if b.start >= edit_end {
-                b.start = (b.start as isize + delta).max(0) as usize;
-                b.end = (b.end as isize + delta).max(0) as usize;
+                b.start = (isize::try_from(b.start).unwrap_or(isize::MAX) + delta).max(0) as usize;
+                b.end = (isize::try_from(b.end).unwrap_or(isize::MAX) + delta).max(0) as usize;
                 true
             } else {
                 false

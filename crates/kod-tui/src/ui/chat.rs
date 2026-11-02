@@ -527,7 +527,7 @@ impl ChatWidget {
     ) -> (usize, bool, std::sync::Arc<Vec<Line<'static>>>) {
         let lines = Self::message_lines_owned(app, m, width);
         let tail_blank = lines.last().is_some_and(|l| l.width() == 0);
-        let width_u16 = width.min(u16::MAX as usize) as u16;
+        let width_u16 = u16::try_from(width.min(u16::MAX as usize)).unwrap_or(u16::MAX);
         #[allow(unstable_name_collisions)]
         let rows = Paragraph::new(Text::from((*lines).clone()))
             .wrap(Wrap { trim: false })
@@ -548,7 +548,7 @@ impl ChatWidget {
 
     fn message_measurement_cached(app: &KodApp, m: &Message, width: usize) -> (usize, bool) {
         let content_hash = crate::render_cache::hash_content(&m.content);
-        let width_u16 = width.min(u16::MAX as usize) as u16;
+        let width_u16 = u16::try_from(width.min(u16::MAX as usize)).unwrap_or(u16::MAX);
         if let Some((rows, tail_blank, _)) =
             crate::render_cache::with_cache(|c| c.lookup_with_lines(&m.id, content_hash, width_u16))
         {
@@ -567,7 +567,7 @@ impl ChatWidget {
         width: usize,
     ) -> std::sync::Arc<Vec<Line<'static>>> {
         let content_hash = crate::render_cache::hash_content(&m.content);
-        let width_u16 = width.min(u16::MAX as usize) as u16;
+        let width_u16 = u16::try_from(width.min(u16::MAX as usize)).unwrap_or(u16::MAX);
         if let Some((_, _, lines)) =
             crate::render_cache::with_cache(|c| c.lookup_with_lines(&m.id, content_hash, width_u16))
         {
@@ -651,7 +651,7 @@ impl ChatWidget {
                 #[allow(unstable_name_collisions)]
                 let rows = Paragraph::new(Text::from(block))
                     .wrap(Wrap { trim: false })
-                    .line_count(narrow_width as u16);
+                    .line_count(u16::try_from(narrow_width).unwrap_or(u16::MAX));
                 probe_rows += rows;
                 probe_rendered = true;
             }
@@ -701,7 +701,7 @@ impl ChatWidget {
                 {
                     rows += Paragraph::new(Text::from(block))
                         .wrap(Wrap { trim: false })
-                        .line_count(text_width as u16);
+                        .line_count(u16::try_from(text_width).unwrap_or(u16::MAX));
                 }
                 rendered = true;
             }
@@ -733,7 +733,7 @@ impl ChatWidget {
         } else {
             total_rows.saturating_sub(height).saturating_sub(offset)
         };
-        let skip_rows_u16 = skip_rows_usize.min(u16::MAX as usize) as u16;
+        let skip_rows_u16 = u16::try_from(skip_rows_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
 
         // Bug-hunt: `area.width - 1` panics on a 0-width rect.
         let text_area = if show_bar {
@@ -923,7 +923,7 @@ impl ChatWidget {
             let more_above = offset < max_offset;
             let more_below = offset > 0;
             for i in 0..h {
-                let y = area.y + i as u16;
+                let y = area.y + u16::try_from(i).unwrap_or(u16::MAX);
                 let mut symbol = "│";
                 let mut style = bar_style;
                 if i >= thumb_start && i < thumb_start + thumb_h {

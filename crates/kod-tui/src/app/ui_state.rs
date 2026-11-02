@@ -475,7 +475,7 @@ impl KodApp {
         } else {
             let s = ms / 1000;
             if s < 60 {
-                format!("{:.1}s", ms as f64 / 1000.0)
+                format!("{:.1}s", f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1000.0)
             } else if s < 3600 {
                 format!("{}m{:02}s", s / 60, s % 60)
             } else {
@@ -641,7 +641,7 @@ impl KodApp {
     /// Context fill ratio 0.0–1.0+ (rough estimate, see `context_label`).
     #[must_use]
     pub fn context_usage(&self) -> f64 {
-        self.context_tokens as f64 / self.context_limit.max(1) as f64
+        f64::from(u32::try_from(self.context_tokens).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.context_limit.max(1)).unwrap_or(u32::MAX))
     }
 
     /// Model name for the header (never blank).

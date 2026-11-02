@@ -937,8 +937,8 @@ fn parse_diagnostics(params: &serde_json::Value, uri: &str) -> Vec<Diagnostic> {
             let message = d.get("message")?.as_str()?.to_string();
             Some(Diagnostic {
                 file: file.clone(),
-                line: line as u32,
-                column: character as u32,
+                line: u32::try_from(line).unwrap_or(u32::MAX),
+                column: u32::try_from(character).unwrap_or(u32::MAX),
                 severity: severity.to_string(),
                 code,
                 message,

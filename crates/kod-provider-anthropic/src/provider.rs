@@ -221,7 +221,7 @@ impl AnthropicProvider {
         tokio::time::timeout(timeout, self.collect_inner(request, stream))
             .await
             .map_err(|_| KodError::ProviderTimeout {
-                timeout_ms: timeout.as_millis() as u64,
+                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             })?
     }
 
@@ -255,9 +255,9 @@ impl AnthropicProvider {
             let response = item.map_err(adk_err)?;
             if let Some(usage) = response.usage_metadata {
                 last_usage = Some(kod_provider::TokenUsage {
-                    prompt_tokens: usage.prompt_token_count.max(0) as usize,
-                    completion_tokens: usage.candidates_token_count.max(0) as usize,
-                    total_tokens: usage.total_token_count.max(0) as usize,
+                    prompt_tokens: usize::try_from(usage.prompt_token_count.max(0)).unwrap_or(usize::MAX),
+                    completion_tokens: usize::try_from(usage.candidates_token_count.max(0)).unwrap_or(usize::MAX),
+                    total_tokens: usize::try_from(usage.total_token_count.max(0)).unwrap_or(usize::MAX),
                     ..Default::default()
                 });
             }
@@ -402,7 +402,7 @@ impl LlmProvider for AnthropicProvider {
                         && delay <= self.rate_limit_wait
                     {
                         return Err(KodError::RateLimited {
-                            retry_after_secs: (delay.as_millis() as u64).div_ceil(1000).max(1),
+                            retry_after_secs: (u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)).div_ceil(1000).max(1),
                         });
                     }
                     let mut err = KodError::provider_status_with_hint(
@@ -1024,9 +1024,9 @@ impl AnthropicProvider {
                             Ok(response) => {
                                 if let Some(usage) = response.usage_metadata {
                                     last_usage = Some(kod_provider::TokenUsage {
-                                        prompt_tokens: usage.prompt_token_count.max(0) as usize,
-                                        completion_tokens: usage.candidates_token_count.max(0) as usize,
-                                        total_tokens: usage.total_token_count.max(0) as usize,
+                                        prompt_tokens: usize::try_from(usage.prompt_token_count.max(0)).unwrap_or(usize::MAX),
+                                        completion_tokens: usize::try_from(usage.candidates_token_count.max(0)).unwrap_or(usize::MAX),
+                                        total_tokens: usize::try_from(usage.total_token_count.max(0)).unwrap_or(usize::MAX),
                                         ..Default::default()
                                     });
                                 }
@@ -1198,8 +1198,8 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     // `prompt_tokens` so a single field carries the full input window,
     // and keeps the split in the cache fields for the cost math.
     let usage = v.get("usage").map(|u| {
-        let input = u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
-        let output = u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+        let input = usize::try_from(u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
+        let output = usize::try_from(u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
         // Option preserved: `None` means the field was absent, which
         // is different from "present and zero." kod's `TokenUsage`
         // keeps that distinction so the hit-rate readout can say
@@ -1220,8 +1220,8 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
             .and_then(|c| c.get("ephemeral_1h_input_tokens"))
             .and_then(serde_json::Value::as_u64)
             .map(|n| n.min(cache_creation.unwrap_or(0)));
-        let read_usize = cache_read.unwrap_or(0) as usize;
-        let creation_usize = cache_creation.unwrap_or(0) as usize;
+        let read_usize = usize::try_from(cache_read.unwrap_or(0)).unwrap_or(usize::MAX);
+        let creation_usize = usize::try_from(cache_creation.unwrap_or(0)).unwrap_or(usize::MAX);
         kod_provider::TokenUsage {
             // `prompt_tokens` is the total window the provider billed
             // and processed. Anthropic reports `input_tokens` excluding
@@ -1785,8 +1785,8 @@ mod parse_response_proptests {
                 other => panic!("expected Text, got {other:?}"),
             };
             let expected_prompt = input + read.unwrap_or(0) + creation.unwrap_or(0);
-            prop_assert_eq!(u.prompt_tokens, expected_prompt as usize);
-            prop_assert_eq!(u.completion_tokens, output as usize);
+            prop_assert_eq!(u.prompt_tokens, usize::try_from(expected_prompt).unwrap_or(usize::MAX));
+            prop_assert_eq!(u.completion_tokens, usize::try_from(output).unwrap_or(usize::MAX));
             prop_assert_eq!(u.total_tokens, (expected_prompt + output) as usize);
             prop_assert_eq!(u.cache_read_tokens, read);
             prop_assert_eq!(u.cache_creation_tokens, creation);

@@ -227,7 +227,7 @@ pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
             .map(|h| (h.path.to_string_lossy().into_owned(), h.line_number))
             .collect();
     }
-    let total = results.hits.len().max(1) as f64;
+    let total = f64::from(u32::try_from(results.hits.len().max(1)).unwrap_or(u32::MAX));
     let df: std::collections::HashMap<&str, usize> = terms
         .iter()
         .map(|t| {
@@ -307,7 +307,7 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
         .collect();
 
     // Score each hit.
-    let total = results.hits.len().max(1) as f64;
+    let total = f64::from(u32::try_from(results.hits.len().max(1)).unwrap_or(u32::MAX));
     let mut scored: Vec<(f64, &SearchHit)> = results
         .hits
         .iter()
@@ -470,7 +470,7 @@ mod tests {
     fn heatmap_reports_a_clear_drop_count() {
         let results = SearchResults {
             hits: (0..5)
-                .map(|i| hit(&format!("f{i}.rs"), i as u64, "no match term here"))
+                .map(|i| hit(&format!("f{i}.rs"), u64::try_from(i).unwrap_or(u64::MAX), "no match term here"))
                 .collect(),
             ..Default::default()
         };

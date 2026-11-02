@@ -70,7 +70,7 @@ impl Query {
         if union == 0 {
             return 1.0;
         }
-        intersection as f64 / union as f64
+        f64::from(u32::try_from(intersection).unwrap_or(u32::MAX)) / f64::from(u32::try_from(union).unwrap_or(u32::MAX))
     }
 }
 

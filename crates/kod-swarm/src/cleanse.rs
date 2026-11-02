@@ -456,7 +456,7 @@ mod cleanse_proptests {
 
     fn diag(n: i32) -> Diagnostic {
         Diagnostic {
-            line: n as u32,
+            line: u32::try_from(n).unwrap_or(u32::MAX),
             message: format!("d{n}"),
         }
     }
@@ -495,7 +495,7 @@ mod cleanse_proptests {
         fn prop_respects_budget(n in 1usize..=10, budget in 1usize..=4) {
             let mut s = CleanseScheduler::new(4).with_batch_budget(budget);
             for i in 0..n {
-                s.enqueue(format!("f{i}.rs"), vec![diag(i as i32)]);
+                s.enqueue(format!("f{i}.rs"), vec![diag(i32::try_from(i).unwrap_or(i32::MAX))]);
             }
             let b = s.take_batch("w1").expect("non-empty");
             prop_assert!(b.len() <= budget, "batch {} > budget {}", b.len(), budget);

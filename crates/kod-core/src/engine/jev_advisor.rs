@@ -31,7 +31,7 @@ impl KodEngine {
             .evaluate_score(&state, "What kind of text is this streamed chunk?", labels)
             .await
             .ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.log_jev_decision(
             holder,
             "chunk_classify",
@@ -79,7 +79,7 @@ impl KodEngine {
             Ok(r) => r,
             Err(_) => return 0,
         };
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let p = rows.first().map_or(0.0, |(_, p)| *p);
         if p < 0.7 {
             return 0;
@@ -177,7 +177,7 @@ impl KodEngine {
         let state = crate::jev::build_state(input, &[]);
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().memory_filter_min;
 
         let mut merged: Vec<String> = router_match.to_vec();
@@ -256,7 +256,7 @@ impl KodEngine {
         let state = crate::jev::build_state(&request, &[]);
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().memory_filter_min;
 
         let mut keep_idx: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -372,7 +372,7 @@ impl KodEngine {
         let state = crate::jev::build_state(&request, &[]);
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().memory_filter_min;
         let mut elided = 0_usize;
         let mut kept_hunks: Vec<&Vec<&str>> = Vec::new();
@@ -481,7 +481,7 @@ impl KodEngine {
                 impact_labels,
             )
             .await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (outcome_label, impact_label, confidence, source) = match (outcome, impact) {
             (Ok(o), Ok(i)) => (
@@ -508,7 +508,7 @@ impl KodEngine {
             let entry = kod_core_state::session_log::SessionEntry::ToolOutcome {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as u64),
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                 holder: holder.to_string(),
                 tool_name: call.tool_name.clone(),
                 outcome: outcome_label,
@@ -543,7 +543,7 @@ impl KodEngine {
         )];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (p_yes, source) = match result {
             Ok(rows) => (
                 rows.first().map_or(1.0, |(_, p)| *p),
@@ -644,7 +644,7 @@ impl KodEngine {
             .collect();
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &questions).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (rows, source) = match result {
             Ok(r) => (r, crate::jev::DecisionSource::Jev),
             Err(_) => (Vec::new(), crate::jev::DecisionSource::Heuristic),
@@ -710,7 +710,7 @@ impl KodEngine {
         )];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (p_amb, source) = match result {
             Ok(rows) => (
                 rows.first().map_or(0.0, |(_, p)| *p),
@@ -868,7 +868,7 @@ impl KodEngine {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().task_classify_min;
 
         let mut facts: Vec<String> = Vec::new();
@@ -961,7 +961,7 @@ impl KodEngine {
             out.extend(mcp);
             return out;
         };
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().tool_filter_min;
         // Sort MCP tools by p descending, keep top N above threshold.
         let mut scored: Vec<(usize, f32)> = slice
@@ -1052,7 +1052,7 @@ impl KodEngine {
             .evaluate_score(&state, "What phase is the session currently in?", labels)
             .await
             .ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         // Previous phase: use the earliest half of the window as the
         // state for a second question. Reuses the same Jev client.
         let earlier: String = transcript_tail
@@ -1133,7 +1133,7 @@ impl KodEngine {
             .collect();
         let started = std::time::Instant::now();
         let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let threshold = jev.thresholds().memory_filter_min;
 
         let mut keep_idx: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -1220,7 +1220,7 @@ impl KodEngine {
             .evaluate_score(&state, "Which endpoint should handle this task?", &labels)
             .await
             .ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let model = registry.default_model(&decision.value)?;
         self.log_jev_decision(
             DEFAULT_TRANSCRIPT_KEY,
@@ -1268,7 +1268,7 @@ impl KodEngine {
             Ok(r) => r,
             Err(_) => return *base,
         };
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let get = |k: &str| {
             rows.iter()
                 .find(|(id, _)| id == k)
@@ -1282,7 +1282,7 @@ impl KodEngine {
         ];
         let threshold = jev.thresholds().task_classify_min;
         let total_share: u32 =
-            base.history as u32 + base.skills as u32 + base.memory as u32 + base.repomap as u32;
+            u32::try_from(base.history).unwrap_or(u32::MAX) + u32::try_from(base.skills).unwrap_or(u32::MAX) + u32::try_from(base.memory).unwrap_or(u32::MAX) + u32::try_from(base.repomap).unwrap_or(u32::MAX);
         let mut yes_count = 0_u32;
         for w in &wants {
             if *w >= threshold {
@@ -1435,7 +1435,7 @@ impl KodEngine {
             .collect();
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &questions).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (keep_ids, answers, source) = match result {
             Ok(rows) => {
@@ -1532,7 +1532,7 @@ impl KodEngine {
                 "Would the user almost certainly approve this tool call?".to_string(),
             )];
             let yes = jev.evaluate_yes_no_batch(&state, &pairs).await;
-            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             let (p_yes, yes_source) = match yes {
                 Ok(rows) => (
@@ -1706,7 +1706,7 @@ impl KodEngine {
             .collect();
         let started = std::time::Instant::now();
         let decision = jev.evaluate_yes_no_batch(&state, &questions).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (categories, answers_json, confidence, source) = match decision {
             Ok(pairs) => {
@@ -1781,7 +1781,7 @@ impl KodEngine {
         let labels = crate::router::TaskType::all_labels();
         let started = std::time::Instant::now();
         let decision = jev.evaluate_choice(&state, question, labels).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (final_type, confidence, source) = match decision {
             Ok(d) => {

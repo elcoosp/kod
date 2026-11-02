@@ -1217,8 +1217,8 @@ impl MemoryManager {
             let jaccard = |a: &str, b: &str| -> f64 {
                 let ta: std::collections::HashSet<&str> = a.split_whitespace().collect();
                 let tb: std::collections::HashSet<&str> = b.split_whitespace().collect();
-                let inter = ta.intersection(&tb).count() as f64;
-                let union = ta.union(&tb).count() as f64;
+                let inter = f64::from(u32::try_from(ta.intersection(&tb).count()).unwrap_or(u32::MAX));
+                let union = f64::from(u32::try_from(ta.union(&tb).count()).unwrap_or(u32::MAX));
                 if union == 0.0 { 0.0 } else { inter / union }
             };
             let reranked = crate::fusion::mmr_rerank(
@@ -1277,7 +1277,7 @@ impl MemoryManager {
         if !top.is_empty() {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
             // H-D5: re-read each entry inside the write step so we
             // write back the *current* value, not a stale snapshot.
             // The pre-fix code captured `top` from `get_all()` and
@@ -2356,7 +2356,7 @@ impl PendingMemory {
     pub fn snapshot(context: kod_types::MemoryContext) -> Self {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         let ids = context
             .working_memory
             .iter()
@@ -2375,7 +2375,7 @@ impl PendingMemory {
     pub fn is_fresh(&self) -> bool {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         now_ms.saturating_sub(self.computed_at_ms) < FRESHNESS_WINDOW_MS
     }
 

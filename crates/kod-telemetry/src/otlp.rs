@@ -19,7 +19,7 @@ fn now_nanos() -> u128 {
     let now = time::OffsetDateTime::now_utc();
     // `unix_timestamp_nanos` returns i128; the epoch is well past
     // zero for any real clock, so the cast is safe.
-    now.unix_timestamp_nanos().max(0) as u128
+    u128::try_from(now.unix_timestamp_nanos().max(0)).unwrap_or(u128::MAX)
 }
 
 /// The resource block: `service.name` plus any caller-supplied

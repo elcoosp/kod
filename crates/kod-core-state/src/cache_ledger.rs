@@ -142,7 +142,7 @@ impl CacheLedger {
             return 0.0;
         }
         let m = 1_000_000.0;
-        (transcript_tokens as f64 / m)
+        (f64::from(u32::try_from(transcript_tokens).unwrap_or(u32::MAX)) / m)
             * (pricing.cache_write_per_mtok_usd + pricing.cache_read_per_mtok_usd)
     }
 

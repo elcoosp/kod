@@ -182,7 +182,7 @@ impl Tool for MemorySearchTool {
         let k = params
             .get("k")
             .and_then(serde_json::Value::as_u64)
-            .map_or(8, |n| n as usize)
+            .map_or(8, |n| usize::try_from(n).unwrap_or(usize::MAX))
             .min(30);
 
         let _ = context; // memory_search does not use the cwd
