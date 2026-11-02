@@ -22,6 +22,7 @@
 use std::collections::HashSet;
 
 use kod_types::ChatMessage;
+use num_traits::ToPrimitive;
 
 /// How much of a turn to render.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]

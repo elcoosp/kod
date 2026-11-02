@@ -1,4 +1,5 @@
 use super::*;
+use num_traits::ToPrimitive;
 
 /// Redact one prompt-scaffolding block, or return it unchanged when
 /// `in_prompt` redaction is off.

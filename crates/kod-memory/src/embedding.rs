@@ -23,6 +23,7 @@
 
 use async_trait::async_trait;
 use kod_error::{KodError, Result};
+use num_traits::ToPrimitive;
 
 /// One embedding client.
 #[async_trait]

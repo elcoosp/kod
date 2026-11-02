@@ -40,6 +40,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use num_traits::ToPrimitive;
 
 /// The most files the lexical wave keeps for judging.
 pub const MAX_FILE_CANDIDATES: usize = 128;

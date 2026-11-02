@@ -40,6 +40,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use typesafe_ai_rs::{Choice, Client, Noul, Question, Score, SystemOneRequest};
+use num_traits::ToPrimitive;
 
 /// Who produced a decision. Logged with every call so `/jev stats`
 /// can report Jev's share, and so a user can see when the heuristic

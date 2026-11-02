@@ -17,6 +17,7 @@
 //! swarm agent carries its own.
 
 use serde::{Deserialize, Serialize};
+use num_traits::ToPrimitive;
 
 /// One step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]

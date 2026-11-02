@@ -16,6 +16,7 @@
 use crate::stopwords;
 use kod_types::{MemoryEntry, MemoryType, MemoryMetadata};
 use time::OffsetDateTime;
+use num_traits::ToPrimitive;
 
 /// Which decay shape scoring uses.
 ///
@@ -201,7 +202,7 @@ impl QueryTerms {
     /// BM25-lite inverse document frequency for one token.
     #[must_use]
     pub fn idf(&self, token: &str) -> f32 {
-        let df = self.df.get(token).copied().unwrap_or(0) as f32;
+        let df = self.df.get(token).copied().unwrap_or(0).to_f32().unwrap_or(f32::MAX);
         (1.0 + (self.n_docs as f32 - df + 0.5) / (df + 0.5)).ln()
     }
 }
@@ -297,7 +298,7 @@ impl HybridScorer {
         } else {
             redistribute(self.w_semantic, self.w_keyword)
         };
-        let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0) * weights.vector as f32;
+        let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0) * weights.vector.to_f32().unwrap_or(f32::MAX);
         let keyword_component = wk * self.keyword_bm25_lite(query, entry) * weights.keyword as f32;
         let shape = self.decay_shape_for(entry.memory_type);
         let recency_component =
