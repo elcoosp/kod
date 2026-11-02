@@ -3464,7 +3464,7 @@ mod tests {
         // enough; the pattern will not match anyway, so the skip path
         // is the only thing that determines the outcome.
         let big = temp.path().join("huge.log");
-        let filler = vec![b'x'; (MAX_GREP_FILE_BYTES + 1) as usize];
+        let filler = vec![b'x'; usize::try_from(MAX_GREP_FILE_BYTES + 1).unwrap_or(usize::MAX)];
         std::fs::write(&big, &filler).unwrap();
         // A small file that would match, so we can also assert the
         // search continued to the small file after the skip.

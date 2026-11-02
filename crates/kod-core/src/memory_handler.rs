@@ -74,7 +74,7 @@ fn percent_decode(s: &str) -> String {
                 let hi = (bytes[i + 1] as char).to_digit(16);
                 let lo = (bytes[i + 2] as char).to_digit(16);
                 if let (Some(h), Some(l)) = (hi, lo) {
-                    out.push((h * 16 + l) as u8);
+                    out.push(u8::try_from(h * 16 + l).unwrap_or(0));
                     i += 3;
                 } else {
                     out.push(b'%');

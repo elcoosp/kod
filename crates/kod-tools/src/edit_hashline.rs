@@ -165,7 +165,7 @@ pub fn tag_of(text: &str) -> Tag {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     // Fold the high and low halves so a change anywhere moves the tag.
-    let folded = (h ^ (h >> 32)) as u16;
+    let folded = u16::try_from(h ^ (h >> 32)).unwrap_or(u16::MAX);
     folded.to_be_bytes()
 }
 

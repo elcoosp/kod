@@ -30,7 +30,7 @@ impl CompletionsWidget {
     /// Panel height for the current completion count.
     #[must_use]
     pub fn height(app: &KodApp) -> u16 {
-        (app.active_completion_len().min(8) + 2).min(10) as u16
+        u16::try_from((app.active_completion_len().min(8) + 2).min(10)).unwrap_or(u16::MAX)
     }
 
     /// Render the completions panel.

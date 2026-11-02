@@ -954,8 +954,8 @@ fn parse_diagnostics(params: &serde_json::Value, uri: &str) -> Vec<Diagnostic> {
 fn parse_locations(v: &serde_json::Value) -> Vec<crate::types::Location> {
     fn to_pos(p: &serde_json::Value) -> Option<crate::types::Position> {
         Some(crate::types::Position {
-            line: (p.get("line")?.as_u64()? + 1) as u32,
-            column: (p.get("character")?.as_u64()? + 1) as u32,
+            line: u32::try_from(p.get("line")?.as_u64()? + 1).unwrap_or(u32::MAX),
+            column: u32::try_from(p.get("character")?.as_u64()? + 1).unwrap_or(u32::MAX),
         })
     }
     fn one(item: &serde_json::Value) -> Option<crate::types::Location> {
@@ -986,8 +986,8 @@ fn parse_locations(v: &serde_json::Value) -> Vec<crate::types::Location> {
 fn parse_hover(v: &serde_json::Value) -> crate::types::Hover {
     fn to_pos(p: &serde_json::Value) -> Option<crate::types::Position> {
         Some(crate::types::Position {
-            line: (p.get("line")?.as_u64()? + 1) as u32,
-            column: (p.get("character")?.as_u64()? + 1) as u32,
+            line: u32::try_from(p.get("line")?.as_u64()? + 1).unwrap_or(u32::MAX),
+            column: u32::try_from(p.get("character")?.as_u64()? + 1).unwrap_or(u32::MAX),
         })
     }
     if v.is_null() {

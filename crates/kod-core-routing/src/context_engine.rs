@@ -352,7 +352,7 @@ pub fn render_scored(
     let mut scored: Vec<(usize, Fidelity)> = Vec::with_capacity(n);
     for (i, message) in turns.iter().enumerate() {
         consult.insert(message.id.clone());
-        let age_turns = (n - 1 - i) as u32;
+        let age_turns = u32::try_from(n - 1 - i).unwrap_or(u32::MAX);
         let chunk = Chunk {
             message,
             age_turns,

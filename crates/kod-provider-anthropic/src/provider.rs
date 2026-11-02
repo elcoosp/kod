@@ -1786,7 +1786,7 @@ mod parse_response_proptests {
             let expected_prompt = input + read.unwrap_or(0) + creation.unwrap_or(0);
             prop_assert_eq!(u.prompt_tokens, usize::try_from(expected_prompt).unwrap_or(usize::MAX));
             prop_assert_eq!(u.completion_tokens, usize::try_from(output).unwrap_or(usize::MAX));
-            prop_assert_eq!(u.total_tokens, (expected_prompt + output) as usize);
+            prop_assert_eq!(u.total_tokens, usize::try_from(expected_prompt + output).unwrap_or(usize::MAX));
             prop_assert_eq!(u.cache_read_tokens, read);
             prop_assert_eq!(u.cache_creation_tokens, creation);
         }

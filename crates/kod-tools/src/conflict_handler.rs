@@ -140,7 +140,7 @@ fn stable_id(path: &std::path::Path, start: usize, body: &str) -> String {
         h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{:08x}", (h ^ (h >> 32)) as u32)
+    format!("{:08x}", u32::try_from(h ^ (h >> 32)).unwrap_or(u32::MAX))
 }
 
 /// Scan `text` for conflict blocks. Only column-0 `<<<<<<<` opens a

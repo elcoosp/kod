@@ -4838,7 +4838,13 @@ impl TuiLoop {
                                 msg.push_str(&format!(
                                     "\nCache hits:      {cached} ({}%)\n",
                                     if total > 0 {
-                                        (f64::from(u32::try_from(cached).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) * 100.0).round() as u64
+                                        u64::try_from(
+                                            (f64::from(u32::try_from(cached).unwrap_or(u32::MAX))
+                                                / f64::from(u32::try_from(total).unwrap_or(u32::MAX))
+                                                * 100.0)
+                                                .round() as u128,
+                                        )
+                                        .unwrap_or(u64::MAX)
                                     } else {
                                         0
                                     },
