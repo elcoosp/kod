@@ -420,7 +420,7 @@ mod tests {
         let (text, e) = read_with_evidence(&p).unwrap();
         match consume(&p, text, e) {
             SpecOutcome::Committed { text, .. } => assert_eq!(text, "hello"),
-            other => panic!("expected Committed, got {other:?}"),
+            SpecOutcome::Discarded(r) => panic!("expected Committed, got Discarded({r:?})"),
         }
     }
 

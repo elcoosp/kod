@@ -182,7 +182,9 @@ async fn swarm_decomposes_runs_and_merges() {
                     r.name
                 );
             }
-            other => panic!("agent {} failed: {other:?}", r.name),
+            kod_core::AgentOutcome::Failed(e) => {
+                panic!("agent {} failed: {e}", r.name);
+            }
         }
     }
 

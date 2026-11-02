@@ -112,7 +112,7 @@ async fn test_hot_reload_on_file_change() {
     // reports Modified. The consumer's reload path handles both.
     let ev = wait_for(&mut rx, |e| match e {
         WatchEvent::Created(p) | WatchEvent::Modified(p) => p.ends_with("test.md"),
-        _ => false,
+        WatchEvent::Removed(_) => false,
     })
     .await;
     assert!(

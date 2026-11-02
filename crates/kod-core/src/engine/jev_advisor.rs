@@ -452,7 +452,7 @@ impl KodEngine {
         let result_text = match result {
             ToolResult::Success(v) => serde_json::to_string(v).unwrap_or_default(),
             ToolResult::Error(e) => format!("ERROR: {e}"),
-            _ => String::new(),
+            ToolResult::RequiresConfirmation { .. } => String::new(),
         };
         let state = crate::jev::build_state(
             &format!(
