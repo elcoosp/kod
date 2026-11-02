@@ -151,7 +151,7 @@ async fn skills_export_writes_to_destination() {
 
     let dest = cfg.path().join("exported.md");
     run_skills_export("demo-skill", dest.clone(), false)
-        .await
+
         .expect("exporting an existing skill must succeed");
     assert!(dest.exists(), "export did not create {dest:?}");
 }
@@ -179,7 +179,7 @@ async fn skills_export_refuses_overwrite_without_force() {
     std::fs::write(&dest, "preexisting content").unwrap();
 
     let err = run_skills_export("demo-skill", dest.clone(), false)
-        .await
+
         .expect_err("export over an existing destination must be refused");
     assert!(
         err.to_string().contains("Refusing to overwrite"),

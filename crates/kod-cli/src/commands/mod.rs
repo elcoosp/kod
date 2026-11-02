@@ -508,21 +508,21 @@ impl Cli {
                         None | Some(SkillsAction::List) => run_skills_list(*json).await,
                         Some(SkillsAction::New { name }) => run_skills_new(name),
                         Some(SkillsAction::Remove { name, yes }) => {
-                            run_skills_remove(name, *yes).await
+                            run_skills_remove(name, *yes)
                         }
-                        Some(SkillsAction::Edit { name }) => run_skills_edit(name).await,
-                        Some(SkillsAction::Show { name }) => run_skills_show(name).await,
+                        Some(SkillsAction::Edit { name }) => run_skills_edit(name),
+                        Some(SkillsAction::Show { name }) => run_skills_show(name),
                         Some(SkillsAction::Export { name, dest, force }) => {
-                            run_skills_export(name, dest.clone(), *force).await
+                            run_skills_export(name, dest.clone(), *force)
                         }
                         Some(SkillsAction::Search { query }) => run_skills_search(query),
                         Some(SkillsAction::Copy { name, new_name }) => {
-                            run_skills_copy(name, new_name).await
+                            run_skills_copy(name, new_name)
                         }
                         Some(SkillsAction::Rename { name, new_name }) => {
                             run_skills_rename(name, new_name).await
                         }
-                        Some(SkillsAction::Source { name }) => run_skills_source(name).await,
+                        Some(SkillsAction::Source { name }) => run_skills_source(name),
                     }
                 })
             }
@@ -747,7 +747,7 @@ impl Cli {
                 rt.block_on(async {
                     match action {
                         FixtureAction::Save { name, turns, force } => {
-                            run_fixture_save_v2(name, turns.clone(), *force).await
+                            run_fixture_save_v2(name, turns.clone(), *force)
                         }
                         FixtureAction::Replay {
                             name,

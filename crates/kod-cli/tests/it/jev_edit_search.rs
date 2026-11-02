@@ -136,7 +136,7 @@ async fn skills_edit_runs_the_editor() {
     let _ed = EnvVar::set_str("EDITOR", ":");
 
     run_skills_edit("edit-me")
-        .await
+
         .expect("EDITOR=: must make the editor spawn exit 0");
     assert!(
         skills.path().join("edit-me.md").exists(),

@@ -208,7 +208,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_fixture_save_v2(
+pub fn run_fixture_save_v2(
     name: &str,
     turns: Option<std::path::PathBuf>,
     force: bool,

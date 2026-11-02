@@ -228,7 +228,7 @@ pub fn run_skills_new(name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
+pub fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     let Some(path) = find_skill_path(name)? else {
         {
                     return Err(KodError::InvalidParameters {
@@ -280,7 +280,7 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_edit(name: &str) -> Result<()> {
+pub fn run_skills_edit(name: &str) -> Result<()> {
     let Some(path) = find_skill_path(name)? else {
         {
                     return Err(KodError::InvalidParameters {
@@ -318,7 +318,7 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_show(name: &str) -> Result<()> {
+pub fn run_skills_show(name: &str) -> Result<()> {
     let Some(path) = find_skill_path(name)? else {
         {
                     return Err(KodError::InvalidParameters {
@@ -406,7 +406,7 @@ pub(super) fn to_title_case(s: &str) -> String {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
+pub fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
     let Some(src) = find_skill_path(name)? else {
         {
                     return Err(KodError::InvalidParameters {
@@ -606,7 +606,7 @@ pub fn run_skills_validate_strict() -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
+pub fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     // Validate the new name.
     if !new_name
         .chars()
@@ -710,7 +710,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
 
     // Reuse the copy path so the `name:` rewrite logic lives in one
     // place.
-    run_skills_copy(name, new_name).await?;
+    run_skills_copy(name, new_name)?;
     std::fs::remove_file(&src).map_err(KodError::Io)?;
     println!(
         "Renamed {} -> {} (removed {})",
@@ -726,7 +726,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_source(name: &str) -> Result<()> {
+pub fn run_skills_source(name: &str) -> Result<()> {
     match find_skill_path(name)? {
         Some(p) => {
             println!("{}", p.display());

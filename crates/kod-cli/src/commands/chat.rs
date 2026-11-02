@@ -280,7 +280,7 @@ pub async fn run_chat(
     if config.skills.enable_hot_reload {
         for dir in &skills_dirs {
             if dir.is_dir()
-                && let Err(e) = engine.enable_hot_reload(dir).await
+                && let Err(e) = engine.enable_hot_reload(dir)
             {
                 eprintln!(
                     "Could not enable skill hot reload for {}: {}",

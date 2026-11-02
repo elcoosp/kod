@@ -151,6 +151,6 @@ async fn skills_show_reads_the_named_skill() {
     write_skill(skills.path(), "demo-skill");
     let _guard = ConfigDirEnv::set(cfg.path());
     run_skills_show("demo-skill")
-        .await
+
         .expect("show of an existing skill should succeed");
 }

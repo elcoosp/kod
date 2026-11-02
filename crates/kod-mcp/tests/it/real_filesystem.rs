@@ -59,7 +59,7 @@ async fn spawn_filesystem_server(dir: &std::path::Path) -> McpClient {
         dir.to_string_lossy().to_string(),
     ];
     McpClient::spawn_stdio("npx", &args, &BTreeMap::new())
-        .await
+
         .expect("spawn @modelcontextprotocol/server-filesystem via npx")
 }
 

@@ -58,7 +58,7 @@ async fn skills_show_missing_is_err() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     let err = run_skills_show("does-not-exist")
-        .await
+
         .expect_err("a missing skill must be an error, not an exit");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }
@@ -69,7 +69,7 @@ async fn skills_source_missing_is_err() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     let err = run_skills_source("does-not-exist")
-        .await
+
         .expect_err("a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }
@@ -82,7 +82,7 @@ async fn skills_remove_missing_is_err() {
     // `yes = true` skips the confirmation prompt; the not-found check
     // runs first regardless.
     let err = run_skills_remove("does-not-exist", true)
-        .await
+
         .expect_err("a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }
@@ -95,7 +95,7 @@ async fn skills_edit_missing_is_err() {
     // The not-found check fires before the editor is spawned, so
     // this never opens $EDITOR.
     let err = run_skills_edit("does-not-exist")
-        .await
+
         .expect_err("a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }
@@ -107,7 +107,7 @@ async fn skills_export_missing_is_err() {
     let _guard = ConfigDirEnv::set(cfg.path());
     let dest = cfg.path().join("out.md");
     let err = run_skills_export("does-not-exist", dest, false)
-        .await
+
         .expect_err("exporting a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }
@@ -118,7 +118,7 @@ async fn skills_copy_missing_is_err() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     let err = run_skills_copy("does-not-exist", "new-name")
-        .await
+
         .expect_err("copying a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }

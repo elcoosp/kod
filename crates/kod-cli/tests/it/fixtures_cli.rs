@@ -133,7 +133,7 @@ async fn save_v2_refuses_to_overwrite_without_force() {
         .save_to(&tmp.path().join("demo.json"))
         .expect("save existing fixture");
     let err = run_fixture_save_v2("demo", Some(turns), false)
-        .await
+
         .expect_err("existing fixture without --force must error");
     assert!(
         err.to_string().contains("already exists"),

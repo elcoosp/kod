@@ -796,7 +796,7 @@ impl KodEngine {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
+    pub fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
         self.router.enable_hot_reload(skills_dir)
     }
 

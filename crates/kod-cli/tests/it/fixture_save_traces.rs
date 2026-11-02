@@ -168,7 +168,7 @@ async fn save_v2_with_force_overwrites_a_seeded_fixture() {
         .expect("seed fixture");
 
     run_fixture_save_v2("pre", Some(trace_path), true)
-        .await
+
         .expect("save_v2 with force must overwrite an existing fixture");
 
     let overwritten = Fixture::load_from(&tmp.path().join("pre.json")).expect("load fixture");

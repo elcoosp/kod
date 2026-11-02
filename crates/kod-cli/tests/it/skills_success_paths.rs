@@ -97,7 +97,7 @@ async fn skills_copy_creates_new_and_keeps_original() {
     let _guard = ConfigDirEnv::set(cfg.path());
 
     run_skills_copy("original-skill", "copied-skill")
-        .await
+
         .expect("copying an existing skill must succeed");
 
     assert!(
@@ -147,7 +147,7 @@ async fn skills_remove_with_yes_deletes_the_file() {
     let _guard = ConfigDirEnv::set(cfg.path());
 
     run_skills_remove("doomed-skill", true)
-        .await
+
         .expect("removing with yes=true must succeed");
 
     assert!(

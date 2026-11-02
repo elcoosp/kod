@@ -472,7 +472,7 @@ impl TuiLoop {
             if config.skills.enable_hot_reload {
                 for dir in &skills_dirs {
                     if dir.is_dir()
-                        && let Err(e) = engine.enable_hot_reload(dir).await
+                        && let Err(e) = engine.enable_hot_reload(dir)
                     {
                         tracing::warn!(
                             dir = %dir.display(),
@@ -648,7 +648,7 @@ impl TuiLoop {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub async fn init_terminal(&mut self) -> Result<()> {
-        let result = self.init_terminal_inner().await;
+        let result = self.init_terminal_inner();
         if result.is_err() {
             let _ = crossterm::execute!(
                 std::io::stdout(),
@@ -663,7 +663,7 @@ impl TuiLoop {
         result
     }
 
-    async fn init_terminal_inner(&mut self) -> Result<()> {
+    fn init_terminal_inner(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()
             .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {e}")))?;
 

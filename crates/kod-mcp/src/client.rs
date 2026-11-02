@@ -121,7 +121,7 @@ impl McpClient {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn spawn_stdio(
+    pub fn spawn_stdio(
         cmd: &str,
         args: &[String],
         env: &BTreeMap<String, String>,
@@ -761,7 +761,7 @@ for line in sys.stdin:
             &[script.to_string_lossy().to_string()],
             &BTreeMap::new(),
         )
-        .await
+
         .expect("spawn fake server");
         (dir, client)
     }
@@ -859,7 +859,7 @@ for line in sys.stdin:
         // Match on the result directly instead.
         let result =
             McpClient::spawn_stdio("this-binary-does-not-exist-kod-test", &[], &BTreeMap::new())
-                .await;
+;
         match result {
             Ok(_) => panic!("spawn of a missing binary must fail"),
             Err(McpError::Spawn { program, .. }) => {
@@ -905,7 +905,7 @@ mod t2_c6_regression {
         );
         let args = vec!["-c".to_string(), script];
         let client = McpClient::spawn_stdio("sh", &args, &std::collections::BTreeMap::new())
-            .await
+
             .expect("spawn");
 
         // Give the shell a moment to install the trap before we signal.
