@@ -3,7 +3,6 @@
 //! Extracted from `engine/mod.rs`.
 
 use super::*;
-use std::fmt::Write as _;
 
 impl KodEngine {
     pub(crate) async fn prepare_turn(
@@ -91,15 +90,15 @@ impl KodEngine {
             } else {
                 let mut s = system_text;
                 s.push_str("\n\n## LSP diagnostics (late)\n\n");
-                let _ = write!(s, 
+                s.push_str(&format!(
                     "{} diagnostic(s) arrived after the previous write:\n\n",
                     late.len(),
-                );
+                ));
                 for d in late.iter().take(20) {
-                    let _ = write!(s, 
+                    s.push_str(&format!(
                         "{}:{}:{} {} {}\n",
                         d.file, d.line, d.column, d.severity, d.message,
-                    );
+                    ));
                 }
                 s
             }

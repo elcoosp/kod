@@ -11,7 +11,6 @@ use kod_skills::matcher::SkillMatcher;
 use kod_types::{MemoryContext, ToolCall, ToolResult};
 use std::path::PathBuf;
 use std::time::Instant;
-use std::fmt::Write as _;
 
 /// Truncate a UTF-8 string to at most `max` **characters**, ending on
 /// a char boundary. Local to this module so the router does not need
@@ -1083,7 +1082,7 @@ impl TaskRouter {
             if !mem_ctx.working_memory.is_empty() {
                 context.push_str("## Current Context\n\n");
                 for entry in &mem_ctx.working_memory {
-                    let _ = write!(context, "- {}\n", entry.content);
+                    context.push_str(&format!("- {}\n", entry.content));
                 }
                 context.push('\n');
             }
@@ -1091,7 +1090,7 @@ impl TaskRouter {
             if !mem_ctx.long_term.is_empty() {
                 context.push_str("## User Preferences\n\n");
                 for entry in &mem_ctx.long_term {
-                    let _ = write!(context, "- {}\n", entry.content);
+                    context.push_str(&format!("- {}\n", entry.content));
                 }
                 context.push('\n');
             }
@@ -1421,12 +1420,12 @@ impl TaskRouter {
                 } else {
                     String::new()
                 };
-                let _ = write!(prompt, 
+                prompt.push_str(&format!(
                     "## Available skills ({})\n\n{}{}\n\n",
                     names.len(),
                     listed.join("\n"),
                     more
-                );
+                ));
             }
             // Prefer the caller's list (the engine's `refined_skills`,
             // which unions the lexical match with Jev's semantic one).
@@ -1462,10 +1461,10 @@ impl TaskRouter {
                     let base_dir = skill
                         .path
                         .parent().map_or_else(|| ".".to_string(), |p| p.display().to_string());
-                    let _ = write!(prompt, 
+                    prompt.push_str(&format!(
                         "### {}\nSkill location: {}\n\n{}\n\n",
                         skill.metadata.name, base_dir, skill.instructions
-                    );
+                    ));
 
                     // The parser splits a skill file into instructions,
                     // examples, and constraints. Only the instructions
@@ -1483,7 +1482,7 @@ impl TaskRouter {
                         prompt.push_str("Examples:\n\n");
                         for ex in skill.examples.iter().take(MAX_SKILL_EXAMPLES) {
                             if !ex.input.trim().is_empty() {
-                                let _ = write!(prompt, "Input: {}\n", ex.input.trim());
+                                prompt.push_str(&format!("Input: {}\n", ex.input.trim()));
                             }
                             let out = ex.output.trim();
                             // Rely on truncate_chars's own behavior to
@@ -1500,19 +1499,19 @@ impl TaskRouter {
                             } else {
                                 out.to_string()
                             };
-                            let _ = write!(prompt, "Output:\n{shown}\n\n");
+                            prompt.push_str(&format!("Output:\n{shown}\n\n"));
                         }
                         let extra = skill.examples.len().saturating_sub(MAX_SKILL_EXAMPLES);
                         if extra > 0 {
-                            let _ = write!(prompt, 
+                            prompt.push_str(&format!(
                                 "…and {extra} more example(s) in the skill file.\n\n"
-                            );
+                            ));
                         }
                     }
                     if let Some(constraints) = &skill.constraints
                         && !constraints.trim().is_empty()
                     {
-                        let _ = write!(prompt, "Constraints:\n{}\n\n", constraints.trim());
+                        prompt.push_str(&format!("Constraints:\n{}\n\n", constraints.trim()));
                     }
                 }
             }
@@ -1542,9 +1541,9 @@ impl TaskRouter {
         }
 
         // Add user input
-        let _ = write!(prompt, 
+        prompt.push_str(&format!(
             "## Conversation so far\n\n{history}\n\n## User Request\n\n{input}"
-        );
+        ));
 
         Ok(prompt)
     }

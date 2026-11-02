@@ -12,7 +12,6 @@
 //! on exact message contents (which change with every run).
 
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
 
 /// One round's captured request + response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,28 +297,28 @@ impl Fixture {
 #[must_use]
 pub fn diff_rounds(expected: &RoundFixture, actual: &RoundFixture) -> String {
     let mut out = String::new();
-    let _ = write!(out, 
+    out.push_str(&format!(
         "Round {} request hash: expected {} got {}\n",
         expected.seq, expected.request_hash, actual.request_hash,
-    );
-    let _ = write!(out, 
+    ));
+    out.push_str(&format!(
         "  system_chars:  {} → {}\n",
         expected.request_summary.system_chars, actual.request_summary.system_chars,
-    );
-    let _ = write!(out, 
+    ));
+    out.push_str(&format!(
         "  message_count: {} → {}\n",
         expected.request_summary.message_count, actual.request_summary.message_count,
-    );
-    let _ = write!(out, 
+    ));
+    out.push_str(&format!(
         "  model:         {} → {}\n",
         expected.request_summary.model, actual.request_summary.model,
-    );
+    ));
     if expected.request_summary.tool_names != actual.request_summary.tool_names {
-        let _ = write!(out, 
+        out.push_str(&format!(
             "  tools: {} → {}\n",
             expected.request_summary.tool_names.join(", "),
             actual.request_summary.tool_names.join(", "),
-        );
+        ));
     }
     out
 }

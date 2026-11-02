@@ -18,7 +18,6 @@
 
 use serde::{Deserialize, Serialize};
 use num_traits::ToPrimitive;
-use std::fmt::Write as _;
 
 /// One step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,15 +213,15 @@ impl Plan {
                 PlanStatus::Skipped => "·",
                 PlanStatus::Pending => " ",
             };
-            let _ = write!(out, "{} {}. {}\n", marker, s.id + 1, s.text);
+            out.push_str(&format!("{} {}. {}\n", marker, s.id + 1, s.text));
             if let Some(notes) = self.notes.get(&s.id) {
                 for n in notes {
-                    let _ = write!(out, "   note: {n}\n");
+                    out.push_str(&format!("   note: {n}\n"));
                 }
             }
         }
         if let Some(cur) = self.current_step() {
-            let _ = write!(out, "\nCurrent step: {}. {}\n", cur.id + 1, cur.text);
+            out.push_str(&format!("\nCurrent step: {}. {}\n", cur.id + 1, cur.text));
         }
         out
     }

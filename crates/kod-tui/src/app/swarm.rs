@@ -7,7 +7,6 @@
 //! views.
 
 use super::*;
-use std::fmt::Write as _;
 
 impl KodApp {
     /// All tracked agents.
@@ -86,7 +85,7 @@ impl KodApp {
         let mut s = format!("Swarm: {} subtasks\n", subtasks.len());
         for (i, (name, desc)) in subtasks.iter().enumerate() {
             let d = desc.lines().next().unwrap_or(desc);
-            let _ = write!(s, "  {}. {} — {}\n", i + 1, name, d);
+            s.push_str(&format!("  {}. {} — {}\n", i + 1, name, d));
         }
         self.push_system_message(s.trim_end());
     }

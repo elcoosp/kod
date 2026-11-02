@@ -45,7 +45,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::internal_url::{ProtocolError, ProtocolHandler, ResolveContext, ResolvedResource};
 use async_trait::async_trait;
-use std::fmt::Write as _;
 
 /// Files larger than this are not scanned for conflicts.
 pub const MAX_SCAN_BYTES: u64 = 10 * 1024 * 1024;
@@ -330,13 +329,13 @@ impl ProtocolHandler for ConflictHandler {
             let mut registered = b.clone();
             registered.id = id.clone();
             self.store.register(&path, registered, body.to_string());
-            let _ = write!(listing, 
+            listing.push_str(&format!(
                 "conflict://{id}\n  ours ({}): {} line(s)\n  theirs ({}): {} line(s)\n\n",
                 b.ours_label,
                 b.ours.lines().count(),
                 b.theirs_label,
                 b.theirs.lines().count(),
-            );
+            ));
         }
         Ok(ResolvedResource {
             text: listing,

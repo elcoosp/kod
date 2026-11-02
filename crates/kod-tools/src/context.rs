@@ -4,7 +4,6 @@ use crate::path_lock::PathLockTable;
 use kod_error::{KodError, Result};
 use kod_types::ToolPermissions;
 use std::path::{Path, PathBuf};
-use std::fmt::Write as _;
 
 /// How the tool should invoke shell commands.
 ///
@@ -535,7 +534,7 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
             format!("{h}/.docker/config.json"),
         ];
         for path in &secrets {
-            let _ = write!(profile, "(deny file-read* (subpath \"{path}\"))\n");
+            profile.push_str(&format!("(deny file-read* (subpath \"{path}\"))\n"));
         }
     }
     if opts.net_deny {
@@ -545,9 +544,9 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     // matching rule wins, so the specific allows must come after the
     // broad deny.
     profile.push_str("(deny file-write*)\n");
-    let _ = write!(profile, 
+    profile.push_str(&format!(
         "(allow file-write* (subpath \"{wd_str}\"))\n"
-    );
+    ));
     // stdout / stderr / /dev/null writes go through the file-write*
     // operation. Without this allow, an `echo hello` inside the
     // sandbox produces no output at all — the sandbox silently
@@ -565,10 +564,10 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         // canonical workspace makes both halves of the same subtree
         // share one spelling.
         let git_canon = std::fs::canonicalize(wd.join(".git")).unwrap_or_else(|_| wd.join(".git"));
-        let _ = write!(profile, 
+        profile.push_str(&format!(
             "(deny file-write* (subpath \"{git}\"))\n",
             git = git_canon.to_string_lossy(),
-        );
+        ));
     }
 
     SandboxInvocation {
