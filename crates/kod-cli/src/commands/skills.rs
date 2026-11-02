@@ -733,9 +733,9 @@ pub async fn run_skills_source(name: &str) -> Result<()> {
             Ok(())
         }
         None => {
-            return Err(KodError::InvalidParameters {
+            Err(KodError::InvalidParameters {
                 reason: format!("No skill named {name:?}."),
-            });
+            })
         }
     }
 }

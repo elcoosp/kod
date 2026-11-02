@@ -386,9 +386,9 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     Ok(())
                 }
                 None => {
-                    return Err(KodError::FileNotFound {
+                    Err(KodError::FileNotFound {
                         path: dir.display().to_string(),
-                    });
+                    })
                 }
             }
         }

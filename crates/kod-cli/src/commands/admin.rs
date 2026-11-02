@@ -1135,9 +1135,9 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                 Ok(())
             } else {
                 eprintln!("No tool named {name:?}. Try `kod tools`.");
-                return Err(kod_error::KodError::Internal(
+                Err(kod_error::KodError::Internal(
                     "admin: fatal check failed".to_string(),
-                ));
+                ))
             }
         }
     }
@@ -1355,9 +1355,9 @@ pub async fn run_if_bench(
     if pass {
         Ok(())
     } else {
-        return Err(kod_error::KodError::Internal(
+        Err(kod_error::KodError::Internal(
             "admin: fatal check failed".to_string(),
-        ));
+        ))
     }
 }
 
