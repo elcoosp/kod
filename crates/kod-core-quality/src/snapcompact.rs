@@ -376,7 +376,7 @@ pub fn base64_encode(bytes: &[u8]) -> String {
             chunk.get(1).copied().unwrap_or(0),
             chunk.get(2).copied().unwrap_or(0),
         ];
-        let n = ((u32::try_from(b[0]).unwrap_or(u32::MAX) as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
+        let n = ((u32::try_from(b[0]).unwrap_or(u32::MAX) as u32) << 16) | ((u32::from(b[1])) << 8) | (b[2] as u32);
         out.push(ALPHABET[((n >> 18) & 0x3F) as usize] as char);
         out.push(ALPHABET[((n >> 12) & 0x3F) as usize] as char);
         if chunk.len() > 1 {
