@@ -1842,7 +1842,7 @@ impl std::hash::Hasher for Fnv1aHasher {
     }
     fn write(&mut self, bytes: &[u8]) {
         for b in bytes {
-            self.0 ^= *b as u64;
+            self.0 ^= u64::from(*b);
             self.0 = self.0.wrapping_mul(Self::PRIME);
         }
     }

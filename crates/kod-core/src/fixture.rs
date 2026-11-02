@@ -81,7 +81,7 @@ impl RequestSummary {
     pub fn hash(&self) -> String {
         fn feed(h: &mut u64, b: &[u8]) {
             for x in b {
-                *h ^= *x as u64;
+                *h ^= u64::from(*x);
                 *h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
         }

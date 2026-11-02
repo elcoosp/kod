@@ -33,7 +33,7 @@ impl KodEngine {
         let mut h = FNV_OFFSET;
         let mut mix = |bytes: &[u8]| {
             for b in bytes {
-                h ^= *b as u64;
+                h ^= u64::from(*b);
                 h = h.wrapping_mul(FNV_PRIME);
             }
         };

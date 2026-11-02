@@ -365,7 +365,7 @@ impl LearnedAllow {
         let digest = sha.finalize();
         let mut h: u64 = 0;
         for b in &digest[..8] {
-            h = (h << 8) | (*b as u64);
+            h = (h << 8) | (u64::from(*b));
         }
         Self {
             tool_name: call.tool_name.clone(),

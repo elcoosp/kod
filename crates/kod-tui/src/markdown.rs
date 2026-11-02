@@ -227,7 +227,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = OFFSET;
     for b in bytes {
-        h ^= *b as u64;
+        h ^= u64::from(*b);
         h = h.wrapping_mul(PRIME);
     }
     h

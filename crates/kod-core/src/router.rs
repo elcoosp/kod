@@ -1871,15 +1871,15 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
 
     for (path, mtime, size) in &entries {
         for byte in path.to_string_lossy().as_bytes() {
-            h ^= *byte as u64;
+            h ^= u64::from(*byte);
             h = h.wrapping_mul(FNV_PRIME);
         }
         for byte in mtime.to_le_bytes() {
-            h ^= byte as u64;
+            h ^=u64::from(byte);
             h = h.wrapping_mul(FNV_PRIME);
         }
         for byte in size.to_le_bytes() {
-            h ^= byte as u64;
+            h ^=u64::from(byte);
             h = h.wrapping_mul(FNV_PRIME);
         }
     }
