@@ -580,7 +580,7 @@ impl KodApp {
         if elapsed < 0.05 {
             return None;
         }
-        let tokens = self.streamed_chars_this_turn as f32 / 4.0;
+        let tokens = f32::from(u16::try_from(self.streamed_chars_this_turn).unwrap_or(u16::MAX)) / 4.0;
         Some(tokens / elapsed)
     }
 

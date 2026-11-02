@@ -351,7 +351,7 @@ fn compute_pagerank(
     const DAMPING: f32 = 0.85;
     const ITERATIONS: usize = 20;
 
-    let n = entries.len().max(1) as f32;
+    let n = f32::from(u16::try_from(entries.len().max(1)).unwrap_or(u16::MAX));
     let base = (1.0 - DAMPING) / n;
 
     // Build the incoming-edges map: for each path, the set of files
@@ -359,7 +359,7 @@ fn compute_pagerank(
     let mut incoming: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
     let mut out_degree: BTreeMap<PathBuf, f32> = BTreeMap::new();
     for (from, targets) in imports {
-        let deg = targets.len() as f32;
+        let deg = f32::from(u16::try_from(targets.len()).unwrap_or(u16::MAX));
         if deg == 0.0 {
             continue;
         }

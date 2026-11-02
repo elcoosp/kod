@@ -60,7 +60,7 @@ pub fn reciprocal_rank_fusion(lists: &[Vec<String>]) -> Vec<(String, f64)> {
     let mut scores: HashMap<String, f64> = HashMap::new();
     for list in lists {
         for (i, id) in list.iter().enumerate() {
-            let rank = (i + 1) as f64;
+            let rank = f64::from(u32::try_from(i + 1).unwrap_or(u32::MAX));
             *scores.entry(id.clone()).or_insert(0.0) += 1.0 / (RRF_K + rank);
         }
     }

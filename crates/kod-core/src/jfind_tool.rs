@@ -44,7 +44,7 @@ impl Judge for LexicalJudge {
                 }
                 let cl = c.to_lowercase();
                 let hits = words.iter().filter(|w| cl.contains(w.as_str())).count();
-                hits as f32 / words.len() as f32
+                f32::from(u16::try_from(hits).unwrap_or(u16::MAX)) / f32::from(u16::try_from(words.len()).unwrap_or(u16::MAX))
             })
             .collect()
     }
