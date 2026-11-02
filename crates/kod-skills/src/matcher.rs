@@ -675,7 +675,6 @@ mod matcher_proptests {
         #[test]
         fn prop_one_cjk_char_query_does_not_tag_reverse_match(c in cjk_char()) {
             let tag = format!("{c}設");
-            let matcher = SkillMatcher::new();
             let skill = test_skill("", &[&tag]);
             let (_score, reasons) = SkillMatcher::score_skill(&skill, &c.to_string());
             prop_assert!(
@@ -695,7 +694,6 @@ mod matcher_proptests {
         #[test]
         fn prop_one_cjk_char_query_does_not_name_match(c in cjk_char()) {
             let name = format!("{c}師");
-            let matcher = SkillMatcher::new();
             let skill = test_skill(&name, &[]);
             let (_score, reasons) = SkillMatcher::score_skill(&skill, &c.to_string());
             prop_assert!(
@@ -716,7 +714,6 @@ mod matcher_proptests {
         fn prop_one_cjk_char_name_does_not_match(c in cjk_char()) {
             let name = c.to_string();
             let query = format!("{c}設");
-            let matcher = SkillMatcher::new();
             let skill = test_skill(&name, &[]);
             let (_score, reasons) = SkillMatcher::score_skill(&skill, &query);
             prop_assert!(
@@ -737,7 +734,6 @@ mod matcher_proptests {
     /// the comment documents.
     #[test]
     fn control_two_ascii_char_query_does_not_reverse_match() {
-        let matcher = SkillMatcher::new();
         let skill = test_skill("", &["build"]);
         let (_score, reasons) = SkillMatcher::score_skill(&skill, "ui");
         assert!(
@@ -753,7 +749,6 @@ mod matcher_proptests {
     /// 9 bytes, both >= 3). Proves the fix does not over-tighten.
     #[test]
     fn control_three_cjk_char_query_still_reverse_matches() {
-        let matcher = SkillMatcher::new();
         let skill = test_skill("", &["中國設計師學會"]);
         let (_score, reasons) = SkillMatcher::score_skill(&skill, "設計師");
         assert!(
@@ -768,7 +763,6 @@ mod matcher_proptests {
     /// case, also passes both pre-fix and post-fix.
     #[test]
     fn control_three_ascii_char_query_still_reverse_matches() {
-        let matcher = SkillMatcher::new();
         let skill = test_skill("", &["rebuild"]);
         let (_score, reasons) = SkillMatcher::score_skill(&skill, "bui");
         assert!(
@@ -783,7 +777,6 @@ mod matcher_proptests {
     /// for the name path. Passes both pre-fix and post-fix.
     #[test]
     fn control_three_cjk_char_query_still_name_matches() {
-        let matcher = SkillMatcher::new();
         let skill = test_skill("中國設計師學會", &[]);
         let (_score, reasons) = SkillMatcher::score_skill(&skill, "設計師");
         assert!(
