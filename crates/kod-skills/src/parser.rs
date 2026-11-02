@@ -56,19 +56,18 @@ impl SkillParser {
     ///
     /// Returns `Err` when the underlying operation fails.
     pub fn parse_content(&self, content: &str, source_name: &str) -> Result<Skill> {
-        let (metadata, body) = self.split_front_matter(content, source_name)?;
+        let (metadata, body) = Self::split_front_matter(content, source_name)?;
 
         self.validate_metadata(&metadata)?;
 
-        let instructions = self
-            .extract_section(&body, "## Instructions")
+        let instructions = Self::extract_section(&body, "## Instructions")
             // Real-world SKILL.md files (Claude-style) rarely have an
             // `## Instructions` section — the whole body IS the instructions.
             // Fall back to it instead of rejecting the skill.
             .unwrap_or_else(|| body.clone());
 
         let examples = self.extract_examples(&body);
-        let constraints = self.extract_section(&body, "## Constraints");
+        let constraints = Self::extract_section(&body, "## Constraints");
 
         Ok(Skill {
             id: SkillId::new(),
@@ -82,7 +81,7 @@ impl SkillParser {
     }
 
     /// Split content into front matter and body
-    fn split_front_matter(&self, content: &str, source: &str) -> Result<(SkillMetadata, String)> {
+    fn split_front_matter(content: &str, source: &str) -> Result<(SkillMetadata, String)> {
         // Bug-hunt post-v0.1.9 (P3): U+FEFF is not whitespace in
         // current Unicode (removed from White_Space in 3.2), so
         // str::trim does not strip it. A BOM-emitting editor's
@@ -143,7 +142,7 @@ impl SkillParser {
     }
 
     /// Extract a section from markdown body
-    fn extract_section(&self, body: &str, section_header: &str) -> Option<String> {
+    fn extract_section(body: &str, section_header: &str) -> Option<String> {
         let start = body.find(section_header)?;
         let content_after = &body[start + section_header.len()..];
 
@@ -172,7 +171,7 @@ impl SkillParser {
             };
 
             let opening_tag = &body[start..tag_end];
-            let input_attr = self.extract_attribute(opening_tag, "input");
+            let input_attr = Self::extract_attribute(opening_tag, "input");
 
             // Find closing tag
             let close_rel = match body[tag_end..].find("</example>") {
@@ -194,7 +193,7 @@ impl SkillParser {
     }
 
     /// Extract attribute value from an XML-like tag
-    fn extract_attribute(&self, tag: &str, attr: &str) -> Option<String> {
+    fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
         // Fix (proptest round): require a whitespace boundary before
         // the attribute name. The pre-fix `tag.find("input=\"")` was
         // a substring match, so `data-input="x"`, `xinput="y"`, and
