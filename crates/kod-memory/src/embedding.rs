@@ -600,9 +600,9 @@ mod coverage_embedding_parsing {
     fn parse_float_array_accepts_negative_values() {
         let v: serde_json::Value = serde_json::from_str("[-0.5, -1.0, 0.5]").unwrap();
         let out = parse_float_array(&v).unwrap();
-        assert!(f64::from(out[0]).to_bits() == f64::from(-0.5_f32).to_bits());
-        assert!(f64::from(out[1]).to_bits() == f64::from(-1.0_f32).to_bits());
-        assert!(f64::from(out[2]).to_bits() == f64::from(0.5_f32).to_bits());
+        assert_eq!(f64::from(out[0]).to_bits(), f64::from(-0.5_f32).to_bits());
+        assert_eq!(f64::from(out[1]).to_bits(), f64::from(-1.0_f32).to_bits());
+        assert_eq!(f64::from(out[2]).to_bits(), f64::from(0.5_f32).to_bits());
     }
 
     #[test]

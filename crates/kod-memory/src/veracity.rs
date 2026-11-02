@@ -170,11 +170,11 @@ mod tests {
 
     #[test]
     fn the_weights_match_the_design_table() {
-        assert!(Veracity::Stated.weight().to_bits() == f64::from(1.0_f32).to_bits());
-        assert!(Veracity::Inferred.weight().to_bits() == f64::from(0.7_f32).to_bits());
-        assert!(Veracity::Imported.weight().to_bits() == f64::from(0.6_f32).to_bits());
-        assert!(Veracity::Unknown.weight().to_bits() == f64::from(0.8_f32).to_bits());
-        assert!(Veracity::Tool.weight().to_bits() == f64::from(0.5_f32).to_bits());
+        assert_eq!(Veracity::Stated.weight().to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(Veracity::Inferred.weight().to_bits(), f64::from(0.7_f32).to_bits());
+        assert_eq!(Veracity::Imported.weight().to_bits(), f64::from(0.6_f32).to_bits());
+        assert_eq!(Veracity::Unknown.weight().to_bits(), f64::from(0.8_f32).to_bits());
+        assert_eq!(Veracity::Tool.weight().to_bits(), f64::from(0.5_f32).to_bits());
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn a_stated_fact_starts_at_a_half() {
-        assert!(Veracity::Stated.base_confidence().to_bits() == f64::from(0.5_f32).to_bits());
+        assert_eq!(Veracity::Stated.base_confidence().to_bits(), f64::from(0.5_f32).to_bits());
     }
 
     #[test]
@@ -224,12 +224,12 @@ mod tests {
 
     #[test]
     fn confidence_never_exceeds_one() {
-        assert!(raise_confidence(2.0, 1.0).to_bits() == f64::from(1.0_f32).to_bits());
+        assert_eq!(raise_confidence(2.0, 1.0).to_bits(), f64::from(1.0_f32).to_bits());
     }
 
     #[test]
     fn base_confidence_fn_matches_the_enum() {
-        assert!(base_confidence(Veracity::Stated).to_bits() == Veracity::Stated.base_confidence().to_bits());
+        assert_eq!(base_confidence(Veracity::Stated).to_bits(), Veracity::Stated.base_confidence().to_bits());
     }
 
     #[test]

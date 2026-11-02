@@ -1238,7 +1238,7 @@ mod tests {
     fn the_documented_defaults_hold() {
         let o = JudgmentOptions::default();
         assert_eq!(o.max_tokens, 4096);
-        assert!(f64::from(o.temperature).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(o.temperature).to_bits(), f64::from(0.0_f32).to_bits());
         assert_eq!(o.max_format_retries, 1);
     }
 }

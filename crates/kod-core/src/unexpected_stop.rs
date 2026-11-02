@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn the_threshold_constant_matches_the_doc() {
         // The doc's number, restated for the label-based judge.
-        assert!(f64::from(UNEXPECTED_STOP_THRESHOLD).to_bits() == f64::from(0.5_f32).to_bits());
+        assert_eq!(f64::from(UNEXPECTED_STOP_THRESHOLD).to_bits(), f64::from(0.5_f32).to_bits());
     }
 
     // -----------------------------------------------------------------

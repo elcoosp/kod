@@ -706,13 +706,13 @@ mod tests {
     #[test]
     fn progress_reports_completed_fraction() {
         let mut p = Plan::new("g", vec!["a".into(), "b".into(), "c".into()]);
-        assert!(f64::from(p.progress()).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(p.progress()).to_bits(), f64::from(0.0_f32).to_bits());
         p.set_status(0, PlanStatus::Done);
         let f = p.progress();
         assert!((f - 1.0 / 3.0).abs() < 1e-6);
         p.set_status(1, PlanStatus::Skipped);
         p.set_status(2, PlanStatus::Done);
-        assert!(f64::from(p.progress()).to_bits() == f64::from(1.0_f32).to_bits());
+        assert_eq!(f64::from(p.progress()).to_bits(), f64::from(1.0_f32).to_bits());
     }
 
     #[test]

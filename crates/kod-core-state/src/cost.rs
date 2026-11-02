@@ -246,8 +246,8 @@ mod tests {
     fn new_tracker_is_zero() {
         let t = CostTracker::new();
         let s = t.snapshot();
-        assert!(f64::from(s.session_usd).to_bits() == f64::from(0.0_f32).to_bits());
-        assert!(f64::from(s.turn_usd).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(s.session_usd).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(s.turn_usd).to_bits(), f64::from(0.0_f32).to_bits());
         assert!(!s.exhausted);
     }
 
@@ -268,7 +268,7 @@ mod tests {
         t.record(-1.0);
         t.record(f64::NAN);
         let s = t.snapshot();
-        assert!(f64::from(s.session_usd).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(s.session_usd).to_bits(), f64::from(0.0_f32).to_bits());
     }
 
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         t.begin_turn();
         let s = t.snapshot();
         assert!((s.session_usd - 0.05).abs() < 1e-6);
-        assert!(f64::from(s.turn_usd).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(s.turn_usd).to_bits(), f64::from(0.0_f32).to_bits());
     }
 
     #[test]
@@ -439,7 +439,7 @@ mod window_tests {
     #[test]
     fn spend_in_is_zero_on_a_fresh_tracker() {
         let t = CostTracker::new();
-        assert!(f64::from(t.spend_in(std::time::Duration::from_secs(3600))).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(t.spend_in(std::time::Duration::from_secs(3600))).to_bits(), f64::from(0.0_f32).to_bits());
     }
 
     #[test]
@@ -447,7 +447,7 @@ mod window_tests {
         let t = CostTracker::new();
         t.record(2.0);
         t.reset();
-        assert!(f64::from(t.spend_in(std::time::Duration::from_secs(3600))).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(t.spend_in(std::time::Duration::from_secs(3600))).to_bits(), f64::from(0.0_f32).to_bits());
     }
 
     #[test]

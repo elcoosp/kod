@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn redistribute_moves_semantic_to_keyword() {
         let (ws, wk) = redistribute(0.6, 0.3);
-        assert!(f64::from(ws).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(ws).to_bits(), f64::from(0.0_f32).to_bits());
         assert!((wk - 0.9).abs() < 1e-6);
     }
 
@@ -516,7 +516,7 @@ mod tests {
             half_life_days: 30.0,
             ..HybridScorer::default()
         };
-        assert!(f64::from(s.half_life_for(MemoryType::Episodic)).to_bits() == f64::from(30.0_f32).to_bits());
+        assert_eq!(f64::from(s.half_life_for(MemoryType::Episodic)).to_bits(), f64::from(30.0_f32).to_bits());
     }
 
     #[test]
@@ -580,8 +580,8 @@ mod tests {
         ] {
             let a = weibull_shape_for(t);
             let b = weibull_shape_for(t);
-            assert!(f64::from(a.eta_hours).to_bits() == f64::from(b.eta_hours).to_bits());
-            assert!(f64::from(a.k).to_bits() == f64::from(b.k).to_bits());
+            assert_eq!(f64::from(a.eta_hours).to_bits(), f64::from(b.eta_hours).to_bits());
+            assert_eq!(f64::from(a.k).to_bits(), f64::from(b.k).to_bits());
         }
     }
 
@@ -637,24 +637,24 @@ mod tests {
             eta_hours: 0.0,
             k: 1.0,
         };
-        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
         let bad = DecayShape {
             eta_hours: -1.0,
             k: 1.0,
         };
-        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
         let bad = DecayShape {
             eta_hours: 100.0,
             k: 0.0,
         };
-        assert!(f64::from(bad.decay(100.0)).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
     }
 
     #[test]
     fn decay_at_age_zero_is_one() {
         let now = OffsetDateTime::now_utc();
         let shape = weibull_shape_for(MemoryType::LongTerm);
-        assert!(f64::from(decay_at(now, now, shape)).to_bits() == f64::from(1.0_f32).to_bits());
+        assert_eq!(f64::from(decay_at(now, now, shape)).to_bits(), f64::from(1.0_f32).to_bits());
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod coverage_scoring_composition {
         // value: zero.
         let now = OffsetDateTime::now_utc();
         let e = entry_at("x", 1);
-        assert!(f64::from(recency(e.timestamp, now, 0.0)).to_bits() == f64::from(0.0_f32).to_bits());
+        assert_eq!(f64::from(recency(e.timestamp, now, 0.0)).to_bits(), f64::from(0.0_f32).to_bits());
     }
 }
 
