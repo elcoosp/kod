@@ -110,7 +110,7 @@ impl SkillMatcher {
         let mut matches: Vec<SkillMatch> = Vec::new();
 
         for skill in skills.values() {
-            let (score, reasons) = self.score_skill(skill, &query_lower);
+            let (score, reasons) = Self::score_skill(skill, &query_lower);
 
             if score >= self.min_score {
                 matches.push(SkillMatch {
@@ -133,7 +133,7 @@ impl SkillMatcher {
     }
 
     /// Score a single skill against a query
-    fn score_skill(&self, skill: &Skill, query: &str) -> (f32, Vec<MatchReason>) {
+    fn score_skill(skill: &Skill, query: &str) -> (f32, Vec<MatchReason>) {
         const MIN_NAME_MATCH_CHARS: usize = 3;
         const MIN_TAG_MATCH_CHARS: usize = 3;
         let mut score: f32 = 0.0;
@@ -677,7 +677,7 @@ mod matcher_proptests {
             let tag = format!("{c}設");
             let matcher = SkillMatcher::new();
             let skill = test_skill("", &[&tag]);
-            let (_score, reasons) = matcher.score_skill(&skill, &c.to_string());
+            let (_score, reasons) = SkillMatcher::score_skill(&skill, &c.to_string());
             prop_assert!(
                 !reasons
                     .iter()
@@ -697,7 +697,7 @@ mod matcher_proptests {
             let name = format!("{c}師");
             let matcher = SkillMatcher::new();
             let skill = test_skill(&name, &[]);
-            let (_score, reasons) = matcher.score_skill(&skill, &c.to_string());
+            let (_score, reasons) = SkillMatcher::score_skill(&skill, &c.to_string());
             prop_assert!(
                 !reasons
                     .iter()
@@ -718,7 +718,7 @@ mod matcher_proptests {
             let query = format!("{c}設");
             let matcher = SkillMatcher::new();
             let skill = test_skill(&name, &[]);
-            let (_score, reasons) = matcher.score_skill(&skill, &query);
+            let (_score, reasons) = SkillMatcher::score_skill(&skill, &query);
             prop_assert!(
                 !reasons
                     .iter()
@@ -739,7 +739,7 @@ mod matcher_proptests {
     fn control_two_ascii_char_query_does_not_reverse_match() {
         let matcher = SkillMatcher::new();
         let skill = test_skill("", &["build"]);
-        let (_score, reasons) = matcher.score_skill(&skill, "ui");
+        let (_score, reasons) = SkillMatcher::score_skill(&skill, "ui");
         assert!(
             !reasons
                 .iter()
@@ -755,7 +755,7 @@ mod matcher_proptests {
     fn control_three_cjk_char_query_still_reverse_matches() {
         let matcher = SkillMatcher::new();
         let skill = test_skill("", &["中國設計師學會"]);
-        let (_score, reasons) = matcher.score_skill(&skill, "設計師");
+        let (_score, reasons) = SkillMatcher::score_skill(&skill, "設計師");
         assert!(
             reasons
                 .iter()
@@ -770,7 +770,7 @@ mod matcher_proptests {
     fn control_three_ascii_char_query_still_reverse_matches() {
         let matcher = SkillMatcher::new();
         let skill = test_skill("", &["rebuild"]);
-        let (_score, reasons) = matcher.score_skill(&skill, "bui");
+        let (_score, reasons) = SkillMatcher::score_skill(&skill, "bui");
         assert!(
             reasons
                 .iter()
@@ -785,7 +785,7 @@ mod matcher_proptests {
     fn control_three_cjk_char_query_still_name_matches() {
         let matcher = SkillMatcher::new();
         let skill = test_skill("中國設計師學會", &[]);
-        let (_score, reasons) = matcher.score_skill(&skill, "設計師");
+        let (_score, reasons) = SkillMatcher::score_skill(&skill, "設計師");
         assert!(
             reasons
                 .iter()
