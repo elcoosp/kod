@@ -135,7 +135,7 @@ impl DecisionLog {
                 DecisionKind::Constraint => "constraint",
                 DecisionKind::Other => "other",
             };
-            out.push_str(&format!("- [{tag}] {}\n", d.text));
+            std::fmt::Write::write_fmt(&mut out, format_args!("- [{tag}] {}\n", d.text)).ok();
         }
         out
     }

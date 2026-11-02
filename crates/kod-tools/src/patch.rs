@@ -770,7 +770,7 @@ mod coverage_render_unified {
             } else if i == 20 {
                 new.push_str("twentieth-changed\n");
             } else {
-                new.push_str(&format!("{i}\n"));
+                std::fmt::Write::write_fmt(&mut new, format_args!("{i}\n")).ok();
             }
         }
         let d = render_unified_diff(&old, &new, "f");

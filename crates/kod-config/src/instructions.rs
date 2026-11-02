@@ -417,7 +417,7 @@ impl InstructionChain {
                 out.push('\n');
             }
             if let Some(n) = &s.name {
-                out.push_str(&format!("### {n}\n\n"));
+                std::fmt::Write::write_fmt(&mut out, format_args!("### {n}\n\n")).ok();
             }
             out.push_str(s.body.trim_end());
             out.push('\n');

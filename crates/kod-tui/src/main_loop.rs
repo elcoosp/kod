@@ -1563,11 +1563,11 @@ impl TuiLoop {
                         } else {
                             body
                         };
-                        buf.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut buf, format_args!(
                             "<file path=\"{}\">\n{}\n</file>\n",
                             f.display(),
                             shown,
-                        ));
+                        )).ok();
                     }
                     Err(e) => {
                         self.app.push_system_message(&format!(
@@ -2671,16 +2671,16 @@ impl TuiLoop {
                     {
                         let total_chars = a.request + a.truncatable_total();
                         msg.push_str("\n\nPrompt allocation (last turn):\n");
-                        msg.push_str(&format!("  request:  {:>8} chars\n", a.request));
-                        msg.push_str(&format!("  history:  {:>8} chars\n", a.history));
-                        msg.push_str(&format!("  skills:   {:>8} chars\n", a.skills));
-                        msg.push_str(&format!("  memory:   {:>8} chars\n", a.memory));
-                        msg.push_str(&format!("  repomap:  {:>8} chars\n", a.repomap));
-                        msg.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  request:  {:>8} chars\n", a.request)).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  history:  {:>8} chars\n", a.history)).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  skills:   {:>8} chars\n", a.skills)).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  memory:   {:>8} chars\n", a.memory)).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  repomap:  {:>8} chars\n", a.repomap)).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                             "  total:    {:>8} chars (~{} tokens)\n",
                             total_chars,
                             total_chars / 4,
-                        ));
+                        )).ok();
                         msg.push_str(
                             "\nShare of the truncatable budget that goes to \
                              the request is not counted above; the four other \
@@ -2826,19 +2826,19 @@ impl TuiLoop {
                             format!("Checkpoints ({} total, newest first):\n", list.len());
                         for s in list.iter().take(20) {
                             let kind = if s.existed { "modify" } else { "create" };
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  {}  {:<7} {:<12} {}\n",
                                 s.id,
                                 kind,
                                 s.tool,
                                 s.path.display(),
-                            ));
+                            )).ok();
                         }
                         if list.len() > 20 {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "… and {} older — `kod checkpoint list` shows more.\n",
                                 list.len() - 20,
-                            ));
+                            )).ok();
                         }
                         msg.push_str("\nRestore with /rollback <id>, or /rollback for the newest.");
                         self.app.push_system_message(&msg);
@@ -2932,7 +2932,7 @@ impl TuiLoop {
                                         } else {
                                             one.to_string()
                                         };
-                                        msg.push_str(&format!("  {short}  {shown}\n"));
+                                        std::fmt::Write::write_fmt(&mut msg, format_args!("  {short}  {shown}\n")).ok();
                                     }
                                     self.app.push_system_message(msg.trim_end());
                                 }
@@ -3007,10 +3007,10 @@ impl TuiLoop {
                                     } else {
                                         one.to_string()
                                     };
-                                    msg.push_str(&format!("  {short}  {shown}\n"));
+                                    std::fmt::Write::write_fmt(&mut msg, format_args!("  {short}  {shown}\n")).ok();
                                 }
                                 if all.len() > 30 {
-                                    msg.push_str(&format!("… and {} more.", all.len() - 30));
+                                    std::fmt::Write::write_fmt(&mut msg, format_args!("… and {} more.", all.len() - 30)).ok();
                                 }
                                 msg.push_str(
                                     "\nSubcommands: /memory search <q>, /memory delete <id>, /memory clear",
@@ -3151,7 +3151,7 @@ impl TuiLoop {
                             );
                             for (i, r) in rules.iter().enumerate() {
                                 let pattern = r.path_pattern.as_deref().unwrap_or("*");
-                                msg.push_str(&format!("  {}. {} {}\n", i + 1, r.tool, pattern));
+                                std::fmt::Write::write_fmt(&mut msg, format_args!("  {}. {} {}\n", i + 1, r.tool, pattern)).ok();
                             }
                             msg.push_str("\nDrop a rule with `/policy forget <n>`.");
                             self.app.push_system_message(msg.trim_end());
@@ -3279,13 +3279,13 @@ impl TuiLoop {
                     } else {
                         first_line.to_string()
                     };
-                    msg.push_str(&format!("  {n:>4}. [{role}] {shown}\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("  {n:>4}. [{role}] {shown}\n")).ok();
                 }
                 if hits.len() > 30 {
-                    msg.push_str(&format!(
+                    std::fmt::Write::write_fmt(&mut msg, format_args!(
                         "… and {} more. Narrow the pattern to see them.",
                         hits.len() - 30,
-                    ));
+                    )).ok();
                 }
                 self.app.push_system_message(msg.trim_end());
             }
@@ -3312,25 +3312,25 @@ impl TuiLoop {
                 let warning = self.app.context_warning().unwrap_or("");
                 let mut msg = String::new();
                 msg.push_str("Context window\n");
-                msg.push_str(&format!("  approx used:  {used} tokens\n"));
-                msg.push_str(&format!("  limit:        {limit} tokens\n"));
-                msg.push_str(&format!("  fill:         {pct:.1}%\n"));
-                msg.push_str(&format!("  label:        {}\n", self.app.context_label()));
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  approx used:  {used} tokens\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  limit:        {limit} tokens\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  fill:         {pct:.1}%\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  label:        {}\n", self.app.context_label())).ok();
                 if !warning.is_empty() {
-                    msg.push_str(&format!("  warning:      {warning}\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("  warning:      {warning}\n")).ok();
                 }
                 msg.push_str("\nSession totals (from provider usage)\n");
-                msg.push_str(&format!("  input:        {inp} tokens\n"));
-                msg.push_str(&format!("  output:       {out} tokens\n"));
-                msg.push_str(&format!("  total:        {total} tokens\n"));
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  input:        {inp} tokens\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  output:       {out} tokens\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  total:        {total} tokens\n")).ok();
                 msg.push_str("\nMessage counts\n");
-                msg.push_str(&format!("  total:        {msg_count}\n"));
-                msg.push_str(&format!("  assistant:    {assistant_count}\n"));
-                msg.push_str(&format!("  tool:         {tool_count}\n"));
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  total:        {msg_count}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  assistant:    {assistant_count}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  tool:         {tool_count}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "\nAuto-compact fires at {}% of the window.\n",
                     4 * 100 / 5
-                ));
+                )).ok();
                 msg.push_str("Force with /compact. Reset with /clear.");
                 self.app.push_system_message(&msg);
             }
@@ -3534,7 +3534,7 @@ impl TuiLoop {
                         } else {
                             let mut msg = format!("Attached files ({}):\n", attached.len());
                             for f in attached {
-                                msg.push_str(&format!("  {}\n", f.display()));
+                                std::fmt::Write::write_fmt(&mut msg, format_args!("  {}\n", f.display())).ok();
                             }
                             msg.push_str("\n/attach clear to remove, or send your next prompt.");
                             self.app.push_system_message(&msg);
@@ -3814,39 +3814,39 @@ impl TuiLoop {
 
                 let mut msg = String::new();
                 msg.push_str("Session summary\n");
-                msg.push_str(&format!("  model:         {model}\n"));
-                msg.push_str(&format!("  skills:        {skills}\n"));
-                msg.push_str(&format!("  messages:      {msgs}\n"));
-                msg.push_str(&format!("  context:       {ctx}\n"));
-                msg.push_str(&format!("  theme:         {theme}\n"));
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  model:         {model}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  skills:        {skills}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  messages:      {msgs}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  context:       {ctx}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  theme:         {theme}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  tool output:   {}\n",
                     if tools_on { "shown" } else { "hidden" }
-                ));
-                msg.push_str(&format!(
+                )).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  autocompact:   {}\n",
                     if auto_on { "on" } else { "off" }
-                ));
-                msg.push_str(&format!(
+                )).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  system prompt: {}\n",
                     if sys_override {
                         "override active"
                     } else {
                         "(default)"
                     }
-                ));
-                msg.push_str(&format!("  attachments:   {attached}\n"));
+                )).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  attachments:   {attached}\n")).ok();
                 if let Some(g) = goal {
                     let shown: String = if g.chars().count() > 60 {
                         g.chars().take(60).collect::<String>() + "…"
                     } else {
                         g
                     };
-                    msg.push_str(&format!("  goal:          {shown}\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("  goal:          {shown}\n")).ok();
                 }
                 msg.push_str("\nPaths\n");
-                msg.push_str(&format!("  config:  {config_path}\n"));
-                msg.push_str(&format!("  session: {session_path}\n"));
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  config:  {config_path}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  session: {session_path}\n")).ok();
                 self.app.push_system_message(msg.trim_end());
             }
             "/clearall" => {
@@ -3897,30 +3897,30 @@ impl TuiLoop {
                 }
 
                 let mut msg = String::from("Session statistics\n");
-                msg.push_str(&format!("  elapsed:         {elapsed}\n"));
-                msg.push_str(&format!("  total messages:  {}\n", msgs.len()));
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  elapsed:         {elapsed}\n")).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  total messages:  {}\n", msgs.len())).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  input tokens:    {}\n",
                     self.app.session_input_tokens()
-                ));
-                msg.push_str(&format!(
+                )).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  output tokens:   {}\n",
                     self.app.session_output_tokens()
-                ));
-                msg.push_str(&format!(
+                )).ok();
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "  context:         {}\n",
                     self.app.context_label()
-                ));
+                )).ok();
                 msg.push_str("\nMessages by role\n");
                 for (r, n) in &per_role {
-                    msg.push_str(&format!("  {r:<6} {n}\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("  {r:<6} {n}\n")).ok();
                 }
                 if !tool_by_name.is_empty() {
                     msg.push_str("\nTool calls this session\n");
                     let mut rows: Vec<(&String, &usize)> = tool_by_name.iter().collect();
                     rows.sort_by(|a, b| b.1.cmp(a.1));
                     for (name, n) in rows {
-                        msg.push_str(&format!("  {name:<20} {n}\n"));
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  {name:<20} {n}\n")).ok();
                     }
                 }
 
@@ -3944,9 +3944,9 @@ impl TuiLoop {
                     }
                     if !by_rule.is_empty() {
                         let total: usize = by_rule.values().sum();
-                        msg.push_str(&format!("\nSecrets redacted this session: {total}\n"));
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("\nSecrets redacted this session: {total}\n")).ok();
                         for (rule, n) in &by_rule {
-                            msg.push_str(&format!("  {rule:<24} {n}\n"));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  {rule:<24} {n}\n")).ok();
                         }
                     }
                 }
@@ -3973,15 +3973,15 @@ impl TuiLoop {
                     let agg = engine.request_aggregates();
                     if agg.requests > 0 {
                         msg.push_str("\nPer-request analytics\n");
-                        msg.push_str(&format!("  requests:        {}\n", agg.requests));
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  requests:        {}\n", agg.requests)).ok();
                         if let Some(r) = agg.error_rate() {
-                            msg.push_str(&format!("  error rate:      {:.1}%\n", r * 100.0));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  error rate:      {:.1}%\n", r * 100.0)).ok();
                         }
                         if let Some(t) = agg.avg_ttft_ms() {
-                            msg.push_str(&format!("  avg TTFT:        {t:.0} ms\n"));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  avg TTFT:        {t:.0} ms\n")).ok();
                         }
                         if let Some(r) = agg.cache_rate() {
-                            msg.push_str(&format!("  cache hit rate:  {:.1}%\n", r * 100.0));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  cache hit rate:  {:.1}%\n", r * 100.0)).ok();
                         }
                         // Cache savings can go negative: a session
                         // that wrote a cache it never read back pays
@@ -3991,33 +3991,33 @@ impl TuiLoop {
                         } else {
                             "-"
                         };
-                        msg.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                             "  cache savings:   {sign}${:.4}\n",
                             agg.total_cache_savings_usd.abs(),
-                        ));
-                        msg.push_str(&format!(
+                        )).ok();
+                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                             "  cache tokens:    read {} / written {}\n",
                             agg.cache_read_tokens, agg.cache_write_tokens,
-                        ));
+                        )).ok();
                     }
 
                     let b = engine.behavioral_signals();
                     if b.any() {
                         msg.push_str("\nBehavioral signals (user messages)\n");
                         if b.negation > 0 {
-                            msg.push_str(&format!("  negation:        {}\n", b.negation));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  negation:        {}\n", b.negation)).ok();
                         }
                         if b.repetition > 0 {
-                            msg.push_str(&format!("  repetition:      {}\n", b.repetition));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  repetition:      {}\n", b.repetition)).ok();
                         }
                         if b.blame > 0 {
-                            msg.push_str(&format!("  blame:           {}\n", b.blame));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  blame:           {}\n", b.blame)).ok();
                         }
                         if b.anguish > 0 {
-                            msg.push_str(&format!("  anguish:         {}\n", b.anguish));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  anguish:         {}\n", b.anguish)).ok();
                         }
                         if b.yelling > 0 {
-                            msg.push_str(&format!("  yelling:         {}\n", b.yelling));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  yelling:         {}\n", b.yelling)).ok();
                         }
                     }
                 }
@@ -4154,7 +4154,7 @@ impl TuiLoop {
                         }
                         let mut msg = format!("Blackboard ({} entries)\n", entries.len());
                         for e in entries.iter().take(40) {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  {:<40} {}\n",
                                 e.key,
                                 serde_json::to_string(&e.value)
@@ -4162,10 +4162,10 @@ impl TuiLoop {
                                     .chars()
                                     .take(60)
                                     .collect::<String>(),
-                            ));
+                            )).ok();
                         }
                         if entries.len() > 40 {
-                            msg.push_str(&format!("  … and {} more\n", entries.len() - 40));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  … and {} more\n", entries.len() - 40)).ok();
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
@@ -4235,14 +4235,14 @@ impl TuiLoop {
                                 kod_core::DecisionKind::Constraint => "cons",
                                 kod_core::DecisionKind::Other => "othr",
                             };
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  [{}] {}\n",
                                 tag,
                                 d.text.chars().take(120).collect::<String>(),
-                            ));
+                            )).ok();
                         }
                         if log.entries.len() > 20 {
-                            msg.push_str(&format!("  … and {} more\n", log.entries.len() - 20));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  … and {} more\n", log.entries.len() - 20)).ok();
                         }
                         msg.push_str("\n  /decisions drop <id> | /decisions clear");
                         self.app.push_system_message(msg.trim_end());
@@ -4350,15 +4350,15 @@ impl TuiLoop {
                                     kod_core::PlanStatus::Skipped => "·",
                                     kod_core::PlanStatus::Pending => " ",
                                 };
-                                msg.push_str(&format!(
+                                std::fmt::Write::write_fmt(&mut msg, format_args!(
                                     "{} {}. {}\n",
                                     marker,
                                     step.id + 1,
                                     step.text,
-                                ));
+                                )).ok();
                                 if let Some(notes) = plan.notes.get(&step.id) {
                                     for n in notes {
-                                        msg.push_str(&format!("   note: {n}\n"));
+                                        std::fmt::Write::write_fmt(&mut msg, format_args!("   note: {n}\n")).ok();
                                     }
                                 }
                             }
@@ -4467,12 +4467,12 @@ impl TuiLoop {
                             format!("failed: {}", error.lines().next().unwrap_or(""))
                         }
                     };
-                    msg.push_str(&format!(
+                    std::fmt::Write::write_fmt(&mut msg, format_args!(
                         "  {id}  {:>4}s  {}\n         {}\n",
                         elapsed,
                         state.kind.label(),
                         status,
-                    ));
+                    )).ok();
                 }
                 self.app.push_system_message(msg.trim_end());
             }
@@ -4527,7 +4527,7 @@ impl TuiLoop {
                 }
                 let mut msg = String::from("Cache ledger\n");
                 if let Some(s) = &sticky {
-                    msg.push_str(&format!("  warm endpoint: {s}\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("  warm endpoint: {s}\n")).ok();
                 } else {
                     msg.push_str("  warm endpoint: (none)\n");
                 }
@@ -4535,14 +4535,14 @@ impl TuiLoop {
                 if !snapshot.is_empty() {
                     msg.push_str("  endpoint             cached tokens  last used\n");
                     for (ep, tokens, turn) in &snapshot {
-                        msg.push_str(&format!("  {ep:<20} {tokens:>13}  {turn}\n"));
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  {ep:<20} {tokens:>13}  {turn}\n")).ok();
                     }
                 }
                 if !unhealthy.is_empty() {
                     msg.push_str("\n  Unhealthy (circuit open):\n");
                     for (ep, fails, err) in &unhealthy {
                         let e = err.as_deref().unwrap_or("(no error)");
-                        msg.push_str(&format!("  {ep:<20} {fails} fails  {e}\n"));
+                        std::fmt::Write::write_fmt(&mut msg, format_args!("  {ep:<20} {fails} fails  {e}\n")).ok();
                     }
                 }
                 self.app.push_system_message(msg.trim_end());
@@ -4562,7 +4562,7 @@ impl TuiLoop {
                         }
                         let mut msg = String::from("Per-tool counts (this turn / this session)\n");
                         for (name, turn, session) in &snap {
-                            msg.push_str(&format!("  {name:<20} {turn:>6} / {session}\n"));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  {name:<20} {turn:>6} / {session}\n")).ok();
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
@@ -4610,7 +4610,7 @@ impl TuiLoop {
                     Some("list") => {
                         let mut msg = String::from("Turn traces (newest first)\n");
                         for t in traces.iter().rev().take(20) {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  #{:<4} {:<10} {:>7.2}s  ${:.4}  {:>5}in {:>5}out  {} tools  {}\n",
                                 t.id,
                                 t.holder,
@@ -4625,7 +4625,7 @@ impl TuiLoop {
                                     kod_core::TurnOutcome::Failed => "failed",
                                     kod_core::TurnOutcome::BudgetExhausted => "budget",
                                 },
-                            ));
+                            )).ok();
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
@@ -4688,32 +4688,32 @@ impl TuiLoop {
                         let snap = engine.cost_tracker().snapshot();
                         let mut msg = String::from("Session budget\n");
                         if snap.session_cap_usd > 0.0 {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  session:  ${:.4} / ${:.2}  ({:.0}%)\n",
                                 snap.session_usd,
                                 snap.session_cap_usd,
                                 snap.session_fraction * 100.0,
-                            ));
+                            )).ok();
                         } else {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  session:  ${:.4} (no cap)\n",
                                 snap.session_usd,
-                            ));
+                            )).ok();
                         }
                         if snap.turn_cap_usd > 0.0 {
-                            msg.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut msg, format_args!(
                                 "  turn:     ${:.4} / ${:.2}  ({:.0}%)\n",
                                 snap.turn_usd,
                                 snap.turn_cap_usd,
                                 snap.turn_fraction * 100.0,
-                            ));
+                            )).ok();
                         } else {
-                            msg.push_str(&format!("  turn:     ${:.4} (no cap)\n", snap.turn_usd));
+                            std::fmt::Write::write_fmt(&mut msg, format_args!("  turn:     ${:.4} (no cap)\n", snap.turn_usd)).ok();
                         }
-                        msg.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                             "  policy:   {:?}\n",
                             engine.cost_tracker().on_exhausted(),
-                        ));
+                        )).ok();
                         if snap.exhausted {
                             msg.push_str(
                                 "\n⛔ A cap is exhausted. /budget raise <usd> to lift it.",
@@ -4774,7 +4774,7 @@ impl TuiLoop {
                         Some(line) => {
                             let mut msg = format!("Jev status\n  {line}\n");
                             if let Some(t) = engine.jev_thresholds_line() {
-                                msg.push_str(&format!("  thresholds: {t}\n"));
+                                std::fmt::Write::write_fmt(&mut msg, format_args!("  thresholds: {t}\n")).ok();
                             }
                             msg.push_str(
                                     "\nSub-commands: /jev stats | /jev cache clear | /jev test | /jev tune",
@@ -4833,9 +4833,9 @@ impl TuiLoop {
                                 let mut msg = format!("Jev decisions this session: {total}\n");
                                 for (src, n) in &by_source {
                                     let pct = (f64::from(u32::try_from(*n).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX))) * 100.0;
-                                    msg.push_str(&format!("  {src:<10} {n:>4}  ({pct:.0}%)\n"));
+                                    std::fmt::Write::write_fmt(&mut msg, format_args!("  {src:<10} {n:>4}  ({pct:.0}%)\n")).ok();
                                 }
-                                msg.push_str(&format!(
+                                std::fmt::Write::write_fmt(&mut msg, format_args!(
                                     "\nCache hits:      {cached} ({}%)\n",
                                     if total > 0 {
                                         u64::try_from(
@@ -4848,16 +4848,16 @@ impl TuiLoop {
                                     } else {
                                         0
                                     },
-                                ));
-                                msg.push_str(&format!(
+                                )).ok();
+                                std::fmt::Write::write_fmt(&mut msg, format_args!(
                                     "Avg Jev latency: {}ms\n",
                                     total_latency_ms / total as u64,
-                                ));
+                                )).ok();
                                 msg.push_str("\nBy purpose\n");
                                 let mut rows: Vec<(&String, &usize)> = by_purpose.iter().collect();
                                 rows.sort_by(|a, b| b.1.cmp(a.1));
                                 for (p, n) in rows {
-                                    msg.push_str(&format!("  {p:<20} {n}\n"));
+                                    std::fmt::Write::write_fmt(&mut msg, format_args!("  {p:<20} {n}\n")).ok();
                                 }
                                 self.app.push_system_message(msg.trim_end());
                             }
@@ -4932,7 +4932,7 @@ impl TuiLoop {
                                 let mut msg = String::from("Jev thresholds (name = value)\n");
                                 for name in kod_config::JevThresholds::NAMES {
                                     if let Some(v) = t.get(name) {
-                                        msg.push_str(&format!("  {name:<24} {v:.2}\n"));
+                                        std::fmt::Write::write_fmt(&mut msg, format_args!("  {name:<24} {v:.2}\n")).ok();
                                     }
                                 }
                                 msg.push_str(
@@ -5124,13 +5124,13 @@ impl TuiLoop {
                                 } else {
                                     d.message.clone()
                                 };
-                                msg.push_str(&format!(
+                                std::fmt::Write::write_fmt(&mut msg, format_args!(
                                     "  {} {} {}:{}:{} — {}\n",
                                     d.severity, code, d.file, d.line, d.column, short,
-                                ));
+                                )).ok();
                             }
                             if diags.len() > 30 {
-                                msg.push_str(&format!("  … and {} more\n", diags.len() - 30));
+                                std::fmt::Write::write_fmt(&mut msg, format_args!("  … and {} more\n", diags.len() - 30)).ok();
                             }
                             self.app.push_system_message(msg.trim_end());
                             handled = true;
@@ -5191,16 +5191,16 @@ impl TuiLoop {
                                         } else {
                                             d.message.clone()
                                         };
-                                        msg.push_str(&format!(
+                                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                                             "  {} {} {}:{}:{} — {}\n",
                                             d.severity, code, d.file, d.line, d.column, short,
-                                        ));
+                                        )).ok();
                                     }
                                     if o.diagnostics.len() > 30 {
-                                        msg.push_str(&format!(
+                                        std::fmt::Write::write_fmt(&mut msg, format_args!(
                                             "  … and {} more\n",
                                             o.diagnostics.len() - 30
-                                        ));
+                                        )).ok();
                                     }
                                     if o.truncated {
                                         msg.push_str("(raw output truncated)\n");
@@ -6451,23 +6451,23 @@ fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
         t.prompt_tokens,
         t.completion_tokens,
     );
-    msg.push_str(&format!(
+    std::fmt::Write::write_fmt(&mut msg, format_args!(
         "  prompt: {} chars   reply: {} chars   tools: {}\n",
         t.prompt_chars, t.reply_chars, t.tool_call_count,
-    ));
-    msg.push_str(&format!(
+    )).ok();
+    std::fmt::Write::write_fmt(&mut msg, format_args!(
         "  jev: {} decisions ({} cached)\n",
         t.jev_decisions, t.jev_cache_hits,
-    ));
-    msg.push_str(&format!("  outcome: {:?}", t.outcome));
+    )).ok();
+    std::fmt::Write::write_fmt(&mut msg, format_args!("  outcome: {:?}", t.outcome)).ok();
     if let Some(r) = &t.reason {
-        msg.push_str(&format!(" — {r}"));
+        std::fmt::Write::write_fmt(&mut msg, format_args!(" — {r}")).ok();
     }
     msg.push('\n');
     if !t.rounds.is_empty() {
         msg.push_str("\nRounds\n");
         for (i, r) in t.rounds.iter().enumerate() {
-            msg.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut msg, format_args!(
                 "  {:>2}  {:<12} {:<20} {:>6}ms  {}in→{}out",
                 i + 1,
                 format!("{:?}", r.kind).to_lowercase(),
@@ -6475,13 +6475,13 @@ fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
                 r.duration_ms,
                 r.input_tokens,
                 r.output_tokens,
-            ));
+            )).ok();
             if let Some(c) = r.cache_read_tokens {
-                msg.push_str(&format!("  cache:{c}"));
+                std::fmt::Write::write_fmt(&mut msg, format_args!("  cache:{c}")).ok();
             }
             msg.push('\n');
             for c in &r.tool_calls {
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "       tool  {:<16} {}ms  {}  {}B\n",
                     c.name,
                     c.duration_ms,
@@ -6492,13 +6492,13 @@ fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
                         kod_core::ToolOutcomeKind::RequiresConfirmation => "ask",
                     },
                     c.output_bytes,
-                ));
+                )).ok();
             }
             for rr in &r.retries {
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "       retry  {} → {}  ({})\n",
                     rr.from_endpoint, rr.to_endpoint, rr.reason,
-                ));
+                )).ok();
             }
         }
     }

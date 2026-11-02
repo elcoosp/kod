@@ -416,9 +416,9 @@ impl KodEngine {
             filtered.push_str(&h.join("\n"));
         }
         if elided > 0 {
-            filtered.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut filtered, format_args!(
                 "\n… ({elided} lines of context-only hunks elided by Jev)",
-            ));
+            )).ok();
         }
 
         // Rebuild the result with the filtered diff. The TUI still

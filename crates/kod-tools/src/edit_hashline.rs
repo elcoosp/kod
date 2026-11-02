@@ -472,13 +472,13 @@ pub fn render_numbered(text: &str, max_lines: usize) -> String {
     let shown = lines.len().min(max_lines);
     let mut out = String::new();
     for (i, l) in lines.iter().take(shown).enumerate() {
-        out.push_str(&format!("{}:{}\n", i + 1, l));
+        std::fmt::Write::write_fmt(&mut out, format_args!("{}:{}\n", i + 1, l)).ok();
     }
     if lines.len() > shown {
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "[…{} lines elided; re-read the range you need]\n",
             lines.len() - shown,
-        ));
+        )).ok();
     }
     out
 }

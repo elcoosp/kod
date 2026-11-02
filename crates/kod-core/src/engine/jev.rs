@@ -576,7 +576,7 @@ impl KodEngine {
             "Jev could not confirm that the following cited lines support the claims made about them:\n",
         );
         for f in &failing {
-            out.push_str(&format!("- {f}\n"));
+            std::fmt::Write::write_fmt(&mut out, format_args!("- {f}\n")).ok();
         }
         out
     }
@@ -713,12 +713,12 @@ impl KodEngine {
         // declared globs.
         let mut ctx = String::from("Subtasks:\n");
         for (i, (desc, globs)) in slice.iter().enumerate() {
-            ctx.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut ctx, format_args!(
                 "[{}] {} :: {}\n",
                 i,
                 crate::jev::preview_chars(desc, 200),
                 globs.join(", ")
-            ));
+            )).ok();
         }
         let state = crate::jev::build_state(&ctx, &[]);
         let mut questions: Vec<(String, String)> = Vec::new();

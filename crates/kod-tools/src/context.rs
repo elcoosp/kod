@@ -534,7 +534,7 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
             format!("{h}/.docker/config.json"),
         ];
         for path in &secrets {
-            profile.push_str(&format!("(deny file-read* (subpath \"{path}\"))\n"));
+            std::fmt::Write::write_fmt(&mut profile, format_args!("(deny file-read* (subpath \"{path}\"))\n")).ok();
         }
     }
     if opts.net_deny {
@@ -544,9 +544,9 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     // matching rule wins, so the specific allows must come after the
     // broad deny.
     profile.push_str("(deny file-write*)\n");
-    profile.push_str(&format!(
+    std::fmt::Write::write_fmt(&mut profile, format_args!(
         "(allow file-write* (subpath \"{wd_str}\"))\n"
-    ));
+    )).ok();
     // stdout / stderr / /dev/null writes go through the file-write*
     // operation. Without this allow, an `echo hello` inside the
     // sandbox produces no output at all — the sandbox silently
@@ -564,10 +564,10 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         // canonical workspace makes both halves of the same subtree
         // share one spelling.
         let git_canon = std::fs::canonicalize(wd.join(".git")).unwrap_or_else(|_| wd.join(".git"));
-        profile.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut profile, format_args!(
             "(deny file-write* (subpath \"{git}\"))\n",
             git = git_canon.to_string_lossy(),
-        ));
+        )).ok();
     }
 
     SandboxInvocation {

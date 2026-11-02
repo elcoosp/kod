@@ -1301,7 +1301,7 @@ mod coverage_chat_widget {
         let mut app = KodApp::new();
         let mut body = String::from("[run] a tool\n");
         for i in 0..(TOOL_DISPLAY_LINES + 5) {
-            body.push_str(&format!("row {i}\n"));
+            std::fmt::Write::write_fmt(&mut body, format_args!("row {i}\n")).ok();
         }
         push_message(&mut app, MessageRole::Tool, &body);
         let text = render(&app, 120, 80);

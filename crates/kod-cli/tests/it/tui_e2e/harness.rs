@@ -401,15 +401,15 @@ impl TuiSession {
             }
             if start.elapsed() > timeout {
                 let mut msg = String::new();
-                msg.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut msg, format_args!(
                     "timed out after {timeout:?} waiting for {needle:?}\n"
-                ));
+                )).ok();
                 msg.push_str("--- raw screen ---\n");
                 for (i, line) in text.lines().enumerate() {
-                    msg.push_str(&format!("{i:3}|{line}|\n"));
+                    std::fmt::Write::write_fmt(&mut msg, format_args!("{i:3}|{line}|\n")).ok();
                 }
                 let raw = self.raw_bytes();
-                msg.push_str(&format!("--- {} raw bytes captured ---\n", raw.len()));
+                std::fmt::Write::write_fmt(&mut msg, format_args!("--- {} raw bytes captured ---\n", raw.len())).ok();
                 msg.push_str("--- last 2500 raw bytes (escaped) ---\n");
                 let start = raw.len().saturating_sub(2500);
                 for &b in &raw[start..] {

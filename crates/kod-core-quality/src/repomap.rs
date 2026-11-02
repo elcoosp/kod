@@ -76,7 +76,7 @@ impl RepoMap {
             let display = path.to_string_lossy().replace('\\', "/");
             let mut line = format!("{display}:");
             for s in symbols {
-                line.push_str(&format!(" {} {}", s.kind, s.name));
+                std::fmt::Write::write_fmt(&mut line, format_args!(" {} {}", s.kind, s.name)).ok();
             }
             if out.len() + line.len() + 1 > max_chars {
                 out.push_str("\n… (map truncated)\n");
@@ -902,10 +902,10 @@ async fn an_async_test() {}
         // still in the mix.
         let mut src = String::new();
         for i in 0..60 {
-            src.push_str(&format!("#[test]\nfn t{i}() {{}}\n"));
+            std::fmt::Write::write_fmt(&mut src, format_args!("#[test]\nfn t{i}() {{}}\n")).ok();
         }
         for i in 0..250 {
-            src.push_str(&format!("fn f{i}() {{}}\n"));
+            std::fmt::Write::write_fmt(&mut src, format_args!("fn f{i}() {{}}\n")).ok();
         }
         let regex = extract_rust(&src);
         let ast = ast_or_regex(&src, "rs", extract_rust);

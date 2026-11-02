@@ -173,7 +173,7 @@ fn pytest_json(text: &str) -> String {
             _ => {}
         }
     }
-    out.push_str(&format!("{failed} failed, {passed} passed\n"));
+    std::fmt::Write::write_fmt(&mut out, format_args!("{failed} failed, {passed} passed\n")).ok();
     out
 }
 

@@ -1600,7 +1600,7 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 .tool_trust_level(&call.tool_name)
                 .await
                 .unwrap_or(kod_types::trust::TrustLevel::ToolTrusted);
-            block.push_str(&format!("\n### {} {}\n", call.tool_name, call.arguments));
+            std::fmt::Write::write_fmt(&mut block, format_args!("\n### {} {}\n", call.tool_name, call.arguments)).ok();
             block.push_str(&trust.open_marker(&call.tool_name, None));
             block.push('\n');
             block.push_str(&rendered);
@@ -1932,13 +1932,13 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        block.push_str(&format!("`{source}`: no diagnostics on this file.\n"));
+                        std::fmt::Write::write_fmt(&mut block, format_args!("`{source}`: no diagnostics on this file.\n")).ok();
                     } else {
-                        block.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut block, format_args!(
                             "`{}` reported {} diagnostic(s) on this file:\n\n",
                             source,
                             diags.len(),
-                        ));
+                        )).ok();
                         render_diagnostics(&mut block, &diags, 20);
                     }
                 } else {

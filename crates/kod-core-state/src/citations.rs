@@ -251,7 +251,7 @@ pub fn render_block(checks: &[CitationCheck]) -> String {
             Some(end) => format!("{}:{}-{}", c.citation.raw_path, c.citation.line, end),
             None => format!("{}:{}", c.citation.raw_path, c.citation.line),
         };
-        out.push_str(&format!("{marker} {line_range}{note}\n"));
+        std::fmt::Write::write_fmt(&mut out, format_args!("{marker} {line_range}{note}\n")).ok();
     }
     out
 }

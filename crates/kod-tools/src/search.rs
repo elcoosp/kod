@@ -226,9 +226,9 @@ impl Tool for SearchFilesTool {
                                 Some(r) => r.redact(&truncated_line).0,
                                 None => truncated_line,
                             };
-                            block.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut block, format_args!(
                                 "{marker} {real_line:>5} | {truncated_line}\n"
-                            ));
+                            )).ok();
                         }
                         hits.push(serde_json::json!({
                             "file": file.to_string_lossy(),

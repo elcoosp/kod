@@ -220,9 +220,9 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
     let failed = cards.len() - done;
 
     let mut out = format!("# Overnight: {mission}\n\n");
-    out.push_str(&format!("{done} of {} subtasks completed", cards.len()));
+    std::fmt::Write::write_fmt(&mut out, format_args!("{done} of {} subtasks completed", cards.len())).ok();
     if failed > 0 {
-        out.push_str(&format!(", {failed} failed"));
+        std::fmt::Write::write_fmt(&mut out, format_args!(", {failed} failed")).ok();
     }
     out.push_str(".\n\n");
 
@@ -240,10 +240,10 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
             CardStatus::Done => "[x]",
             CardStatus::Failed => "[ ]",
         };
-        out.push_str(&format!("{mark} **{}**\n\n", card.name));
-        out.push_str(&format!("{}\n\n", card.summary.trim()));
+        std::fmt::Write::write_fmt(&mut out, format_args!("{mark} **{}**\n\n", card.name)).ok();
+        std::fmt::Write::write_fmt(&mut out, format_args!("{}\n\n", card.summary.trim())).ok();
         if let Some(v) = &card.validation {
-            out.push_str(&format!("*Validation:* {}\n\n", v.trim()));
+            std::fmt::Write::write_fmt(&mut out, format_args!("*Validation:* {}\n\n", v.trim())).ok();
         }
         if !card.files_written.is_empty() {
             out.push_str("*Files:* ");
@@ -254,12 +254,12 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
             && r != "safe"
             && r != "low"
         {
-            out.push_str(&format!("*Risk:* {r}\n\n"));
+            std::fmt::Write::write_fmt(&mut out, format_args!("*Risk:* {r}\n\n")).ok();
         }
         if !card.followups.is_empty() {
             out.push_str("*Open questions:*\n");
             for f in &card.followups {
-                out.push_str(&format!("- {}\n", f.trim()));
+                std::fmt::Write::write_fmt(&mut out, format_args!("- {}\n", f.trim())).ok();
             }
             out.push('\n');
         }

@@ -1082,7 +1082,7 @@ impl TaskRouter {
             if !mem_ctx.working_memory.is_empty() {
                 context.push_str("## Current Context\n\n");
                 for entry in &mem_ctx.working_memory {
-                    context.push_str(&format!("- {}\n", entry.content));
+                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content)).ok();
                 }
                 context.push('\n');
             }
@@ -1090,7 +1090,7 @@ impl TaskRouter {
             if !mem_ctx.long_term.is_empty() {
                 context.push_str("## User Preferences\n\n");
                 for entry in &mem_ctx.long_term {
-                    context.push_str(&format!("- {}\n", entry.content));
+                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content)).ok();
                 }
                 context.push('\n');
             }
@@ -1420,12 +1420,12 @@ impl TaskRouter {
                 } else {
                     String::new()
                 };
-                prompt.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut prompt, format_args!(
                     "## Available skills ({})\n\n{}{}\n\n",
                     names.len(),
                     listed.join("\n"),
                     more
-                ));
+                )).ok();
             }
             // Prefer the caller's list (the engine's `refined_skills`,
             // which unions the lexical match with Jev's semantic one).
@@ -1461,10 +1461,10 @@ impl TaskRouter {
                     let base_dir = skill
                         .path
                         .parent().map_or_else(|| ".".to_string(), |p| p.display().to_string());
-                    prompt.push_str(&format!(
+                    std::fmt::Write::write_fmt(&mut prompt, format_args!(
                         "### {}\nSkill location: {}\n\n{}\n\n",
                         skill.metadata.name, base_dir, skill.instructions
-                    ));
+                    )).ok();
 
                     // The parser splits a skill file into instructions,
                     // examples, and constraints. Only the instructions
@@ -1482,7 +1482,7 @@ impl TaskRouter {
                         prompt.push_str("Examples:\n\n");
                         for ex in skill.examples.iter().take(MAX_SKILL_EXAMPLES) {
                             if !ex.input.trim().is_empty() {
-                                prompt.push_str(&format!("Input: {}\n", ex.input.trim()));
+                                std::fmt::Write::write_fmt(&mut prompt, format_args!("Input: {}\n", ex.input.trim())).ok();
                             }
                             let out = ex.output.trim();
                             // Rely on truncate_chars's own behavior to
@@ -1499,19 +1499,19 @@ impl TaskRouter {
                             } else {
                                 out.to_string()
                             };
-                            prompt.push_str(&format!("Output:\n{shown}\n\n"));
+                            std::fmt::Write::write_fmt(&mut prompt, format_args!("Output:\n{shown}\n\n")).ok();
                         }
                         let extra = skill.examples.len().saturating_sub(MAX_SKILL_EXAMPLES);
                         if extra > 0 {
-                            prompt.push_str(&format!(
+                            std::fmt::Write::write_fmt(&mut prompt, format_args!(
                                 "…and {extra} more example(s) in the skill file.\n\n"
-                            ));
+                            )).ok();
                         }
                     }
                     if let Some(constraints) = &skill.constraints
                         && !constraints.trim().is_empty()
                     {
-                        prompt.push_str(&format!("Constraints:\n{}\n\n", constraints.trim()));
+                        std::fmt::Write::write_fmt(&mut prompt, format_args!("Constraints:\n{}\n\n", constraints.trim())).ok();
                     }
                 }
             }
@@ -1541,9 +1541,9 @@ impl TaskRouter {
         }
 
         // Add user input
-        prompt.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut prompt, format_args!(
             "## Conversation so far\n\n{history}\n\n## User Request\n\n{input}"
-        ));
+        )).ok();
 
         Ok(prompt)
     }

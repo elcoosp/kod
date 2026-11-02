@@ -845,17 +845,17 @@ pub(super) fn render_session_markdown(messages: &[kod_tui::app::Message]) -> Str
             MessageRole::System => ("## sys", false),
             MessageRole::Tool => ("## tool", true),
             MessageRole::Agent(id) => {
-                out.push_str(&format!("## agent {id}\n\n"));
+                std::fmt::Write::write_fmt(&mut out, format_args!("## agent {id}\n\n")).ok();
                 out.push_str(&m.content);
                 out.push_str("\n\n");
                 continue;
             }
         };
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "{} · {}\n\n",
             label,
             m.timestamp.format("%Y-%m-%d %H:%M:%S"),
-        ));
+        )).ok();
         if fence {
             out.push_str("```\n");
             out.push_str(&m.content);

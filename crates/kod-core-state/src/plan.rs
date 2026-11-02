@@ -213,15 +213,15 @@ impl Plan {
                 PlanStatus::Skipped => "·",
                 PlanStatus::Pending => " ",
             };
-            out.push_str(&format!("{} {}. {}\n", marker, s.id + 1, s.text));
+            std::fmt::Write::write_fmt(&mut out, format_args!("{} {}. {}\n", marker, s.id + 1, s.text)).ok();
             if let Some(notes) = self.notes.get(&s.id) {
                 for n in notes {
-                    out.push_str(&format!("   note: {n}\n"));
+                    std::fmt::Write::write_fmt(&mut out, format_args!("   note: {n}\n")).ok();
                 }
             }
         }
         if let Some(cur) = self.current_step() {
-            out.push_str(&format!("\nCurrent step: {}. {}\n", cur.id + 1, cur.text));
+            std::fmt::Write::write_fmt(&mut out, format_args!("\nCurrent step: {}. {}\n", cur.id + 1, cur.text)).ok();
         }
         out
     }

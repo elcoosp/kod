@@ -73,7 +73,7 @@ pub fn build_prompt(messages: &[ChatMessage], max_entries: usize) -> String {
         if matches!(m.role, MessageRole::Tool) {
             continue;
         }
-        transcript.push_str(&format!("{role}: {}\n", m.content.trim()));
+        std::fmt::Write::write_fmt(&mut transcript, format_args!("{role}: {}\n", m.content.trim())).ok();
     }
 
     format!(
@@ -350,11 +350,11 @@ mod proptests {
                 if i > 0 {
                     s.push(',');
                 }
-                s.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut s, format_args!(
                     r#"{{"type":{},"content":{}}}"#,
                     serde_json::to_string(kind).unwrap(),
                     serde_json::to_string(content).unwrap(),
-                ));
+                )).ok();
             }
             s.push(']');
             s
@@ -475,11 +475,11 @@ mod proptests {
                 if i > 0 {
                     s.push(',');
                 }
-                s.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut s, format_args!(
                     r#"{{"type":{},"content":{}}}"#,
                     serde_json::to_string(kind_str).unwrap(),
                     serde_json::to_string(content).unwrap(),
-                ));
+                )).ok();
             }
             s.push(']');
 

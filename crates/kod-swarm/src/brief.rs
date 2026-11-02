@@ -117,7 +117,7 @@ pub fn render_brief(brief: &ContextBrief) -> String {
     if !brief.constraints.is_empty() {
         out.push_str("## Constraints\n\n");
         for c in &brief.constraints {
-            out.push_str(&format!("- {}\n", c.trim()));
+            std::fmt::Write::write_fmt(&mut out, format_args!("- {}\n", c.trim())).ok();
         }
         out.push('\n');
     }
@@ -126,7 +126,7 @@ pub fn render_brief(brief: &ContextBrief) -> String {
         out.push_str("## Decisions the parent has already made\n\n");
         out.push_str("Do not re-litigate these; respect them unless you find a concrete reason they are wrong.\n\n");
         for d in &brief.relevant_decisions {
-            out.push_str(&format!("- {}\n", d.trim()));
+            std::fmt::Write::write_fmt(&mut out, format_args!("- {}\n", d.trim())).ok();
         }
         out.push('\n');
     }
@@ -134,12 +134,12 @@ pub fn render_brief(brief: &ContextBrief) -> String {
     if !brief.file_digests.is_empty() {
         out.push_str("## Files you may need\n\n");
         for d in &brief.file_digests {
-            out.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut out, format_args!(
                 "- `{}` ({} lines): {}\n",
                 d.path.display(),
                 d.line_count,
                 d.summary.trim()
-            ));
+            )).ok();
         }
         out.push('\n');
     }
@@ -164,7 +164,7 @@ pub fn render_brief(brief: &ContextBrief) -> String {
         out.push_str("## Write scope\n\n");
         out.push_str("Your writes must stay within these globs:\n");
         for g in &brief.expected_writes {
-            out.push_str(&format!("- `{g}`\n"));
+            std::fmt::Write::write_fmt(&mut out, format_args!("- `{g}`\n")).ok();
         }
         out.push('\n');
     }

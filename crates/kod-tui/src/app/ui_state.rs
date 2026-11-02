@@ -358,13 +358,13 @@ impl KodApp {
                 kod_types::MessageRole::Agent(_) => ("agent", "agent"),
             };
             let escaped = html_escape(&m.content);
-            out.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut out, format_args!(
                 "<div class=\"msg {}\"><div class=\"role\">{}<span class=\"time\">{}</span></div><pre>{}</pre></div>\n",
                 cls,
                 label,
                 m.timestamp.format("%Y-%m-%d %H:%M:%S"),
                 escaped,
-            ));
+            )).ok();
         }
         out.push_str("</body></html>\n");
         out
@@ -386,11 +386,11 @@ impl KodApp {
                 kod_types::MessageRole::Tool => "tool",
                 kod_types::MessageRole::Agent(_) => "agent",
             };
-            out.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut out, format_args!(
                 "## {} · {}\n\n",
                 label,
                 m.timestamp.format("%Y-%m-%d %H:%M:%S")
-            ));
+            )).ok();
             let fenced = matches!(
                 m.role,
                 kod_types::MessageRole::Assistant | kod_types::MessageRole::Tool

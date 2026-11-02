@@ -393,7 +393,7 @@ mod tests {
     fn header_runaway_clean_below_threshold() {
         let mut tail = String::new();
         for i in 0..35 {
-            tail.push_str(&format!("## Section {i}\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\n")).ok();
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -402,7 +402,7 @@ mod tests {
     fn header_runaway_fires_at_threshold() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\n")).ok();
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -411,7 +411,7 @@ mod tests {
     fn header_runaway_tolerates_blank_lines_between_headers() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\n\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\n\n")).ok();
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -420,7 +420,7 @@ mod tests {
     fn header_runaway_resets_on_prose_between_headers() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\nSome prose content here.\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\nSome prose content here.\n")).ok();
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -429,7 +429,7 @@ mod tests {
     fn header_runaway_fires_on_bold_titles() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("**Summary {i}**\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("**Summary {i}**\n")).ok();
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -438,7 +438,7 @@ mod tests {
     fn header_runaway_ignores_a_bold_inline_label() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("**Note {i}:** some text after it\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("**Note {i}:** some text after it\n")).ok();
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -541,7 +541,7 @@ mod tests {
         });
         let mut tail = String::new();
         for i in 0..40 {
-            tail.push_str(&format!("## Section {i}\n"));
+            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\n")).ok();
         }
         let v = g.feed(tail.as_bytes());
         assert_eq!(v, StallVerdict::Clean, "disabled detector must not fire");

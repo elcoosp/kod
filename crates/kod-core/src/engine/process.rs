@@ -681,11 +681,11 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        summary_prompt.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut summary_prompt, format_args!(
                             "\n### Result {}\n{}\n",
                             i + 1,
                             summarize_tool_result(name, r),
-                        ));
+                        )).ok();
                     }
                 }
                 summary_prompt.push_str(
@@ -1187,11 +1187,11 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        summary_prompt.push_str(&format!(
+                        std::fmt::Write::write_fmt(&mut summary_prompt, format_args!(
                             "\n### Result {}\n{}\n",
                             i + 1,
                             summarize_tool_result(name, r),
-                        ));
+                        )).ok();
                     }
                 }
                 summary_prompt.push_str(
@@ -1535,7 +1535,7 @@ impl KodEngine {
                 if turn > 1 {
                     let _ = chunk_tx.send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX))).await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
-                    pending.push_str(&format!("\n\n{nudge}\n"));
+                    std::fmt::Write::write_fmt(&mut pending, format_args!("\n\n{nudge}\n")).ok();
                     // The nudge is what tells the model to *continue*;
                     // on the structured path it has to be a message
                     // for the provider to see it.

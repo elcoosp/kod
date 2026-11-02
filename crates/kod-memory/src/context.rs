@@ -55,7 +55,7 @@ impl Context {
         if !self.memory_context.working_memory.is_empty() {
             prompt.push_str("## Current Context\n\n");
             for entry in &self.memory_context.working_memory {
-                prompt.push_str(&format!("- {}\n", entry.content));
+                std::fmt::Write::write_fmt(&mut prompt, format_args!("- {}\n", entry.content)).ok();
             }
             prompt.push('\n');
         }
@@ -63,7 +63,7 @@ impl Context {
         if !self.memory_context.long_term.is_empty() {
             prompt.push_str("## User Preferences & Knowledge\n\n");
             for entry in &self.memory_context.long_term {
-                prompt.push_str(&format!("- {}\n", entry.content));
+                std::fmt::Write::write_fmt(&mut prompt, format_args!("- {}\n", entry.content)).ok();
             }
             prompt.push('\n');
         }
@@ -72,20 +72,20 @@ impl Context {
         if !self.skills.is_empty() {
             prompt.push_str("## Relevant Skills\n\n");
             for skill in &self.skills {
-                prompt.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut prompt, format_args!(
                     "### {}\n\n{}\n\n",
                     skill.metadata.name, skill.instructions
-                ));
+                )).ok();
             }
         }
 
         // Add system prompt if provided
         if let Some(system) = &self.system_prompt {
-            prompt.push_str(&format!("## System\n\n{system}\n\n"));
+            std::fmt::Write::write_fmt(&mut prompt, format_args!("## System\n\n{system}\n\n")).ok();
         }
 
         // Add user input
-        prompt.push_str(&format!("## User Request\n\n{}", self.user_input));
+        std::fmt::Write::write_fmt(&mut prompt, format_args!("## User Request\n\n{}", self.user_input)).ok();
 
         prompt
     }

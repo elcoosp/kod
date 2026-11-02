@@ -329,13 +329,13 @@ impl ProtocolHandler for ConflictHandler {
             let mut registered = b.clone();
             registered.id = id.clone();
             self.store.register(&path, registered, body.to_string());
-            listing.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut listing, format_args!(
                 "conflict://{id}\n  ours ({}): {} line(s)\n  theirs ({}): {} line(s)\n\n",
                 b.ours_label,
                 b.ours.lines().count(),
                 b.theirs_label,
                 b.theirs.lines().count(),
-            ));
+            )).ok();
         }
         Ok(ResolvedResource {
             text: listing,

@@ -345,15 +345,15 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 
     let mut out = String::new();
     for h in &kept {
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "{}:{}: {}\n",
             h.path.display(),
             h.line_number,
             h.line
-        ));
+        )).ok();
     }
     if dropped > 0 {
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "... {dropped} more match{} in {} file{} (filtered by relevance to the query)\n",
             if dropped == 1 { "" } else { "es" },
             results
@@ -363,7 +363,7 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
                 .collect::<std::collections::HashSet<_>>()
                 .len(),
             if results.hits.len() == 1 { "" } else { "s" },
-        ));
+        )).ok();
     }
     out
 }
@@ -371,15 +371,15 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 fn mechanical_truncate(hits: &[SearchHit], cap_lines: usize) -> String {
     let mut out = String::new();
     for h in hits.iter().take(cap_lines) {
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "{}:{}: {}\n",
             h.path.display(),
             h.line_number,
             h.line
-        ));
+        )).ok();
     }
     if hits.len() > cap_lines {
-        out.push_str(&format!("... {} more matches\n", hits.len() - cap_lines));
+        std::fmt::Write::write_fmt(&mut out, format_args!("... {} more matches\n", hits.len() - cap_lines)).ok();
     }
     out
 }

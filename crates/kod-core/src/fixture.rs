@@ -297,28 +297,28 @@ impl Fixture {
 #[must_use]
 pub fn diff_rounds(expected: &RoundFixture, actual: &RoundFixture) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
+    std::fmt::Write::write_fmt(&mut out, format_args!(
         "Round {} request hash: expected {} got {}\n",
         expected.seq, expected.request_hash, actual.request_hash,
-    ));
-    out.push_str(&format!(
+    )).ok();
+    std::fmt::Write::write_fmt(&mut out, format_args!(
         "  system_chars:  {} → {}\n",
         expected.request_summary.system_chars, actual.request_summary.system_chars,
-    ));
-    out.push_str(&format!(
+    )).ok();
+    std::fmt::Write::write_fmt(&mut out, format_args!(
         "  message_count: {} → {}\n",
         expected.request_summary.message_count, actual.request_summary.message_count,
-    ));
-    out.push_str(&format!(
+    )).ok();
+    std::fmt::Write::write_fmt(&mut out, format_args!(
         "  model:         {} → {}\n",
         expected.request_summary.model, actual.request_summary.model,
-    ));
+    )).ok();
     if expected.request_summary.tool_names != actual.request_summary.tool_names {
-        out.push_str(&format!(
+        std::fmt::Write::write_fmt(&mut out, format_args!(
             "  tools: {} → {}\n",
             expected.request_summary.tool_names.join(", "),
             actual.request_summary.tool_names.join(", "),
-        ));
+        )).ok();
     }
     out
 }

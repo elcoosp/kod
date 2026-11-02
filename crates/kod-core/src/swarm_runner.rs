@@ -2197,13 +2197,13 @@ impl SwarmRunner {
                 .filter_map(|r| r.get("file").and_then(|f| f.as_str()))
                 .map(|s| s.rsplit('/').next().unwrap_or(s))
                 .collect();
-            hits.push_str(&format!(
+            std::fmt::Write::write_fmt(&mut hits, format_args!(
                 "  \"{}\" ({} match{}): {}\n",
                 kw,
                 results.len(),
                 if results.len() == 1 { "" } else { "es" },
                 files.join(", ")
-            ));
+            )).ok();
         }
 
         let mut out = String::new();
@@ -2427,11 +2427,11 @@ impl SwarmRunner {
                  (or combination) wins, naming the file:\n",
             );
             for c in conflicts {
-                s.push_str(&format!(
+                std::fmt::Write::write_fmt(&mut s, format_args!(
                     "  - {} was written by {}\n",
                     c.file,
                     c.agents.join(", ")
-                ));
+                )).ok();
             }
             s.push('\n');
             s
@@ -2465,8 +2465,8 @@ impl SwarmRunner {
     fn concatenate(per_agent: &[AgentResult]) -> String {
         let mut out = String::new();
         for r in per_agent {
-            out.push_str(&format!("=== {} ===\n", r.name));
-            out.push_str(&format!("Subtask: {}\n\n", r.subtask));
+            std::fmt::Write::write_fmt(&mut out, format_args!("=== {} ===\n", r.name)).ok();
+            std::fmt::Write::write_fmt(&mut out, format_args!("Subtask: {}\n\n", r.subtask)).ok();
             match &r.outcome {
                 AgentOutcome::Completed(text) => out.push_str(text),
                 AgentOutcome::Failed(e) => out.push_str(&format!("(failed: {e})")),
@@ -2545,10 +2545,10 @@ fn render_swarm_conflict_notice(
             .join(", "),
     );
     if let Some(su) = &t.summary {
-        s.push_str(&format!(" ({su})"));
+        std::fmt::Write::write_fmt(&mut s, format_args!(" ({su})")).ok();
     }
     if let Some(intent) = &t.intent {
-        s.push_str(&format!(" — their stated intent: {intent}"));
+        std::fmt::Write::write_fmt(&mut s, format_args!(" — their stated intent: {intent}")).ok();
     }
     s.push_str(
         ". You have touched this file during this run. Re-read it before \

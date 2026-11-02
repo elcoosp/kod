@@ -85,7 +85,7 @@ impl KodApp {
         let mut s = format!("Swarm: {} subtasks\n", subtasks.len());
         for (i, (name, desc)) in subtasks.iter().enumerate() {
             let d = desc.lines().next().unwrap_or(desc);
-            s.push_str(&format!("  {}. {} — {}\n", i + 1, name, d));
+            std::fmt::Write::write_fmt(&mut s, format_args!("  {}. {} — {}\n", i + 1, name, d)).ok();
         }
         self.push_system_message(s.trim_end());
     }

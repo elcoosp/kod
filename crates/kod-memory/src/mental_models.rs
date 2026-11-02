@@ -213,7 +213,7 @@ impl MentalModels {
             if text.trim().is_empty() {
                 continue;
             }
-            out.push_str(&format!("### {}\n\n{}\n\n", m.seed.name, text.trim_end()));
+            std::fmt::Write::write_fmt(&mut out, format_args!("### {}\n\n{}\n\n", m.seed.name, text.trim_end())).ok();
         }
         out.trim_end().to_string()
     }

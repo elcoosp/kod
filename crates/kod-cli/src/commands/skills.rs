@@ -194,7 +194,7 @@ pub fn run_skills_new(name: &str) -> Result<()> {
     // indentation-invariant.
     let mut body = String::new();
     body.push_str("---\n");
-    body.push_str(&format!("name: {trimmed}\n"));
+    std::fmt::Write::write_fmt(&mut body, format_args!("name: {trimmed}\n")).ok();
     body.push_str("description: \"TODO: one-sentence description of what this skill does\"\n");
     body.push_str("version: 0.1.0\n");
     body.push_str("category: general\n");
@@ -203,7 +203,7 @@ pub fn run_skills_new(name: &str) -> Result<()> {
     body.push_str("triggers:\n");
     body.push_str("  - \"TODO trigger phrase\"\n");
     body.push_str("---\n\n");
-    body.push_str(&format!("# {title}\n\n"));
+    std::fmt::Write::write_fmt(&mut body, format_args!("# {title}\n\n")).ok();
     body.push_str("## Instructions\n\n");
     body.push_str("Describe the skill's guidance here. The model reads this section\n");
     body.push_str("when the skill's triggers match the user's request.\n\n");
@@ -646,7 +646,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     for line in content.lines() {
         if !rewrote && line.trim_start().starts_with("name:") {
             let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            out.push_str(&format!("{indent}name: {new_name}\n"));
+            std::fmt::Write::write_fmt(&mut out, format_args!("{indent}name: {new_name}\n")).ok();
             rewrote = true;
         } else {
             out.push_str(line);
