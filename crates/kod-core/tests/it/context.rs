@@ -1,6 +1,7 @@
 use kod_core_routing::context::{EngineContext, EngineContextBuilder};
 use kod_types::MemoryContext;
 use std::path::PathBuf;
+use kod_types::memory::MemoryMetadata;
 
 #[test]
 fn test_context_creation() {

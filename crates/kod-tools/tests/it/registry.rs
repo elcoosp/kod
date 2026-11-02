@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use kod_tools::registry::ToolRegistry;
 use kod_tools::{Tool, ToolContext, ToolResult};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, LoadMode};
 use serde_json::json;
 
 struct EchoTool;
@@ -34,7 +34,7 @@ impl Tool for EchoTool {
                 allowed_paths: Vec::new(),
                 forbidden_paths: Vec::new(),
             },
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         }
     }
 

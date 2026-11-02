@@ -7,7 +7,7 @@ use crate::{Tool, ToolContext};
 use crate::relevance::SearchBackend;
 pub(crate) use crate::shared::{atomic_write, kill_child_tree};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use regex::Regex;
 use serde_json::Value;
 
@@ -199,7 +199,7 @@ impl ReadFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -620,7 +620,7 @@ impl WriteFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -881,7 +881,7 @@ impl ExecuteCommandTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -1399,7 +1399,7 @@ impl ListFilesTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -1641,7 +1641,7 @@ impl PatchFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -1826,7 +1826,7 @@ impl GrepTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

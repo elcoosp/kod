@@ -95,7 +95,7 @@ pub use plan::PlanTool;
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience
-pub use kod_types::{ToolDefinition, ToolResult};
+pub use kod_types::{ToolDefinition, ToolResult, LoadMode};
 
 /// Trait that all tools must implement.
 #[async_trait::async_trait]
@@ -133,7 +133,7 @@ mod tests {
                 category: ToolCategory::System,
                 parameters_schema: serde_json::json!({}),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             }
         }
 

@@ -21,7 +21,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::Result;
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 
 /// Marker prefix for a question on the streaming chunk channel:
@@ -92,7 +92,7 @@ impl AskUserTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

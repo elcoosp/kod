@@ -38,7 +38,7 @@ use kod_error::{KodError, Result};
 use kod_mcp::tool_cache;
 use kod_mcp::{McpClient, McpToolDef};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -357,7 +357,7 @@ impl McpToolAdapter {
                 // pretend to be one and be bypassable by any config
                 // that forgot to set it.
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             call_timeout_secs: call_timeout_secs.max(1),
         }

@@ -3,7 +3,7 @@
 //! Combines user input, memory, and skills into a structured context
 //! that can be serialized into a prompt.
 
-use kod_types::{MemoryContext, Skill};
+use kod_types::{MemoryContext, Skill, MemoryMetadata};
 use serde::{Deserialize, Serialize};
 
 /// Built context ready for LLM processing
@@ -188,7 +188,7 @@ mod coverage_memory_context {
             content: content.to_string(),
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),

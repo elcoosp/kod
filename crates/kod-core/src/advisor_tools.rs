@@ -38,7 +38,7 @@ use kod_swarm::advisor::{
     Admission, Advice, Delivery, EmissionGuard, PrimaryState, Severity, route,
 };
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -167,7 +167,7 @@ impl AdviseTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

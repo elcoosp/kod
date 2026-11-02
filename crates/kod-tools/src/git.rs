@@ -16,7 +16,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 
 /// Byte cap for git output rendered back to the model. A `git diff` on a
@@ -218,7 +218,7 @@ impl GitStatusTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -354,7 +354,7 @@ impl GitDiffTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -513,7 +513,7 @@ impl GitCommitTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -667,7 +667,7 @@ impl GitBranchTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

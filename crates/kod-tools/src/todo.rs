@@ -14,7 +14,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -191,7 +191,7 @@ impl TodoTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             list,
             next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),

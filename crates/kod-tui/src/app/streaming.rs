@@ -10,6 +10,7 @@
 //! exactly as before.
 
 use super::*;
+use kod_types::message::MessageMetadata;
 
 impl KodApp {
     /// The response text accumulated so far.

@@ -14,7 +14,7 @@
 //!    scores near zero; a fact from yesterday scores near one.
 
 use crate::stopwords;
-use kod_types::{MemoryEntry, MemoryType};
+use kod_types::{MemoryEntry, MemoryType, MemoryMetadata};
 use time::OffsetDateTime;
 
 /// Which decay shape scoring uses.
@@ -398,7 +398,7 @@ mod tests {
             content: content.to_string(),
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),
@@ -677,7 +677,7 @@ mod tests {
             content: "the user prefers tabs".to_string(),
             timestamp: old,
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),
@@ -716,7 +716,7 @@ mod coverage_scoring_composition {
             content: content.to_string(),
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),

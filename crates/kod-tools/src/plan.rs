@@ -9,7 +9,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::Result;
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 
 /// See the module docs.
@@ -55,7 +55,7 @@ impl PlanTool {
                 }),
                 permissions: ToolPermissions::default(),
                 trust_level: kod_types::trust::TrustLevel::ToolTrusted,
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

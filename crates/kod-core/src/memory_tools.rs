@@ -18,7 +18,7 @@
 
 use kod_error::{KodError, Result};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ impl MemorySaveTool {
                 // the policy engine is what gates it, not the
                 // ToolPermissions bitmask.
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             router,
         }
@@ -157,7 +157,7 @@ impl MemorySearchTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             router,
         }

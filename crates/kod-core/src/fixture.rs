@@ -12,6 +12,7 @@
 //! on exact message contents (which change with every run).
 
 use serde::{Deserialize, Serialize};
+use kod_types::tool::LoadMode;
 
 /// One round's captured request + response.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -17,7 +17,7 @@
 
 use kod_error::{KodError, Result};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -87,7 +87,7 @@ impl LspDiagnosticsTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             manager,
         }
@@ -174,7 +174,7 @@ impl LspDefinitionTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             manager,
         }
@@ -265,7 +265,7 @@ impl LspReferencesTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             manager,
         }
@@ -356,7 +356,7 @@ impl LspHoverTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             manager,
         }

@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kod_error::Result;
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 
 use crate::jev::JevDecider;
@@ -186,7 +186,7 @@ impl JfindTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
             judge,
             judge_is_semantic,

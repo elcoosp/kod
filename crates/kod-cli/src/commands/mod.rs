@@ -3311,7 +3311,7 @@ mod coverage_cli_render {
     use super::*;
     use chrono::{DateTime, Utc};
     use kod_tui::app::Message;
-    use kod_types::{AgentId, MessageId, MessageRole};
+    use kod_types::{AgentId, MessageId, MessageRole, MessageMetadata};
 
     fn frozen_ts() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
@@ -3325,7 +3325,7 @@ mod coverage_cli_render {
             role,
             content: content.to_string(),
             timestamp: frozen_ts(),
-            metadata: Default::default(),
+            metadata: MessageMetadata::default(),
             sequence: 0,
         }
     }

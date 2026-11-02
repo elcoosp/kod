@@ -38,7 +38,7 @@ use kod_memory::MemoryManager;
 use kod_memory::short_term::ShortTermMemory;
 use kod_skills::{SkillLoader, SkillMatcher};
 use kod_swarm::{AgentBuilder, Capability};
-use kod_types::{MemoryEntry, MemoryType};
+use kod_types::{MemoryEntry, MemoryType, MemoryMetadata};
 use std::path::PathBuf;
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -146,7 +146,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
                 content: "Benchmark memory entry".to_string(),
                 timestamp: OffsetDateTime::now_utc(),
                 relevance: 1.0,
-                metadata: Default::default(),
+                metadata: MemoryMetadata::default(),
 
                 superseded_by: None,
                 contradicts: Vec::new(),
@@ -165,7 +165,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
                 content: format!("Memory entry {i}"),
                 timestamp: OffsetDateTime::now_utc(),
                 relevance: 1.0,
-                metadata: Default::default(),
+                metadata: MemoryMetadata::default(),
 
                 superseded_by: None,
                 contradicts: Vec::new(),

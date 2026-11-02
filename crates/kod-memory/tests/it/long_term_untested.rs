@@ -16,7 +16,7 @@
 //! either is missing). Writing tests for them without reading the
 //! bodies would be guessing; they are the next recon's targets.
 use kod_memory::long_term::LongTermMemory;
-use kod_types::{MemoryEntry, MemoryId, MemoryType};
+use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 
@@ -27,7 +27,7 @@ fn create_entry(content: &str) -> MemoryEntry {
         content: content.to_string(),
         timestamp: OffsetDateTime::now_utc(),
         relevance: 0.8,
-        metadata: Default::default(),
+        metadata: MemoryMetadata::default(),
         superseded_by: None,
         contradicts: Vec::new(),
     }

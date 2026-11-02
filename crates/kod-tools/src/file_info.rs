@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 
 /// Get file information
 /// The file-info tool.
@@ -48,7 +48,7 @@ impl FileInfoTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }

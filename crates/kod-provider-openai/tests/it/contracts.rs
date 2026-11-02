@@ -20,7 +20,7 @@ use kod_provider::GenerationResponse;
 use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt, SystemSegment};
 use kod_provider::traits::{GenerationOptions, LlmProvider};
 use kod_provider_openai::OpenAICompatProvider;
-use kod_types::{ChatMessage, MessageId, MessageRole, ToolCall};
+use kod_types::{ChatMessage, MessageId, MessageRole, ToolCall, LoadMode};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -224,7 +224,7 @@ async fn complete_serializes_tools_as_functions() {
             "properties": {"path": {"type": "string"}}
         }),
         permissions: ToolPermissions::default(),
-        load_mode: Default::default(),
+        load_mode: LoadMode::default(),
     }];
     provider.complete(&req).await.expect("complete");
 }

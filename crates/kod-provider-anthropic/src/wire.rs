@@ -37,7 +37,7 @@
 //! entry so the API accepts the request.
 
 use kod_provider::request::{CompletionRequest, SystemPrompt};
-use kod_types::{ChatMessage, MessageRole, ToolDefinition};
+use kod_types::{ChatMessage, MessageRole, ToolDefinition, LoadMode, MessageMetadata};
 use serde_json::{Value, json};
 
 /// Build the JSON body for `POST /v1/messages`.
@@ -1150,7 +1150,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
             permissions: ToolPermissions::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         };
         let arr = tools_array(&[tool]);
         let v = arr.as_array().unwrap();
@@ -1269,7 +1269,7 @@ mod tests {
             role: kod_types::MessageRole::Tool,
             content: "output".to_string(),
             timestamp: time::OffsetDateTime::now_utc(),
-            metadata: Default::default(),
+            metadata: MessageMetadata::default(),
             tool_calls: Vec::new(),
             tool_call_id: Some("call-1".to_string()),
         };
@@ -1332,7 +1332,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
             permissions: ToolPermissions::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         };
         let t1 = mk("alpha");
         let t2 = mk("beta");
@@ -1440,7 +1440,7 @@ mod coverage_wire_builders {
             category: kod_types::ToolCategory::Code,
             parameters_schema: json!({"type": "object"}),
             permissions: kod_types::ToolPermissions::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         }
     }
 
@@ -1456,7 +1456,7 @@ mod coverage_wire_builders {
             category: kod_types::ToolCategory::FileSystem,
             parameters_schema: serde_json::json!({"type": "object"}),
             permissions: kod_types::ToolPermissions::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         }];
         req.options.tool_choice = Some(ToolChoice::Specific("read_file".to_string()));
         let body = build_messages_body(&req);

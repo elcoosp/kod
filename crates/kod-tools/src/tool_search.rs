@@ -21,7 +21,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 
 /// Tools the search will match against. Filled by the engine at
@@ -92,7 +92,7 @@ impl ToolSearchTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                load_mode: LoadMode::default(),
             },
         }
     }
@@ -209,7 +209,7 @@ mod tests {
             parameters_schema: serde_json::json!({"type": "object"}),
             permissions: ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
-            load_mode: Default::default(),
+            load_mode: LoadMode::default(),
         }
     }
 

@@ -3,7 +3,7 @@
 //! Uses FIFO eviction when capacity is exceeded. Suitable for
 //! session-scoped context that doesn't need persistence.
 
-use kod_types::{MemoryEntry, MemoryId};
+use kod_types::{MemoryEntry, MemoryId, MemoryMetadata};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
@@ -187,7 +187,7 @@ mod tests {
             content: content.to_string(),
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),
@@ -284,7 +284,7 @@ mod coverage_short_term_accessors {
             content: content.to_string(),
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
-            metadata: Default::default(),
+            metadata: MemoryMetadata::default(),
 
             superseded_by: None,
             contradicts: Vec::new(),

@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use kod_error::Result;
 use kod_memory::{EmbeddingClient, MemoryManager};
 use kod_types::memory::MemoryType;
+use kod_types::memory::MemoryMetadata;
 
 /// An embedder that panics on every call. The fixture, not a
 /// workaround.

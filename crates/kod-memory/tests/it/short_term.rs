@@ -1,5 +1,5 @@
 use kod_memory::short_term::ShortTermMemory;
-use kod_types::{MemoryEntry, MemoryId, MemoryType};
+use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
 use time::OffsetDateTime;
 
 fn create_entry(content: &str) -> MemoryEntry {
@@ -9,7 +9,7 @@ fn create_entry(content: &str) -> MemoryEntry {
         content: content.to_string(),
         timestamp: OffsetDateTime::now_utc(),
         relevance: 1.0,
-        metadata: Default::default(),
+        metadata: MemoryMetadata::default(),
 
         superseded_by: None,
         contradicts: Vec::new(),

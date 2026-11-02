@@ -1,6 +1,6 @@
 use kod_tui::app::{InputMode, KodApp, Message, SLASH_COMMANDS};
 use kod_tui::ui::{AgentPanelWidget, ChatWidget, CompletionsWidget, InputWidget, StatusWidget};
-use kod_types::{MessageId, MessageRole};
+use kod_types::{MessageId, MessageRole, MessageMetadata};
 use ratatui::backend::TestBackend;
 use ratatui::{Terminal, buffer::Buffer};
 
@@ -21,7 +21,7 @@ fn test_chat_widget_rendering() {
         role: MessageRole::User,
         content: "Hello".to_string(),
         timestamp: chrono::Utc::now(),
-        metadata: Default::default(),
+        metadata: MessageMetadata::default(),
         sequence: 0,
     });
 
@@ -30,7 +30,7 @@ fn test_chat_widget_rendering() {
         role: MessageRole::Assistant,
         content: "Hi there!".to_string(),
         timestamp: chrono::Utc::now(),
-        metadata: Default::default(),
+        metadata: MessageMetadata::default(),
         sequence: 0,
     });
 
@@ -221,7 +221,7 @@ fn test_chat_scrollbar_appears_on_overflow() {
             role: MessageRole::User,
             content: format!("message number {i}"),
             timestamp: chrono::Utc::now(),
-            metadata: Default::default(),
+            metadata: MessageMetadata::default(),
             sequence: 0,
         });
     }
@@ -249,7 +249,7 @@ fn test_chat_scrollbar_slim_when_scrolled_back() {
             role: MessageRole::User,
             content: format!("message number {i}"),
             timestamp: chrono::Utc::now(),
-            metadata: Default::default(),
+            metadata: MessageMetadata::default(),
             sequence: 0,
         });
     }
@@ -274,7 +274,7 @@ fn push_msg(app: &mut KodApp, role: MessageRole, content: &str) {
         role,
         content: content.to_string(),
         timestamp: chrono::Utc::now(),
-        metadata: Default::default(),
+        metadata: MessageMetadata::default(),
         sequence: 0,
     });
 }
@@ -513,7 +513,7 @@ fn test_messages_render_in_chronological_order() {
         role: MessageRole::User,
         content: "first line".to_string(),
         timestamp: early,
-        metadata: Default::default(),
+        metadata: MessageMetadata::default(),
         sequence: 0,
     });
     app.add_message(Message {
@@ -521,7 +521,7 @@ fn test_messages_render_in_chronological_order() {
         role: MessageRole::Assistant,
         content: "second line".to_string(),
         timestamp: late,
-        metadata: Default::default(),
+        metadata: MessageMetadata::default(),
         sequence: 0,
     });
 

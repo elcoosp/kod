@@ -958,7 +958,7 @@ mod coverage_chat_widget {
     use super::*;
     use crate::app::Message;
     use chrono::Utc;
-    use kod_types::{MessageId, MessageRole};
+    use kod_types::{MessageId, MessageRole, MessageMetadata};
 
     fn buffer_text(buf: &Buffer) -> String {
         buf.content()
@@ -973,7 +973,7 @@ mod coverage_chat_widget {
             role,
             content: content.to_string(),
             timestamp: Utc::now(),
-            metadata: Default::default(),
+            metadata: MessageMetadata::default(),
             sequence: 0,
         });
     }

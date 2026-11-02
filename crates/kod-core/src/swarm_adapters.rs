@@ -34,7 +34,7 @@
 use kod_error::Result;
 use kod_swarm::{AgentCommunicationHub, MessageContent};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{AgentId, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{AgentId, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ fn base_definition(name: &str, description: &str, schema: Value) -> ToolDefiniti
         // default permissions can use the tools. The policy engine
         // is what gates them, not the ToolPermissions bitmask.
         permissions: ToolPermissions::default(),
-        load_mode: Default::default(),
+        load_mode: LoadMode::default(),
     }
 }
 
