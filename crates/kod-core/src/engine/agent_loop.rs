@@ -1387,7 +1387,7 @@ impl KodEngine {
                 continue;
             }
             let frame_est = crate::compaction_dispatcher::FRAME_TOKEN_ESTIMATE;
-            let ratio = frame_est as f64 / tokens.max(1) as f64;
+            let ratio = frame_est.to_f64().unwrap_or(f64::MAX) / tokens.max(1).to_f64().unwrap_or(f64::MAX);
             if ratio >= crate::compaction_dispatcher::SAVINGS_MARGIN {
                 continue;
             }

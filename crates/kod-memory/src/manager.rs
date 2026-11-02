@@ -9,7 +9,6 @@ use kod_error::{KodError, Result};
 use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType};
 use std::path::PathBuf;
 use time::OffsetDateTime;
-use num_traits::ToPrimitive;
 
 /// Episodic entries whose last touch (write or retrieval) is older
 /// than this many days are archived by [`MemoryManager::consolidate`].

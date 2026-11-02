@@ -196,7 +196,7 @@ impl Plan {
             .iter()
             .filter(|s| matches!(s.status, PlanStatus::Done | PlanStatus::Skipped))
             .count();
-        done as f32 / self.steps.len() as f32
+        done.to_f32().unwrap_or(f32::MAX) / self.steps.len().to_f32().unwrap_or(f32::MAX)
     }
 
     /// Render the plan as it appears at the top of the system prompt.

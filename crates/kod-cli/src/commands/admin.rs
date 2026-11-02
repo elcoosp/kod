@@ -34,7 +34,6 @@ pub async fn run_tui(
 /// Returns `Err` when the underlying operation fails.
 pub fn run_doctor(json: bool) -> Result<()> {
     use kod_core::doctor::{CheckStatus, run_diagnostics};
-use num_traits::ToPrimitive;
 
     let config = KodConfig::load_default()?;
     let report = run_diagnostics(&config);

@@ -279,7 +279,7 @@ mod tests {
                     if words.is_empty() {
                         0.0
                     } else {
-                        hits as f32 / words.len() as f32
+                        hits.to_f32().unwrap_or(f32::MAX) / words.len().to_f32().unwrap_or(f32::MAX)
                     }
                 })
                 .collect()

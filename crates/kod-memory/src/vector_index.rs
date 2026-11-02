@@ -169,7 +169,6 @@ impl VectorIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-use num_traits::ToPrimitive;
 
     fn id() -> MemoryId {
         MemoryId::new()

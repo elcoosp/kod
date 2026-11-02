@@ -195,7 +195,6 @@ impl TuiLoop {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-use num_traits::ToPrimitive;
             let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
         }
 

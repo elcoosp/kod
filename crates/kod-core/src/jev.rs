@@ -425,7 +425,7 @@ impl JevClient {
         let answer = nouls
             .get("q")
             .ok_or_else(|| JevError::Malformed("no noul answer for key 'q'".into()))?;
-        let p_yes = answer.noul as f32;
+        let p_yes = answer.noul.to_f32().unwrap_or(f32::MAX);
 
         self.cache_put(key, CachedAnswer::Bool { p_yes });
         Ok(Decision::jev(p_yes >= 0.5, (p_yes - 0.5).abs() * 2.0))
@@ -486,7 +486,7 @@ impl JevClient {
             let answer = nouls
                 .get(k.as_str())
                 .ok_or_else(|| JevError::Malformed(format!("no noul answer for key '{k}'")))?;
-            out.push((k.clone(), answer.noul as f32));
+            out.push((k.clone(), answer.noul.to_f32().unwrap_or(f32::MAX)));
         }
 
         // Persist the whole batch so the next identical call is free.
@@ -544,7 +544,7 @@ impl JevClient {
         let last = (levels.len() - 1) as f64;
         let idx = raw.round().clamp(0.0, last) as usize;
         let label = levels[idx].to_string();
-        let confidence = answer.confidence.clamp(0.0, 1.0) as f32;
+        let confidence = answer.confidence.clamp(0.0, 1.0).to_f32().unwrap_or(f32::MAX);
 
         self.cache_put(
             key,
@@ -590,7 +590,7 @@ impl JevClient {
             .get("q")
             .ok_or_else(|| JevError::Malformed("no choice answer for key 'q'".into()))?;
         let label = answer.choice.clone();
-        let confidence = answer.confidence.clamp(0.0, 1.0) as f32;
+        let confidence = answer.confidence.clamp(0.0, 1.0).to_f32().unwrap_or(f32::MAX);
 
         self.cache_put(
             key,

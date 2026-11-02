@@ -395,7 +395,7 @@ pub fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
         let f = x
             .as_f64()
             .ok_or_else(|| KodError::Provider(format!("embedding: non-numeric entry {x}")))?;
-        out.push(f as f32);
+        out.push(f.to_f32().unwrap_or(f32::MAX));
     }
     Ok(out)
 }

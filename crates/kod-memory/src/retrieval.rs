@@ -203,7 +203,7 @@ impl QueryTerms {
     #[must_use]
     pub fn idf(&self, token: &str) -> f32 {
         let df = self.df.get(token).copied().unwrap_or(0).to_f32().unwrap_or(f32::MAX);
-        (1.0 + (self.n_docs as f32 - df + 0.5) / (df + 0.5)).ln()
+        (1.0 + (self.n_docs.to_f32().unwrap_or(f32::MAX) - df + 0.5) / (df + 0.5)).ln()
     }
 }
 
@@ -299,10 +299,10 @@ impl HybridScorer {
             redistribute(self.w_semantic, self.w_keyword)
         };
         let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0) * weights.vector.to_f32().unwrap_or(f32::MAX);
-        let keyword_component = wk * self.keyword_bm25_lite(query, entry) * weights.keyword as f32;
+        let keyword_component = wk * self.keyword_bm25_lite(query, entry) * weights.keyword.to_f32().unwrap_or(f32::MAX);
         let shape = self.decay_shape_for(entry.memory_type);
         let recency_component =
-            self.w_recency * decay_at(entry.timestamp, now, shape) * weights.temporal as f32;
+            self.w_recency * decay_at(entry.timestamp, now, shape) * weights.temporal.to_f32().unwrap_or(f32::MAX);
         // `weights.importance` is not applied: the score has three
         // components (semantic, keyword, recency) whose BASE weights
         // sum to 1. Intent weights can scale a component above 1
