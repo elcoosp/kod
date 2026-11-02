@@ -6,7 +6,6 @@
 //! invalidated by an unrelated tool registration, and the cache
 //! savings this whole design rests on would silently vanish.
 use super::*;
-use kod_types::tool::LoadMode;
 
 fn head_of(prompt: &str) -> &str {
     const MARKER: &str = "## Volatile suffix";
