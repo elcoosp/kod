@@ -210,10 +210,7 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
         return Verification::MissingFile;
     }
 
-    let f = match std::fs::File::open(&canonical_candidate) {
-        Ok(f) => f,
-        Err(_) => return Verification::Unreadable,
-    };
+    let Ok(f) = std::fs::File::open(&canonical_candidate) else { return Verification::Unreadable; };
 
     // Count lines up to the cited one. `take(n).count()` returns
     // `min(file_lines, n)`, which is exactly the two outcomes we
