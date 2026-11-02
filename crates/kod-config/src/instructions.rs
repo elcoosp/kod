@@ -72,15 +72,6 @@ pub struct InstructionSection {
 
 /// Parse an `AGENTS.md` body into sections.
 pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
-    let mut out: Vec<InstructionSection> = Vec::new();
-    let mut current_when = When::Always;
-    let mut current_name: Option<String> = None;
-    let mut buf = String::new();
-    let mut in_fence = false;
-    // F2b-9: track markdown ``` fences so a `::: when` shown as an
-    // example inside a code block is not parsed as a live directive.
-    let mut in_code_fence = false;
-
     fn flush(
         out: &mut Vec<InstructionSection>,
         when: When,
@@ -99,6 +90,15 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
             body,
         });
     }
+    let mut out: Vec<InstructionSection> = Vec::new();
+    let mut current_when = When::Always;
+    let mut current_name: Option<String> = None;
+    let mut buf = String::new();
+    let mut in_fence = false;
+    // F2b-9: track markdown ``` fences so a `::: when` shown as an
+    // example inside a code block is not parsed as a live directive.
+    let mut in_code_fence = false;
+
 
     for line in src.lines() {
         let trimmed = line.trim_start();

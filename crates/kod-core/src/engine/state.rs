@@ -720,10 +720,6 @@ impl KodEngine {
     /// are arbitrary JSON, and the model may have put a placeholder
     /// in a nested field.
     pub(crate) async fn deobfuscate_json(&self, value: &mut serde_json::Value) -> usize {
-        let vault = match self.secret_vault.read().await.as_ref() {
-            Some(v) => std::sync::Arc::clone(v),
-            None => return 0,
-        };
         fn walk(
             v: &mut serde_json::Value,
             vault: &kod_types::secret_placeholder::SecretVault,
@@ -751,6 +747,10 @@ impl KodEngine {
             }
             n
         }
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) => std::sync::Arc::clone(v),
+            None => return 0,
+        };
         walk(value, &vault)
     }
 
@@ -763,10 +763,6 @@ impl KodEngine {
     /// those arguments were never scrubbed, so a registered secret the
     /// model put into a tool call leaked on every subsequent request.
     pub(crate) async fn obfuscate_json(&self, value: &mut serde_json::Value) -> usize {
-        let vault = match self.secret_vault.read().await.as_ref() {
-            Some(v) => std::sync::Arc::clone(v),
-            None => return 0,
-        };
         fn walk(
             v: &mut serde_json::Value,
             vault: &kod_types::secret_placeholder::SecretVault,
@@ -794,6 +790,10 @@ impl KodEngine {
             }
             n
         }
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) => std::sync::Arc::clone(v),
+            None => return 0,
+        };
         walk(value, &vault)
     }
 

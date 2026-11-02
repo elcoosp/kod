@@ -984,17 +984,17 @@ fn parse_locations(v: &serde_json::Value) -> Vec<crate::types::Location> {
 
 /// Parse a `textDocument/hover` response.
 fn parse_hover(v: &serde_json::Value) -> crate::types::Hover {
-    if v.is_null() {
-        return crate::types::Hover {
-            text: String::new(),
-            range: None,
-        };
-    }
     fn to_pos(p: &serde_json::Value) -> Option<crate::types::Position> {
         Some(crate::types::Position {
             line: (p.get("line")?.as_u64()? + 1) as u32,
             column: (p.get("character")?.as_u64()? + 1) as u32,
         })
+    }
+    if v.is_null() {
+        return crate::types::Hover {
+            text: String::new(),
+            range: None,
+        };
     }
     let range = v.get("range").and_then(|r| {
         let s = r.get("start")?;

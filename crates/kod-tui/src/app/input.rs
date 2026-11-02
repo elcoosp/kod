@@ -455,6 +455,12 @@ impl KodApp {
     /// call from both layout and render.
     #[must_use]
     pub fn input_view(&self, inner_width: usize) -> InputView {
+        struct LogRow {
+            text: String,
+            cursor_char: Option<usize>,
+            chips: Vec<(usize, usize)>,
+            logical: usize,
+        }
         let wrap_w = inner_width.max(8);
         let input = &self.input;
         let cb = self.cursor_position.min(input.len());
@@ -499,12 +505,6 @@ impl KodApp {
             .collect();
         blocks.sort_by_key(|b| b.start);
 
-        struct LogRow {
-            text: String,
-            cursor_char: Option<usize>,
-            chips: Vec<(usize, usize)>,
-            logical: usize,
-        }
         let mut log_rows: Vec<LogRow> = Vec::new();
         let mut i = 0;
         while i < starts.len() {

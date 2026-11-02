@@ -265,6 +265,24 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
 /// were served independently *before* shutdown.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_clients_are_served_independently_then_shutdown_stops_the_daemon() {
+    async fn one_rpc<R, W>(r: R, mut w: W, id: &str, method: &str) -> serde_json::Value
+    where
+        R: AsyncReadExt + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
+        let req = serde_json::json!({ "id": id, "method": method });
+        let mut buf = serde_json::to_vec(&req).expect("serialize request");
+        buf.push(b'\n');
+        w.write_all(&buf).await.expect("write request");
+        w.flush().await.expect("flush request");
+
+        let mut br = BufReader::new(r);
+        let mut line = String::new();
+        let n = br.read_line(&mut line).await.expect("read response line");
+        assert!(n > 0, "server closed without a response to id={id}");
+        serde_json::from_str(line.trim()).expect("response is JSON")
+    }
     use tokio::io::AsyncReadExt;
 
     let (tmp, engine) = start_engine().await;
@@ -292,24 +310,6 @@ async fn two_clients_are_served_independently_then_shutdown_stops_the_daemon() {
     // One request/response round-trip on a borrowed stream. `split()`
     // lets the read half own a BufReader while the write half stays
     // available; both halves drop before the stream is reused.
-    async fn one_rpc<R, W>(r: R, mut w: W, id: &str, method: &str) -> serde_json::Value
-    where
-        R: AsyncReadExt + Unpin,
-        W: tokio::io::AsyncWrite + Unpin,
-    {
-        use tokio::io::AsyncWriteExt;
-        let req = serde_json::json!({ "id": id, "method": method });
-        let mut buf = serde_json::to_vec(&req).expect("serialize request");
-        buf.push(b'\n');
-        w.write_all(&buf).await.expect("write request");
-        w.flush().await.expect("flush request");
-
-        let mut br = BufReader::new(r);
-        let mut line = String::new();
-        let n = br.read_line(&mut line).await.expect("read response line");
-        assert!(n > 0, "server closed without a response to id={id}");
-        serde_json::from_str(line.trim()).expect("response is JSON")
-    }
 
     // Client A: its own id, its own response.
     let resp_a = {

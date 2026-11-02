@@ -79,13 +79,13 @@ impl RequestSummary {
     /// or counts.
     #[must_use]
     pub fn hash(&self) -> String {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         fn feed(h: &mut u64, b: &[u8]) {
             for x in b {
                 *h ^= *x as u64;
                 *h = h.wrapping_mul(0x0000_0100_0000_01b3);
             }
         }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         feed(&mut h, self.system_chars.to_string().as_bytes());
         feed(&mut h, &[0u8]);
         feed(&mut h, self.message_count.to_string().as_bytes());

@@ -459,6 +459,54 @@ impl SwarmRunner {
         // counter so it is globally unique; no coordinator trace is
         // emitted, because the run has no single model round — only
         // its dispatches do.
+        async fn report_run_timeout(
+            chunk_tx: &mpsc::Sender<SwarmEvent>,
+            handles: &[AgentHandle],
+            indices: &[usize],
+            timeout_secs: u64,
+        ) {
+            let reason = format!(
+                "overall run timeout ({timeout_secs}s) reached; this agent did not complete",
+            );
+            for &idx in indices {
+                if let Some(h) = handles.get(idx) {
+                    let _ = chunk_tx
+                        .send(SwarmEvent::AgentFailed {
+                            id: h.id.clone(),
+                            name: h.name.clone(),
+                            error: reason.clone(),
+                        })
+                        .await;
+                }
+            }
+            // Synthetic run-level event so a live UI can distinguish
+            // "this agent failed" from "the whole run stopped".
+            let _ = chunk_tx
+                .send(SwarmEvent::AgentFailed {
+                    id: kod_types::AgentId::new(),
+                    name: "(run)".to_string(),
+                    error: format!("overall run timeout ({timeout_secs}s) reached"),
+                })
+                .await;
+        }
+        struct AgentHandle {
+            /// Dispatch id — unique per subtask. Two subtasks assigned
+            /// to the same pool agent get distinct ids, so their
+            /// transcripts (keyed `swarm:{id}`) cannot collide. H-D1:
+            /// pre-fix both used the pool agent id, so one subtask's
+            /// failure path wiped its peer's history mid-flight.
+            id: AgentId,
+            /// The pool agent that owns this subtask (load-balancing
+            /// bookkeeping; distinct from `id`).
+            pool_agent_id: AgentId,
+            name: String,
+            subtask: Subtask,
+            task_id: TaskId,
+            /// Worktree path this subtask runs in, if any. Set at
+            /// dispatch time (not pool time) because the transcript
+            /// key is subtask-scoped.
+            worktree: Option<kod_core_quality::worktree::WorktreeInfo>,
+        }
         let swarm_run_trace_id = self.engine.begin_swarm_run();
         let _swarm_slot_guard = self.engine.try_acquire_swarm_slot().ok_or_else(|| {
             KodError::InvalidState(
@@ -716,24 +764,6 @@ impl SwarmRunner {
         // Per-agent handle info: name and, when a worktree was created,
         // its path. Keyed by AgentId so the wave loop can find the right
         // worktree when it assigns a subtask to an agent.
-        struct AgentHandle {
-            /// Dispatch id — unique per subtask. Two subtasks assigned
-            /// to the same pool agent get distinct ids, so their
-            /// transcripts (keyed `swarm:{id}`) cannot collide. H-D1:
-            /// pre-fix both used the pool agent id, so one subtask's
-            /// failure path wiped its peer's history mid-flight.
-            id: AgentId,
-            /// The pool agent that owns this subtask (load-balancing
-            /// bookkeeping; distinct from `id`).
-            pool_agent_id: AgentId,
-            name: String,
-            subtask: Subtask,
-            task_id: TaskId,
-            /// Worktree path this subtask runs in, if any. Set at
-            /// dispatch time (not pool time) because the transcript
-            /// key is subtask-scoped.
-            worktree: Option<kod_core_quality::worktree::WorktreeInfo>,
-        }
 
         // H-D1: the watchdog needs to reach every *dispatch* key
         // currently running on a given pool agent. This map is the
@@ -1156,36 +1186,6 @@ impl SwarmRunner {
         // Emit an `AgentFailed` for every handle in `indices` that has
         // not been recorded as completed. Used by both the top-of-loop
         // deadline check and the wave-level timeout.
-        async fn report_run_timeout(
-            chunk_tx: &mpsc::Sender<SwarmEvent>,
-            handles: &[AgentHandle],
-            indices: &[usize],
-            timeout_secs: u64,
-        ) {
-            let reason = format!(
-                "overall run timeout ({timeout_secs}s) reached; this agent did not complete",
-            );
-            for &idx in indices {
-                if let Some(h) = handles.get(idx) {
-                    let _ = chunk_tx
-                        .send(SwarmEvent::AgentFailed {
-                            id: h.id.clone(),
-                            name: h.name.clone(),
-                            error: reason.clone(),
-                        })
-                        .await;
-                }
-            }
-            // Synthetic run-level event so a live UI can distinguish
-            // "this agent failed" from "the whole run stopped".
-            let _ = chunk_tx
-                .send(SwarmEvent::AgentFailed {
-                    id: kod_types::AgentId::new(),
-                    name: "(run)".to_string(),
-                    error: format!("overall run timeout ({timeout_secs}s) reached"),
-                })
-                .await;
-        }
 
         // P5: build the parent's context once for the whole run.
         // The snapshot is taken here so every subtask's brief draws

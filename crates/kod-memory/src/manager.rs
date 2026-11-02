@@ -1506,6 +1506,13 @@ impl MemoryManager {
             std::collections::HashMap::new();
 
         for (_key, mut group) in by_project {
+            fn find(p: &mut [usize], mut i: usize) -> usize {
+                while p[i] != i {
+                    p[i] = p[p[i]];
+                    i = p[i];
+                }
+                i
+            }
             if group.len() < 2 {
                 continue;
             }
@@ -1582,13 +1589,6 @@ impl MemoryManager {
             // Union-find over "cosine > threshold".
             let n = group.len();
             let mut parent: Vec<usize> = (0..n).collect();
-            fn find(p: &mut [usize], mut i: usize) -> usize {
-                while p[i] != i {
-                    p[i] = p[p[i]];
-                    i = p[i];
-                }
-                i
-            }
             for i in 0..n {
                 for j in (i + 1)..n {
                     let cos: f32 = normed[i]

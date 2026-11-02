@@ -216,7 +216,6 @@ impl Redactor {
     /// Redact a JSON value in place. Object values and string array
     /// elements are recursed; numbers, bools, nulls are unchanged.
     pub fn redact_json(&self, value: &mut serde_json::Value) -> Vec<Redaction> {
-        let mut out = Vec::new();
         fn walk(r: &Redactor, v: &mut serde_json::Value, out: &mut Vec<Redaction>) {
             match v {
                 serde_json::Value::String(s) => {
@@ -260,6 +259,7 @@ impl Redactor {
                 _ => {}
             }
         }
+        let mut out = Vec::new();
         walk(self, value, &mut out);
         out
     }

@@ -638,20 +638,6 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
 /// left verbatim, so a Jev question about `/regex/` syntax is not
 /// mangled.
 fn redact_state_paths(value: &Value, enabled: bool) -> Value {
-    if !enabled {
-        return value.clone();
-    }
-    fn redact_token(tok: &str) -> String {
-        let is_abs = tok.starts_with('/')
-            || (tok.len() >= 2
-                && tok.as_bytes()[1] == b':'
-                && tok.as_bytes()[0].is_ascii_alphabetic());
-        if !is_abs {
-            return tok.to_string();
-        }
-        let hash = fnv1a_64(tok.as_bytes());
-        format!("path-{hash:016x}")
-    }
     fn walk(v: &Value) -> Value {
         match v {
             Value::String(s) => {
@@ -681,6 +667,20 @@ fn redact_state_paths(value: &Value, enabled: bool) -> Value {
             }
             other => other.clone(),
         }
+    }
+    fn redact_token(tok: &str) -> String {
+        let is_abs = tok.starts_with('/')
+            || (tok.len() >= 2
+                && tok.as_bytes()[1] == b':'
+                && tok.as_bytes()[0].is_ascii_alphabetic());
+        if !is_abs {
+            return tok.to_string();
+        }
+        let hash = fnv1a_64(tok.as_bytes());
+        format!("path-{hash:016x}")
+    }
+    if !enabled {
+        return value.clone();
     }
     walk(value)
 }
@@ -777,13 +777,6 @@ impl RedactingJevDecider {
     /// judgment endpoint sees neither the raw secret nor a
     /// one-way redaction it cannot reason about.
     async fn scrub(&self, state: &Value) -> Value {
-        let vault = self.vault.read().await.clone();
-        let Some(vault) = vault else {
-            return state.clone();
-        };
-        if vault.is_empty() {
-            return state.clone();
-        }
         fn walk(v: &Value, vault: &kod_types::secret_placeholder::SecretVault) -> Value {
             match v {
                 Value::String(s) => Value::String(vault.obfuscate(s)),
@@ -793,6 +786,13 @@ impl RedactingJevDecider {
                 }
                 other => other.clone(),
             }
+        }
+        let vault = self.vault.read().await.clone();
+        let Some(vault) = vault else {
+            return state.clone();
+        };
+        if vault.is_empty() {
+            return state.clone();
         }
         walk(state, &vault)
     }

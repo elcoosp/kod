@@ -611,6 +611,15 @@ async fn read_loop(
                     // client uses for outgoing requests, serialized by
                     // the shared Mutex.
                     if let Some(id_val) = msg.get("id") {
+                        const REPLY_SEND_TIMEOUT: std::time::Duration =
+                            std::time::Duration::from_secs(10);
+                        let mut guard = stdin.lock().await;
+                        let write = async {
+                            tokio::io::AsyncWriteExt::write_all(&mut *guard, line.as_bytes())
+                                .await?;
+                            tokio::io::AsyncWriteExt::flush(&mut *guard).await?;
+                            Ok::<(), std::io::Error>(())
+                        };
                         let reply = serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": id_val,
@@ -632,15 +641,6 @@ async fn read_loop(
                         // diagnostic. Poison the shared flag on
                         // timeout so subsequent `send` calls fail fast
                         // (see the note on `poisoned`).
-                        const REPLY_SEND_TIMEOUT: std::time::Duration =
-                            std::time::Duration::from_secs(10);
-                        let mut guard = stdin.lock().await;
-                        let write = async {
-                            tokio::io::AsyncWriteExt::write_all(&mut *guard, line.as_bytes())
-                                .await?;
-                            tokio::io::AsyncWriteExt::flush(&mut *guard).await?;
-                            Ok::<(), std::io::Error>(())
-                        };
                         match tokio::time::timeout(REPLY_SEND_TIMEOUT, write).await {
                             Ok(Ok(())) => {}
                             Ok(Err(e)) => {

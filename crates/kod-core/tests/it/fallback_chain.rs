@@ -204,18 +204,14 @@ async fn retryable_error_falls_back_to_next_endpoint() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn non_retryable_error_does_not_fall_back() {
-    let temp = TempDir::new().unwrap();
-    let engine = engine_in(temp.path());
-
-    // A provider that always fails with a non-retryable error.
     struct AuthFailingProvider;
     #[async_trait]
     impl LlmProvider for AuthFailingProvider {
-        fn name(&self) -> &str {
-            "auth-failing"
-        }
         async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
+        }
+        fn name(&self) -> &str {
+            "auth-failing"
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {
             Err(KodError::Provider("401 unauthorized".into()))
@@ -236,6 +232,10 @@ async fn non_retryable_error_does_not_fall_back() {
             Box::pin(futures::stream::empty())
         }
     }
+    let temp = TempDir::new().unwrap();
+    let engine = engine_in(temp.path());
+
+    // A provider that always fails with a non-retryable error.
 
     let primary = Arc::new(AuthFailingProvider);
     let secondary = Arc::new(SuccessProvider::new());
