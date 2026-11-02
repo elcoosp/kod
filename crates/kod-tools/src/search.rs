@@ -97,7 +97,7 @@ impl Tool for SearchFilesTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'pattern' parameter".to_string(),
             })?;
-        let context_lines = u32::try_from(params["context"].as_u64().unwrap_or(2)).unwrap_or(u32::MAX) as u32;
+        let context_lines = u32::try_from(params["context"].as_u64().unwrap_or(2)).unwrap_or(u32::MAX);
         let context_lines = context_lines.min(MAX_CONTEXT_LINES);
         let case_insensitive = params["case_insensitive"].as_bool().unwrap_or(false);
 

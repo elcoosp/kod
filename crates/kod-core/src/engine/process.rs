@@ -209,7 +209,7 @@ impl KodEngine {
         };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX) as u64);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
 
         let mut guard = self.injected_memory_at.write().await;
         let seen = guard.entry(key.to_string()).or_default();
@@ -1535,7 +1535,7 @@ impl KodEngine {
                 // Delta §9.8: the pause gate's model-call boundary.
                 self.pause_gate.wait_if_paused().await;
                 if turn > 1 {
-                    let _ = chunk_tx.send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX) as u32)).await;
+                    let _ = chunk_tx.send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX))).await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
                     pending.push_str(&format!("\n\n{nudge}\n"));
                     // The nudge is what tells the model to *continue*;

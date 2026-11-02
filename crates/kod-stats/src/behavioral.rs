@@ -291,7 +291,7 @@ mod behavioral_proptests {
             prop_assert_eq!(got.repetition, count_cues(&lower, REPETITION_CUES));
             prop_assert_eq!(got.blame, count_cues(&lower, BLAME_CUES));
             prop_assert_eq!(got.anguish, count_cues(&lower, ANGUISH_CUES));
-            let lines = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX) as u32;
+            let lines = u32::try_from(text.lines().filter(|l| is_yelling(l)).count()).unwrap_or(u32::MAX);
             prop_assert_eq!(got.yelling, lines);
         }
 

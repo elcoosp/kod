@@ -386,7 +386,7 @@ pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> R
     );
     // Newest first.
     for t in traces.iter().rev().take(cap) {
-        let dur = format!("{:.2}s", f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) as f64 / 1000.0);
+        let dur = format!("{:.2}s", f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) / 1000.0);
         let cost = format!("${:.4}", t.cost_usd);
         let toks = format!("{}→{}", t.prompt_tokens, t.completion_tokens);
         println!(
@@ -422,7 +422,7 @@ pub async fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result
         "Turn #{} ({})   {:.2}s   ${:.4}   {} in → {} out",
         t.id,
         t.holder,
-        f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) as f64 / 1000.0,
+        f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) / 1000.0,
         t.cost_usd,
         t.prompt_tokens,
         t.completion_tokens,

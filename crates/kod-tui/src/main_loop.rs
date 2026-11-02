@@ -6678,7 +6678,7 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
         if h <= 0 {
             return None;
         }
-        return (u64::try_from(h).unwrap_or(u64::MAX) as u64).checked_mul(3600).map(Duration::from_secs);
+        return u64::try_from(h).unwrap_or(u64::MAX).checked_mul(3600).map(Duration::from_secs);
     }
     let mut total = Duration::ZERO;
     let mut num = String::new();
@@ -6691,8 +6691,8 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
         let n: i64 = num.parse().ok()?;
         num.clear();
         let secs = match ch {
-            'h' => (u64::try_from(n).unwrap_or(u64::MAX) as u64).checked_mul(3600)?,
-            'm' => (u64::try_from(n).unwrap_or(u64::MAX) as u64).checked_mul(60)?,
+            'h' => u64::try_from(n).unwrap_or(u64::MAX).checked_mul(3600)?,
+            'm' => u64::try_from(n).unwrap_or(u64::MAX).checked_mul(60)?,
             _ => return None,
         };
         total = total.checked_add(Duration::from_secs(secs))?;
