@@ -15,6 +15,7 @@ categories = ["development-tools", "database"]
 all-features = true
 
 [dependencies]
+num-traits = { workspace = true }
 futures = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }

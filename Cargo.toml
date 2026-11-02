@@ -201,6 +201,9 @@ base64 = "0.23.1"
 # System
 libc = "0.2"
 
+# Numeric conversions for f64→f32 without unstable TryFrom
+num-traits = "0.2"
+
 # AST (delta 7.3): tree-sitter core + the grammars kod's repo map
 # understands. Each grammar compiles a C parser on first build, which
 # is why this is a separate crate rather than a kod-core module.

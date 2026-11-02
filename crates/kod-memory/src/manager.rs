@@ -560,7 +560,7 @@ impl MemoryManager {
                 // A re-mention is evidence: raise confidence, persist.
                 if let Some(e) = self.long_term.get(&id).await? {
                     let current = e.metadata.confidence.unwrap_or_else(|| {
-                        crate::veracity::Veracity::Stated.base_confidence() as f32
+                        num_traits::ToPrimitive::to_f32(&crate::veracity::Veracity::Stated.base_confidence()).unwrap_or(f32::MAX)
                     });
                     let raised = crate::veracity::raise_confidence(
                         f64::from(current),
