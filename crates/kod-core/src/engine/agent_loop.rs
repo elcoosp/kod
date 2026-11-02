@@ -1,5 +1,6 @@
 use super::*;
 use num_traits::ToPrimitive;
+use std::fmt::Write as _;
 
 /// Redact one prompt-scaffolding block, or return it unchanged when
 /// `in_prompt` redaction is off.
@@ -123,7 +124,7 @@ impl KodEngine {
                     // still read `pending` (apply_steers, the
                     // exhausted-rounds note). The provider no longer
                     // sees this string on the primary path.
-                    pending.push_str(&format!("\n\n{}", section.prompt_block));
+                    let _ = write!(pending, "\n\n{}", section.prompt_block);
                     // Persist the structured slice (AD-02): the next
                     // `process_*` call reads `self.history[key]` as
                     // its starting messages, so the tool round-trip
@@ -178,7 +179,7 @@ impl KodEngine {
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
-                    pending.push_str(&format!("\n\n{}", section.prompt_block));
+                    let _ = write!(pending, "\n\n{}", section.prompt_block);
                     // Persist the structured slice (AD-02): the next
                     // `process_*` call reads `self.history[key]` as
                     // its starting messages, so the tool round-trip
@@ -254,7 +255,7 @@ impl KodEngine {
             // to the pre-P1-b string (`steer.rs` pins that), so the
             // golden prompts and recorded transcripts are unchanged.
             let body = interrupt.render();
-            pending.push_str(&format!("\n\n{body}\n"));
+            let _ = write!(pending, "\n\n{body}\n");
             messages.push(kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
                 kod_types::MessageRole::User,
@@ -627,7 +628,7 @@ impl KodEngine {
             // request messages. The text `pending` string is kept in
             // sync for `apply_steers` and the exhausted-rounds note.
             messages.extend(section.messages.iter().cloned());
-            pending.push_str(&format!("\n\n{}", section.prompt_block));
+            let _ = write!(pending, "\n\n{}", section.prompt_block);
             // Persist the structured slice (AD-02). Same rationale as
             // the collected loop above.
             if !section.messages.is_empty() {
@@ -1632,11 +1633,11 @@ impl KodEngine {
         mut prompt: String,
         definitions: &[ToolDefinition],
     ) -> String {
-        prompt.push_str(&format!(
+        let _ = write!(prompt, 
             "\n## Environment\n\n- Working directory: {}\n- OS: {}\n",
             self.working_dir.display(),
             std::env::consts::OS
-        ));
+        );
         // Tier 2.1 — if a plan exists for the default transcript,
         // prepend it to the prompt. The plan is a stable target the
         // model can consult on every round.
@@ -1687,10 +1688,10 @@ impl KodEngine {
                 .iter()
                 .map(|d| format!("- {}: {}", d.name, d.description))
                 .collect();
-            prompt.push_str(&format!(
+            let _ = write!(prompt, 
                 "\n## Tool use\n\nYou have these tools (function calls, rooted at the working directory above):\n{}\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool results` blocks — then answer the user.\n",
                 names.join("\n")
-            ));
+            );
             // Tier 1.1 — the trust invariant. Injected whenever the
             // prompt carries a tool inventory, since that is the
             // precondition for a tool result block later in the turn.

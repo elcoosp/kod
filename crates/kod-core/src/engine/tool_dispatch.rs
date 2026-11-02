@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 
 /// Outcome of [`KodEngine::await_decision`]. Three-way because the
 /// caller maps each variant to a different downstream message
@@ -1600,7 +1601,7 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 .tool_trust_level(&call.tool_name)
                 .await
                 .unwrap_or(kod_types::trust::TrustLevel::ToolTrusted);
-            block.push_str(&format!("\n### {} {}\n", call.tool_name, call.arguments));
+            let _ = write!(block, "\n### {} {}\n", call.tool_name, call.arguments);
             block.push_str(&trust.open_marker(&call.tool_name, None));
             block.push('\n');
             block.push_str(&rendered);
@@ -1932,13 +1933,13 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        block.push_str(&format!("`{source}`: no diagnostics on this file.\n"));
+                        let _ = write!(block, "`{source}`: no diagnostics on this file.\n");
                     } else {
-                        block.push_str(&format!(
+                        let _ = write!(block, 
                             "`{}` reported {} diagnostic(s) on this file:\n\n",
                             source,
                             diags.len(),
-                        ));
+                        );
                         render_diagnostics(&mut block, &diags, 20);
                     }
                 } else {

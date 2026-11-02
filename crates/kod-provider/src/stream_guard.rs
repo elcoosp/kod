@@ -77,6 +77,7 @@
 //! few bytes can complete a pattern the last scan did not see.
 
 use crate::types::StreamChunk;
+use std::fmt::Write as _;
 
 /// Configuration for a [`StreamGuard`].
 #[derive(Debug, Clone)]
@@ -393,7 +394,7 @@ mod tests {
     fn header_runaway_clean_below_threshold() {
         let mut tail = String::new();
         for i in 0..35 {
-            tail.push_str(&format!("## Section {i}\n"));
+            let _ = write!(tail, "## Section {i}\n");
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -402,7 +403,7 @@ mod tests {
     fn header_runaway_fires_at_threshold() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\n"));
+            let _ = write!(tail, "## Section {i}\n");
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -411,7 +412,7 @@ mod tests {
     fn header_runaway_tolerates_blank_lines_between_headers() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\n\n"));
+            let _ = write!(tail, "## Section {i}\n\n");
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -420,7 +421,7 @@ mod tests {
     fn header_runaway_resets_on_prose_between_headers() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("## Section {i}\nSome prose content here.\n"));
+            let _ = write!(tail, "## Section {i}\nSome prose content here.\n");
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -429,7 +430,7 @@ mod tests {
     fn header_runaway_fires_on_bold_titles() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("**Summary {i}**\n"));
+            let _ = write!(tail, "**Summary {i}**\n");
         }
         assert!(detect_header_runaway(tail.as_bytes()));
     }
@@ -438,7 +439,7 @@ mod tests {
     fn header_runaway_ignores_a_bold_inline_label() {
         let mut tail = String::new();
         for i in 0..36 {
-            tail.push_str(&format!("**Note {i}:** some text after it\n"));
+            let _ = write!(tail, "**Note {i}:** some text after it\n");
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -541,7 +542,7 @@ mod tests {
         });
         let mut tail = String::new();
         for i in 0..40 {
-            tail.push_str(&format!("## Section {i}\n"));
+            let _ = write!(tail, "## Section {i}\n");
         }
         let v = g.feed(tail.as_bytes());
         assert_eq!(v, StallVerdict::Clean, "disabled detector must not fire");

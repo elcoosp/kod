@@ -46,6 +46,7 @@ use terminal_testlib::ScreenState;
 pub use terminal_testlib::{KeyCode, Modifiers};
 
 use super::mock_llm::MockServer;
+use std::fmt::Write as _;
 
 /// One isolated test environment: a tempdir, a config pointing at a
 /// loopback mock, and a running mock server.
@@ -401,15 +402,15 @@ impl TuiSession {
             }
             if start.elapsed() > timeout {
                 let mut msg = String::new();
-                msg.push_str(&format!(
+                let _ = write!(msg, 
                     "timed out after {timeout:?} waiting for {needle:?}\n"
-                ));
+                );
                 msg.push_str("--- raw screen ---\n");
                 for (i, line) in text.lines().enumerate() {
-                    msg.push_str(&format!("{i:3}|{line}|\n"));
+                    let _ = write!(msg, "{i:3}|{line}|\n");
                 }
                 let raw = self.raw_bytes();
-                msg.push_str(&format!("--- {} raw bytes captured ---\n", raw.len()));
+                let _ = write!(msg, "--- {} raw bytes captured ---\n", raw.len());
                 msg.push_str("--- last 2500 raw bytes (escaped) ---\n");
                 let start = raw.len().saturating_sub(2500);
                 for &b in &raw[start..] {

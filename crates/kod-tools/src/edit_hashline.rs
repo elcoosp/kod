@@ -53,6 +53,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::fmt::Write as _;
 
 /// 4-hex content tag. Two bytes, rendered `{:04x}`.
 pub type Tag = [u8; 2];
@@ -472,13 +473,13 @@ pub fn render_numbered(text: &str, max_lines: usize) -> String {
     let shown = lines.len().min(max_lines);
     let mut out = String::new();
     for (i, l) in lines.iter().take(shown).enumerate() {
-        out.push_str(&format!("{}:{}\n", i + 1, l));
+        let _ = write!(out, "{}:{}\n", i + 1, l);
     }
     if lines.len() > shown {
-        out.push_str(&format!(
+        let _ = write!(out, 
             "[…{} lines elided; re-read the range you need]\n",
             lines.len() - shown,
-        ));
+        );
     }
     out
 }

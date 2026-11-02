@@ -15,6 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
+use std::fmt::Write as _;
 
 /// Tool body rows shown before collapsing to `… +N more lines (o expands)`.
 /// Errors bypass the cap entirely — see the auto-expand in
@@ -1301,7 +1302,7 @@ mod coverage_chat_widget {
         let mut app = KodApp::new();
         let mut body = String::from("[run] a tool\n");
         for i in 0..(TOOL_DISPLAY_LINES + 5) {
-            body.push_str(&format!("row {i}\n"));
+            let _ = write!(body, "row {i}\n");
         }
         push_message(&mut app, MessageRole::Tool, &body);
         let text = render(&app, 120, 80);

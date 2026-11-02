@@ -8,6 +8,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use kod_types::ToolResult;
+use std::fmt::Write as _;
 
 /// Bytes of headroom reserved when capping a JSON tool result: enough
 /// room for the surrounding `{"path": "…", "content": "…", "truncated":
@@ -621,7 +622,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             out.push_str(&shown.join("\n"));
         }
         if files.len() > shown.len() {
-            out.push_str(&format!("\n… and {} more", files.len() - shown.len()));
+            let _ = write!(out, "\n… and {} more", files.len() - shown.len());
         }
         return out;
     }
@@ -631,7 +632,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         if let Some(stderr) = v.get("stderr").and_then(|s| s.as_str())
             && !stderr.trim().is_empty()
         {
-            out.push_str(&format!("\nstderr:\n{}", cap_lines(stderr.trim_end(), 4)));
+            let _ = write!(out, "\nstderr:\n{}", cap_lines(stderr.trim_end(), 4));
         }
         // The runaway-command guard in ExecuteCommandTool reports
         // "stdout_truncated" / "stderr_truncated" so downstream can
@@ -675,9 +676,9 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         let signalled = v.get("exit_signal").and_then(serde_json::Value::as_i64).is_some();
 
         if timed_out {
-            out.push_str(&format!(
+            let _ = write!(out, 
                 "\n[command timed out after {timeout_secs}s — killed]"
-            ));
+            );
         }
         if truncated {
             out.push_str("\n[output truncated at cap");
@@ -790,13 +791,13 @@ pub(crate) fn render_diagnostics(
         } else {
             d.message.clone()
         };
-        block.push_str(&format!(
+        let _ = write!(block, 
             "  {} {} {}:{}:{} — {}\n",
             d.severity, code, d.file, d.line, d.column, short,
-        ));
+        );
     }
     if diags.len() > max {
-        block.push_str(&format!("  … and {} more.\n", diags.len() - max));
+        let _ = write!(block, "  … and {} more.\n", diags.len() - max);
     }
 }
 
@@ -834,48 +835,48 @@ pub(crate) fn render_compiler_auto_check(
     match baseline {
         None => {
             if diags.is_empty() {
-                block.push_str(&format!("`{source}` is clean.\n"));
+                let _ = write!(block, "`{source}` is clean.\n");
             } else {
-                block.push_str(&format!(
+                let _ = write!(block, 
                     "`{source}` reported {} diagnostic(s). \
                      (No baseline was captured, so all are shown — \
                      some may pre-date this write.)\n\n",
                     diags.len(),
-                ));
+                );
                 render_diagnostics(block, diags, 20);
             }
         }
         Some(_) if !new_diags.is_empty() => {
-            block.push_str(&format!(
+            let _ = write!(block, 
                 "`{source}` reported {} NEW diagnostic(s) from this write:\n\n",
                 new_diags.len(),
-            ));
+            );
             let owned: Vec<kod_tools::check::Diagnostic> =
                 new_diags.iter().map(|d| (*d).clone()).collect();
             render_diagnostics(block, &owned, 20);
             if resolved_count > 0 {
-                block.push_str(&format!(
+                let _ = write!(block, 
                     "\n({resolved_count} pre-existing diagnostic(s) resolved.)\n",
-                ));
+                );
             }
             block.push_str("\nFix the new errors before continuing.\n");
         }
         Some(_) if resolved_count > 0 => {
-            block.push_str(&format!(
+            let _ = write!(block, 
                 "`{source}`: your write introduced no new errors and \
                  resolved {resolved_count} pre-existing diagnostic(s).\n",
-            ));
+            );
         }
         Some(_) if diags.is_empty() => {
-            block.push_str(&format!("`{source}` is clean.\n"));
+            let _ = write!(block, "`{source}` is clean.\n");
         }
         Some(_) => {
-            block.push_str(&format!(
+            let _ = write!(block, 
                 "`{source}`: your write introduced no new errors. \
                  {} pre-existing diagnostic(s) remain, \
                  unrelated to this change.\n",
                 diags.len(),
-            ));
+            );
         }
     }
 }

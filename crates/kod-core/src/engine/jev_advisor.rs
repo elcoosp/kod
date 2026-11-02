@@ -12,6 +12,7 @@ use super::ToolFilterState;
 use super::{AWAIT_APPROVAL_SECS, DEFAULT_TRANSCRIPT_KEY, format_call_brief, question_marker};
 use kod_provider::ModelRef;
 use kod_types::{ToolCall, ToolDefinition, ToolResult};
+use std::fmt::Write as _;
 
 impl KodEngine {
     /// Classify a chunk with Jev.
@@ -416,9 +417,9 @@ impl KodEngine {
             filtered.push_str(&h.join("\n"));
         }
         if elided > 0 {
-            filtered.push_str(&format!(
+            let _ = write!(filtered, 
                 "\n… ({elided} lines of context-only hunks elided by Jev)",
-            ));
+            );
         }
 
         // Rebuild the result with the filtered diff. The TUI still

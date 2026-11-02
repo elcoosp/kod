@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 
 impl KodEngine {
     /// Snapshot of the cache ledger for a `/cache` surface (P1).
@@ -576,7 +577,7 @@ impl KodEngine {
             "Jev could not confirm that the following cited lines support the claims made about them:\n",
         );
         for f in &failing {
-            out.push_str(&format!("- {f}\n"));
+            let _ = write!(out, "- {f}\n");
         }
         out
     }
@@ -713,12 +714,12 @@ impl KodEngine {
         // declared globs.
         let mut ctx = String::from("Subtasks:\n");
         for (i, (desc, globs)) in slice.iter().enumerate() {
-            ctx.push_str(&format!(
+            let _ = write!(ctx, 
                 "[{}] {} :: {}\n",
                 i,
                 crate::jev::preview_chars(desc, 200),
                 globs.join(", ")
-            ));
+            );
         }
         let state = crate::jev::build_state(&ctx, &[]);
         let mut questions: Vec<(String, String)> = Vec::new();

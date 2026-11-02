@@ -1,5 +1,6 @@
 use super::*;
 use kod_core_state::goals::GoalBudget;
+use std::fmt::Write as _;
 
 impl KodEngine {
     /// Process user input
@@ -681,11 +682,11 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        summary_prompt.push_str(&format!(
+                        let _ = write!(summary_prompt, 
                             "\n### Result {}\n{}\n",
                             i + 1,
                             summarize_tool_result(name, r),
-                        ));
+                        );
                     }
                 }
                 summary_prompt.push_str(
@@ -1187,11 +1188,11 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        summary_prompt.push_str(&format!(
+                        let _ = write!(summary_prompt, 
                             "\n### Result {}\n{}\n",
                             i + 1,
                             summarize_tool_result(name, r),
-                        ));
+                        );
                     }
                 }
                 summary_prompt.push_str(
@@ -1535,7 +1536,7 @@ impl KodEngine {
                 if turn > 1 {
                     let _ = chunk_tx.send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX))).await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
-                    pending.push_str(&format!("\n\n{nudge}\n"));
+                    let _ = write!(pending, "\n\n{nudge}\n");
                     // The nudge is what tells the model to *continue*;
                     // on the structured path it has to be a message
                     // for the provider to see it.

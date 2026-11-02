@@ -44,6 +44,7 @@ use kod_swarm::{AgentBuilder, AgentSwarm, Capability};
 use kod_types::{AgentId, Priority, TaskId};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use std::fmt::Write as _;
 
 /// One decomposed piece of the user's goal.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -2197,13 +2198,13 @@ impl SwarmRunner {
                 .filter_map(|r| r.get("file").and_then(|f| f.as_str()))
                 .map(|s| s.rsplit('/').next().unwrap_or(s))
                 .collect();
-            hits.push_str(&format!(
+            let _ = write!(hits, 
                 "  \"{}\" ({} match{}): {}\n",
                 kw,
                 results.len(),
                 if results.len() == 1 { "" } else { "es" },
                 files.join(", ")
-            ));
+            );
         }
 
         let mut out = String::new();
@@ -2427,11 +2428,11 @@ impl SwarmRunner {
                  (or combination) wins, naming the file:\n",
             );
             for c in conflicts {
-                s.push_str(&format!(
+                let _ = write!(s, 
                     "  - {} was written by {}\n",
                     c.file,
                     c.agents.join(", ")
-                ));
+                );
             }
             s.push('\n');
             s
@@ -2465,8 +2466,8 @@ impl SwarmRunner {
     fn concatenate(per_agent: &[AgentResult]) -> String {
         let mut out = String::new();
         for r in per_agent {
-            out.push_str(&format!("=== {} ===\n", r.name));
-            out.push_str(&format!("Subtask: {}\n\n", r.subtask));
+            let _ = write!(out, "=== {} ===\n", r.name);
+            let _ = write!(out, "Subtask: {}\n\n", r.subtask);
             match &r.outcome {
                 AgentOutcome::Completed(text) => out.push_str(text),
                 AgentOutcome::Failed(e) => out.push_str(&format!("(failed: {e})")),
@@ -2545,10 +2546,10 @@ fn render_swarm_conflict_notice(
             .join(", "),
     );
     if let Some(su) = &t.summary {
-        s.push_str(&format!(" ({su})"));
+        let _ = write!(s, " ({su})");
     }
     if let Some(intent) = &t.intent {
-        s.push_str(&format!(" — their stated intent: {intent}"));
+        let _ = write!(s, " — their stated intent: {intent}");
     }
     s.push_str(
         ". You have touched this file during this run. Re-read it before \
