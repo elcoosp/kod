@@ -120,21 +120,19 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
         (out, err)
     };
 
-    let (stdout_bytes, stderr_bytes) =
-        match tokio::time::timeout(std::time::Duration::from_secs(effective), collect).await {
-            Ok(v) => v,
-            Err(_) => {
-                // kill_on_drop reaps the child when `child` drops here.
-                return Err(KodError::ToolExecution {
-                    tool_name: "git".to_string(),
-                    reason: format!(
-                        "`git {}` did not finish within {}s",
-                        args.join(" "),
-                        effective
-                    ),
-                });
-            }
-        };
+    let Ok((stdout_bytes, stderr_bytes)) =
+        tokio::time::timeout(std::time::Duration::from_secs(effective), collect).await
+    else {
+        // kill_on_drop reaps the child when `child` drops here.
+        return Err(KodError::ToolExecution {
+            tool_name: "git".to_string(),
+            reason: format!(
+                "`git {}` did not finish within {}s",
+                args.join(" "),
+                effective
+            ),
+        });
+    };
 
     let status = match child.wait().await {
         Ok(st) => st,

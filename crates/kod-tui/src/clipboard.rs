@@ -18,12 +18,11 @@ pub fn write_clipboard(text: &str) -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        let mut child = match Command::new("pbcopy")
+        let Ok(mut child) = Command::new("pbcopy")
             .stdin(std::process::Stdio::piped())
             .spawn()
-        {
-            Ok(child) => child,
-            Err(_) => return false,
+        else {
+            return false;
         };
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;

@@ -238,12 +238,11 @@ mod tests {
         let start = std::time::Instant::now();
         // `expect_err` needs Debug on the Ok type and `OwnedMutexGuard`
         // is not Debug — match instead of unwrapping.
-        let err = match table
+        let Err(err) = table
             .acquire(&path, "blocked", Duration::from_millis(80))
             .await
-        {
-            Ok(_) => panic!("blocked acquire must time out"),
-            Err(e) => e,
+        else {
+            panic!("blocked acquire must time out");
         };
         let waited = start.elapsed();
         match err {

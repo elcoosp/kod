@@ -2177,16 +2177,15 @@ impl SwarmRunner {
 
         let mut hits = String::new();
         for kw in &keywords {
-            let grep = match self
+            let Ok(ToolResult::Success(grep)) = self
                 .engine
                 .run_tool(
                     "grep",
                     serde_json::json!({ "path": ".", "pattern": kw, "recursive": true }),
                 )
                 .await
-            {
-                Ok(ToolResult::Success(v)) => v,
-                _ => continue,
+            else {
+                continue;
             };
             let results = match grep.get("results").and_then(|r| r.as_array()) {
                 Some(a) if !a.is_empty() => a,
