@@ -140,7 +140,10 @@ fn stable_id(path: &std::path::Path, start: usize, body: &str) -> String {
         h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{:08x}", u32::try_from(h ^ (h >> 32)).unwrap_or(u32::MAX))
+    // Truncate the folded 64-bit hash to 32 bits. Mask first so the
+    // try_from succeeds by construction; `unwrap()` is unreachable.
+    let folded = (h ^ (h >> 32)) & 0xFFFF_FFFF;
+    format!("{:08x}", u32::try_from(folded).unwrap())
 }
 
 /// Scan `text` for conflict blocks. Only column-0 `<<<<<<<` opens a

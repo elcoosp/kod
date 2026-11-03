@@ -107,6 +107,7 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
         let mut ebuf = [0u8; 1024];
         loop {
             match stderr.read(&mut ebuf).await {
+                Ok(0) => break,
                 Ok(n) => {
                     if err.len() < 16 * 1024 {
                         let room = 16 * 1024 - err.len();

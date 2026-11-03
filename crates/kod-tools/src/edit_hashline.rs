@@ -165,7 +165,9 @@ pub fn tag_of(text: &str) -> Tag {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     // Fold the high and low halves so a change anywhere moves the tag.
-    let folded = u16::try_from(h ^ (h >> 32)).unwrap_or(u16::MAX);
+    // Truncate the folded 64-bit hash to 16 bits. Mask first so the
+    // try_from succeeds by construction; `unwrap()` is unreachable.
+    let folded = u16::try_from((h ^ (h >> 32)) & 0xFFFF).unwrap();
     folded.to_be_bytes()
 }
 

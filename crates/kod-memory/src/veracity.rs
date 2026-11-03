@@ -177,11 +177,11 @@ mod tests {
 
     #[test]
     fn the_weights_match_the_design_table() {
-        assert_eq!(Veracity::Stated.weight().to_bits(), f64::from(1.0_f32).to_bits());
-        assert_eq!(Veracity::Inferred.weight().to_bits(), f64::from(0.7_f32).to_bits());
-        assert_eq!(Veracity::Imported.weight().to_bits(), f64::from(0.6_f32).to_bits());
-        assert_eq!(Veracity::Unknown.weight().to_bits(), f64::from(0.8_f32).to_bits());
-        assert_eq!(Veracity::Tool.weight().to_bits(), f64::from(0.5_f32).to_bits());
+        assert!((Veracity::Stated.weight() - 1.0_f64).abs() < f64::EPSILON);
+        assert!((Veracity::Inferred.weight() - 0.7_f64).abs() < f64::EPSILON);
+        assert!((Veracity::Imported.weight() - 0.6_f64).abs() < f64::EPSILON);
+        assert!((Veracity::Unknown.weight() - 0.8_f64).abs() < f64::EPSILON);
+        assert!((Veracity::Tool.weight() - 0.5_f64).abs() < f64::EPSILON);
     }
 
     #[test]
