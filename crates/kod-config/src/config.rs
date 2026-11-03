@@ -25,7 +25,7 @@ impl Default for KodConfig {
             jev: crate::JevConfig::default(),
             security: crate::SecurityConfig::default(),
             limits: crate::LimitsConfig::default(),
-            commands: Default::default(),
+            commands: std::collections::HashMap::default(),
         }
     }
 }

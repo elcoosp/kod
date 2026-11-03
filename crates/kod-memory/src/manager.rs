@@ -1092,13 +1092,13 @@ impl MemoryManager {
                             let hits = idx.search(&q_vec, 200, |_| true).unwrap_or_default();
                             hits.into_iter().collect()
                         }
-                        None => Default::default(),
+                        None => std::collections::HashMap::default(),
                     }
                 }
-                None => Default::default(),
+                None => std::collections::HashMap::default(),
             }
         } else {
-            Default::default()
+            std::collections::HashMap::default()
         };
 
         let now = time::OffsetDateTime::now_utc();
