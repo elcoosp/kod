@@ -236,7 +236,11 @@ fn test_path_completion_lists_matching_files() {
     }
     let candidates = app.path_candidates();
     assert_eq!(candidates.len(), 2);
-    assert!(candidates.iter().all(|c| c.to_lowercase().ends_with(".txt")));
+    assert!(
+        candidates
+            .iter()
+            .all(|c| c.to_lowercase().ends_with(".txt"))
+    );
 
     // Accepting replaces only the path token, keeping `read ` (plus a
     // trailing space so the user can keep typing).

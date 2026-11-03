@@ -118,9 +118,7 @@ async fn skills_rename_moves_the_file() {
     write_skill(skills.path(), "old-name");
     let _guard = ConfigDirEnv::set(cfg.path());
 
-    run_skills_rename("old-name", "new-name")
-
-        .expect("renaming an existing skill must succeed");
+    run_skills_rename("old-name", "new-name").expect("renaming an existing skill must succeed");
 
     assert!(
         !skill_path(skills.path(), "old-name").exists(),

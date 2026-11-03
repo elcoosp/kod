@@ -121,7 +121,6 @@ async fn skills_rename_missing_is_err() {
     let (cfg, _skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
     let err = run_skills_rename("does-not-exist", "new-name")
-
         .expect_err("renaming a missing skill must be an error");
     assert!(err.to_string().contains("No skill named"), "{err}");
 }

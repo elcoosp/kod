@@ -303,7 +303,7 @@ fn build_corrective(calls: &[ToolCall], results: &[ToolResult], count: u32) -> C
     // the fallback is a string that will never appear, kept as
     // defensive code rather than `unwrap`.
     let mut names: Vec<&str> = calls.iter().map(|c| c.tool_name.as_str()).collect();
-    names.sort();
+    names.sort_unstable();
     let tool_name = names.first().copied().unwrap_or("(none)").to_string();
 
     let mut args_raw = String::new();
