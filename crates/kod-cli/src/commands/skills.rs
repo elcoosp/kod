@@ -671,7 +671,7 @@ pub fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns `Err` when the underlying operation fails.
-pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
+pub fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     // Validate `new_name` *before* it is joined into a path. The
     // copy path validates internally, but rename joins the name
     // first to run an existence check — with `new_name = "../../x"`

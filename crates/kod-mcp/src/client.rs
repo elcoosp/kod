@@ -756,7 +756,7 @@ for line in sys.stdin:
             .is_ok_and(|s| s.success())
     }
 
-    async fn spawn() -> (tempfile::TempDir, McpClient) {
+    fn spawn() -> (tempfile::TempDir, McpClient) {
         let dir = write_fake_server();
         let script = dir.path().join("server.py");
         let client = McpClient::spawn_stdio(
@@ -774,7 +774,7 @@ for line in sys.stdin:
             eprintln!("skipping: python3 not on PATH");
             return;
         }
-        let (_dir, client) = spawn().await;
+        let (_dir, client) = spawn();
         let info = client.initialize().await.expect("initialize");
         assert_eq!(info.name, "fake");
         assert_eq!(info.version, "0.0.1");
@@ -787,7 +787,7 @@ for line in sys.stdin:
             eprintln!("skipping: python3 not on PATH");
             return;
         }
-        let (_dir, client) = spawn().await;
+        let (_dir, client) = spawn();
         client.initialize().await.expect("initialize");
         let tools = client.list_tools().await.expect("list");
         assert_eq!(tools.len(), 2);
@@ -803,7 +803,7 @@ for line in sys.stdin:
             eprintln!("skipping: python3 not on PATH");
             return;
         }
-        let (_dir, client) = spawn().await;
+        let (_dir, client) = spawn();
         client.initialize().await.expect("initialize");
         let result = client
             .call_tool("echo", serde_json::json!({"text": "hello"}))
@@ -820,7 +820,7 @@ for line in sys.stdin:
             eprintln!("skipping: python3 not on PATH");
             return;
         }
-        let (_dir, client) = spawn().await;
+        let (_dir, client) = spawn();
         client.initialize().await.expect("initialize");
         let result = client
             .call_tool("fail", serde_json::json!({}))
@@ -837,7 +837,7 @@ for line in sys.stdin:
             eprintln!("skipping: python3 not on PATH");
             return;
         }
-        let (_dir, client) = spawn().await;
+        let (_dir, client) = spawn();
         client.initialize().await.expect("initialize");
         let err = client
             .call_tool("nope", serde_json::json!({}))

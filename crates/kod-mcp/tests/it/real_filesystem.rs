@@ -52,7 +52,7 @@ fn npx_available() -> bool {
 /// first-time run blocks on stdin waiting for a TTY answer. Version
 /// is `@latest` on purpose: this is a drift-detection test — pinning
 /// a version would pass forever while the real server moved on.
-async fn spawn_filesystem_server(dir: &std::path::Path) -> McpClient {
+fn spawn_filesystem_server(dir: &std::path::Path) -> McpClient {
     let args = vec![
         "-y".to_string(),
         "@modelcontextprotocol/server-filesystem".to_string(),
@@ -72,7 +72,7 @@ async fn real_filesystem_server_initialize_and_list_tools() {
     }
 
     let dir = TempDir::new().expect("tempdir");
-    let client = spawn_filesystem_server(dir.path()).await;
+    let client = spawn_filesystem_server(dir.path());
 
     // initialize: the server names itself. The exact name varies by
     // version; assert only non-empty — a server that fails to name
@@ -132,7 +132,7 @@ async fn real_filesystem_server_reads_a_written_file() {
     let target = dir.path().join("hello.txt");
     std::fs::write(&target, "hello from a real MCP filesystem server\n").expect("write target");
 
-    let client = spawn_filesystem_server(dir.path()).await;
+    let client = spawn_filesystem_server(dir.path());
     client.initialize().await.expect("initialize");
 
     // read_file: real path, real content.

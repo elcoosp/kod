@@ -520,7 +520,7 @@ impl Cli {
                             run_skills_copy(name, new_name)
                         }
                         Some(SkillsAction::Rename { name, new_name }) => {
-                            run_skills_rename(name, new_name).await
+                            run_skills_rename(name, new_name)
                         }
                         Some(SkillsAction::Source { name }) => run_skills_source(name),
                     }

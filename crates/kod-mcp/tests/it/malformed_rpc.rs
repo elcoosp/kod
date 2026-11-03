@@ -31,7 +31,7 @@ fn python_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-async fn spawn_with_script(script: &str) -> (TempDir, McpClient) {
+fn spawn_with_script(script: &str) -> (TempDir, McpClient) {
     let dir = TempDir::new().expect("tempdir");
     std::fs::write(dir.path().join("server.py"), script).expect("write server");
     let path = dir.path().join("server.py");
@@ -79,7 +79,7 @@ async fn garbage_line_before_a_valid_response_does_not_break_correlation() {
         eprintln!("skipping: python3 not on PATH");
         return;
     }
-    let (_dir, client) = spawn_with_script(GARBAGE_BEFORE_VALID).await;
+    let (_dir, client) = spawn_with_script(GARBAGE_BEFORE_VALID);
     client.initialize().await.expect("initialize");
 
     let result = client
@@ -132,7 +132,7 @@ async fn timeout_on_one_call_does_not_poison_the_client() {
         eprintln!("skipping: python3 not on PATH");
         return;
     }
-    let (_dir, client) = spawn_with_script(TIMEOUT_THEN_RESPOND).await;
+    let (_dir, client) = spawn_with_script(TIMEOUT_THEN_RESPOND);
     client.initialize().await.expect("initialize");
 
     let t0 = std::time::Instant::now();

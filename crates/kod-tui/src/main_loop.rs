@@ -649,7 +649,7 @@ impl TuiLoop {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    pub async fn init_terminal(&mut self) -> Result<()> {
+    pub fn init_terminal(&mut self) -> Result<()> {
         let result = self.init_terminal_inner();
         if result.is_err() {
             let _ = crossterm::execute!(
@@ -816,7 +816,7 @@ impl TuiLoop {
         self.app.load_persistent_history();
         self.persist_history = true;
 
-        self.init_terminal().await?;
+        self.init_terminal()?;
 
         // TPD-03: an external kill (session manager stopping the
         // process, `pkill -TERM kod`, closing the terminal window)
