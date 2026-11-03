@@ -45,9 +45,7 @@ async fn init_writes_a_config_file() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
 
-    run_init(false)
-
-        .expect("init on a fresh dir must succeed");
+    run_init(false).expect("init on a fresh dir must succeed");
 
     let path = tmp.path().join("config.toml");
     assert!(path.exists(), "init did not create {path:?}");
@@ -96,9 +94,7 @@ async fn profile_list_text_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
 
-    run_profile(ProfileAction::List { json: false })
-
-        .expect("profile list text mode must succeed");
+    run_profile(ProfileAction::List { json: false }).expect("profile list text mode must succeed");
 }
 
 /// `kod profile list --json` — same table, JSON serialized.
@@ -108,9 +104,7 @@ async fn profile_list_json_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
 
-    run_profile(ProfileAction::List { json: true })
-
-        .expect("profile list json mode must succeed");
+    run_profile(ProfileAction::List { json: true }).expect("profile list json mode must succeed");
 }
 
 /// `kod profile show` reads the effective `[llm]` config. With an
@@ -123,9 +117,7 @@ async fn profile_show_is_ok() {
     std::fs::write(tmp.path().join("config.toml"), "").unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
 
-    run_profile(ProfileAction::Show)
-
-        .expect("profile show must succeed on any valid config");
+    run_profile(ProfileAction::Show).expect("profile show must succeed on any valid config");
 }
 
 // ---- run_policy ------------------------------------------------------
@@ -141,7 +133,6 @@ async fn policy_show_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_policy(kod_cli::commands::PolicyAction::Show)
-
         .expect("policy show must succeed with a valid config");
 }
 
@@ -158,6 +149,5 @@ async fn policy_forget_with_no_daemon_is_ok() {
     let _guard = ConfigDirEnv::set(tmp.path());
 
     run_policy(kod_cli::commands::PolicyAction::Forget { n: None })
-
         .expect("policy forget with no daemon must return Ok");
 }

@@ -34,13 +34,13 @@
 //! flag threaded through every function.
 
 use kod_config::JevConfig;
+use num_traits::ToPrimitive;
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use typesafe_ai_rs::{Choice, Client, Noul, Question, Score, SystemOneRequest};
-use num_traits::ToPrimitive;
 
 /// Who produced a decision. Logged with every call so `/jev stats`
 /// can report Jev's share, and so a user can see when the heuristic
@@ -544,7 +544,11 @@ impl JevClient {
         let last = (levels.len() - 1) as f64;
         let idx = usize::try_from(raw.round().clamp(0.0, last) as u64).unwrap_or(0);
         let label = levels[idx].to_string();
-        let confidence = answer.confidence.clamp(0.0, 1.0).to_f32().unwrap_or(f32::MAX);
+        let confidence = answer
+            .confidence
+            .clamp(0.0, 1.0)
+            .to_f32()
+            .unwrap_or(f32::MAX);
 
         self.cache_put(
             key,
@@ -590,7 +594,11 @@ impl JevClient {
             .get("q")
             .ok_or_else(|| JevError::Malformed("no choice answer for key 'q'".into()))?;
         let label = answer.choice.clone();
-        let confidence = answer.confidence.clamp(0.0, 1.0).to_f32().unwrap_or(f32::MAX);
+        let confidence = answer
+            .confidence
+            .clamp(0.0, 1.0)
+            .to_f32()
+            .unwrap_or(f32::MAX);
 
         self.cache_put(
             key,
@@ -980,16 +988,25 @@ mod tests {
     fn heuristic_decision_carries_full_confidence() {
         let d: Decision<bool> = Decision::heuristic(true);
         assert!(d.value);
-        assert_eq!(f64::from(d.confidence).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(d.confidence).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
         assert_eq!(d.source, DecisionSource::Heuristic);
     }
 
     #[test]
     fn jev_decision_clamps_confidence() {
         let d = Decision::jev(true, 1.5);
-        assert_eq!(f64::from(d.confidence).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(d.confidence).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
         let d = Decision::jev(true, -0.5);
-        assert_eq!(f64::from(d.confidence).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(d.confidence).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
     }
 
     // --- RedactingJevDecider (the Jev outbound choke point) ---

@@ -78,7 +78,9 @@ impl DecisionKind {
     #[must_use]
     pub fn target_file(self) -> &'static str {
         match self {
-Self::Architecture | Self::Constraint | Self::RejectedApproach | Self::Correction => "architecture.md",
+            Self::Architecture | Self::Constraint | Self::RejectedApproach | Self::Correction => {
+                "architecture.md"
+            }
             Self::Product => "product.md",
             Self::Style => "style.md",
         }
@@ -119,7 +121,9 @@ impl Friction {
             3
         } else if self.corrective {
             2
-        } else { u8::from(self.subtle) }
+        } else {
+            u8::from(self.subtle)
+        }
     }
 }
 
@@ -953,10 +957,7 @@ mod sharpshooter_proptests {
     fn prop_parse_reply_empty_yields_empty() {
         for reply in ["", "no array here", "{}", "still nothing"] {
             let parsed = parse_reply(reply, 4);
-            assert!(
-                parsed.is_empty(),
-                "reply {reply:?} should parse to nothing"
-            );
+            assert!(parsed.is_empty(), "reply {reply:?} should parse to nothing");
         }
     }
 

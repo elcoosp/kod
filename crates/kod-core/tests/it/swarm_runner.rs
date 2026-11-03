@@ -1423,19 +1423,13 @@ async fn clear_history_drops_queued_background_job_results() {
 
     // A background job's result is queued for the interactive
     // transcript (the default key, `""`).
-    engine
-        .enqueue_async_result_for_tests("", 1, "job one")
-;
-    engine
-        .enqueue_async_result_for_tests("", 2, "job two")
-;
+    engine.enqueue_async_result_for_tests("", 1, "job one");
+    engine.enqueue_async_result_for_tests("", 2, "job two");
     assert_eq!(engine.queued_async_results_for_tests(""), 2);
 
     // A sibling transcript (a swarm agent) also has a queued result
     // — `/clear` on the interactive session must NOT drop it.
-    engine
-        .enqueue_async_result_for_tests("swarm:agent-1", 3, "agent result")
-;
+    engine.enqueue_async_result_for_tests("swarm:agent-1", 3, "agent result");
 
     engine.clear_history().await;
 

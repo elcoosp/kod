@@ -471,12 +471,14 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             return format!(
                 "{}: no change (content identical)",
                 v.get("path")
-                    .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path)
+                    .and_then(|p| p.as_str())
+                    .map_or_else(|| name.to_string(), shorten_path)
             );
         }
         let path = v
             .get("path")
-            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
+            .and_then(|p| p.as_str())
+            .map_or_else(|| name.to_string(), shorten_path);
         let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
         return format!("{path}:\n{body}");
     }
@@ -486,14 +488,19 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     if name == "git_diff"
         && let Some(diff) = v.get("diff").and_then(|d| d.as_str())
     {
-        let mut scope = vec![
-            if v.get("staged").and_then(serde_json::Value::as_bool).unwrap_or(false) {
-                "staged"
-            } else {
-                "unstaged"
-            },
-        ];
-        if v.get("stat").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+        let mut scope = vec![if v
+            .get("staged")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            "staged"
+        } else {
+            "unstaged"
+        }];
+        if v.get("stat")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
             scope.push("--stat");
         }
         let path = v.get("path").and_then(|p| p.as_str()).map(shorten_path);
@@ -519,11 +526,19 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     // Binary read_file: no text preview, just a name-and-size line.
     // The model sees the hex preview through the tool-result feedback
     // block; the chat row is a one-liner.
-    if name == "read_file" && v.get("binary").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+    if name == "read_file"
+        && v.get("binary")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
-        let size = v.get("size_bytes").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            .and_then(|p| p.as_str())
+            .map_or_else(|| name.to_string(), shorten_path);
+        let size = v
+            .get("size_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
         return format!("{path} · binary ({size} bytes) — not shown as text");
     }
 
@@ -535,7 +550,8 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
+            .and_then(|p| p.as_str())
+            .map_or_else(|| name.to_string(), shorten_path);
         let lines = content.lines().count();
         // When the file was larger than the reader's byte cap, the tool
         // sets "truncated": true. Without surfacing it, the row reads
@@ -569,7 +585,8 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     if name == "list_files" && v.get("path_kind").and_then(|k| k.as_str()) == Some("file") {
         let path = v
             .get("path")
-            .and_then(|p| p.as_str()).map_or_else(|| name.to_string(), shorten_path);
+            .and_then(|p| p.as_str())
+            .map_or_else(|| name.to_string(), shorten_path);
         return format!("{path} · is a file, not a directory");
     }
 
@@ -670,9 +687,15 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .get("timed_out")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let timeout_secs = v.get("timeout_secs").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let timeout_secs = v
+            .get("timeout_secs")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
         let truncated = stdout_trunc || stderr_trunc;
-        let signalled = v.get("exit_signal").and_then(serde_json::Value::as_i64).is_some();
+        let signalled = v
+            .get("exit_signal")
+            .and_then(serde_json::Value::as_i64)
+            .is_some();
 
         if timed_out {
             out.push_str(&format!(
@@ -1165,10 +1188,7 @@ mod render_proptests {
     #[test]
     fn prop_pure_cjk_is_not_goal_marker() {
         for s in ["中文", "中文中文中", "中文中文中文中文"] {
-            assert!(
-                !line_is_goal_marker(s),
-                "{s:?} should not be a goal marker"
-            );
+            assert!(!line_is_goal_marker(s), "{s:?} should not be a goal marker");
         }
     }
 

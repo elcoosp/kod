@@ -37,7 +37,7 @@
 //! entry so the API accepts the request.
 
 use kod_provider::request::{CompletionRequest, SystemPrompt};
-use kod_types::{ChatMessage, MessageRole, ToolDefinition, LoadMode, MessageMetadata};
+use kod_types::{ChatMessage, LoadMode, MessageMetadata, MessageRole, ToolDefinition};
 use serde_json::{Value, json};
 
 /// Build the JSON body for `POST /v1/messages`.
@@ -548,8 +548,10 @@ pub fn parse_sse_line(
             // input window; the split is retained in the two cache
             // fields for cost math.
             if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
-                let get =
-                    |k: &str| -> usize { usize::try_from(u.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX) };
+                let get = |k: &str| -> usize {
+                    usize::try_from(u.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0))
+                        .unwrap_or(usize::MAX)
+                };
                 let base = get("input_tokens");
                 let cache_read = get("cache_read_input_tokens");
                 let cache_creation = get("cache_creation_input_tokens");
@@ -578,7 +580,12 @@ pub fn parse_sse_line(
             Vec::new()
         }
         Some("content_block_start") => {
-            let index = usize::try_from(v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
+            let index = usize::try_from(
+                v.get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            )
+            .unwrap_or(usize::MAX);
             let block = v.get("content_block").cloned().unwrap_or_default();
             let kind = block
                 .get("type")
@@ -607,7 +614,12 @@ pub fn parse_sse_line(
             }
         }
         Some("content_block_delta") => {
-            let index = usize::try_from(v.get("index").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
+            let index = usize::try_from(
+                v.get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            )
+            .unwrap_or(usize::MAX);
             let delta = v.get("delta").cloned().unwrap_or_default();
             match delta.get("type").and_then(|t| t.as_str()) {
                 Some("text_delta") => {

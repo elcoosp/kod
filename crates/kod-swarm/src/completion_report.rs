@@ -114,9 +114,7 @@ pub fn parse(text: &str) -> CompletionReport {
 
     // The open tag's own line carries the status attribute.
     let after_open = &text[open_at..];
-    let open_line_end = after_open
-        .find('>')
-        .map_or(after_open.len(), |i| i + 1);
+    let open_line_end = after_open.find('>').map_or(after_open.len(), |i| i + 1);
     let open_line = &after_open[..open_line_end];
     let status = extract_status(open_line);
 

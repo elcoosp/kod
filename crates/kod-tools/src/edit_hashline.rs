@@ -477,10 +477,14 @@ pub fn render_numbered(text: &str, max_lines: usize) -> String {
         std::fmt::Write::write_fmt(&mut out, format_args!("{}:{}\n", i + 1, l)).ok();
     }
     if lines.len() > shown {
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "[…{} lines elided; re-read the range you need]\n",
-            lines.len() - shown,
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "[…{} lines elided; re-read the range you need]\n",
+                lines.len() - shown,
+            ),
+        )
+        .ok();
     }
     out
 }

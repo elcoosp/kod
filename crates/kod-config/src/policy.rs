@@ -699,7 +699,8 @@ impl PolicyEngine {
         } else {
             for (name, tp) in &self.effective.tools {
                 let mode = tp
-                    .mode.map_or_else(|| "(preset)".to_string(), |m| format!("{m:?}"));
+                    .mode
+                    .map_or_else(|| "(preset)".to_string(), |m| format!("{m:?}"));
                 lines.push(format!("  {name}: mode = {mode}"));
             }
         }

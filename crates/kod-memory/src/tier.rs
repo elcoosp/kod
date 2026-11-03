@@ -120,9 +120,10 @@ pub fn compress_body(body: &str) -> String {
     // Trim back to the last whitespace, if there is one in the back
     // half (a very long first word is left as-is).
     if let Some(pos) = out.rfind(char::is_whitespace)
-        && pos > TIER3_MAX_CHARS / 2 {
-            out.truncate(pos);
-        }
+        && pos > TIER3_MAX_CHARS / 2
+    {
+        out.truncate(pos);
+    }
     out.push('…');
     out
 }
@@ -156,9 +157,18 @@ mod tests {
 
     #[test]
     fn weights_fall_with_tier() {
-        assert_eq!(f64::from(Tier::One.weight()).to_bits(), f64::from(1.0_f32).to_bits());
-        assert_eq!(f64::from(Tier::Two.weight()).to_bits(), f64::from(0.5_f32).to_bits());
-        assert_eq!(f64::from(Tier::Three.weight()).to_bits(), f64::from(0.25_f32).to_bits());
+        assert_eq!(
+            f64::from(Tier::One.weight()).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
+        assert_eq!(
+            f64::from(Tier::Two.weight()).to_bits(),
+            f64::from(0.5_f32).to_bits()
+        );
+        assert_eq!(
+            f64::from(Tier::Three.weight()).to_bits(),
+            f64::from(0.25_f32).to_bits()
+        );
     }
 
     #[test]

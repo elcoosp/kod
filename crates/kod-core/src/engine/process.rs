@@ -569,8 +569,7 @@ impl KodEngine {
                                 &model_ref,
                                 next,
                                 &format!("{} ({})", e, failure.summary()),
-                            )
-;
+                            );
                             // Hygiene 3.2: record the failure against
                             // the endpoint that produced it.
                             if let Ok(mut h) = self.endpoint_health.lock()
@@ -678,11 +677,15 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        std::fmt::Write::write_fmt(&mut summary_prompt, format_args!(
-                            "\n### Result {}\n{}\n",
-                            i + 1,
-                            summarize_tool_result(name, r),
-                        )).ok();
+                        std::fmt::Write::write_fmt(
+                            &mut summary_prompt,
+                            format_args!(
+                                "\n### Result {}\n{}\n",
+                                i + 1,
+                                summarize_tool_result(name, r),
+                            ),
+                        )
+                        .ok();
                     }
                 }
                 summary_prompt.push_str(
@@ -1037,8 +1040,7 @@ impl KodEngine {
                                 to = %next.display(),
                                 "Jev flagged the reply off-track; trying next endpoint"
                             );
-                            self.record_model_fallback(key, &model_ref, next, "jev quality gate")
-;
+                            self.record_model_fallback(key, &model_ref, next, "jev quality gate");
                             last_err = None;
                             i += 1;
                             continue;
@@ -1065,8 +1067,7 @@ impl KodEngine {
                             error = %e,
                             "retryable provider error; falling back"
                         );
-                        self.record_model_fallback(key, &model_ref, next, &e.to_string())
-;
+                        self.record_model_fallback(key, &model_ref, next, &e.to_string());
                         // Hygiene 3.2: record the endpoint failure.
                         if let Ok(mut h) = self.endpoint_health.lock()
                             && h.record_failure(&model_ref.endpoint, e.to_string())
@@ -1179,11 +1180,15 @@ impl KodEngine {
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
                         let name = calls.get(i).map_or("tool", |c| c.tool_name.as_str());
-                        std::fmt::Write::write_fmt(&mut summary_prompt, format_args!(
-                            "\n### Result {}\n{}\n",
-                            i + 1,
-                            summarize_tool_result(name, r),
-                        )).ok();
+                        std::fmt::Write::write_fmt(
+                            &mut summary_prompt,
+                            format_args!(
+                                "\n### Result {}\n{}\n",
+                                i + 1,
+                                summarize_tool_result(name, r),
+                            ),
+                        )
+                        .ok();
                     }
                 }
                 summary_prompt.push_str(
@@ -1293,7 +1298,9 @@ impl KodEngine {
             // it; since we are the only owner at this point, this is
             // a simple `into_inner` on the tracked cell.
             let finished = match std::sync::Arc::try_unwrap(std::sync::Arc::new(trace)) {
-                Ok(m) => m.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner),
+                Ok(m) => m
+                    .into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
                 Err(_) => {
                     return Ok(TaskResponse {
                         task_type: response.task_type,
@@ -1525,7 +1532,9 @@ impl KodEngine {
                 // Delta §9.8: the pause gate's model-call boundary.
                 self.pause_gate.wait_if_paused().await;
                 if turn > 1 {
-                    let _ = chunk_tx.send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX))).await;
+                    let _ = chunk_tx
+                        .send(turn_marker(u32::try_from(turn).unwrap_or(u32::MAX)))
+                        .await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
                     std::fmt::Write::write_fmt(&mut pending, format_args!("\n\n{nudge}\n")).ok();
                     // The nudge is what tells the model to *continue*;
@@ -1649,8 +1658,7 @@ impl KodEngine {
                                 error = %e,
                                 "retryable provider error; falling back"
                             );
-                            self.record_model_fallback(key, model_ref, next, &e.to_string())
-;
+                            self.record_model_fallback(key, model_ref, next, &e.to_string());
                             turn_err = Some(e);
                         }
                         Err(e) => return Err(e),

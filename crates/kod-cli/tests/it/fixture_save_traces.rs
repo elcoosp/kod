@@ -105,9 +105,7 @@ async fn save_writes_a_fixture_from_a_one_tool_trace() {
     let trace_path = tmp.path().join("turns.jsonl");
     write_one_turn(&trace_path);
 
-    run_fixture_save("saved", &trace_path)
-
-        .expect("run_fixture_save over a valid trace");
+    run_fixture_save("saved", &trace_path).expect("run_fixture_save over a valid trace");
 
     let fixture_path = Fixture::default_path("saved").expect("default_path('saved')");
     assert_eq!(
@@ -168,7 +166,6 @@ async fn save_v2_with_force_overwrites_a_seeded_fixture() {
         .expect("seed fixture");
 
     run_fixture_save_v2("pre", Some(trace_path), true)
-
         .expect("save_v2 with force must overwrite an existing fixture");
 
     let overwritten = Fixture::load_from(&tmp.path().join("pre.json")).expect("load fixture");

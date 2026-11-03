@@ -33,7 +33,10 @@ mod tests {
 
     #[test]
     fn medium_is_the_neutral_multiplier() {
-        assert_eq!(f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
         let base = Duration::from_secs(180);
         assert_eq!(scaled_idle_timeout(base, EffortLevel::Medium), base);
     }

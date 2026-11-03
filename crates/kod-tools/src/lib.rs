@@ -95,7 +95,7 @@ pub use plan::PlanTool;
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience
-pub use kod_types::{ToolDefinition, ToolResult, LoadMode};
+pub use kod_types::{LoadMode, ToolDefinition, ToolResult};
 
 /// Trait that all tools must implement.
 #[async_trait::async_trait]

@@ -213,9 +213,11 @@ pub fn run_fixture_save_v2(
     turns: Option<std::path::PathBuf>,
     force: bool,
 ) -> Result<()> {
-    let turns_path = if let Some(p) = turns { p } else {
-        let home = dirs::home_dir()
-            .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
+    let turns_path = if let Some(p) = turns {
+        p
+    } else {
+        let home =
+            dirs::home_dir().ok_or_else(|| KodError::Config("no home directory".to_string()))?;
         home.join(".kod").join("sessions").join("turns.jsonl")
     };
     if !turns_path.exists() {

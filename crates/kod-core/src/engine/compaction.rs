@@ -130,7 +130,9 @@ impl KodEngine {
     pub(crate) async fn anchored_context_tokens(&self, holder: &str) -> Option<u64> {
         let tail_start = {
             let gauges = self.context_gauges.read().await;
-            gauges.get(holder).and_then(kod_core_state::context_gauge::ContextGauge::tail_start)?
+            gauges
+                .get(holder)
+                .and_then(kod_core_state::context_gauge::ContextGauge::tail_start)?
         };
         let tail: u64 = {
             let history = self.history.read().await;
@@ -700,7 +702,11 @@ impl KodEngine {
                     let what = payload
                         .downcast_ref::<&'static str>()
                         .copied()
-                        .or_else(|| payload.downcast_ref::<String>().map(std::string::String::as_str))
+                        .or_else(|| {
+                            payload
+                                .downcast_ref::<String>()
+                                .map(std::string::String::as_str)
+                        })
                         .unwrap_or("non-string panic payload");
                     tracing::error!(key = %engine_key, panic = what,
                         "compaction summary provider panicked; emergency path will be used");
@@ -732,13 +738,17 @@ impl KodEngine {
         // disk without a preceding call.
         let used = match self.anchored_context_tokens(key).await {
             Some(n) => n,
-            None => if let Some(&n) = self.observed_usage.read().await.get(key) { n } else {
-                let guard = self.history.read().await;
-                let chars: usize = guard
-                    .get(key)
-                    .map_or(0, |t| t.iter().map(|m| m.content.len()).sum());
-                (chars / 4) as u64
-            },
+            None => {
+                if let Some(&n) = self.observed_usage.read().await.get(key) {
+                    n
+                } else {
+                    let guard = self.history.read().await;
+                    let chars: usize = guard
+                        .get(key)
+                        .map_or(0, |t| t.iter().map(|m| m.content.len()).sum());
+                    (chars / 4) as u64
+                }
+            }
         };
 
         let action = crate::compaction::decide(used, window as u64);
@@ -882,22 +892,12 @@ impl KodEngine {
     /// Test-only: run `compact_history_for` and return the number of
     /// messages dropped. `compact_history_for` itself returns `()`.
     pub async fn compact_history_for_tests(&self, key: &str, max_turns: usize) -> usize {
-        let before = self
-            .history
-            .read()
-            .await
-            .get(key)
-            .map_or(0, Vec::len);
+        let before = self.history.read().await.get(key).map_or(0, Vec::len);
         self.compact_history_for(key, max_turns).await;
         // Count the messages that were dropped, not the net change:
         // compaction now inserts a summary message, so `before - after`
         // undercounts by one per call.
-        let after = self
-            .history
-            .read()
-            .await
-            .get(key)
-            .map_or(0, Vec::len);
+        let after = self.history.read().await.get(key).map_or(0, Vec::len);
         if after == 0 {
             return before;
         }

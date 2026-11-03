@@ -138,14 +138,15 @@ impl LlmConfig {
             // Clamp an unrecognised trust tier to `standard` rather
             // than silently treating a typo as `trusted`.
             if let Some(t) = &e.trust
-                && !matches!(t.as_str(), "trusted" | "standard" | "untrusted") {
-                    tracing::warn!(
-                        endpoint = %e.name,
-                        value = %t,
-                        "unknown trust tier; clamping to standard",
-                    );
-                    e.trust = Some("standard".to_string());
-                }
+                && !matches!(t.as_str(), "trusted" | "standard" | "untrusted")
+            {
+                tracing::warn!(
+                    endpoint = %e.name,
+                    value = %t,
+                    "unknown trust tier; clamping to standard",
+                );
+                e.trust = Some("standard".to_string());
+            }
         }
         if self.endpoints.is_empty() {
             tracing::warn!("llm.endpoints is empty; falling back to the built-in default endpoint");
@@ -224,7 +225,8 @@ impl LlmConfig {
                     "base_url is empty; falling back to the default"
                 );
                 let default_endpoint = LlmConfig::default();
-                e.base_url.clone_from(&default_endpoint.endpoints[0].base_url);
+                e.base_url
+                    .clone_from(&default_endpoint.endpoints[0].base_url);
             }
             // model: non-empty.
             if e.model.trim().is_empty() {

@@ -29,9 +29,7 @@ fn body_range(src: &str, start_marker: &str, end_marker: &str) -> (usize, usize)
         .find(start_marker)
         .unwrap_or_else(|| panic!("marker not found: {start_marker}"));
     let tail = &src[start..];
-    let end = tail
-        .find(end_marker)
-        .map_or(src.len(), |i| start + i);
+    let end = tail.find(end_marker).map_or(src.len(), |i| start + i);
     (start, end)
 }
 

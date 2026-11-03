@@ -47,11 +47,12 @@ fn wait_ci(session: &harness::TuiSession, needle: &str, timeout: Duration) -> St
         if text.to_lowercase().contains(&needle_lower) {
             return text;
         }
-        assert!(start.elapsed() <= timeout, 
-                        "timed out waiting for {needle:?}
+        assert!(
+            start.elapsed() <= timeout,
+            "timed out waiting for {needle:?}
         --- screen ---
         {text}"
-                    );
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -726,7 +727,10 @@ fn retry_after_a_turn_resends_the_prompt() {
         if hits >= 2 {
             break;
         }
-        assert!(start.elapsed() <= Duration::from_secs(20), "retry produced {hits} repl(ies), expected 2:\n{text}");
+        assert!(
+            start.elapsed() <= Duration::from_secs(20),
+            "retry produced {hits} repl(ies), expected 2:\n{text}"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
 }

@@ -186,9 +186,7 @@ impl Goal {
         if self.status != GoalStatus::Active {
             return;
         }
-        let tokens_over = self
-            .token_budget
-            .is_some_and(|b| self.tokens_used >= b);
+        let tokens_over = self.token_budget.is_some_and(|b| self.tokens_used >= b);
         let time_over = self
             .time_budget_seconds
             .is_some_and(|b| self.time_used_seconds >= b);
@@ -344,9 +342,7 @@ impl GoalRuntime {
     /// wants one.
     #[must_use]
     pub fn wants_continuation(&self) -> bool {
-        self.current
-            .as_ref()
-            .is_some_and(Goal::wants_continuation)
+        self.current.as_ref().is_some_and(Goal::wants_continuation)
     }
 }
 

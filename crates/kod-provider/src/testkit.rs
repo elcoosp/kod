@@ -298,7 +298,8 @@ async fn contract_generate_with_tools_calls(provider: &Arc<dyn LlmProvider>) {
     let empty_tools: Vec<ToolDefinition> = Vec::new();
     if let Ok(GenerationResponse::ToolCalls { calls, .. }) = provider
         .generate_with_tools("hello", &empty_tools, &opts)
-        .await {
+        .await
+    {
         assert!(!calls.is_empty(), "ToolCalls variant must carry ≥ 1 call");
     } else {
         // Only the caller that scripted Calls cares; a

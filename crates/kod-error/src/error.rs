@@ -375,9 +375,10 @@ impl KodError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-KodError::RateLimited { .. }
+            KodError::RateLimited { .. }
             | KodError::ServerBusy { .. }
-            | KodError::ProviderTimeout { .. } | KodError::Network(_) => true,
+            | KodError::ProviderTimeout { .. }
+            | KodError::Network(_) => true,
             KodError::Provider(msg) => is_transient_transport_error(msg),
             _ => false,
         }

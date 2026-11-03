@@ -16,7 +16,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
 /// Byte cap for git output rendered back to the model. A `git diff` on a

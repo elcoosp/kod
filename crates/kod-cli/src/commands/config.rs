@@ -399,14 +399,12 @@ pub fn run_config_validate() -> Result<()> {
             }
             Ok(())
         }
-        Err(e) => {
-            Err(KodError::Config(format!(
-                "{}: INVALID.\n  {}\n\nFix the file, or delete it to fall back to defaults:\n  rm {}",
-                path.display(),
-                e,
-                path.display(),
-            )))
-        }
+        Err(e) => Err(KodError::Config(format!(
+            "{}: INVALID.\n  {}\n\nFix the file, or delete it to fall back to defaults:\n  rm {}",
+            path.display(),
+            e,
+            path.display(),
+        ))),
     }
 }
 

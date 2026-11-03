@@ -288,8 +288,12 @@ fn scope_allows(scope: &RuleScope, site: MatchSite) -> bool {
 
 fn interrupt_allows(mode: InterruptMode, site: MatchSite) -> bool {
     match (mode, site) {
-(InterruptMode::Never, _) | (InterruptMode::ProseOnly, MatchSite::Tool) | (InterruptMode::ToolOnly, MatchSite::Text) => false,
-(InterruptMode::Always, _) | (InterruptMode::ProseOnly, MatchSite::Text) | (InterruptMode::ToolOnly, MatchSite::Tool) => true,
+        (InterruptMode::Never, _)
+        | (InterruptMode::ProseOnly, MatchSite::Tool)
+        | (InterruptMode::ToolOnly, MatchSite::Text) => false,
+        (InterruptMode::Always, _)
+        | (InterruptMode::ProseOnly, MatchSite::Text)
+        | (InterruptMode::ToolOnly, MatchSite::Tool) => true,
     }
 }
 

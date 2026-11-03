@@ -38,7 +38,7 @@ use kod_error::{KodError, Result};
 use kod_mcp::tool_cache;
 use kod_mcp::{McpClient, McpToolDef};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -231,7 +231,6 @@ impl McpHost {
             &spec.env,
             Some(&self.working_dir),
         )
-
         .map_err(|e| {
             KodError::Internal(format!(
                 "MCP server {name:?} ({}) failed to spawn: {e}",

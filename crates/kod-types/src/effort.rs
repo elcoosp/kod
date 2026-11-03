@@ -146,7 +146,10 @@ mod tests {
 
     #[test]
     fn multipliers_are_monotone_and_medium_is_neutral() {
-        assert_eq!(f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
         let levels = [
             EffortLevel::None,
             EffortLevel::Minimal,
@@ -297,7 +300,10 @@ mod proptests {
             assert!(m > 0.0, "{l:?} multiplier must be positive, got {m}");
             assert!(m.is_finite(), "{l:?} multiplier must be finite, got {m}");
         }
-        assert_eq!(f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(EffortLevel::Medium.timeout_multiplier()).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
         for pair in ALL.windows(2) {
             assert!(
                 pair[0].timeout_multiplier() < pair[1].timeout_multiplier(),

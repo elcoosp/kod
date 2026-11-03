@@ -666,9 +666,8 @@ impl KodConfig {
         }
         let home = dirs::home_dir()
             .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-        let cwd = std::env::current_dir().map_err(|e| {
-            KodError::Config(format!("Could not determine working directory: {e}"))
-        })?;
+        let cwd = std::env::current_dir()
+            .map_err(|e| KodError::Config(format!("Could not determine working directory: {e}")))?;
         // Delta §14.2: include the common foreign skill directories
         // so a user who already curates `.claude/skills` (or
         // `.cursor/skills`) does not have to copy into kod's own tree.
@@ -850,7 +849,10 @@ mod tests {
             cfg.llm.default_endpoint().provider,
             crate::llm::ProviderKind::OpenAICompatible,
         );
-        assert_eq!(f64::from(cfg.llm.default_endpoint().temperature.unwrap_or(0.7)).to_bits(), f64::from(0.7_f32).to_bits());
+        assert_eq!(
+            f64::from(cfg.llm.default_endpoint().temperature.unwrap_or(0.7)).to_bits(),
+            f64::from(0.7_f32).to_bits()
+        );
         assert_eq!(cfg.llm.default_endpoint().context_window, 8192);
         assert_eq!(cfg.skills.max_skills_per_query, 7);
         assert!(cfg.skills.enable_hot_reload);
@@ -1103,8 +1105,7 @@ mod coverage_hooks_config {
         // broken file was renamed to `.toml.broken` (both are acceptable
         // depending on the recovery branch taken).
         let broken = cfg_path.with_extension("toml.broken");
-        let path_has_content = std::fs::metadata(&cfg_path)
-            .is_ok_and(|m| m.len() > 0);
+        let path_has_content = std::fs::metadata(&cfg_path).is_ok_and(|m| m.len() > 0);
         let broken_exists = broken.exists();
         assert!(
             path_has_content || broken_exists,

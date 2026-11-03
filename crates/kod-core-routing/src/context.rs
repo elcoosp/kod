@@ -3,7 +3,7 @@
 //! Combines user input, memory context, and skills into a structured
 //! context that can be serialized into a prompt for the LLM.
 
-use kod_types::{MemoryContext, Skill, MemoryMetadata};
+use kod_types::{MemoryContext, MemoryMetadata, Skill};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -84,14 +84,16 @@ impl EngineContext {
             if !self.memory_context.working_memory.is_empty() {
                 body.push_str("## Current Context\n\n");
                 for entry in &self.memory_context.working_memory {
-                    std::fmt::Write::write_fmt(&mut body, format_args!("- {}\n", entry.content)).ok();
+                    std::fmt::Write::write_fmt(&mut body, format_args!("- {}\n", entry.content))
+                        .ok();
                 }
                 body.push('\n');
             }
             if !self.memory_context.long_term.is_empty() {
                 body.push_str("## User Preferences\n\n");
                 for entry in &self.memory_context.long_term {
-                    std::fmt::Write::write_fmt(&mut body, format_args!("- {}\n", entry.content)).ok();
+                    std::fmt::Write::write_fmt(&mut body, format_args!("- {}\n", entry.content))
+                        .ok();
                 }
                 body.push('\n');
             }
@@ -103,10 +105,11 @@ impl EngineContext {
         if !self.skills.is_empty() {
             prompt.push_str("## Relevant Skills\n\n");
             for skill in &self.skills {
-                std::fmt::Write::write_fmt(&mut prompt, format_args!(
-                    "### {}\n\n{}\n\n",
-                    skill.metadata.name, skill.instructions
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut prompt,
+                    format_args!("### {}\n\n{}\n\n", skill.metadata.name, skill.instructions),
+                )
+                .ok();
             }
         }
 
@@ -120,7 +123,11 @@ impl EngineContext {
         }
 
         // Add user input
-        std::fmt::Write::write_fmt(&mut prompt, format_args!("## User Request\n\n{}", self.user_input)).ok();
+        std::fmt::Write::write_fmt(
+            &mut prompt,
+            format_args!("## User Request\n\n{}", self.user_input),
+        )
+        .ok();
 
         prompt
     }

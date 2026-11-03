@@ -122,7 +122,9 @@ pub fn fact_content_id(subject: &str, predicate: &str, object: &str) -> String {
 #[must_use]
 pub fn raise_confidence(confidence: f64, weight: f64) -> f64 {
     let c = confidence.clamp(0.0, 1.0);
-    ((1.0 - c) * weight).mul_add(MENTION_STEP, c).clamp(0.0, 1.0)
+    ((1.0 - c) * weight)
+        .mul_add(MENTION_STEP, c)
+        .clamp(0.0, 1.0)
 }
 
 /// The base confidence a new fact starts at, given its source.
@@ -198,7 +200,10 @@ mod tests {
 
     #[test]
     fn a_stated_fact_starts_at_a_half() {
-        assert_eq!(Veracity::Stated.base_confidence().to_bits(), f64::from(0.5_f32).to_bits());
+        assert_eq!(
+            Veracity::Stated.base_confidence().to_bits(),
+            f64::from(0.5_f32).to_bits()
+        );
     }
 
     #[test]
@@ -231,12 +236,18 @@ mod tests {
 
     #[test]
     fn confidence_never_exceeds_one() {
-        assert_eq!(raise_confidence(2.0, 1.0).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            raise_confidence(2.0, 1.0).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
     }
 
     #[test]
     fn base_confidence_fn_matches_the_enum() {
-        assert_eq!(base_confidence(Veracity::Stated).to_bits(), Veracity::Stated.base_confidence().to_bits());
+        assert_eq!(
+            base_confidence(Veracity::Stated).to_bits(),
+            Veracity::Stated.base_confidence().to_bits()
+        );
     }
 
     #[test]

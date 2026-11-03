@@ -159,7 +159,7 @@ fn has_top_level_operator(s: &str) -> bool {
         match c {
             b'\'' => in_single = true,
             b'"' => in_double = true,
-b'|' | b';' | b'&' | b'>' | b'<' | b'\n' | b'(' | b')' | b'`' => return true,
+            b'|' | b';' | b'&' | b'>' | b'<' | b'\n' | b'(' | b')' | b'`' => return true,
             // Only `$(` is a subshell. `$VAR` passes.
             b'$' if i + 1 < bytes.len() && bytes[i + 1] == b'(' => return true,
             b'$' => {}

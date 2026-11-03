@@ -245,7 +245,8 @@ pub fn emergency_summary(dropped: &[ChatMessage], budget_tokens: u64) -> String 
                 .join(", "),
         );
         if files.len() > 30 {
-            std::fmt::Write::write_fmt(&mut s, format_args!(" (and {} more)", files.len() - 30)).ok();
+            std::fmt::Write::write_fmt(&mut s, format_args!(" (and {} more)", files.len() - 30))
+                .ok();
         }
     }
     s

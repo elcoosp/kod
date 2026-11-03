@@ -134,12 +134,16 @@ pub fn render_brief(brief: &ContextBrief) -> String {
     if !brief.file_digests.is_empty() {
         out.push_str("## Files you may need\n\n");
         for d in &brief.file_digests {
-            std::fmt::Write::write_fmt(&mut out, format_args!(
-                "- `{}` ({} lines): {}\n",
-                d.path.display(),
-                d.line_count,
-                d.summary.trim()
-            )).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!(
+                    "- `{}` ({} lines): {}\n",
+                    d.path.display(),
+                    d.line_count,
+                    d.summary.trim()
+                ),
+            )
+            .ok();
         }
         out.push('\n');
     }

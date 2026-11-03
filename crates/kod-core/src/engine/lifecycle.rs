@@ -727,10 +727,14 @@ impl KodEngine {
         // engine — and returns the `Arc` back on the shared path,
         // in which case we fall back to the previous behaviour
         // (the OS file lock releases when the last reference drops).
-        if let Ok(router) = Arc::try_unwrap(self.router.clone()) { router.close_memory() } else { tracing::debug!(
-            "router Arc still shared at shutdown; redb will close when \
+        if let Ok(router) = Arc::try_unwrap(self.router.clone()) {
+            router.close_memory()
+        } else {
+            tracing::debug!(
+                "router Arc still shared at shutdown; redb will close when \
              the last reference drops"
-        ); }
+            );
+        }
 
         tracing::info!("KOD engine shutdown complete");
         Ok(())

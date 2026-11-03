@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use kod_tools::registry::ToolRegistry;
 use kod_tools::{Tool, ToolContext, ToolResult};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions};
 use serde_json::json;
 
 struct EchoTool;

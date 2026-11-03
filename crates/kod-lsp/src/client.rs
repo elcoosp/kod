@@ -920,7 +920,10 @@ fn parse_diagnostics(params: &serde_json::Value, uri: &str) -> Vec<Diagnostic> {
             let start = d.get("range")?.get("start")?;
             let line = start.get("line")?.as_u64()? + 1;
             let character = start.get("character")?.as_u64()? + 1;
-            let severity_n = d.get("severity").and_then(serde_json::Value::as_u64).unwrap_or(1);
+            let severity_n = d
+                .get("severity")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1);
             let severity = match severity_n {
                 1 => "error",
                 2 => "warning",
@@ -1732,9 +1735,7 @@ mod lsp_document_cap_regression {
             .find("pub async fn diagnostics(")
             .expect("diagnostics present");
         let diag_tail = &src[diag..];
-        let diag_end = diag_tail
-            .find("\n    }\n")
-            .map_or(src.len(), |i| diag + i);
+        let diag_end = diag_tail.find("\n    }\n").map_or(src.len(), |i| diag + i);
         let diag_body = &src[diag..diag_end];
         assert!(
             diag_body.contains("evict_if_full_preserving"),

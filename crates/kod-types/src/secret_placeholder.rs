@@ -328,7 +328,9 @@ impl SecretVault {
             Ok(g) => g.clone(),
             Err(_) => None,
         };
-        let sorted = if let Some(v) = cached { v } else {
+        let sorted = if let Some(v) = cached {
+            v
+        } else {
             let mut v: Vec<(String, String)> = match self.inner.forward.read() {
                 Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
                 Err(_) => return text.to_string(),

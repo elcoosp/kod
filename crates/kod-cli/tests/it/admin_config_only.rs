@@ -50,9 +50,7 @@ async fn jev_status_disabled_returns_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_config(tmp.path(), "");
     let _guard = ConfigDirEnv::set(tmp.path());
-    run_jev_status()
-
-        .expect("a disabled Jev is a first-run case, not an error");
+    run_jev_status().expect("a disabled Jev is a first-run case, not an error");
 }
 
 /// A config with `[jev] enabled = true` takes the listing branch. The
@@ -66,9 +64,7 @@ async fn jev_status_enabled_returns_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_config(tmp.path(), "[jev]\nenabled = true\n");
     let _guard = ConfigDirEnv::set(tmp.path());
-    run_jev_status()
-
-        .expect("an enabled Jev status listing must return Ok");
+    run_jev_status().expect("an enabled Jev status listing must return Ok");
 }
 
 // ---- run_tools -----------------------------------------------------

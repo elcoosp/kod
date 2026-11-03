@@ -189,7 +189,10 @@ pub fn format_duration_ms(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
-        format!("{:.1}s", f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1000.0)
+        format!(
+            "{:.1}s",
+            f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1000.0
+        )
     } else {
         format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1000)
     }

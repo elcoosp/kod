@@ -113,39 +113,29 @@ async fn test_task_classification_full() {
     let simple = router.classify_task("What is 2+2?").unwrap();
     assert_eq!(simple, kod_core::router::TaskType::Simple);
 
-    let code_mod = router
-        .classify_task("Fix the bug in main.rs")
-
-        .unwrap();
+    let code_mod = router.classify_task("Fix the bug in main.rs").unwrap();
     assert_eq!(code_mod, kod_core::router::TaskType::CodeModification);
 
     let debug = router
         .classify_task("Debug this error: panic in main")
-
         .unwrap();
     assert_eq!(debug, kod_core::router::TaskType::Debugging);
 
     let test_task = router
         .classify_task("Write unit tests for auth module")
-
         .unwrap();
     assert_eq!(test_task, kod_core::router::TaskType::Testing);
 
     let research = router
         .classify_task("Research best practices for async Rust")
-
         .unwrap();
     assert_eq!(research, kod_core::router::TaskType::Research);
 
-    let docs = router
-        .classify_task("Document the public API")
-
-        .unwrap();
+    let docs = router.classify_task("Document the public API").unwrap();
     assert_eq!(docs, kod_core::router::TaskType::Documentation);
 
     let complex = router
         .classify_task("Design and implement a complete authentication system")
-
         .unwrap();
     assert_eq!(complex, kod_core::router::TaskType::Complex);
 }

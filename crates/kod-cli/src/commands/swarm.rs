@@ -304,9 +304,7 @@ pub async fn run_swarm_inner(
                         .map(|p| p.display().to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    eprintln!(
-                        "\n⚠ {agent_name} wrote outside its declared scope: {list}\n",
-                    );
+                    eprintln!("\n⚠ {agent_name} wrote outside its declared scope: {list}\n",);
                 }
                 SwarmEvent::WorktreesMerged {
                     merged,
@@ -424,7 +422,10 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
         }
         "agent_retrying" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-            let attempt = data.get("attempt").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let attempt = data
+                .get("attempt")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             let max = data
                 .get("max_attempts")
                 .and_then(serde_json::Value::as_u64)
@@ -461,9 +462,7 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
                 .unwrap_or("?");
             let path = data.get("path").and_then(|x| x.as_str()).unwrap_or("");
             let branch = data.get("branch").and_then(|x| x.as_str()).unwrap_or("");
-            println!(
-                "\u{2500}\u{2500} {agent}: worktree {path} (branch {branch})"
-            );
+            println!("\u{2500}\u{2500} {agent}: worktree {path} (branch {branch})");
         }
         "worktrees_merged" => {
             let merged = data
@@ -479,9 +478,7 @@ pub(super) fn print_swarm_event(v: &serde_json::Value) {
                 .and_then(|a| a.as_array())
                 .map_or(0, std::vec::Vec::len);
             if conflicted == 0 && failed == 0 {
-                println!(
-                    "\n\u{2500}\u{2500} worktrees merged: {merged} ok \u{2500}\u{2500}\n"
-                );
+                println!("\n\u{2500}\u{2500} worktrees merged: {merged} ok \u{2500}\u{2500}\n");
             } else {
                 println!(
                     "\n\u{2500}\u{2500} worktrees merged: {merged} ok, {conflicted} conflict(s), {failed} failed \u{2500}\u{2500}\n"

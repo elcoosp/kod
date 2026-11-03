@@ -207,7 +207,11 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
             let mut out = String::new();
             out.push_str("--- /dev/null\n");
             std::fmt::Write::write_fmt(&mut out, format_args!("+++ b/{path}\n")).ok();
-            std::fmt::Write::write_fmt(&mut out, format_args!("@@ -0,0 +1,{} @@\n", content.lines().count())).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("@@ -0,0 +1,{} @@\n", content.lines().count()),
+            )
+            .ok();
             for line in content.lines() {
                 out.push('+');
                 out.push_str(line);
@@ -219,7 +223,11 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
             let mut out = String::new();
             std::fmt::Write::write_fmt(&mut out, format_args!("--- a/{path}\n")).ok();
             out.push_str("+++ /dev/null\n");
-            std::fmt::Write::write_fmt(&mut out, format_args!("@@ -1,{} +0,0 @@\n", original.lines().count())).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("@@ -1,{} +0,0 @@\n", original.lines().count()),
+            )
+            .ok();
             for line in original.lines() {
                 out.push('-');
                 out.push_str(line);
@@ -263,10 +271,13 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                     })?;
                 let old_count = count;
                 let new_count = new_lines.len();
-                let new_start = (isize::try_from(start).unwrap_or(isize::MAX) + new_side_offset).max(0) as usize;
-                std::fmt::Write::write_fmt(&mut out, format_args!(
-                    "@@ -{start},{old_count} +{new_start},{new_count} @@\n"
-                )).ok();
+                let new_start = (isize::try_from(start).unwrap_or(isize::MAX) + new_side_offset)
+                    .max(0) as usize;
+                std::fmt::Write::write_fmt(
+                    &mut out,
+                    format_args!("@@ -{start},{old_count} +{new_start},{new_count} @@\n"),
+                )
+                .ok();
                 // W6: re-emit context / removal lines with the FILE's
                 // exact bytes, not the patch's spelling. `find_unique_block`
                 // tolerates trailing whitespace; `apply_unified_diff`
@@ -290,7 +301,8 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                         out.push('\n');
                     }
                 }
-                new_side_offset += isize::try_from(new_count).unwrap_or(isize::MAX) - isize::try_from(old_count).unwrap_or(isize::MAX);
+                new_side_offset += isize::try_from(new_count).unwrap_or(isize::MAX)
+                    - isize::try_from(old_count).unwrap_or(isize::MAX);
             }
             Ok(out)
         }

@@ -7,7 +7,7 @@ use crate::{Tool, ToolContext};
 use crate::relevance::SearchBackend;
 pub(crate) use crate::shared::{atomic_write, kill_child_tree};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use regex::Regex;
 use serde_json::Value;
 
@@ -400,7 +400,9 @@ impl Tool for ReadFileTool {
         // in the type system, and inconsistent with how directories
         // were handled. One shape for "the model should reason about
         // this," one shape for "the tool itself failed."
-        let mut buf: Vec<u8> = if let Some(b) = prefetched { b } else {
+        let mut buf: Vec<u8> = if let Some(b) = prefetched {
+            b
+        } else {
             let mut file = match std::fs::File::open(&resolved) {
                 Ok(f) => f,
                 Err(e) => {
@@ -512,9 +514,9 @@ impl Tool for ReadFileTool {
             // read is not (an unseen tail must not be editable).
             let seen = vec![true; line_count + 1];
             let tag = context.edit_store.as_ref().map(|store| {
-                store
-                    .lock()
-                    .map_or([0, 0], |mut g| g.record_snapshot(&resolved, &raw_content, seen))
+                store.lock().map_or([0, 0], |mut g| {
+                    g.record_snapshot(&resolved, &raw_content, seen)
+                })
             });
             // The rendered `N:line` rows shown to the model use the
             // REDACTED content (the model must not see a secret the
@@ -943,7 +945,9 @@ impl Tool for ExecuteCommandTool {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
         {
-            let stall = params.get("stall_wake_seconds").and_then(serde_json::Value::as_u64);
+            let stall = params
+                .get("stall_wake_seconds")
+                .and_then(serde_json::Value::as_u64);
             match &context.on_background_command {
                 Some(hook) => match hook.spawn(command, stall, &context.holder) {
                     Some(job_id) => {
@@ -1712,10 +1716,9 @@ impl Tool for PatchFileTool {
             // shape, every hunk `old_start == 0 && old_lines == 0`.
             // Anything else against a missing file is a real error.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let new_file_patch = crate::patch::parse_unified_diff(patch)
-                    .is_ok_and(|hs| {
-                        !hs.is_empty() && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
-                    });
+                let new_file_patch = crate::patch::parse_unified_diff(patch).is_ok_and(|hs| {
+                    !hs.is_empty() && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
+                });
                 if new_file_patch {
                     String::new()
                 } else {
@@ -1899,9 +1902,7 @@ impl Tool for GrepTool {
         let regex = match Regex::new(&pattern_to_compile) {
             Ok(r) => r,
             Err(e) => {
-                return Ok(ToolResult::Error(format!(
-                    "invalid regex {pattern:?}: {e}"
-                )));
+                return Ok(ToolResult::Error(format!("invalid regex {pattern:?}: {e}")));
             }
         };
 
@@ -2028,7 +2029,10 @@ impl Tool for GrepTool {
                 for r in &results {
                     let line = r.get("text").and_then(|t| t.as_str()).unwrap_or("");
                     let path = r.get("file").and_then(|p| p.as_str()).unwrap_or("");
-                    let line_number = r.get("line").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                    let line_number = r
+                        .get("line")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
                     hits.push(crate::relevance::SearchHit {
                         path: std::path::PathBuf::from(path),
                         line_number,
@@ -2053,7 +2057,9 @@ impl Tool for GrepTool {
                             .and_then(|f| f.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        r.get("line").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                        r.get("line")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0),
                     );
                     index.insert(key, i);
                 }
@@ -2525,10 +2531,9 @@ mod tests {
                         let n_rows = shown
                             .lines()
                             .filter(|l| {
-                                l.split_once(':')
-                                    .is_some_and(|(n, _)| {
-                                        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
-                                    })
+                                l.split_once(':').is_some_and(|(n, _)| {
+                                    !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
+                                })
                             })
                             .count();
                         assert_eq!(

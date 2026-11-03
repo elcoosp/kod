@@ -44,7 +44,6 @@ use kod_swarm::{AgentBuilder, AgentSwarm, Capability};
 use kod_types::{AgentId, Priority, TaskId};
 use std::sync::Arc;
 
-
 /// One spawned agent's dispatch slot: `(id, name, subtask, write
 /// globs, result)`.
 type DispatchSlot = (
@@ -53,7 +52,8 @@ type DispatchSlot = (
     Subtask,
     Vec<String>,
     std::result::Result<String, String>,
-);use tokio::sync::mpsc;
+);
+use tokio::sync::mpsc;
 
 /// One decomposed piece of the user's goal.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -916,7 +916,8 @@ impl SwarmRunner {
             };
             let name = pool_handles
                 .iter()
-                .find(|h| h.id == chosen).map_or_else(|| format!("agent-{}", st.name), |h| h.name.clone());
+                .find(|h| h.id == chosen)
+                .map_or_else(|| format!("agent-{}", st.name), |h| h.name.clone());
             // M-22: the subtask's own worktree, not the pool agent's.
             let worktree = worktree_created.get(st_idx).cloned();
 
@@ -948,16 +949,14 @@ impl SwarmRunner {
             // Per-transcript working dir: the pool agent's worktree,
             // if any.
             if let Some(wt) = &worktree {
-                self
-                    .engine
+                self.engine
                     .set_transcript_working_dir(&dispatch_key, Some(wt.path.clone()))
                     .await;
             }
 
             // Per-transcript write set.
             if !st.expected_writes.is_empty() {
-                self
-                    .engine
+                self.engine
                     .set_transcript_write_globs(&dispatch_key, Some(st.expected_writes.clone()))
                     .await;
                 // Tier 3.5 — subscribe this agent to the shared
@@ -1755,7 +1754,10 @@ impl SwarmRunner {
                             .await;
                         break;
                     }
-                    if let Ok(v) = tokio::time::timeout(remaining_time, join_all(wave_tasks)).await { v } else {
+                    if let Ok(v) = tokio::time::timeout(remaining_time, join_all(wave_tasks)).await
+                    {
+                        v
+                    } else {
                         tracing::warn!(
                             secs = self.swarm_timeout_secs,
                             "swarm: wave hit the global deadline;                                  aborting agents mid-flight"
@@ -1765,8 +1767,7 @@ impl SwarmRunner {
                         // need a terminal event.
                         let mut all: Vec<usize> = ready.clone();
                         all.extend(blocked.iter().copied());
-                        report_run_timeout(chunk_tx, &handles, &all, self.swarm_timeout_secs)
-                            .await;
+                        report_run_timeout(chunk_tx, &handles, &all, self.swarm_timeout_secs).await;
                         break;
                     }
                 }
@@ -1887,7 +1888,8 @@ impl SwarmRunner {
             for raw_path in &writes {
                 let normalized = match &worktree_prefix {
                     Some(prefix) => std::path::Path::new(raw_path)
-                        .strip_prefix(prefix).map_or_else(|_| raw_path.clone(), |p| p.to_string_lossy().into_owned()),
+                        .strip_prefix(prefix)
+                        .map_or_else(|_| raw_path.clone(), |p| p.to_string_lossy().into_owned()),
                     None => raw_path.clone(),
                 };
                 writers_per_file
@@ -1948,8 +1950,7 @@ impl SwarmRunner {
                     let cr = kod_swarm::completion_report::parse(&text);
                     if cr.had_block {
                         for f_up in &cr.followups {
-                            self
-                                .engine
+                            self.engine
                                 .steer_interrupt_for(
                                     crate::engine::DEFAULT_TRANSCRIPT_KEY,
                                     kod_core_state::steer::SoftInterrupt::swarm(format!(
@@ -2201,13 +2202,17 @@ impl SwarmRunner {
                 .filter_map(|r| r.get("file").and_then(|f| f.as_str()))
                 .map(|s| s.rsplit('/').next().unwrap_or(s))
                 .collect();
-            std::fmt::Write::write_fmt(&mut hits, format_args!(
-                "  \"{}\" ({} match{}): {}\n",
-                kw,
-                results.len(),
-                if results.len() == 1 { "" } else { "es" },
-                files.join(", ")
-            )).ok();
+            std::fmt::Write::write_fmt(
+                &mut hits,
+                format_args!(
+                    "  \"{}\" ({} match{}): {}\n",
+                    kw,
+                    results.len(),
+                    if results.len() == 1 { "" } else { "es" },
+                    files.join(", ")
+                ),
+            )
+            .ok();
         }
 
         let mut out = String::new();
@@ -2431,11 +2436,11 @@ impl SwarmRunner {
                  (or combination) wins, naming the file:\n",
             );
             for c in conflicts {
-                std::fmt::Write::write_fmt(&mut s, format_args!(
-                    "  - {} was written by {}\n",
-                    c.file,
-                    c.agents.join(", ")
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut s,
+                    format_args!("  - {} was written by {}\n", c.file, c.agents.join(", ")),
+                )
+                .ok();
             }
             s.push('\n');
             s

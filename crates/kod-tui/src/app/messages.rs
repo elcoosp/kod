@@ -102,9 +102,7 @@ impl KodApp {
     /// True when the message at `idx` is pinned.
     #[must_use]
     pub fn is_message_pinned(&self, idx: usize) -> bool {
-        self.messages
-            .get(idx)
-            .is_some_and(|m| m.metadata.pinned)
+        self.messages.get(idx).is_some_and(|m| m.metadata.pinned)
     }
 
     /// Load your last user message back into the input box for editing.

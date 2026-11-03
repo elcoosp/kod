@@ -30,7 +30,6 @@ async fn plan_show_with_no_state_file_is_ok() {
     let path = tmp.path().join("state.json");
     assert!(!path.exists());
     run_plan_show(Some(path))
-
         .expect("missing state file is the normal first-run case, not an error");
 }
 
@@ -40,9 +39,7 @@ async fn decisions_show_with_no_state_file_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("state.json");
     assert!(!path.exists());
-    run_decisions_show(Some(path), 10)
-
-        .expect("missing state file is not an error");
+    run_decisions_show(Some(path), 10).expect("missing state file is not an error");
 }
 
 /// `run_trace_list` on a path that does not exist. The function
@@ -52,9 +49,7 @@ async fn trace_list_on_missing_file_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("turns.jsonl");
     assert!(!path.exists());
-    run_trace_list(10, Some(path))
-
-        .expect("missing trace file is not an error");
+    run_trace_list(10, Some(path)).expect("missing trace file is not an error");
 }
 
 /// `run_trace_show` with an unknown id on an empty trace file.
@@ -63,9 +58,7 @@ async fn trace_show_with_unknown_id_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("turns.jsonl");
     std::fs::write(&path, "").unwrap();
-    run_trace_show(1, Some(path))
-
-        .expect("unknown id is not an error");
+    run_trace_show(1, Some(path)).expect("unknown id is not an error");
 }
 
 /// `run_plan_show` on a state file that contains an empty object.
@@ -76,9 +69,7 @@ async fn plan_show_with_empty_state_object_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("state.json");
     std::fs::write(&path, "{}").unwrap();
-    run_plan_show(Some(path))
-
-        .expect("empty state object is not an error");
+    run_plan_show(Some(path)).expect("empty state object is not an error");
 }
 
 /// `run_decisions_show` on a state file with an empty object.
@@ -87,7 +78,5 @@ async fn decisions_show_with_empty_state_object_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("state.json");
     std::fs::write(&path, "{}").unwrap();
-    run_decisions_show(Some(path), 10)
-
-        .expect("empty state object is not an error");
+    run_decisions_show(Some(path), 10).expect("empty state object is not an error");
 }

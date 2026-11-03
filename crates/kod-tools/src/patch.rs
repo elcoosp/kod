@@ -184,7 +184,8 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         let reaches_eof = cursor == lines.len();
         let changed_last = matches!(hunk.last_line_tag, Some('+' | '-'));
         lines.splice(target..cursor, new_lines);
-        offset += isize::try_from(hunk.new_lines).unwrap_or(isize::MAX) - isize::try_from(hunk.old_lines).unwrap_or(isize::MAX);
+        offset += isize::try_from(hunk.new_lines).unwrap_or(isize::MAX)
+            - isize::try_from(hunk.old_lines).unwrap_or(isize::MAX);
         if reaches_eof {
             eof_trailing = Some(if changed_last {
                 !hunk.has_no_newline_marker

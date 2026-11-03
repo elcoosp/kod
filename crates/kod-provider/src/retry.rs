@@ -258,10 +258,12 @@ mod tests {
     fn jitter_for_identical_nanos_differs_per_call() {
         let a = RetryPolicy::jitter_for(12345);
         let b = RetryPolicy::jitter_for(12345);
-        assert!(a.to_bits() != b.to_bits(),
+        assert!(
+            a.to_bits() != b.to_bits(),
             "jitter_for(12345) returned the same value twice; the seed \
              depends only on wall-clock nanos, which does not advance \
-             between back-to-back calls on a fast machine",);
+             between back-to-back calls on a fast machine",
+        );
     }
 
     #[test]
@@ -598,12 +600,18 @@ fn parse_rate_limit_reset(v: &str) -> Option<Duration> {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
     if n > 1_000_000_000_000 {
         let delta = n.saturating_sub(now_ms);
-        Some(Duration::from_millis(u64::try_from(delta.max(0)).unwrap_or(u64::MAX)))
+        Some(Duration::from_millis(
+            u64::try_from(delta.max(0)).unwrap_or(u64::MAX),
+        ))
     } else if n > 1_000_000_000 {
         let delta = n.saturating_sub(now_ms / 1000);
-        Some(Duration::from_secs(u64::try_from(delta.max(0)).unwrap_or(u64::MAX)))
+        Some(Duration::from_secs(
+            u64::try_from(delta.max(0)).unwrap_or(u64::MAX),
+        ))
     } else {
-        Some(Duration::from_secs(u64::try_from(n.max(0)).unwrap_or(u64::MAX)))
+        Some(Duration::from_secs(
+            u64::try_from(n.max(0)).unwrap_or(u64::MAX),
+        ))
     }
 }
 
@@ -643,10 +651,7 @@ fn scan_text_hint(body: &str) -> Option<Duration> {
             Err(_) => continue,
         };
         let rest = trimmed[num_end..].trim_start();
-        let unit: String = rest
-            .chars()
-            .take_while(char::is_ascii_alphabetic)
-            .collect();
+        let unit: String = rest.chars().take_while(char::is_ascii_alphabetic).collect();
         let secs = match unit.as_str() {
             "" | "s" | "sec" | "secs" | "second" | "seconds" => n,
             "m" | "min" | "mins" | "minute" | "minutes" => n.saturating_mul(60),

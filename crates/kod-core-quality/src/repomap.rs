@@ -210,7 +210,11 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
             name != ".git" && name != "target" && name != "node_modules"
         });
     let mut truncated_at: Option<usize> = None;
-    for (i, entry) in builder.build().filter_map(std::result::Result::ok).enumerate() {
+    for (i, entry) in builder
+        .build()
+        .filter_map(std::result::Result::ok)
+        .enumerate()
+    {
         if i >= MAX_REPO_FILES {
             truncated_at = Some(i);
             break;
@@ -492,7 +496,9 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     > = std::sync::OnceLock::new();
 
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let mut out: Vec<String> = Vec::new();
     for pat in patterns {

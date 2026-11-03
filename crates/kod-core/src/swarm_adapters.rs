@@ -34,7 +34,9 @@
 use kod_error::Result;
 use kod_swarm::{AgentCommunicationHub, MessageContent};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{AgentId, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{
+    AgentId, LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult,
+};
 use serde_json::Value;
 use std::sync::Arc;
 

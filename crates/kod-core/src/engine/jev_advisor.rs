@@ -416,9 +416,11 @@ impl KodEngine {
             filtered.push_str(&h.join("\n"));
         }
         if elided > 0 {
-            std::fmt::Write::write_fmt(&mut filtered, format_args!(
-                "\n… ({elided} lines of context-only hunks elided by Jev)",
-            )).ok();
+            std::fmt::Write::write_fmt(
+                &mut filtered,
+                format_args!("\n… ({elided} lines of context-only hunks elided by Jev)",),
+            )
+            .ok();
         }
 
         // Rebuild the result with the filtered diff. The TUI still
@@ -1265,11 +1267,7 @@ impl KodEngine {
             return *base;
         };
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let get = |k: &str| {
-            rows.iter()
-                .find(|(id, _)| id == k)
-                .map_or(1.0, |(_, p)| *p)
-        };
+        let get = |k: &str| rows.iter().find(|(id, _)| id == k).map_or(1.0, |(_, p)| *p);
         let wants = [
             get("needs_history"),
             get("needs_skills"),
@@ -1277,8 +1275,10 @@ impl KodEngine {
             get("needs_repomap"),
         ];
         let threshold = jev.thresholds().task_classify_min;
-        let total_share: u32 =
-            u32::try_from(base.history).unwrap_or(u32::MAX) + u32::try_from(base.skills).unwrap_or(u32::MAX) + u32::try_from(base.memory).unwrap_or(u32::MAX) + u32::try_from(base.repomap).unwrap_or(u32::MAX);
+        let total_share: u32 = u32::try_from(base.history).unwrap_or(u32::MAX)
+            + u32::try_from(base.skills).unwrap_or(u32::MAX)
+            + u32::try_from(base.memory).unwrap_or(u32::MAX)
+            + u32::try_from(base.repomap).unwrap_or(u32::MAX);
         let mut yes_count = 0_u32;
         for w in &wants {
             if *w >= threshold {
@@ -1554,10 +1554,8 @@ impl KodEngine {
                 (None, crate::jev::DecisionSource::Heuristic)
             };
 
-            let risk_blocking = matches!(
-                risk_label.as_deref(),
-                Some("destructive" | "irreversible")
-            );
+            let risk_blocking =
+                matches!(risk_label.as_deref(), Some("destructive" | "irreversible"));
             let final_decision = p_yes >= threshold && !risk_blocking;
 
             if final_decision {

@@ -110,8 +110,14 @@ mod tests {
     #[test]
     fn default_has_every_cap_disabled() {
         let c = LimitsConfig::default();
-        assert_eq!(c.max_cost_usd_per_session.to_bits(), f64::from(0.0_f32).to_bits());
-        assert_eq!(c.max_cost_usd_per_turn.to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            c.max_cost_usd_per_session.to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
+        assert_eq!(
+            c.max_cost_usd_per_turn.to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         assert_eq!(c.on_exhausted, OnExhausted::Ask);
         assert_eq!(c.soft_warn_at.to_bits(), f64::from(0.5_f32).to_bits());
         assert!(!c.any_active());
@@ -132,8 +138,14 @@ soft_warn_at = 0.75
 on_exhausted = "stop"
 "#;
         let c: LimitsConfig = toml::from_str(s).unwrap();
-        assert_eq!(c.max_cost_usd_per_session.to_bits(), f64::from(5.0_f32).to_bits());
-        assert_eq!(c.max_cost_usd_per_turn.to_bits(), f64::from(0.5_f32).to_bits());
+        assert_eq!(
+            c.max_cost_usd_per_session.to_bits(),
+            f64::from(5.0_f32).to_bits()
+        );
+        assert_eq!(
+            c.max_cost_usd_per_turn.to_bits(),
+            f64::from(0.5_f32).to_bits()
+        );
         assert_eq!(c.soft_warn_at.to_bits(), f64::from(0.75_f32).to_bits());
         assert_eq!(c.on_exhausted, OnExhausted::Stop);
         assert!(c.any_active());
@@ -165,8 +177,14 @@ on_exhausted = "stop"
             tools: std::collections::BTreeMap::default(),
         };
         c.clamp();
-        assert_eq!(c.max_cost_usd_per_session.to_bits(), f64::from(0.0_f32).to_bits());
-        assert_eq!(c.max_cost_usd_per_turn.to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            c.max_cost_usd_per_session.to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
+        assert_eq!(
+            c.max_cost_usd_per_turn.to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         assert_eq!(c.soft_warn_at.to_bits(), f64::from(1.0_f32).to_bits());
     }
 

@@ -1082,7 +1082,8 @@ impl TaskRouter {
             if !mem_ctx.working_memory.is_empty() {
                 context.push_str("## Current Context\n\n");
                 for entry in &mem_ctx.working_memory {
-                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content)).ok();
+                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content))
+                        .ok();
                 }
                 context.push('\n');
             }
@@ -1090,7 +1091,8 @@ impl TaskRouter {
             if !mem_ctx.long_term.is_empty() {
                 context.push_str("## User Preferences\n\n");
                 for entry in &mem_ctx.long_term {
-                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content)).ok();
+                    std::fmt::Write::write_fmt(&mut context, format_args!("- {}\n", entry.content))
+                        .ok();
                 }
                 context.push('\n');
             }
@@ -1391,11 +1393,7 @@ impl TaskRouter {
                 }
             });
         }
-        prompt.push_str(
-            &self
-                .build_context(input, &memory_context, task_type)
-?,
-        );
+        prompt.push_str(&self.build_context(input, &memory_context, task_type)?);
 
         // Skill knowledge, two layers: the full name+description inventory is
         // always present (so "which skills do you have?" is answerable), and
@@ -1420,12 +1418,16 @@ impl TaskRouter {
                 } else {
                     String::new()
                 };
-                std::fmt::Write::write_fmt(&mut prompt, format_args!(
-                    "## Available skills ({})\n\n{}{}\n\n",
-                    names.len(),
-                    listed.join("\n"),
-                    more
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut prompt,
+                    format_args!(
+                        "## Available skills ({})\n\n{}{}\n\n",
+                        names.len(),
+                        listed.join("\n"),
+                        more
+                    ),
+                )
+                .ok();
             }
             // Prefer the caller's list (the engine's `refined_skills`,
             // which unions the lexical match with Jev's semantic one).
@@ -1460,11 +1462,16 @@ impl TaskRouter {
                     // guessing relative to the project root.
                     let base_dir = skill
                         .path
-                        .parent().map_or_else(|| ".".to_string(), |p| p.display().to_string());
-                    std::fmt::Write::write_fmt(&mut prompt, format_args!(
-                        "### {}\nSkill location: {}\n\n{}\n\n",
-                        skill.metadata.name, base_dir, skill.instructions
-                    )).ok();
+                        .parent()
+                        .map_or_else(|| ".".to_string(), |p| p.display().to_string());
+                    std::fmt::Write::write_fmt(
+                        &mut prompt,
+                        format_args!(
+                            "### {}\nSkill location: {}\n\n{}\n\n",
+                            skill.metadata.name, base_dir, skill.instructions
+                        ),
+                    )
+                    .ok();
 
                     // The parser splits a skill file into instructions,
                     // examples, and constraints. Only the instructions
@@ -1482,7 +1489,11 @@ impl TaskRouter {
                         prompt.push_str("Examples:\n\n");
                         for ex in skill.examples.iter().take(MAX_SKILL_EXAMPLES) {
                             if !ex.input.trim().is_empty() {
-                                std::fmt::Write::write_fmt(&mut prompt, format_args!("Input: {}\n", ex.input.trim())).ok();
+                                std::fmt::Write::write_fmt(
+                                    &mut prompt,
+                                    format_args!("Input: {}\n", ex.input.trim()),
+                                )
+                                .ok();
                             }
                             let out = ex.output.trim();
                             // Rely on truncate_chars's own behavior to
@@ -1499,19 +1510,29 @@ impl TaskRouter {
                             } else {
                                 out.to_string()
                             };
-                            std::fmt::Write::write_fmt(&mut prompt, format_args!("Output:\n{shown}\n\n")).ok();
+                            std::fmt::Write::write_fmt(
+                                &mut prompt,
+                                format_args!("Output:\n{shown}\n\n"),
+                            )
+                            .ok();
                         }
                         let extra = skill.examples.len().saturating_sub(MAX_SKILL_EXAMPLES);
                         if extra > 0 {
-                            std::fmt::Write::write_fmt(&mut prompt, format_args!(
-                                "…and {extra} more example(s) in the skill file.\n\n"
-                            )).ok();
+                            std::fmt::Write::write_fmt(
+                                &mut prompt,
+                                format_args!("…and {extra} more example(s) in the skill file.\n\n"),
+                            )
+                            .ok();
                         }
                     }
                     if let Some(constraints) = &skill.constraints
                         && !constraints.trim().is_empty()
                     {
-                        std::fmt::Write::write_fmt(&mut prompt, format_args!("Constraints:\n{}\n\n", constraints.trim())).ok();
+                        std::fmt::Write::write_fmt(
+                            &mut prompt,
+                            format_args!("Constraints:\n{}\n\n", constraints.trim()),
+                        )
+                        .ok();
                     }
                 }
             }
@@ -1541,9 +1562,11 @@ impl TaskRouter {
         }
 
         // Add user input
-        std::fmt::Write::write_fmt(&mut prompt, format_args!(
-            "## Conversation so far\n\n{history}\n\n## User Request\n\n{input}"
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut prompt,
+            format_args!("## Conversation so far\n\n{history}\n\n## User Request\n\n{input}"),
+        )
+        .ok();
 
         Ok(prompt)
     }
@@ -1848,7 +1871,11 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     // walk the same set the map walked, or a change below the cap
     // would not invalidate. Stopping at the same limit keeps the two
     // walks consistent and bounds this one too.
-    for (i, entry) in builder.build().filter_map(std::result::Result::ok).enumerate() {
+    for (i, entry) in builder
+        .build()
+        .filter_map(std::result::Result::ok)
+        .enumerate()
+    {
         if i >= kod_core_quality::repomap::MAX_REPO_FILES {
             break;
         }
@@ -1875,11 +1902,11 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
             h = h.wrapping_mul(FNV_PRIME);
         }
         for byte in mtime.to_le_bytes() {
-            h ^=u64::from(byte);
+            h ^= u64::from(byte);
             h = h.wrapping_mul(FNV_PRIME);
         }
         for byte in size.to_le_bytes() {
-            h ^=u64::from(byte);
+            h ^= u64::from(byte);
             h = h.wrapping_mul(FNV_PRIME);
         }
     }
@@ -1911,10 +1938,7 @@ mod tests {
             TaskType::Debugging
         );
         assert_eq!(
-            router
-                .classify_task("Research async patterns")
-
-                .unwrap(),
+            router.classify_task("Research async patterns").unwrap(),
             TaskType::Research
         );
     }
@@ -2194,10 +2218,7 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
 
         let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
-        let task_type = router
-            .classify_task("which skills do you have?")
-
-            .unwrap();
+        let task_type = router.classify_task("which skills do you have?").unwrap();
 
         // No skills loaded: identity + request still present.
         let bare = router
@@ -2543,10 +2564,7 @@ mod coverage_classifier_edges {
             r.classify_task("FIX THE BUG").unwrap(),
             TaskType::CodeModification,
         );
-        assert_eq!(
-            r.classify_task("Debug this").unwrap(),
-            TaskType::Debugging,
-        );
+        assert_eq!(r.classify_task("Debug this").unwrap(), TaskType::Debugging,);
     }
 
     #[tokio::test]
@@ -2569,7 +2587,6 @@ mod coverage_classifier_edges {
         let (_tmp, r) = router();
         assert_eq!(
             r.classify_task("the program has a panic at startup")
-
                 .unwrap(),
             TaskType::Debugging,
         );

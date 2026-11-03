@@ -112,7 +112,10 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         let method = frame.get("method").and_then(|m| m.as_str());
 
         // Response to our prompt request?
-        if has_id && method.is_none() && frame.get("id").and_then(serde_json::Value::as_i64) == Some(want_id) {
+        if has_id
+            && method.is_none()
+            && frame.get("id").and_then(serde_json::Value::as_i64) == Some(want_id)
+        {
             return ReadOutcome {
                 response: frame,
                 notifications,
@@ -145,7 +148,8 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             continue;
         }
 
-        assert!(!(has_id && method.is_some()), 
+        assert!(
+            !(has_id && method.is_some()),
             "unexpected server->client request `{}`; bridge makes only \
              session/request_permission; frame: {frame}",
             method.unwrap_or(""),

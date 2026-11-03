@@ -47,8 +47,13 @@ pub fn assemble_brief(
         .map(|d| {
             let lower = d.to_lowercase();
             let score: f64 = f64::from(
-                u32::try_from(goal_terms.iter().filter(|t| lower.contains(t.as_str())).count())
-                    .unwrap_or(u32::MAX),
+                u32::try_from(
+                    goal_terms
+                        .iter()
+                        .filter(|t| lower.contains(t.as_str()))
+                        .count(),
+                )
+                .unwrap_or(u32::MAX),
             );
             (score, d)
         })

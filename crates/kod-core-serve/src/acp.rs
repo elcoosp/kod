@@ -149,7 +149,8 @@ impl Server {
             })),
         )
         .await;
-        if let Ok(Ok(_)) = sent {} else {
+        if let Ok(Ok(_)) = sent {
+        } else {
             self.pending.lock().await.remove(&id);
             return Err(KodError::Internal(
                 "writer channel closed or backpressured past the send timeout".to_string(),

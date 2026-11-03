@@ -198,9 +198,7 @@ auto_lsp = false
 "#,
             skills_dir = skills_dir.display(),
         );
-        eprintln!(
-            "test: writing config.toml pointing at mock on port {port}"
-        );
+        eprintln!("test: writing config.toml pointing at mock on port {port}");
         std::fs::write(self.config_dir.join("config.toml"), config).expect("write config.toml");
     }
 
@@ -401,15 +399,21 @@ impl TuiSession {
             }
             if start.elapsed() > timeout {
                 let mut msg = String::new();
-                std::fmt::Write::write_fmt(&mut msg, format_args!(
-                    "timed out after {timeout:?} waiting for {needle:?}\n"
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut msg,
+                    format_args!("timed out after {timeout:?} waiting for {needle:?}\n"),
+                )
+                .ok();
                 msg.push_str("--- raw screen ---\n");
                 for (i, line) in text.lines().enumerate() {
                     std::fmt::Write::write_fmt(&mut msg, format_args!("{i:3}|{line}|\n")).ok();
                 }
                 let raw = self.raw_bytes();
-                std::fmt::Write::write_fmt(&mut msg, format_args!("--- {} raw bytes captured ---\n", raw.len())).ok();
+                std::fmt::Write::write_fmt(
+                    &mut msg,
+                    format_args!("--- {} raw bytes captured ---\n", raw.len()),
+                )
+                .ok();
                 msg.push_str("--- last 2500 raw bytes (escaped) ---\n");
                 let start = raw.len().saturating_sub(2500);
                 for &b in &raw[start..] {
@@ -488,10 +492,11 @@ fn encode_key(key: KeyCode, mods: Modifiers) -> Vec<u8> {
     // Ctrl+letter: emit the control byte.
     if mods.contains(Modifiers::CTRL)
         && let KeyCode::Char(c) = key
-            && c.is_ascii_alphabetic() {
-                let byte = (c.to_ascii_lowercase() as u8) - b'a' + 1;
-                return vec![byte];
-            }
+        && c.is_ascii_alphabetic()
+    {
+        let byte = (c.to_ascii_lowercase() as u8) - b'a' + 1;
+        return vec![byte];
+    }
 
     match key {
         KeyCode::Char(c) => {

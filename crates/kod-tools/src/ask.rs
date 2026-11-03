@@ -21,7 +21,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::Result;
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
 /// Marker prefix for a question on the streaming chunk channel:

@@ -15,7 +15,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -466,9 +466,7 @@ impl CheckTool {
         // the pid and only `kill_on_drop` the direct child.
         let mut child = cmd.spawn().map_err(|e| KodError::ToolExecution {
             tool_name: "check".to_string(),
-            reason: format!(
-                "could not run `{program}`: {e}. Is the toolchain on PATH?"
-            ),
+            reason: format!("could not run `{program}`: {e}. Is the toolchain on PATH?"),
         })?;
         // Drain both pipes CONCURRENTLY with the wait. A child that
         // fills the ~64 KiB pipe buffer blocks writing and never

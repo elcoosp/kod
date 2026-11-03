@@ -645,7 +645,10 @@ impl JudgmentClient {
             }
 
             last_raw = text;
-            last_missing = missing.iter().map(std::string::ToString::to_string).collect();
+            last_missing = missing
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
 
             // Strict reminder for the next attempt. Rewrites the user
             // message with the same state but a sharper instruction.
@@ -1238,7 +1241,10 @@ mod tests {
     fn the_documented_defaults_hold() {
         let o = JudgmentOptions::default();
         assert_eq!(o.max_tokens, 4096);
-        assert_eq!(f64::from(o.temperature).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(o.temperature).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         assert_eq!(o.max_format_retries, 1);
     }
 }

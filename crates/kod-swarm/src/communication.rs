@@ -240,9 +240,7 @@ impl AgentCommunicationHub {
                 Ok(())
             }
             Some(_) => Err(KodError::InvalidState(format!("Agent {to} is offline"))),
-            None => Err(KodError::InvalidState(format!(
-                "Agent {to} not registered"
-            ))),
+            None => Err(KodError::InvalidState(format!("Agent {to} not registered"))),
         }
     }
 

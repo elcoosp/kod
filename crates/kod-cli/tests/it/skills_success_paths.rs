@@ -77,9 +77,7 @@ async fn skills_new_writes_a_file() {
     let (cfg, skills) = setup();
     let _guard = ConfigDirEnv::set(cfg.path());
 
-    run_skills_new("fresh-skill")
-
-        .expect("creating a new skill must succeed");
+    run_skills_new("fresh-skill").expect("creating a new skill must succeed");
 
     let path = skill_path(skills.path(), "fresh-skill");
     assert!(path.exists(), "skills new did not create {path:?}");
@@ -97,7 +95,6 @@ async fn skills_copy_creates_new_and_keeps_original() {
     let _guard = ConfigDirEnv::set(cfg.path());
 
     run_skills_copy("original-skill", "copied-skill")
-
         .expect("copying an existing skill must succeed");
 
     assert!(
@@ -146,9 +143,7 @@ async fn skills_remove_with_yes_deletes_the_file() {
     write_skill(skills.path(), "doomed-skill");
     let _guard = ConfigDirEnv::set(cfg.path());
 
-    run_skills_remove("doomed-skill", true)
-
-        .expect("removing with yes=true must succeed");
+    run_skills_remove("doomed-skill", true).expect("removing with yes=true must succeed");
 
     assert!(
         !skill_path(skills.path(), "doomed-skill").exists(),

@@ -38,7 +38,7 @@ use kod_memory::MemoryManager;
 use kod_memory::short_term::ShortTermMemory;
 use kod_skills::{SkillLoader, SkillMatcher};
 use kod_swarm::{AgentBuilder, Capability};
-use kod_types::{MemoryEntry, MemoryType, MemoryMetadata};
+use kod_types::{MemoryEntry, MemoryMetadata, MemoryType};
 use std::path::PathBuf;
 use std::time::Duration;
 use time::OffsetDateTime;

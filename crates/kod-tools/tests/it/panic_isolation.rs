@@ -22,7 +22,7 @@
 
 use async_trait::async_trait;
 use kod_tools::{Tool, ToolContext, ToolRegistry};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use std::sync::Arc;
 
 /// A tool whose `execute` panics unconditionally. The whole point of

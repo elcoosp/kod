@@ -519,13 +519,18 @@ impl OpenAICompatProvider {
             let response = item.map_err(adk_err)?;
             if let Some(usage) = response.usage_metadata {
                 last_usage = Some(kod_provider::TokenUsage {
-                    prompt_tokens: usize::try_from(usage.prompt_token_count.max(0)).unwrap_or(usize::MAX),
-                    completion_tokens: usize::try_from(usage.candidates_token_count.max(0)).unwrap_or(usize::MAX),
-                    total_tokens: usize::try_from(usage.total_token_count.max(0)).unwrap_or(usize::MAX),
+                    prompt_tokens: usize::try_from(usage.prompt_token_count.max(0))
+                        .unwrap_or(usize::MAX),
+                    completion_tokens: usize::try_from(usage.candidates_token_count.max(0))
+                        .unwrap_or(usize::MAX),
+                    total_tokens: usize::try_from(usage.total_token_count.max(0))
+                        .unwrap_or(usize::MAX),
                     // Subset convention: `prompt_token_count` already
                     // includes cached tokens; the cache field is the
                     // *subset* served from cache.
-                    cache_read_tokens: usage.cache_read_input_token_count.map(|n| u64::try_from(n.max(0)).unwrap_or(u64::MAX)),
+                    cache_read_tokens: usage
+                        .cache_read_input_token_count
+                        .map(|n| u64::try_from(n.max(0)).unwrap_or(u64::MAX)),
                     cache_creation_tokens: usage
                         .cache_creation_input_token_count
                         .map(|n| u64::try_from(n.max(0)).unwrap_or(u64::MAX)),

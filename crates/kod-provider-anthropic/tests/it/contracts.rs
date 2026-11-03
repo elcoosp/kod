@@ -22,7 +22,7 @@ use httpmock::prelude::*;
 use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt, SystemSegment};
 use kod_provider::traits::{GenerationOptions, LlmProvider};
 use kod_provider_anthropic::AnthropicProvider;
-use kod_types::{ChatMessage, MessageId, MessageRole, ToolCall, LoadMode};
+use kod_types::{ChatMessage, LoadMode, MessageId, MessageRole, ToolCall};
 use serde_json::Value;
 use time::OffsetDateTime;
 

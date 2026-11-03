@@ -17,7 +17,7 @@
 
 use kod_error::{KodError, Result};
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -194,7 +194,8 @@ impl Tool for LspDefinitionTool {
                 reason: "lsp_definition: 'path' is required".to_string(),
             })?;
         let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
-        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column =
+            u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_definition: line and column are 1-based and must be ≥ 1".to_string(),
@@ -285,7 +286,8 @@ impl Tool for LspReferencesTool {
                 reason: "lsp_references: 'path' is required".to_string(),
             })?;
         let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
-        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column =
+            u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_references: line and column are 1-based and must be ≥ 1".to_string(),
@@ -376,7 +378,8 @@ impl Tool for LspHoverTool {
                 reason: "lsp_hover: 'path' is required".to_string(),
             })?;
         let line = u32::try_from(params["line"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
-        let column = u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
+        let column =
+            u32::try_from(params["column"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX) as u32;
         if line == 0 || column == 0 {
             return Ok(ToolResult::Error(
                 "lsp_hover: line and column are 1-based and must be ≥ 1".to_string(),

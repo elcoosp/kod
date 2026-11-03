@@ -119,9 +119,7 @@ async fn skills_validate_with_a_valid_skill_is_ok() {
     write_skill(skills.path(), "valid-skill");
 
     let _g = EnvGuard::set("KOD_CONFIG_DIR", cfg.path());
-    run_skills_validate()
-
-        .expect("a well-formed skill must validate without error");
+    run_skills_validate().expect("a well-formed skill must validate without error");
 }
 
 /// Same fixture through the strict parser. The strict and lenient
@@ -136,9 +134,7 @@ async fn skills_validate_strict_with_a_valid_skill_is_ok() {
     write_skill(skills.path(), "strict-skill");
 
     let _g = EnvGuard::set("KOD_CONFIG_DIR", cfg.path());
-    run_skills_validate_strict()
-
-        .expect("a well-formed skill must validate under strict mode too");
+    run_skills_validate_strict().expect("a well-formed skill must validate under strict mode too");
 }
 
 // ---- checkpoint ----------------------------------------------------
@@ -152,7 +148,6 @@ async fn checkpoint_list_on_empty_dir_is_ok() {
     let ckpt = tempfile::TempDir::new().unwrap();
     let _g = EnvGuard::set("KOD_CHECKPOINT_DIR", ckpt.path());
     run_checkpoint(CheckpointAction::List { limit: 20 })
-
         .expect("listing an empty checkpoint dir must not error");
 }
 
@@ -168,7 +163,6 @@ async fn checkpoint_diff_with_unknown_id_is_invalid_parameters() {
     let err = run_checkpoint(CheckpointAction::Diff {
         id: "definitely-not-a-checkpoint".to_string(),
     })
-
     .expect_err("an unknown checkpoint id must be an error");
     assert!(
         err.to_string().contains("no checkpoint"),

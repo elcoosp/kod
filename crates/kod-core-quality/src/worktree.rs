@@ -812,7 +812,9 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
     let effective = timeout_secs.max(1);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(effective);
     let status = loop {
-        if let Some(s) = child.try_wait().map_err(KodError::Io)? { break s }
+        if let Some(s) = child.try_wait().map_err(KodError::Io)? {
+            break s;
+        }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();

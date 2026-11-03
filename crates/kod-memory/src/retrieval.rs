@@ -14,9 +14,9 @@
 //!    scores near zero; a fact from yesterday scores near one.
 
 use crate::stopwords;
-use kod_types::{MemoryEntry, MemoryType, MemoryMetadata};
-use time::OffsetDateTime;
+use kod_types::{MemoryEntry, MemoryMetadata, MemoryType};
 use num_traits::ToPrimitive;
+use time::OffsetDateTime;
 
 /// Which decay shape scoring uses.
 ///
@@ -202,7 +202,13 @@ impl QueryTerms {
     /// BM25-lite inverse document frequency for one token.
     #[must_use]
     pub fn idf(&self, token: &str) -> f32 {
-        let df = self.df.get(token).copied().unwrap_or(0).to_f32().unwrap_or(f32::MAX);
+        let df = self
+            .df
+            .get(token)
+            .copied()
+            .unwrap_or(0)
+            .to_f32()
+            .unwrap_or(f32::MAX);
         (1.0 + (self.n_docs.to_f32().unwrap_or(f32::MAX) - df + 0.5) / (df + 0.5)).ln()
     }
 }
@@ -298,11 +304,16 @@ impl HybridScorer {
         } else {
             redistribute(self.w_semantic, self.w_keyword)
         };
-        let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0) * weights.vector.to_f32().unwrap_or(f32::MAX);
-        let keyword_component = wk * self.keyword_bm25_lite(query, entry) * weights.keyword.to_f32().unwrap_or(f32::MAX);
+        let semantic_component = ws
+            * cosine.unwrap_or(0.0).clamp(0.0, 1.0)
+            * weights.vector.to_f32().unwrap_or(f32::MAX);
+        let keyword_component = wk
+            * self.keyword_bm25_lite(query, entry)
+            * weights.keyword.to_f32().unwrap_or(f32::MAX);
         let shape = self.decay_shape_for(entry.memory_type);
-        let recency_component =
-            self.w_recency * decay_at(entry.timestamp, now, shape) * weights.temporal.to_f32().unwrap_or(f32::MAX);
+        let recency_component = self.w_recency
+            * decay_at(entry.timestamp, now, shape)
+            * weights.temporal.to_f32().unwrap_or(f32::MAX);
         // `weights.importance` is not applied: the score has three
         // components (semantic, keyword, recency) whose BASE weights
         // sum to 1. Intent weights can scale a component above 1
@@ -517,7 +528,10 @@ mod tests {
             half_life_days: 30.0,
             ..HybridScorer::default()
         };
-        assert_eq!(f64::from(s.half_life_for(MemoryType::Episodic)).to_bits(), f64::from(30.0_f32).to_bits());
+        assert_eq!(
+            f64::from(s.half_life_for(MemoryType::Episodic)).to_bits(),
+            f64::from(30.0_f32).to_bits()
+        );
     }
 
     #[test]
@@ -581,7 +595,10 @@ mod tests {
         ] {
             let a = weibull_shape_for(t);
             let b = weibull_shape_for(t);
-            assert_eq!(f64::from(a.eta_hours).to_bits(), f64::from(b.eta_hours).to_bits());
+            assert_eq!(
+                f64::from(a.eta_hours).to_bits(),
+                f64::from(b.eta_hours).to_bits()
+            );
             assert_eq!(f64::from(a.k).to_bits(), f64::from(b.k).to_bits());
         }
     }
@@ -638,24 +655,36 @@ mod tests {
             eta_hours: 0.0,
             k: 1.0,
         };
-        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(bad.decay(100.0)).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         let bad = DecayShape {
             eta_hours: -1.0,
             k: 1.0,
         };
-        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(bad.decay(100.0)).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         let bad = DecayShape {
             eta_hours: 100.0,
             k: 0.0,
         };
-        assert_eq!(f64::from(bad.decay(100.0)).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(bad.decay(100.0)).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
     }
 
     #[test]
     fn decay_at_age_zero_is_one() {
         let now = OffsetDateTime::now_utc();
         let shape = weibull_shape_for(MemoryType::LongTerm);
-        assert_eq!(f64::from(decay_at(now, now, shape)).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(decay_at(now, now, shape)).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
     }
 
     #[test]
@@ -788,7 +817,10 @@ mod coverage_scoring_composition {
         // value: zero.
         let now = OffsetDateTime::now_utc();
         let e = entry_at("x", 1);
-        assert_eq!(f64::from(recency(e.timestamp, now, 0.0)).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(recency(e.timestamp, now, 0.0)).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
     }
 }
 

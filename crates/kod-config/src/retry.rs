@@ -128,7 +128,10 @@ mod tests {
     fn cfg(entries: &[(&str, &[&str])]) -> RetryConfig {
         let mut fallback_chains = BTreeMap::new();
         for (k, vs) in entries {
-            fallback_chains.insert(k.to_string(), vs.iter().map(std::string::ToString::to_string).collect());
+            fallback_chains.insert(
+                k.to_string(),
+                vs.iter().map(std::string::ToString::to_string).collect(),
+            );
         }
         RetryConfig { fallback_chains }
     }

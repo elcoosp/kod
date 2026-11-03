@@ -66,9 +66,7 @@ async fn map_with_a_kod_map_root_succeeds() {
     seed_workspace(tmp.path());
     let _guard = MapRootEnv::set(tmp.path());
 
-    run_map(500)
-
-        .expect("run_map against a seeded workspace must succeed");
+    run_map(500).expect("run_map against a seeded workspace must succeed");
 }
 
 /// `run_map` on a directory that is *not* a repo (no `Cargo.toml`,
@@ -82,7 +80,5 @@ async fn map_on_a_non_repo_dir_is_ok() {
     std::fs::write(tmp.path().join("readme.txt"), "hello").unwrap();
     let _guard = MapRootEnv::set(tmp.path());
 
-    run_map(200)
-
-        .expect("a non-repo dir yields an empty map, not an error");
+    run_map(200).expect("a non-repo dir yields an empty map, not an error");
 }

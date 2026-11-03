@@ -420,7 +420,11 @@ mod tests {
     fn header_runaway_resets_on_prose_between_headers() {
         let mut tail = String::new();
         for i in 0..36 {
-            std::fmt::Write::write_fmt(&mut tail, format_args!("## Section {i}\nSome prose content here.\n")).ok();
+            std::fmt::Write::write_fmt(
+                &mut tail,
+                format_args!("## Section {i}\nSome prose content here.\n"),
+            )
+            .ok();
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }
@@ -438,7 +442,11 @@ mod tests {
     fn header_runaway_ignores_a_bold_inline_label() {
         let mut tail = String::new();
         for i in 0..36 {
-            std::fmt::Write::write_fmt(&mut tail, format_args!("**Note {i}:** some text after it\n")).ok();
+            std::fmt::Write::write_fmt(
+                &mut tail,
+                format_args!("**Note {i}:** some text after it\n"),
+            )
+            .ok();
         }
         assert!(!detect_header_runaway(tail.as_bytes()));
     }

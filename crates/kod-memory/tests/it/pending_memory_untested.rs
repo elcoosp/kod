@@ -9,7 +9,7 @@
 use kod_memory::long_term::LongTermMemory;
 use kod_memory::manager::PendingMemory;
 use kod_types::memory::MemoryContext;
-use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+use kod_types::{MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 

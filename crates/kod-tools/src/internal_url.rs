@@ -294,7 +294,11 @@ pub struct ProtocolRouter {
 
 impl std::fmt::Debug for ProtocolRouter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut schemes: Vec<&str> = self.handlers.keys().map(std::string::String::as_str).collect();
+        let mut schemes: Vec<&str> = self
+            .handlers
+            .keys()
+            .map(std::string::String::as_str)
+            .collect();
         schemes.sort_unstable();
         f.debug_struct("ProtocolRouter")
             .field("schemes", &schemes)

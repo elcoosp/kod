@@ -83,10 +83,7 @@ impl KodEngine {
     /// on retry passes it to [`Self::clear_cancel_through`]. Zero when
     /// no cancel was ever requested for the key.
     pub fn cancel_epoch_for(&self, key: &str) -> u64 {
-        self.cancels
-            .read()
-            .get(key)
-            .map_or(0, |(e, _, _)| *e)
+        self.cancels.read().get(key).map_or(0, |(e, _, _)| *e)
     }
 
     /// Clear a transcript's cancel only if no newer fire has happened
@@ -173,12 +170,14 @@ impl KodEngine {
         err: &KodError,
     ) -> Option<std::time::Duration> {
         let hint_secs = match err {
-            KodError::RateLimited { retry_after_secs } | KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
+            KodError::RateLimited { retry_after_secs }
+            | KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
             other => {
                 match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
-kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {
+                    kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {
                         retry_after_secs,
-                    } | kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy {
+                    }
+                    | kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy {
                         retry_after_secs,
                     } => retry_after_secs?,
                     _ => return None,

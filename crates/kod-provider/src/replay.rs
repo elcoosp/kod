@@ -151,12 +151,13 @@ impl LlmProvider for ReplayProvider {
         _options: &GenerationOptions,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         use futures::StreamExt;
-        let answer = self
-            .take().map_or_else(|| {
+        let answer = self.take().map_or_else(
+            || {
                 vec![Err(KodError::InvalidState(
                     "replay fixture exhausted".to_string(),
                 ))]
-            }, |r| {
+            },
+            |r| {
                 let mut chunks: Vec<Result<StreamChunk>> = Vec::new();
                 if !r.text.is_empty() {
                     chunks.push(Ok(StreamChunk::Text(r.text.clone())));
@@ -178,7 +179,8 @@ impl LlmProvider for ReplayProvider {
                 }
                 chunks.push(Ok(StreamChunk::Done));
                 chunks
-            });
+            },
+        );
         futures::stream::iter(answer).boxed()
     }
 

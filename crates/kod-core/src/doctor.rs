@@ -140,7 +140,10 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                          add a .md skill to {} to get started",
                         dirs.len(),
                         if dirs.len() == 1 { "y" } else { "ies" },
-                        dirs.first().map_or_else(|| "~/.agents/skills".to_string(), |d| d.display().to_string()),
+                        dirs.first().map_or_else(
+                            || "~/.agents/skills".to_string(),
+                            |d| d.display().to_string()
+                        ),
                     ),
                 );
             } else {
@@ -232,14 +235,18 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
         use kod_tools::context::{SandboxMode, SandboxOpts, SandboxResolver};
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let resolver = SandboxResolver::detect();
-        if let Ok(Some(inv)) = resolver.invocation(SandboxMode::Require, &cwd, SandboxOpts::default()) { report.push(
-            "sandbox",
-            CheckStatus::Ok,
-            format!(
-                "{} available (Auto uses it; Require enforces it)",
-                inv.backend.name()
-            ),
-        ); } else {
+        if let Ok(Some(inv)) =
+            resolver.invocation(SandboxMode::Require, &cwd, SandboxOpts::default())
+        {
+            report.push(
+                "sandbox",
+                CheckStatus::Ok,
+                format!(
+                    "{} available (Auto uses it; Require enforces it)",
+                    inv.backend.name()
+                ),
+            );
+        } else {
             #[cfg(target_os = "linux")]
             let advice = "install bubblewrap (apt/dnf/pacman/apk) to enable sandboxing";
             #[cfg(target_os = "macos")]
@@ -426,11 +433,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     // Empty table means every capability routes to the default
     // endpoint, which is what a v1 config produces.
     {
-        let swarm_routes = config
-            .llm
-            .routing
-            .as_ref()
-            .map_or(0, |r| r.swarm.len());
+        let swarm_routes = config.llm.routing.as_ref().map_or(0, |r| r.swarm.len());
         if swarm_routes == 0 {
             report.push(
                 "swarm.routing",

@@ -55,7 +55,7 @@ impl Stream {
 
 #[cfg(unix)]
 mod imp {
-    use super::{Stream};
+    use super::Stream;
     use kod_error::{KodError, Result};
     use std::path::Path;
     use tokio::net::{UnixListener, UnixStream};
@@ -85,10 +85,12 @@ mod imp {
             std::fs::create_dir_all(parent).map_err(KodError::Io)?;
         }
         let _lock = SocketLock::acquire(path)?;
-        if let Ok(_) = UnixStream::connect(path).await { Err(KodError::InvalidState(format!(
-            "another kod server is already listening on {}",
-            path.display()
-        ))) } else {
+        if let Ok(_) = UnixStream::connect(path).await {
+            Err(KodError::InvalidState(format!(
+                "another kod server is already listening on {}",
+                path.display()
+            )))
+        } else {
             // No file, or a stale one from a crashed daemon.
             // Removing is safe *under the lock*.
             let _ = std::fs::remove_file(path);

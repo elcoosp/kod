@@ -130,7 +130,9 @@ async fn irc_bus_cap_drops_are_accounted_for() {
             for i in 0..per_sender {
                 if bus
                     .send(from.clone(), "inbox", format!("{w}-{i}"), Delivery::Aside)
-                    .await == Receipt::DroppedOldest {
+                    .await
+                    == Receipt::DroppedOldest
+                {
                     drops.fetch_add(1, Ordering::Relaxed);
                 }
                 if i % 8 == 0 {

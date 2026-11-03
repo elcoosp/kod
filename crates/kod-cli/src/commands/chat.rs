@@ -296,9 +296,7 @@ pub async fn run_chat(
     let model_name = model
         .clone()
         .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
-    println!(
-        "KOD Chat (model: {model_name}) - Type 'quit' or Ctrl+C to exit"
-    );
+    println!("KOD Chat (model: {model_name}) - Type 'quit' or Ctrl+C to exit");
     if let Some(sys) = &system_prompt {
         let preview = kod_types::strutil::truncate_with_ellipsis(sys, 120, "…");
         println!("System prompt override: {preview}");

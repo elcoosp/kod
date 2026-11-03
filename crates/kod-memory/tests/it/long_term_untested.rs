@@ -16,7 +16,7 @@
 //! either is missing). Writing tests for them without reading the
 //! bodies would be guessing; they are the next recon's targets.
 use kod_memory::long_term::LongTermMemory;
-use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+use kod_types::{MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 

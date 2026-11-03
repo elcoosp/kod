@@ -251,7 +251,7 @@ impl CompactionPlan {
         match self {
             Self::Shake(p) => p.is_empty(),
             Self::Prune(p) => p.is_empty(),
-Self::Summary { text, .. } | Self::NativeSummary { text, .. } => text.trim().is_empty(),
+            Self::Summary { text, .. } | Self::NativeSummary { text, .. } => text.trim().is_empty(),
             Self::Image { png_base64, .. } => png_base64.trim().is_empty(),
         }
     }
@@ -498,12 +498,7 @@ impl CompactionMethod for ShakeMethod {
                 .extend(ctx.protected_paths.iter().cloned());
             c
         };
-        let plan = plan_shake(
-            ctx.transcript,
-            &merged,
-            estimator,
-            ctx.prefix_is_warm,
-        );
+        let plan = plan_shake(ctx.transcript, &merged, estimator, ctx.prefix_is_warm);
         if plan.is_empty() {
             MethodOutcome::NoChange
         } else {
@@ -809,7 +804,8 @@ impl CompactionMethod for SnapcompactMethod {
             return MethodOutcome::NoChange;
         }
         let frame_estimate = FRAME_TOKEN_ESTIMATE;
-        let ratio = f64::from(u32::try_from(frame_estimate).unwrap_or(u32::MAX)) / f64::from(u32::try_from(text_tokens).unwrap_or(u32::MAX));
+        let ratio = f64::from(u32::try_from(frame_estimate).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(text_tokens).unwrap_or(u32::MAX));
         if ratio >= SAVINGS_MARGIN {
             return MethodOutcome::NoChange;
         }

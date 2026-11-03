@@ -385,11 +385,9 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                     println!("{}", p.display());
                     Ok(())
                 }
-                None => {
-                    Err(KodError::FileNotFound {
-                        path: dir.display().to_string(),
-                    })
-                }
+                None => Err(KodError::FileNotFound {
+                    path: dir.display().to_string(),
+                }),
             }
         }
         SessionsAction::Import { path: src } => {
@@ -851,11 +849,15 @@ pub(super) fn render_session_markdown(messages: &[kod_tui::app::Message]) -> Str
                 continue;
             }
         };
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "{} · {}\n\n",
-            label,
-            m.timestamp.format("%Y-%m-%d %H:%M:%S"),
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "{} · {}\n\n",
+                label,
+                m.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        .ok();
         if fence {
             out.push_str("```\n");
             out.push_str(&m.content);

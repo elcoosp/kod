@@ -316,7 +316,8 @@ impl KodEngine {
             {
                 let ctx = kod_risk::RiskContext {
                     working_dir: working_dir.to_path_buf(),
-                    home_dir: std::env::var_os("HOME").map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from),
+                    home_dir: std::env::var_os("HOME")
+                        .map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from),
                     scratch_dir: std::env::temp_dir(),
                 };
                 let assessment = kod_risk::assess(cmd, &ctx);
@@ -517,9 +518,7 @@ impl KodEngine {
                 DecisionWait::TimedOut => {
                     answers.insert(
                         i,
-                        format!(
-                            "(no answer within {AWAIT_APPROVAL_SECS}s — the user is away)"
-                        ),
+                        format!("(no answer within {AWAIT_APPROVAL_SECS}s — the user is away)"),
                     );
                 }
             }
@@ -1002,7 +1001,9 @@ impl KodEngine {
                             .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
                             .cloned()
                     });
-                    if let crate::tool_quota::QuotaVerdict::Hard { reason } = crate::tool_quota::check(&counts, tool, quota.as_ref(), command) {
+                    if let crate::tool_quota::QuotaVerdict::Hard { reason } =
+                        crate::tool_quota::check(&counts, tool, quota.as_ref(), command)
+                    {
                         Err(kod_error::KodError::PermissionDenied {
                             action: "quota".to_string(),
                             reason,
@@ -1311,7 +1312,7 @@ impl KodEngine {
                     use crate::run_collector::ToolStatus;
                     let status = match &res {
                         Ok(ToolResult::Success(_)) => ToolStatus::Ok,
-Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
+                        Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                         Ok(ToolResult::RequiresConfirmation { .. }) => ToolStatus::Skipped,
                     };
                     self.run_collector
@@ -1332,11 +1333,15 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                                 crate::run_collector::ToolStatus::Aborted => "aborted",
                             }
                             .to_string(),
-                            duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                            duration_ms: u64::try_from(start.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
                         });
                     }
                 }
-                out.push((res, u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)));
+                out.push((
+                    res,
+                    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ));
             }
             out
         } else {
@@ -1401,7 +1406,10 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                             .tools
                             .execute_tool(&call.tool_name, &call.arguments, &ctx)
                             .await;
-                        (res, u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
+                        (
+                            res,
+                            u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        )
                     }
                 })
                 .collect();
@@ -1599,7 +1607,11 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 .tool_trust_level(&call.tool_name)
                 .await
                 .unwrap_or(kod_types::trust::TrustLevel::ToolTrusted);
-            std::fmt::Write::write_fmt(&mut block, format_args!("\n### {} {}\n", call.tool_name, call.arguments)).ok();
+            std::fmt::Write::write_fmt(
+                &mut block,
+                format_args!("\n### {} {}\n", call.tool_name, call.arguments),
+            )
+            .ok();
             block.push_str(&trust.open_marker(&call.tool_name, None));
             block.push('\n');
             block.push_str(&rendered);
@@ -1764,7 +1776,9 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                     if lsp_diags.is_empty() {
                         let (deferred_enabled, deferred_ms) = kod_config::KodConfig::load_cached()
                             .ok()
-                            .map_or((true, 12_000), |c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms));
+                            .map_or((true, 12_000), |c| {
+                                (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms)
+                            });
                         if deferred_enabled && deferred_ms > 0 {
                             let mtime_at_spawn =
                                 std::fs::metadata(path).and_then(|m| m.modified()).ok();
@@ -1931,13 +1945,21 @@ Ok(ToolResult::Error(_)) | Err(_) => ToolStatus::Error,
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        std::fmt::Write::write_fmt(&mut block, format_args!("`{source}`: no diagnostics on this file.\n")).ok();
+                        std::fmt::Write::write_fmt(
+                            &mut block,
+                            format_args!("`{source}`: no diagnostics on this file.\n"),
+                        )
+                        .ok();
                     } else {
-                        std::fmt::Write::write_fmt(&mut block, format_args!(
-                            "`{}` reported {} diagnostic(s) on this file:\n\n",
-                            source,
-                            diags.len(),
-                        )).ok();
+                        std::fmt::Write::write_fmt(
+                            &mut block,
+                            format_args!(
+                                "`{}` reported {} diagnostic(s) on this file:\n\n",
+                                source,
+                                diags.len(),
+                            ),
+                        )
+                        .ok();
                         render_diagnostics(&mut block, &diags, 20);
                     }
                 } else {

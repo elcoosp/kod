@@ -46,7 +46,8 @@ impl KodApp {
                         format!(
                             "rate-limited — retry in {}…",
                             kod_core::engine::format_duration_ms(
-                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
+                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX)))
+                                    .unwrap_or(u64::MAX)
                             )
                         )
                     }
@@ -62,7 +63,8 @@ impl KodApp {
                         format!(
                             "server-busy — retry in {}…",
                             kod_core::engine::format_duration_ms(
-                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
+                                u64::try_from(remaining.as_millis().min(u128::from(u64::MAX)))
+                                    .unwrap_or(u64::MAX)
                             )
                         )
                     }
@@ -386,11 +388,15 @@ impl KodApp {
                 kod_types::MessageRole::Tool => "tool",
                 kod_types::MessageRole::Agent(_) => "agent",
             };
-            std::fmt::Write::write_fmt(&mut out, format_args!(
-                "## {} · {}\n\n",
-                label,
-                m.timestamp.format("%Y-%m-%d %H:%M:%S")
-            )).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!(
+                    "## {} · {}\n\n",
+                    label,
+                    m.timestamp.format("%Y-%m-%d %H:%M:%S")
+                ),
+            )
+            .ok();
             let fenced = matches!(
                 m.role,
                 kod_types::MessageRole::Assistant | kod_types::MessageRole::Tool
@@ -475,7 +481,10 @@ impl KodApp {
         } else {
             let s = ms / 1000;
             if s < 60 {
-                format!("{:.1}s", f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1000.0)
+                format!(
+                    "{:.1}s",
+                    f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1000.0
+                )
             } else if s < 3600 {
                 format!("{}m{:02}s", s / 60, s % 60)
             } else {
@@ -545,7 +554,8 @@ impl KodApp {
         else {
             return;
         };
-        reply.metadata.turn_duration_ms = Some(u64::try_from(d.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX));
+        reply.metadata.turn_duration_ms =
+            Some(u64::try_from(d.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX));
     }
 
     /// Milliseconds from `begin_generation` to the first non-empty
@@ -580,7 +590,8 @@ impl KodApp {
         if elapsed < 0.05 {
             return None;
         }
-        let tokens = f32::from(u16::try_from(self.streamed_chars_this_turn).unwrap_or(u16::MAX)) / 4.0;
+        let tokens =
+            f32::from(u16::try_from(self.streamed_chars_this_turn).unwrap_or(u16::MAX)) / 4.0;
         Some(tokens / elapsed)
     }
 
@@ -640,7 +651,8 @@ impl KodApp {
     /// Context fill ratio 0.0–1.0+ (rough estimate, see `context_label`).
     #[must_use]
     pub fn context_usage(&self) -> f64 {
-        f64::from(u32::try_from(self.context_tokens).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.context_limit.max(1)).unwrap_or(u32::MAX))
+        f64::from(u32::try_from(self.context_tokens).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(self.context_limit.max(1)).unwrap_or(u32::MAX))
     }
 
     /// Model name for the header (never blank).

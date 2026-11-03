@@ -25,7 +25,7 @@ use kod_provider::GenerationResponse;
 use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
 use kod_provider::traits::{GenerationOptions, LlmProvider};
 use kod_provider_anthropic::AnthropicProvider;
-use kod_types::{ChatMessage, MessageId, MessageRole, LoadMode};
+use kod_types::{ChatMessage, LoadMode, MessageId, MessageRole};
 use time::OffsetDateTime;
 
 /// The model the live tests use. A small, cheap model so a maintainer
@@ -152,8 +152,12 @@ async fn live_tool_use_round_trip() {
     }];
     let resp = provider.complete(&req).await.expect("complete");
     let calls = match resp {
-GenerationResponse::ToolCalls { calls, .. } | GenerationResponse::Mixed { calls, .. } => calls,
-        GenerationResponse::Text { content, .. } => panic!("expected a tool call, got Text({content:?})"),
+        GenerationResponse::ToolCalls { calls, .. } | GenerationResponse::Mixed { calls, .. } => {
+            calls
+        }
+        GenerationResponse::Text { content, .. } => {
+            panic!("expected a tool call, got Text({content:?})")
+        }
     };
     assert_eq!(calls.len(), 1, "exactly one tool call expected");
     assert_eq!(calls[0].tool_name, "get_time");

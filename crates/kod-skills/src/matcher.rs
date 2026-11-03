@@ -455,7 +455,10 @@ mod coverage_match_scoring {
                 tags: tags.iter().map(std::string::ToString::to_string).collect(),
                 capabilities: caps.iter().map(std::string::ToString::to_string).collect(),
                 requirements: vec![],
-                triggers: triggers.iter().map(std::string::ToString::to_string).collect(),
+                triggers: triggers
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
             },
             instructions: String::new(),
             examples: vec![],

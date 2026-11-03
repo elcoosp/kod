@@ -248,7 +248,9 @@ pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
             let mut score = 0.0;
             for t in &terms {
                 if lower.contains(t.as_str()) {
-                    let n = f64::from(u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX));
+                    let n = f64::from(
+                        u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX),
+                    );
                     score += (total / n).ln_1p();
                 }
             }
@@ -317,7 +319,9 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
             for t in &terms {
                 if lower.contains(t.as_str()) {
                     // Rarer terms score higher. `idf = ln(total / df)`.
-                    let n = f64::from(u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX));
+                    let n = f64::from(
+                        u32::try_from(*df.get(t.as_str()).unwrap_or(&1)).unwrap_or(u32::MAX),
+                    );
                     score += (total / n).ln_1p();
                 }
             }
@@ -345,25 +349,28 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 
     let mut out = String::new();
     for h in &kept {
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "{}:{}: {}\n",
-            h.path.display(),
-            h.line_number,
-            h.line
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("{}:{}: {}\n", h.path.display(), h.line_number, h.line),
+        )
+        .ok();
     }
     if dropped > 0 {
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "... {dropped} more match{} in {} file{} (filtered by relevance to the query)\n",
-            if dropped == 1 { "" } else { "es" },
-            results
-                .hits
-                .iter()
-                .map(|h| h.path.as_path())
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            if results.hits.len() == 1 { "" } else { "s" },
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "... {dropped} more match{} in {} file{} (filtered by relevance to the query)\n",
+                if dropped == 1 { "" } else { "es" },
+                results
+                    .hits
+                    .iter()
+                    .map(|h| h.path.as_path())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                if results.hits.len() == 1 { "" } else { "s" },
+            ),
+        )
+        .ok();
     }
     out
 }
@@ -371,15 +378,18 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 fn mechanical_truncate(hits: &[SearchHit], cap_lines: usize) -> String {
     let mut out = String::new();
     for h in hits.iter().take(cap_lines) {
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "{}:{}: {}\n",
-            h.path.display(),
-            h.line_number,
-            h.line
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("{}:{}: {}\n", h.path.display(), h.line_number, h.line),
+        )
+        .ok();
     }
     if hits.len() > cap_lines {
-        std::fmt::Write::write_fmt(&mut out, format_args!("... {} more matches\n", hits.len() - cap_lines)).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("... {} more matches\n", hits.len() - cap_lines),
+        )
+        .ok();
     }
     out
 }
@@ -470,7 +480,13 @@ mod tests {
     fn heatmap_reports_a_clear_drop_count() {
         let results = SearchResults {
             hits: (0..5)
-                .map(|i| hit(&format!("f{i}.rs"), u64::try_from(i).unwrap_or(u64::MAX), "no match term here"))
+                .map(|i| {
+                    hit(
+                        &format!("f{i}.rs"),
+                        u64::try_from(i).unwrap_or(u64::MAX),
+                        "no match term here",
+                    )
+                })
                 .collect(),
             ..Default::default()
         };

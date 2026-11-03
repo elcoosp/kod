@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kod_error::Result;
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
 use crate::jev::JevDecider;
@@ -32,10 +32,7 @@ struct LexicalJudge;
 #[async_trait]
 impl Judge for LexicalJudge {
     async fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32> {
-        let words: Vec<String> = question
-            .split_whitespace()
-            .map(str::to_lowercase)
-            .collect();
+        let words: Vec<String> = question.split_whitespace().map(str::to_lowercase).collect();
         candidates
             .iter()
             .map(|c| {
@@ -44,7 +41,8 @@ impl Judge for LexicalJudge {
                 }
                 let cl = c.to_lowercase();
                 let hits = words.iter().filter(|w| cl.contains(w.as_str())).count();
-                f32::from(u16::try_from(hits).unwrap_or(u16::MAX)) / f32::from(u16::try_from(words.len()).unwrap_or(u16::MAX))
+                f32::from(u16::try_from(hits).unwrap_or(u16::MAX))
+                    / f32::from(u16::try_from(words.len()).unwrap_or(u16::MAX))
             })
             .collect()
     }

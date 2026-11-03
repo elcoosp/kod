@@ -371,9 +371,10 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
     // otherwise accumulates every pattern ever compiled.
     if let Ok(mut g) = cache.lock() {
         if g.len() >= MAX_CACHED_PATTERNS
-            && let Some(k) = g.keys().next().cloned() {
-                g.remove(&k);
-            }
+            && let Some(k) = g.keys().next().cloned()
+        {
+            g.remove(&k);
+        }
         g.insert(pattern.to_string(), re.clone());
         #[cfg(test)]
         COMPILE_CACHE_LEN.store(g.len(), std::sync::atomic::Ordering::Relaxed);

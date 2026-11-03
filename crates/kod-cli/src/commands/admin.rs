@@ -661,9 +661,8 @@ pub fn run_map(max_chars: usize) -> Result<()> {
     // `KOD_FIXTURES_DIR`, `KOD_SESSIONS_DIR`, and `KOD_UPDATE_URL`.
     let cwd = match std::env::var_os("KOD_MAP_ROOT") {
         Some(root) if !root.is_empty() => std::path::PathBuf::from(root),
-        _ => std::env::current_dir().map_err(|e| {
-            KodError::Config(format!("Could not determine working directory: {e}"))
-        })?,
+        _ => std::env::current_dir()
+            .map_err(|e| KodError::Config(format!("Could not determine working directory: {e}")))?,
     };
     let map = kod_core_quality::repomap::build_repo_map(&cwd);
     let rendered = map.render(max_chars);
@@ -1203,8 +1202,10 @@ pub fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     let mut total = 0_usize;
     let mut cached = 0_usize;
     let mut total_latency_ms: u64 = 0;
-    let mut by_source: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::default();
-    let mut by_purpose: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::default();
+    let mut by_source: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::default();
+    let mut by_purpose: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::default();
     for e in &entries {
         if let kod_core_state::session_log::SessionEntry::JevDecision {
             purpose,
@@ -1230,7 +1231,9 @@ pub fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     println!("Jev decisions in {}", path.display());
     println!("  total:      {total}");
     for (src, n) in &by_source {
-        let pct = f64::from(u32::try_from(*n).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) * 100.0;
+        let pct = f64::from(u32::try_from(*n).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(total).unwrap_or(u32::MAX))
+            * 100.0;
         println!("  {src:<10} {n:>5}  ({pct:.0}%)");
     }
     println!("  cached:     {cached} ({}%)", cached * 100 / total);

@@ -38,9 +38,9 @@
 //! * Not a tool yet. The `jfind` tool wrapper is a follow-up; this
 //!   module is the algorithm.
 
+use num_traits::ToPrimitive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use num_traits::ToPrimitive;
 
 /// The most files the lexical wave keeps for judging.
 pub const MAX_FILE_CANDIDATES: usize = 128;
@@ -267,10 +267,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Judge for KeywordJudge {
         async fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32> {
-            let words: Vec<String> = question
-                .split_whitespace()
-                .map(str::to_lowercase)
-                .collect();
+            let words: Vec<String> = question.split_whitespace().map(str::to_lowercase).collect();
             candidates
                 .iter()
                 .map(|c| {

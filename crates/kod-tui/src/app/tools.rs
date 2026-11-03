@@ -9,7 +9,10 @@
 //! its call id so parallel calls fill *their own* rows. A call with no
 //! provider id (`""`) falls back to the pre-v2 text heuristics.
 
-use super::{GenPhase, KodApp, Message, MessageId, MessageMetadata, MessageRole, ToolExecution, ToolStatus, Utc};
+use super::{
+    GenPhase, KodApp, Message, MessageId, MessageMetadata, MessageRole, ToolExecution, ToolStatus,
+    Utc,
+};
 
 impl KodApp {
     /// Bound on `tool_executions`. A long session can mint hundreds
@@ -140,9 +143,10 @@ impl KodApp {
     /// Rewrite one registered row's header in place, keeping its body.
     fn refresh_tool_row_header(&mut self, msg_id: &MessageId, header: &str) {
         if let Some(m) = self.messages.iter_mut().find(|m| m.id == *msg_id) {
-            let body = m
-                .content
-                .split_once('\n').map_or_else(|| Self::LIVE_TOOL_BODY_PLACEHOLDER.to_string(), |x| x.1.to_string());
+            let body = m.content.split_once('\n').map_or_else(
+                || Self::LIVE_TOOL_BODY_PLACEHOLDER.to_string(),
+                |x| x.1.to_string(),
+            );
             m.content = format!("[{header}]\n{body}");
         }
     }

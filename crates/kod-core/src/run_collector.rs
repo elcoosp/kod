@@ -236,10 +236,14 @@ impl RunCollector {
     #[must_use]
     pub fn report(&self) -> String {
         let mut out = String::new();
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "run: {} turn(s), {} ms total\n",
-            self.turns, self.elapsed_ms,
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "run: {} turn(s), {} ms total\n",
+                self.turns, self.elapsed_ms,
+            ),
+        )
+        .ok();
         if !self.stop_reasons.is_empty() {
             out.push_str("stop reasons:\n");
             for (r, n) in &self.stop_reasons {
@@ -249,18 +253,30 @@ impl RunCollector {
         if !self.tool_counts.is_empty() {
             out.push_str("tools:\n");
             for (name, c) in &self.tool_counts {
-                std::fmt::Write::write_fmt(&mut out, format_args!(
-                    "  {name}: {} ok, {} err, {} blocked, {} skipped, {} timeout, {} aborted\n",
-                    c.ok, c.error, c.blocked, c.skipped, c.timeout, c.aborted,
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut out,
+                    format_args!(
+                        "  {name}: {} ok, {} err, {} blocked, {} skipped, {} timeout, {} aborted\n",
+                        c.ok, c.error, c.blocked, c.skipped, c.timeout, c.aborted,
+                    ),
+                )
+                .ok();
             }
         }
         let (invoked, available) = self.coverage();
         if available > 0 {
-            std::fmt::Write::write_fmt(&mut out, format_args!("coverage: {invoked} / {available} tools used\n")).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("coverage: {invoked} / {available} tools used\n"),
+            )
+            .ok();
             let unused = self.unused_tools();
             if !unused.is_empty() {
-                std::fmt::Write::write_fmt(&mut out, format_args!("  unused: {}\n", unused.join(", "))).ok();
+                std::fmt::Write::write_fmt(
+                    &mut out,
+                    format_args!("  unused: {}\n", unused.join(", ")),
+                )
+                .ok();
             }
         }
         if !self.cost_unavailable.is_empty() {

@@ -1,6 +1,6 @@
 use kod_tui::app::{InputMode, KodApp, Message, SLASH_COMMANDS};
 use kod_tui::ui::{AgentPanelWidget, ChatWidget, CompletionsWidget, InputWidget, StatusWidget};
-use kod_types::{MessageId, MessageRole, MessageMetadata};
+use kod_types::{MessageId, MessageMetadata, MessageRole};
 use ratatui::backend::TestBackend;
 use ratatui::{Terminal, buffer::Buffer};
 

@@ -452,7 +452,8 @@ impl KodEngine {
             // returned), so the turn is recorded with a None reason
             // and the cost-unavailable signal derived from usage.
             {
-                let elapsed = u64::try_from(round_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let elapsed =
+                    u64::try_from(round_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 let cost_unavailable = match usage.as_ref() {
                     None => Some(crate::run_collector::CostUnavailable::NoUsage),
                     Some(_) => None,
@@ -868,7 +869,8 @@ impl KodEngine {
                 Ok(None) => break,
                 Err(_) => {
                     stream_error = Some(kod_error::KodError::ProviderTimeout {
-                        timeout_ms: u64::try_from(stream_idle_timeout.as_millis()).unwrap_or(u64::MAX) as u64,
+                        timeout_ms: u64::try_from(stream_idle_timeout.as_millis())
+                            .unwrap_or(u64::MAX) as u64,
                     });
                     break;
                 }
@@ -1334,17 +1336,18 @@ impl KodEngine {
         drop(guard);
 
         if let Some(prev) = previous
-            && prev != fingerprint {
-                // Late MCP registration is the expected cause. Anything
-                // else is worth a look at the journal.
-                kod_core_state::cache_journal::record(
-                    kod_core_state::cache_journal::InvalidationCause::ToolSurfaceChanged {
-                        previous_fingerprint: prev,
-                        current_fingerprint: fingerprint,
-                        reason: format!("{} definitions on this request", definitions.len()),
-                    },
-                );
-            }
+            && prev != fingerprint
+        {
+            // Late MCP registration is the expected cause. Anything
+            // else is worth a look at the journal.
+            kod_core_state::cache_journal::record(
+                kod_core_state::cache_journal::InvalidationCause::ToolSurfaceChanged {
+                    previous_fingerprint: prev,
+                    current_fingerprint: fingerprint,
+                    reason: format!("{} definitions on this request", definitions.len()),
+                },
+            );
+        }
     }
 
     /// Delta §4.5: the inline-imaging pass.
@@ -1387,7 +1390,8 @@ impl KodEngine {
                 continue;
             }
             let frame_est = crate::compaction_dispatcher::FRAME_TOKEN_ESTIMATE;
-            let ratio = frame_est.to_f64().unwrap_or(f64::MAX) / tokens.max(1).to_f64().unwrap_or(f64::MAX);
+            let ratio =
+                frame_est.to_f64().unwrap_or(f64::MAX) / tokens.max(1).to_f64().unwrap_or(f64::MAX);
             if ratio >= crate::compaction_dispatcher::SAVINGS_MARGIN {
                 continue;
             }

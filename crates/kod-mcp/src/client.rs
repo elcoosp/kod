@@ -586,7 +586,10 @@ async fn read_loop(
                     let sender = pending.lock().await.remove(&id);
                     if let Some(tx) = sender {
                         if let Some(err) = msg.get("error") {
-                            let code = err.get("code").and_then(serde_json::Value::as_i64).unwrap_or(-1);
+                            let code = err
+                                .get("code")
+                                .and_then(serde_json::Value::as_i64)
+                                .unwrap_or(-1);
                             let message = err
                                 .get("message")
                                 .and_then(|v| v.as_str())
@@ -761,7 +764,6 @@ for line in sys.stdin:
             &[script.to_string_lossy().to_string()],
             &BTreeMap::new(),
         )
-
         .expect("spawn fake server");
         (dir, client)
     }
@@ -858,8 +860,7 @@ for line in sys.stdin:
         // `expect_err` — which requires `Ok: Debug` — is unavailable.
         // Match on the result directly instead.
         let result =
-            McpClient::spawn_stdio("this-binary-does-not-exist-kod-test", &[], &BTreeMap::new())
-;
+            McpClient::spawn_stdio("this-binary-does-not-exist-kod-test", &[], &BTreeMap::new());
         match result {
             Ok(_) => panic!("spawn of a missing binary must fail"),
             Err(McpError::Spawn { program, .. }) => {
@@ -904,9 +905,8 @@ mod t2_c6_regression {
             s = sentinel.display(),
         );
         let args = vec!["-c".to_string(), script];
-        let client = McpClient::spawn_stdio("sh", &args, &std::collections::BTreeMap::new())
-
-            .expect("spawn");
+        let client =
+            McpClient::spawn_stdio("sh", &args, &std::collections::BTreeMap::new()).expect("spawn");
 
         // Give the shell a moment to install the trap before we signal.
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;

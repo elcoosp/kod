@@ -7,7 +7,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use regex::Regex;
 use serde_json::Value;
 
@@ -97,7 +97,8 @@ impl Tool for SearchFilesTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'pattern' parameter".to_string(),
             })?;
-        let context_lines = u32::try_from(params["context"].as_u64().unwrap_or(2)).unwrap_or(u32::MAX);
+        let context_lines =
+            u32::try_from(params["context"].as_u64().unwrap_or(2)).unwrap_or(u32::MAX);
         let context_lines = context_lines.min(MAX_CONTEXT_LINES);
         let case_insensitive = params["case_insensitive"].as_bool().unwrap_or(false);
 
@@ -132,9 +133,7 @@ impl Tool for SearchFilesTool {
         let regex = match Regex::new(&folded) {
             Ok(r) => r,
             Err(e) => {
-                return Ok(ToolResult::Error(format!(
-                    "invalid regex {pattern:?}: {e}"
-                )));
+                return Ok(ToolResult::Error(format!("invalid regex {pattern:?}: {e}")));
             }
         };
 
@@ -226,9 +225,11 @@ impl Tool for SearchFilesTool {
                                 Some(r) => r.redact(&truncated_line).0,
                                 None => truncated_line,
                             };
-                            std::fmt::Write::write_fmt(&mut block, format_args!(
-                                "{marker} {real_line:>5} | {truncated_line}\n"
-                            )).ok();
+                            std::fmt::Write::write_fmt(
+                                &mut block,
+                                format_args!("{marker} {real_line:>5} | {truncated_line}\n"),
+                            )
+                            .ok();
                         }
                         hits.push(serde_json::json!({
                             "file": file.to_string_lossy(),

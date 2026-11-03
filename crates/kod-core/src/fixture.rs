@@ -11,8 +11,8 @@
 //! enough to detect a drift in what the model sees without depending
 //! on exact message contents (which change with every run).
 
-use serde::{Deserialize, Serialize};
 use kod_types::tool::LoadMode;
+use serde::{Deserialize, Serialize};
 
 /// One round's captured request + response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,28 +298,48 @@ impl Fixture {
 #[must_use]
 pub fn diff_rounds(expected: &RoundFixture, actual: &RoundFixture) -> String {
     let mut out = String::new();
-    std::fmt::Write::write_fmt(&mut out, format_args!(
-        "Round {} request hash: expected {} got {}\n",
-        expected.seq, expected.request_hash, actual.request_hash,
-    )).ok();
-    std::fmt::Write::write_fmt(&mut out, format_args!(
-        "  system_chars:  {} → {}\n",
-        expected.request_summary.system_chars, actual.request_summary.system_chars,
-    )).ok();
-    std::fmt::Write::write_fmt(&mut out, format_args!(
-        "  message_count: {} → {}\n",
-        expected.request_summary.message_count, actual.request_summary.message_count,
-    )).ok();
-    std::fmt::Write::write_fmt(&mut out, format_args!(
-        "  model:         {} → {}\n",
-        expected.request_summary.model, actual.request_summary.model,
-    )).ok();
+    std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!(
+            "Round {} request hash: expected {} got {}\n",
+            expected.seq, expected.request_hash, actual.request_hash,
+        ),
+    )
+    .ok();
+    std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!(
+            "  system_chars:  {} → {}\n",
+            expected.request_summary.system_chars, actual.request_summary.system_chars,
+        ),
+    )
+    .ok();
+    std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!(
+            "  message_count: {} → {}\n",
+            expected.request_summary.message_count, actual.request_summary.message_count,
+        ),
+    )
+    .ok();
+    std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!(
+            "  model:         {} → {}\n",
+            expected.request_summary.model, actual.request_summary.model,
+        ),
+    )
+    .ok();
     if expected.request_summary.tool_names != actual.request_summary.tool_names {
-        std::fmt::Write::write_fmt(&mut out, format_args!(
-            "  tools: {} → {}\n",
-            expected.request_summary.tool_names.join(", "),
-            actual.request_summary.tool_names.join(", "),
-        )).ok();
+        std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "  tools: {} → {}\n",
+                expected.request_summary.tool_names.join(", "),
+                actual.request_summary.tool_names.join(", "),
+            ),
+        )
+        .ok();
     }
     out
 }

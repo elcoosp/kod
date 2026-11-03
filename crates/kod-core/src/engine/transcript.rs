@@ -565,11 +565,7 @@ impl KodEngine {
         // registry is installed; `emergency_summary` renders that as
         // "context exceeded 0 tokens", which would be misleading, so
         // the budget is clamped to something non-zero.
-        let window = self
-            .budget_hint
-            .read()
-            .map_or(0, |g| g.0 as u64)
-            .max(1);
+        let window = self.budget_hint.read().map_or(0, |g| g.0 as u64).max(1);
 
         // Take and release the history lock before touching the gauge,
         // so a lock-ordering bug between the two maps is impossible.

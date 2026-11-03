@@ -124,9 +124,7 @@ async fn budget_show_with_no_log_arg_uses_sessions_dir() {
     let path = tmp.path().join("costs.jsonl");
     write_cost_log(&path);
     let _guard = SessionsDirEnv::set(tmp.path());
-    run_budget_show(None)
-
-        .expect("budget show with no --log falls back to the newest session log");
+    run_budget_show(None).expect("budget show with no --log falls back to the newest session log");
 }
 
 /// `kod budget show` with no `--log` and an empty dir is an error
@@ -139,7 +137,6 @@ async fn budget_show_with_no_log_arg_and_empty_dir_is_err() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = SessionsDirEnv::set(tmp.path());
     let err = run_budget_show(None)
-
         .expect_err("an empty sessions dir has no log for budget show to read");
     assert!(
         err.to_string().contains("no session log"),

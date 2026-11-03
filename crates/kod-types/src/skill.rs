@@ -262,7 +262,10 @@ mod coverage_skill_metadata {
         };
         let json = serde_json::to_string(&m).unwrap();
         let parsed: SkillMatch = serde_json::from_str(&json).unwrap();
-        assert_eq!(f64::from(parsed.score).to_bits(), f64::from(0.75_f32).to_bits());
+        assert_eq!(
+            f64::from(parsed.score).to_bits(),
+            f64::from(0.75_f32).to_bits()
+        );
         assert_eq!(parsed.match_reasons.len(), 1);
         assert_eq!(parsed.skill.metadata.name, "x");
     }

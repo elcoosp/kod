@@ -90,15 +90,23 @@ impl KodEngine {
             } else {
                 let mut s = system_text;
                 s.push_str("\n\n## LSP diagnostics (late)\n\n");
-                std::fmt::Write::write_fmt(&mut s, format_args!(
-                    "{} diagnostic(s) arrived after the previous write:\n\n",
-                    late.len(),
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut s,
+                    format_args!(
+                        "{} diagnostic(s) arrived after the previous write:\n\n",
+                        late.len(),
+                    ),
+                )
+                .ok();
                 for d in late.iter().take(20) {
-                    std::fmt::Write::write_fmt(&mut s, format_args!(
-                        "{}:{}:{} {} {}\n",
-                        d.file, d.line, d.column, d.severity, d.message,
-                    )).ok();
+                    std::fmt::Write::write_fmt(
+                        &mut s,
+                        format_args!(
+                            "{}:{}:{} {} {}\n",
+                            d.file, d.line, d.column, d.severity, d.message,
+                        ),
+                    )
+                    .ok();
                 }
                 s
             }

@@ -255,9 +255,12 @@ impl AnthropicProvider {
             let response = item.map_err(adk_err)?;
             if let Some(usage) = response.usage_metadata {
                 last_usage = Some(kod_provider::TokenUsage {
-                    prompt_tokens: usize::try_from(usage.prompt_token_count.max(0)).unwrap_or(usize::MAX),
-                    completion_tokens: usize::try_from(usage.candidates_token_count.max(0)).unwrap_or(usize::MAX),
-                    total_tokens: usize::try_from(usage.total_token_count.max(0)).unwrap_or(usize::MAX),
+                    prompt_tokens: usize::try_from(usage.prompt_token_count.max(0))
+                        .unwrap_or(usize::MAX),
+                    completion_tokens: usize::try_from(usage.candidates_token_count.max(0))
+                        .unwrap_or(usize::MAX),
+                    total_tokens: usize::try_from(usage.total_token_count.max(0))
+                        .unwrap_or(usize::MAX),
                     ..Default::default()
                 });
             }
@@ -1198,13 +1201,25 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     // `prompt_tokens` so a single field carries the full input window,
     // and keeps the split in the cache fields for the cost math.
     let usage = v.get("usage").map(|u| {
-        let input = usize::try_from(u.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
-        let output = usize::try_from(u.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
+        let input = usize::try_from(
+            u.get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        )
+        .unwrap_or(usize::MAX);
+        let output = usize::try_from(
+            u.get("output_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        )
+        .unwrap_or(usize::MAX);
         // Option preserved: `None` means the field was absent, which
         // is different from "present and zero." kod's `TokenUsage`
         // keeps that distinction so the hit-rate readout can say
         // "unknown" rather than lying with "0%".
-        let cache_read = u.get("cache_read_input_tokens").and_then(serde_json::Value::as_u64);
+        let cache_read = u
+            .get("cache_read_input_tokens")
+            .and_then(serde_json::Value::as_u64);
         let cache_creation = u
             .get("cache_creation_input_tokens")
             .and_then(serde_json::Value::as_u64);
@@ -1352,7 +1367,8 @@ mod coverage_provider_parse {
 
     fn text_of(r: &GenerationResponse) -> &str {
         match r {
-GenerationResponse::Text { content, .. } | GenerationResponse::Mixed { content, .. } => content,
+            GenerationResponse::Text { content, .. }
+            | GenerationResponse::Mixed { content, .. } => content,
             GenerationResponse::ToolCalls { .. } => {
                 panic!("expected a text-carrying variant")
             }

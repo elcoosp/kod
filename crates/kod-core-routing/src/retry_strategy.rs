@@ -163,9 +163,7 @@ impl TurnFailure {
             || l.contains("invalid api key")
             || l.contains("authentication")
         {
-            return TurnFailure::ProviderAuthError {
-                detail: l,
-            };
+            return TurnFailure::ProviderAuthError { detail: l };
         }
         if l.contains("timed out") || l.contains("timeout") {
             return TurnFailure::TransportTimeout;
@@ -306,9 +304,15 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
         TurnFailure::TransportTimeout | TurnFailure::TransportNetwork => {
             RetryAction::SameEndpointBackoff
         }
-        TurnFailure::TransportRateLimit { .. } | TurnFailure::TransportServerBusy { .. } => RetryAction::SameEndpointBackoff,
+        TurnFailure::TransportRateLimit { .. } | TurnFailure::TransportServerBusy { .. } => {
+            RetryAction::SameEndpointBackoff
+        }
         TurnFailure::ProviderRefused { .. } => RetryAction::SameEndpointLowerTemp,
-TurnFailure::ProviderAuthError { .. } | TurnFailure::ContentFiltered { .. } | TurnFailure::UserCancelled | TurnFailure::BudgetExhausted | TurnFailure::PolicyDenied { .. } => RetryAction::NoRetry,
+        TurnFailure::ProviderAuthError { .. }
+        | TurnFailure::ContentFiltered { .. }
+        | TurnFailure::UserCancelled
+        | TurnFailure::BudgetExhausted
+        | TurnFailure::PolicyDenied { .. } => RetryAction::NoRetry,
         TurnFailure::ContextWindowExceeded { .. } => RetryAction::ShrinkHistory,
         TurnFailure::MalformedJson { .. } => RetryAction::SameEndpointConstrained,
         TurnFailure::HallucinatedTool { .. } => RetryAction::ReinjectTools,

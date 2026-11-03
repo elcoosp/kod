@@ -94,7 +94,9 @@ pub const CAT_SOUND: &str = "meow";
 /// The initial array: the glyphs `a..` repeated to `n`.
 #[must_use]
 pub fn initial_array(n: usize) -> Vec<char> {
-    (0..n).map(|i| (b'a' + u8::try_from(i % 26).unwrap_or(25)) as char).collect()
+    (0..n)
+        .map(|i| (b'a' + u8::try_from(i % 26).unwrap_or(25)) as char)
+        .collect()
 }
 
 /// The swap the harness applies on `turn` (0-based).

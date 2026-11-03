@@ -386,7 +386,10 @@ pub fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> Result<
     );
     // Newest first.
     for t in traces.iter().rev().take(cap) {
-        let dur = format!("{:.2}s", f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) / 1000.0);
+        let dur = format!(
+            "{:.2}s",
+            f64::from(u32::try_from(t.duration_ms()).unwrap_or(u32::MAX)) / 1000.0
+        );
         let cost = format!("${:.4}", t.cost_usd);
         let toks = format!("{}→{}", t.prompt_tokens, t.completion_tokens);
         println!(

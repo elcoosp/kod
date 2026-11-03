@@ -51,9 +51,7 @@ async fn config_display_returns_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.toml"), "").unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
-    run_config_display()
-
-        .expect("config display must succeed on any valid config");
+    run_config_display().expect("config display must succeed on any valid config");
 }
 
 // ---- run_config_init_from ------------------------------------------
@@ -70,9 +68,7 @@ async fn config_init_from_writes_config() {
         .first()
         .expect("PRESETS is non-empty by construction")
         .name;
-    run_config_init_from(name)
-
-        .expect("init-from a real profile must succeed");
+    run_config_init_from(name).expect("init-from a real profile must succeed");
     assert!(
         tmp.path().join("config.toml").exists(),
         "init-from must write config.toml",
@@ -120,7 +116,6 @@ async fn config_init_from_unknown_is_err() {
     let tmp = tempfile::TempDir::new().unwrap();
     let _guard = ConfigDirEnv::set(tmp.path());
     let err = run_config_init_from("definitely-not-a-profile")
-
         .expect_err("an unknown profile must be rejected");
     assert!(
         err.to_string().contains("Unknown profile"),
@@ -151,7 +146,6 @@ async fn skills_export_writes_to_destination() {
 
     let dest = cfg.path().join("exported.md");
     run_skills_export("demo-skill", dest.clone(), false)
-
         .expect("exporting an existing skill must succeed");
     assert!(dest.exists(), "export did not create {dest:?}");
 }
@@ -179,7 +173,6 @@ async fn skills_export_refuses_overwrite_without_force() {
     std::fs::write(&dest, "preexisting content").unwrap();
 
     let err = run_skills_export("demo-skill", dest.clone(), false)
-
         .expect_err("export over an existing destination must be refused");
     assert!(
         err.to_string().contains("Refusing to overwrite"),

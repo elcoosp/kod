@@ -111,9 +111,7 @@ async fn replay_destructive_without_yes_is_refused() {
 async fn jev_stats_with_missing_log_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("does-not-exist.jsonl");
-    let err = run_jev_stats(Some(path))
-
-        .expect_err("a missing session log must be an error");
+    let err = run_jev_stats(Some(path)).expect_err("a missing session log must be an error");
     let msg = err.to_string();
     assert!(
         msg.contains("No such file") || msg.contains("not found") || msg.contains("IO error"),
@@ -129,7 +127,5 @@ async fn jev_stats_with_no_jev_entries_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("no-jev.jsonl");
     write_log(&path, &[tool_call("read_file")]);
-    run_jev_stats(Some(path))
-
-        .expect("a log with no Jev decisions must not be an error");
+    run_jev_stats(Some(path)).expect("a log with no Jev decisions must not be an error");
 }

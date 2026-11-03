@@ -391,7 +391,10 @@ mod otlp_proptests {
     fn severity_number(v: &Value) -> Option<u64> {
         match v {
             Value::Object(map) => {
-                if let Some(n) = map.get("severityNumber").and_then(serde_json::Value::as_u64) {
+                if let Some(n) = map
+                    .get("severityNumber")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     return Some(n);
                 }
                 map.values().find_map(severity_number)

@@ -167,10 +167,12 @@ impl WalkCache {
             paths.truncate(MAX_PATHS_PER_ENTRY);
         }
         let mut g = self.entries.lock().expect("walk_cache poisoned");
-        if g.len() >= MAX_ENTRIES && !g.contains_key(&key)
-            && let Some(oldest_key) = g.iter().min_by_key(|(_, e)| e.at).map(|(k, _)| k.clone()) {
-                g.remove(&oldest_key);
-            }
+        if g.len() >= MAX_ENTRIES
+            && !g.contains_key(&key)
+            && let Some(oldest_key) = g.iter().min_by_key(|(_, e)| e.at).map(|(k, _)| k.clone())
+        {
+            g.remove(&oldest_key);
+        }
         let arc = std::sync::Arc::new(paths);
         g.insert(
             key,

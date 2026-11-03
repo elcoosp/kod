@@ -2,7 +2,9 @@
 //!
 //! Extracted from `engine/mod.rs`.
 
-use super::{Arc, KodEngine, RwLock, ToolContext, push_background_interrupt, sweep_background_spools};
+use super::{
+    Arc, KodEngine, RwLock, ToolContext, push_background_interrupt, sweep_background_spools,
+};
 
 impl KodEngine {
     /// Build the background spawner hook.
@@ -22,7 +24,8 @@ impl KodEngine {
                 let job = runner.allocate_id();
                 let id_str = job.0.to_string();
 
-                let dir = dirs::home_dir().map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
+                let dir = dirs::home_dir()
+                    .map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
                 sweep_background_spools(&dir);
                 let spool_path = dir.join(format!("{}.log", job.0));
 
@@ -243,7 +246,8 @@ impl KodEngine {
             let job = runner.allocate_id();
             let id_str = job.0.to_string();
 
-            let dir = dirs::home_dir().map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
+            let dir = dirs::home_dir()
+                .map_or_else(std::env::temp_dir, |h| h.join(".kod").join("background"));
             sweep_background_spools(&dir);
             let spool_path = dir.join(format!("{}.log", job.0));
 
@@ -262,13 +266,15 @@ impl KodEngine {
             // off. Without this the first chunk of output would be
             // lost.
             if !detached.prior_stdout.is_empty()
-                && let Err(e) = spool.append(&detached.prior_stdout) {
-                    tracing::warn!(error = %e, "spool append failed; output chunk lost");
-                }
+                && let Err(e) = spool.append(&detached.prior_stdout)
+            {
+                tracing::warn!(error = %e, "spool append failed; output chunk lost");
+            }
             if !detached.prior_stderr.is_empty()
-                && let Err(e) = spool.append(&detached.prior_stderr) {
-                    tracing::warn!(error = %e, "spool append failed; output chunk lost");
-                }
+                && let Err(e) = spool.append(&detached.prior_stderr)
+            {
+                tracing::warn!(error = %e, "spool append failed; output chunk lost");
+            }
 
             runner.register(
                 job,

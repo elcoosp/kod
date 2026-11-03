@@ -521,9 +521,7 @@ fn find_fences(content: &str) -> Vec<Region> {
                 if marker_len >= 3 {
                     // Info string: everything from the end of the
                     // marker to the end of the line, trimmed.
-                    let info_end = content[k..]
-                        .find('\n')
-                        .map_or(bytes.len(), |n| k + n);
+                    let info_end = content[k..].find('\n').map_or(bytes.len(), |n| k + n);
                     let info = content[k..info_end].trim().to_string();
                     opened = Some((ch, marker_len, info));
                 }
@@ -613,9 +611,7 @@ fn find_fence_closer(
                 k += 1;
             }
             if k - j >= marker_len {
-                let line_end = content[k..]
-                    .find('\n')
-                    .map_or(bytes.len(), |n| k + n);
+                let line_end = content[k..].find('\n').map_or(bytes.len(), |n| k + n);
                 if content[k..line_end].trim().is_empty() {
                     let end = if line_end < bytes.len() {
                         line_end + 1

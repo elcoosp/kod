@@ -207,14 +207,17 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
         return Verification::MissingFile;
     }
 
-    let Ok(f) = std::fs::File::open(&canonical_candidate) else { return Verification::Unreadable; };
+    let Ok(f) = std::fs::File::open(&canonical_candidate) else {
+        return Verification::Unreadable;
+    };
 
     // Count lines up to the cited one. `take(n).count()` returns
     // `min(file_lines, n)`, which is exactly the two outcomes we
     // need: equal to `line` means the line exists; less than `line`
     // means the file is shorter and `count` is its true length.
     let take = citation.line.min(MAX_SCAN_LINES) as usize;
-    let count = u32::try_from(std::io::BufReader::new(f).lines().take(take).count()).unwrap_or(u32::MAX);
+    let count =
+        u32::try_from(std::io::BufReader::new(f).lines().take(take).count()).unwrap_or(u32::MAX);
 
     if count < citation.line {
         Verification::LineOutOfRange { max: count }

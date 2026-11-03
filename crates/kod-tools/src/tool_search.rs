@@ -21,7 +21,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
 /// Tools the search will match against. Filled by the engine at
@@ -120,7 +120,10 @@ impl Tool for ToolSearchTool {
             })?;
         let limit = params["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
 
-        let inv = self.inventory.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let inv = self
+            .inventory
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if inv.definitions.is_empty() {
             return Ok(ToolResult::Success(serde_json::json!({
                 "matches": [],

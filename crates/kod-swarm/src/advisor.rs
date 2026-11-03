@@ -988,10 +988,7 @@ mod normalize_non_ascii_proptests {
     fn control_ascii_letters_and_digits_unchanged() {
         for s in ["hello", "HELLO", "Hello123", "abc-123_xyz", "0123456789"] {
             let lower = s.to_ascii_lowercase();
-            let expected: String = lower
-                .chars()
-                .filter(char::is_ascii_alphanumeric)
-                .collect();
+            let expected: String = lower.chars().filter(char::is_ascii_alphanumeric).collect();
             assert_eq!(normalize(s), expected, "input {s:?}");
         }
     }

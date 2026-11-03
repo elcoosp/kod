@@ -183,7 +183,11 @@ impl ToolLoopGuard {
             return None;
         }
 
-        let corrective = build_corrective(calls, results, u32::try_from(self.threshold).unwrap_or(u32::MAX));
+        let corrective = build_corrective(
+            calls,
+            results,
+            u32::try_from(self.threshold).unwrap_or(u32::MAX),
+        );
         self.recent.clear();
         Some(corrective)
     }

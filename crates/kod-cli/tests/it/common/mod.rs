@@ -162,9 +162,7 @@ pub fn run_kod_command(args: &[&str], working_dir: &Path) -> Result<String, Stri
 #[allow(dead_code)]
 #[must_use]
 pub fn create_mock_response(prompt: &str) -> String {
-    format!(
-        "Mock response for: {prompt}\n\nThis is a test response that simulates an LLM output."
-    )
+    format!("Mock response for: {prompt}\n\nThis is a test response that simulates an LLM output.")
 }
 
 /// Install a provider behind a one-endpoint registry named

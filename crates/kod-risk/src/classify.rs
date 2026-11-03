@@ -496,9 +496,10 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
         // For `env -S`, the rest of the line is a single quoted
         // command; we cannot see through it.
         if let Some(pos) = tokens.iter().take(i).position(|t| unquote(t) == "-S")
-            && pos < i {
-                return (None, Vec::new(), false);
-            }
+            && pos < i
+        {
+            return (None, Vec::new(), false);
+        }
     }
 }
 
@@ -875,34 +876,35 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                 }
             };
             if let Some(target) = redir_target
-                && !target.is_empty() && !is_safe_sink(&target) {
-                    let (danger, why) = classify_path(&target, ctx);
-                    // A truncating write to scratch is the normal
-                    // "write a temp file" pattern and destroys
-                    // nothing anyone will miss. Anywhere else, `>`
-                    // destroys whatever was there, so it is at least
-                    // a Confirm — the model may have meant to append
-                    // or to edit.
-                    let (expanded, _) = crate::paths::expand_lexical(&target, &ctx.home_dir);
-                    let in_scratch =
-                        crate::paths::normalize(&expanded).starts_with(&ctx.scratch_dir);
-                    let level = match danger {
-                        PathDanger::Catastrophic => RiskLevel::Catastrophic,
-                        _ if in_scratch => RiskLevel::Safe,
-                        _ => RiskLevel::Confirm,
-                    };
-                    if level != RiskLevel::Safe {
-                        findings.push(RiskFinding {
-                            level,
-                            reason: if why.is_empty() {
-                                format!("truncating write to {target}")
-                            } else {
-                                why
-                            },
-                            target,
-                        });
-                    }
+                && !target.is_empty()
+                && !is_safe_sink(&target)
+            {
+                let (danger, why) = classify_path(&target, ctx);
+                // A truncating write to scratch is the normal
+                // "write a temp file" pattern and destroys
+                // nothing anyone will miss. Anywhere else, `>`
+                // destroys whatever was there, so it is at least
+                // a Confirm — the model may have meant to append
+                // or to edit.
+                let (expanded, _) = crate::paths::expand_lexical(&target, &ctx.home_dir);
+                let in_scratch = crate::paths::normalize(&expanded).starts_with(&ctx.scratch_dir);
+                let level = match danger {
+                    PathDanger::Catastrophic => RiskLevel::Catastrophic,
+                    _ if in_scratch => RiskLevel::Safe,
+                    _ => RiskLevel::Confirm,
+                };
+                if level != RiskLevel::Safe {
+                    findings.push(RiskFinding {
+                        level,
+                        reason: if why.is_empty() {
+                            format!("truncating write to {target}")
+                        } else {
+                            why
+                        },
+                        target,
+                    });
                 }
+            }
             i += 1;
         }
 

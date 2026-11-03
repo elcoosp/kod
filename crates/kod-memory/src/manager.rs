@@ -282,7 +282,11 @@ impl MemoryManager {
                 let what = payload
                     .downcast_ref::<&'static str>()
                     .copied()
-                    .or_else(|| payload.downcast_ref::<String>().map(std::string::String::as_str))
+                    .or_else(|| {
+                        payload
+                            .downcast_ref::<String>()
+                            .map(std::string::String::as_str)
+                    })
                     .unwrap_or("non-string panic payload");
                 tracing::error!(
                     panic = what,
@@ -560,7 +564,10 @@ impl MemoryManager {
                 // A re-mention is evidence: raise confidence, persist.
                 if let Some(e) = self.long_term.get(&id).await? {
                     let current = e.metadata.confidence.unwrap_or_else(|| {
-                        num_traits::ToPrimitive::to_f32(&crate::veracity::Veracity::Stated.base_confidence()).unwrap_or(f32::MAX)
+                        num_traits::ToPrimitive::to_f32(
+                            &crate::veracity::Veracity::Stated.base_confidence(),
+                        )
+                        .unwrap_or(f32::MAX)
                     });
                     let raised = crate::veracity::raise_confidence(
                         f64::from(current),
@@ -1218,7 +1225,8 @@ impl MemoryManager {
             let jaccard = |a: &str, b: &str| -> f64 {
                 let ta: std::collections::HashSet<&str> = a.split_whitespace().collect();
                 let tb: std::collections::HashSet<&str> = b.split_whitespace().collect();
-                let inter = f64::from(u32::try_from(ta.intersection(&tb).count()).unwrap_or(u32::MAX));
+                let inter =
+                    f64::from(u32::try_from(ta.intersection(&tb).count()).unwrap_or(u32::MAX));
                 let union = f64::from(u32::try_from(ta.union(&tb).count()).unwrap_or(u32::MAX));
                 if union == 0.0 { 0.0 } else { inter / union }
             };
@@ -2636,7 +2644,10 @@ mod contradiction_resolution_tests {
 
         let a_after = mgr.get_long_term(&a).await.unwrap().unwrap();
         assert_eq!(
-            a_after.superseded_by.as_ref().map(kod_types::MemoryId::as_uuid),
+            a_after
+                .superseded_by
+                .as_ref()
+                .map(kod_types::MemoryId::as_uuid),
             Some(b.as_uuid()),
             "the lower-confidence side must be superseded by the higher",
         );
@@ -2723,7 +2734,11 @@ mod contradiction_resolution_tests {
 
         // Store: spawns a background embed that will panic.
         let _ = m
-            .store_with_metadata(MemoryType::LongTerm, "trigger embed", kod_types::MemoryMetadata::default())
+            .store_with_metadata(
+                MemoryType::LongTerm,
+                "trigger embed",
+                kod_types::MemoryMetadata::default(),
+            )
             .await;
 
         // T1-H1: flush_embeddings must return within a bounded time
@@ -2779,9 +2794,7 @@ mod memory_cache_and_index_invalidation {
             .find("async fn lt_remove_batch(")
             .expect("lt_remove_batch present");
         let batch_tail = &src[batch..];
-        let batch_end = batch_tail
-            .find("\n    }")
-            .map_or(src.len(), |i| batch + i);
+        let batch_end = batch_tail.find("\n    }").map_or(src.len(), |i| batch + i);
         let batch_body = &src[batch..batch_end];
         assert!(
             batch_body.contains("vector_index.write()") && batch_body.contains("idx.remove(id)"),

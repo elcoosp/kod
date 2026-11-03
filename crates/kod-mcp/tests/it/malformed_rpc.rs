@@ -40,7 +40,6 @@ async fn spawn_with_script(script: &str) -> (TempDir, McpClient) {
         &[path.to_string_lossy().to_string()],
         &BTreeMap::new(),
     )
-
     .expect("spawn fake server");
     (dir, client)
 }

@@ -489,7 +489,9 @@ where
                     .params
                     .get("min")
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX));
+                    .map_or(1, |n| {
+                        u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX)
+                    });
                 // Bug-hunt: a client sending `max = 300` used to be
                 // truncated to `44` (300 as u8), breaking version
                 // negotiation silently. The `min` handler two lines
@@ -498,7 +500,9 @@ where
                     .params
                     .get("max")
                     .and_then(serde_json::Value::as_u64)
-                    .map_or(client_min, |n| u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX));
+                    .map_or(client_min, |n| {
+                        u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX)
+                    });
                 let lo = client_min.max(MIN_PROTOCOL_VERSION);
                 let hi = client_max.min(MAX_PROTOCOL_VERSION);
                 let compatible = lo <= hi;
@@ -688,13 +692,13 @@ where
                                 },
                             )
                             .await
-                            {
-                                tracing::warn!(
-                                    error = %write_err,
-                                    engine_error = %e,
-                                    "serve: could not deliver the swarm error frame",
-                                );
-                            }
+                        {
+                            tracing::warn!(
+                                error = %write_err,
+                                engine_error = %e,
+                                "serve: could not deliver the swarm error frame",
+                            );
+                        }
                     },
                     out_for_guard,
                     id_for_guard,
@@ -1493,11 +1497,15 @@ mod version_tests {
         let client_min = v
             .get("min")
             .and_then(serde_json::Value::as_u64)
-            .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX));
+            .map_or(1, |n| {
+                u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX)
+            });
         let client_max = v
             .get("max")
             .and_then(serde_json::Value::as_u64)
-            .map_or(1, |n| u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX));
+            .map_or(1, |n| {
+                u8::try_from(n.min(u64::from(u8::MAX))).unwrap_or(u8::MAX)
+            });
         assert_eq!(client_min, u8::MAX);
         assert_eq!(client_max, u8::MAX);
     }

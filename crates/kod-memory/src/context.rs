@@ -3,7 +3,7 @@
 //! Combines user input, memory, and skills into a structured context
 //! that can be serialized into a prompt.
 
-use kod_types::{MemoryContext, Skill, MemoryMetadata};
+use kod_types::{MemoryContext, MemoryMetadata, Skill};
 use serde::{Deserialize, Serialize};
 
 /// Built context ready for LLM processing
@@ -72,10 +72,11 @@ impl Context {
         if !self.skills.is_empty() {
             prompt.push_str("## Relevant Skills\n\n");
             for skill in &self.skills {
-                std::fmt::Write::write_fmt(&mut prompt, format_args!(
-                    "### {}\n\n{}\n\n",
-                    skill.metadata.name, skill.instructions
-                )).ok();
+                std::fmt::Write::write_fmt(
+                    &mut prompt,
+                    format_args!("### {}\n\n{}\n\n", skill.metadata.name, skill.instructions),
+                )
+                .ok();
             }
         }
 
@@ -85,7 +86,11 @@ impl Context {
         }
 
         // Add user input
-        std::fmt::Write::write_fmt(&mut prompt, format_args!("## User Request\n\n{}", self.user_input)).ok();
+        std::fmt::Write::write_fmt(
+            &mut prompt,
+            format_args!("## User Request\n\n{}", self.user_input),
+        )
+        .ok();
 
         prompt
     }

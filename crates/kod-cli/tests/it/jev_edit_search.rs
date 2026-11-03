@@ -95,9 +95,7 @@ async fn jev_stats_with_a_decision_is_ok() {
             jev_decision_entry("task_classify", 30, true),
         ],
     );
-    run_jev_stats(Some(path))
-
-        .expect("two JevDecision entries must aggregate cleanly");
+    run_jev_stats(Some(path)).expect("two JevDecision entries must aggregate cleanly");
 }
 
 /// A log with a single `JevDecision` also works — the `total == 1`
@@ -107,9 +105,7 @@ async fn jev_stats_with_one_decision_is_ok() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("one.jsonl");
     write_log(&path, &[jev_decision_entry("auto_approve", 5, true)]);
-    run_jev_stats(Some(path))
-
-        .expect("one entry, cached=true, must aggregate");
+    run_jev_stats(Some(path)).expect("one entry, cached=true, must aggregate");
 }
 
 // ---- run_skills_edit -----------------------------------------------
@@ -135,9 +131,7 @@ async fn skills_edit_runs_the_editor() {
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", cfg.path());
     let _ed = EnvVar::set_str("EDITOR", ":");
 
-    run_skills_edit("edit-me")
-
-        .expect("EDITOR=: must make the editor spawn exit 0");
+    run_skills_edit("edit-me").expect("EDITOR=: must make the editor spawn exit 0");
     assert!(
         skills.path().join("edit-me.md").exists(),
         "edit must not delete the skill",
@@ -165,9 +159,7 @@ async fn skills_search_finds_a_configured_skill() {
     write_skill(skills.path(), "demo-search");
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", cfg.path());
 
-    run_skills_search("demo")
-
-        .expect("a matching query over a populated skills dir must return Ok");
+    run_skills_search("demo").expect("a matching query over a populated skills dir must return Ok");
 }
 
 /// A query matching nothing is Ok with an empty result — the
@@ -188,9 +180,7 @@ async fn skills_search_with_no_matches_is_ok() {
     write_skill(skills.path(), "demo-search");
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", cfg.path());
 
-    run_skills_search("definitely-not-a-match")
-
-        .expect("no matches is not an error");
+    run_skills_search("definitely-not-a-match").expect("no matches is not an error");
 }
 
 // ---- run_config_edit -----------------------------------------------
@@ -204,9 +194,7 @@ async fn config_edit_runs_the_editor() {
     let _cfg = EnvVar::set("KOD_CONFIG_DIR", tmp.path());
     let _ed = EnvVar::set_str("EDITOR", ":");
 
-    run_config_edit()
-
-        .expect("EDITOR=: must make the editor spawn exit 0");
+    run_config_edit().expect("EDITOR=: must make the editor spawn exit 0");
     assert!(
         tmp.path().join("config.toml").exists(),
         "config edit must create the config file it opens",

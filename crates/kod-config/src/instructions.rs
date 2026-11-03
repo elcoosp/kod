@@ -99,7 +99,6 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
     // example inside a code block is not parsed as a live directive.
     let mut in_code_fence = false;
 
-
     for line in src.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") {
@@ -258,15 +257,16 @@ fn expand_imports_rec(
         // a reference.
         if let Some(rest) = line.trim().strip_prefix('@')
             && !rest.is_empty()
-                && !rest.chars().any(char::is_whitespace)
-                && depth < MAX_IMPORT_DEPTH
-                && let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited) {
-                    out.push_str(&expanded);
-                    if !expanded.ends_with('\n') {
-                        out.push('\n');
-                    }
-                    continue;
-                }
+            && !rest.chars().any(char::is_whitespace)
+            && depth < MAX_IMPORT_DEPTH
+            && let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited)
+        {
+            out.push_str(&expanded);
+            if !expanded.ends_with('\n') {
+                out.push('\n');
+            }
+            continue;
+        }
         out.push_str(line);
         out.push('\n');
     }
@@ -296,7 +296,8 @@ fn try_expand_import(
     let body = std::fs::read_to_string(&canonical).ok()?;
     visited.insert(canonical.clone());
     let parent = canonical
-        .parent().map_or_else(|| base_dir.to_path_buf(), Path::to_path_buf);
+        .parent()
+        .map_or_else(|| base_dir.to_path_buf(), Path::to_path_buf);
     let expanded = expand_imports_rec(&body, &parent, depth_of_import, visited);
     // Allow siblings to reference the same file: the visited guard
     // is for cycles, not for de-duplication.

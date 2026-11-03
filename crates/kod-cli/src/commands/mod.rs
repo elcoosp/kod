@@ -148,13 +148,15 @@ pub async fn engine_from_config(
     // Model selection: explicit override wins; otherwise the config's
     // default endpoint.
     let model_name = opts
-        .model_override.map_or_else(|| config.llm.default_endpoint().model.clone(), String::from);
+        .model_override
+        .map_or_else(|| config.llm.default_endpoint().model.clone(), String::from);
 
     // DB path: caller override first, then the default under home.
-    let db_path = if let Some(p) = opts.db_path { p } else {
-        let home = dirs::home_dir().ok_or_else(|| {
-            KodError::Config("Could not determine home directory".to_string())
-        })?;
+    let db_path = if let Some(p) = opts.db_path {
+        p
+    } else {
+        let home = dirs::home_dir()
+            .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
         home.join(".kod").join("data").join("kod.redb")
     };
     // Parent dir must exist before `KodEngine::new` opens the db.
@@ -507,9 +509,7 @@ impl Cli {
                     match action {
                         None | Some(SkillsAction::List) => run_skills_list(*json).await,
                         Some(SkillsAction::New { name }) => run_skills_new(name),
-                        Some(SkillsAction::Remove { name, yes }) => {
-                            run_skills_remove(name, *yes)
-                        }
+                        Some(SkillsAction::Remove { name, yes }) => run_skills_remove(name, *yes),
                         Some(SkillsAction::Edit { name }) => run_skills_edit(name),
                         Some(SkillsAction::Show { name }) => run_skills_show(name),
                         Some(SkillsAction::Export { name, dest, force }) => {
@@ -546,9 +546,7 @@ impl Cli {
                         Some(ConfigAction::Edit) => run_config_edit(),
                         Some(ConfigAction::Validate) => run_config_validate(),
                         Some(ConfigAction::InitFrom { name }) => run_config_init_from(name),
-                        Some(ConfigAction::Migrate { dry_run }) => {
-                            run_config_migrate(*dry_run)
-                        }
+                        Some(ConfigAction::Migrate { dry_run }) => run_config_migrate(*dry_run),
                         Some(ConfigAction::ShowRaw) => run_config_show_raw(),
                         Some(ConfigAction::Export { path: dest, force }) => {
                             run_config_export(dest.clone(), *force)
@@ -730,9 +728,7 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {e}")))?;
                 rt.block_on(async {
                     match action {
-                        TraceAction::List { limit, path } => {
-                            run_trace_list(*limit, path.clone())
-                        }
+                        TraceAction::List { limit, path } => run_trace_list(*limit, path.clone()),
                         TraceAction::Show { id, path } => run_trace_show(*id, path.clone()),
                         TraceAction::Json { path } => run_trace_json(path.clone()),
                         TraceAction::Replay { id, path, strict } => {
@@ -781,7 +777,6 @@ impl Cli {
                         summary.clone(),
                         details.clone(),
                     )
-
                 })
             }
             Some(Command::IfBench {
@@ -896,8 +891,14 @@ impl Cli {
                             if existing.is_empty() {
                                 println!(
                                     "Skills:  none found — put .md skills in {} or {}",
-                                    dirs.first().map_or_else(|| "~/.kod/skills".to_string(), |d| d.display().to_string()),
-                                    dirs.get(1).map_or_else(|| "~/.agents/skills".to_string(), |d| d.display().to_string()),
+                                    dirs.first().map_or_else(
+                                        || "~/.kod/skills".to_string(),
+                                        |d| d.display().to_string()
+                                    ),
+                                    dirs.get(1).map_or_else(
+                                        || "~/.agents/skills".to_string(),
+                                        |d| d.display().to_string()
+                                    ),
                                 );
                             } else {
                                 println!("Skills:  {}", existing.join(", "));
@@ -2112,12 +2113,12 @@ fn parse_kv_args(args: &[String]) -> Result<serde_json::Value> {
     for token in args {
         let Some((k, v)) = token.split_once('=') else {
             {
-                            return Err(KodError::InvalidParameters {
-                                reason: format!(
-                                    "argument {token:?} is not key=value. Use `key=value` for every argument, or pass a JSON object as a single token."
-                                ),
-                            });
-                        }
+                return Err(KodError::InvalidParameters {
+                    reason: format!(
+                        "argument {token:?} is not key=value. Use `key=value` for every argument, or pass a JSON object as a single token."
+                    ),
+                });
+            }
         };
         if k.is_empty() {
             return Err(KodError::InvalidParameters {
@@ -3310,7 +3311,7 @@ mod coverage_cli_render {
     use super::*;
     use chrono::{DateTime, Utc};
     use kod_tui::app::Message;
-    use kod_types::{AgentId, MessageId, MessageRole, MessageMetadata};
+    use kod_types::{AgentId, MessageId, MessageMetadata, MessageRole};
 
     fn frozen_ts() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")

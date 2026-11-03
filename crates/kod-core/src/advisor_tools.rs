@@ -38,7 +38,7 @@ use kod_swarm::advisor::{
     Admission, Advice, Delivery, EmissionGuard, PrimaryState, Severity, route,
 };
 use kod_tools::{Tool, ToolContext};
-use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, LoadMode};
+use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -235,19 +235,19 @@ impl Tool for AdviseTool {
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
         let Some(note) = params.get("note").and_then(|v| v.as_str()) else {
             {
-                            return Ok(ToolResult::Error(
-                                "advise: `note` is required and must be a string".to_string(),
-                            ));
-                        }
+                return Ok(ToolResult::Error(
+                    "advise: `note` is required and must be a string".to_string(),
+                ));
+            }
         };
         let Some(severity_str) = params.get("severity").and_then(|v| v.as_str()) else {
             {
-                            return Ok(ToolResult::Error(
-                                "advise: `severity` is required and must be one of \
+                return Ok(ToolResult::Error(
+                    "advise: `severity` is required and must be one of \
                                  \"nit\", \"concern\", \"blocker\""
-                                    .to_string(),
-                            ));
-                        }
+                        .to_string(),
+                ));
+            }
         };
         let Some(severity) = parse_severity(severity_str) else {
             return Ok(ToolResult::Error(format!(

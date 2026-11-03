@@ -1,5 +1,5 @@
 use kod_memory::short_term::ShortTermMemory;
-use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+use kod_types::{MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
 use time::OffsetDateTime;
 
 fn create_entry(content: &str) -> MemoryEntry {

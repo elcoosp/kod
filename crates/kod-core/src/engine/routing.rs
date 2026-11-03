@@ -281,7 +281,10 @@ impl KodEngine {
         // Hygiene: read the cached (window, max_out). `set_registry`
         // populates it from the effective endpoint; a caller that
         // never installed a registry sees the built-in default.
-        let (window, max_out) = *self.budget_hint.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (window, max_out) = *self
+            .budget_hint
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let budget = kod_core_state::budget::PromptBudget::from_tokens(window, max_out);
         // H-E3: subtract the parts the engine appends outside the four
         // budgeted sections — the environment/tool-use trailer, the
@@ -461,18 +464,9 @@ impl KodEngine {
         // prefix (cold → re-process the whole transcript).
         let preferred_pricing = self.pricing_for(&preferred).await;
         let penalty = match preferred_pricing {
-            Some(p) => self
-                .cache_ledger
-                .lock()
-                .ok()
-                .map_or(0.0, |l| {
-                    l.switch_penalty_usd(
-                        &preferred.endpoint,
-                        head_fingerprint,
-                        &p,
-                        transcript_tokens,
-                    )
-                }),
+            Some(p) => self.cache_ledger.lock().ok().map_or(0.0, |l| {
+                l.switch_penalty_usd(&preferred.endpoint, head_fingerprint, &p, transcript_tokens)
+            }),
             // No pricing → cannot estimate; treat as zero penalty so
             // the classification's choice is honoured (local
             // endpoints have no cost, and the switch is free).
@@ -491,17 +485,18 @@ impl KodEngine {
             (Some(a), Some(b)) => {
                 let m = 1_000_000.0;
                 let diff = b.input_per_mtok_usd - a.input_per_mtok_usd;
-                (f64::from(u32::try_from(transcript_tokens).unwrap_or(u32::MAX)) / m) * diff.max(0.0)
+                (f64::from(u32::try_from(transcript_tokens).unwrap_or(u32::MAX)) / m)
+                    * diff.max(0.0)
             }
             _ => 0.0,
         };
-        let chosen = self
-            .cache_ledger
-            .lock()
-            .ok().map_or_else(|| preferred.endpoint.clone(), |l| {
+        let chosen = self.cache_ledger.lock().ok().map_or_else(
+            || preferred.endpoint.clone(),
+            |l| {
                 l.gate(&preferred.endpoint, &sticky, per_turn_saving, penalty)
                     .to_string()
-            });
+            },
+        );
         if chosen == sticky {
             // Hop declined; move the warm endpoint to the front of
             // the chain. The preferred endpoint stays as a fallback
@@ -914,9 +909,13 @@ impl KodEngine {
                 // are `Option<u64>`; prompt_tokens is `usize`, so cast.
                 input_tokens: usage
                     .prompt_tokens
-                    .saturating_sub(usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
-                    .saturating_sub(usize::try_from(usage.cache_creation_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
-                    as u64,
+                    .saturating_sub(
+                        usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX),
+                    )
+                    .saturating_sub(
+                        usize::try_from(usage.cache_creation_tokens.unwrap_or(0))
+                            .unwrap_or(usize::MAX),
+                    ) as u64,
                 output_tokens: usage.completion_tokens as u64,
                 cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
                 cache_write_tokens: usage.cache_creation_tokens.unwrap_or(0),

@@ -16,8 +16,8 @@
 //! The plan is per-transcript (keyed the same as history) so a
 //! swarm agent carries its own.
 
-use serde::{Deserialize, Serialize};
 use num_traits::ToPrimitive;
+use serde::{Deserialize, Serialize};
 
 /// One step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +213,11 @@ impl Plan {
                 PlanStatus::Skipped => "·",
                 PlanStatus::Pending => " ",
             };
-            std::fmt::Write::write_fmt(&mut out, format_args!("{} {}. {}\n", marker, s.id + 1, s.text)).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("{} {}. {}\n", marker, s.id + 1, s.text),
+            )
+            .ok();
             if let Some(notes) = self.notes.get(&s.id) {
                 for n in notes {
                     std::fmt::Write::write_fmt(&mut out, format_args!("   note: {n}\n")).ok();
@@ -221,7 +225,11 @@ impl Plan {
             }
         }
         if let Some(cur) = self.current_step() {
-            std::fmt::Write::write_fmt(&mut out, format_args!("\nCurrent step: {}. {}\n", cur.id + 1, cur.text)).ok();
+            std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("\nCurrent step: {}. {}\n", cur.id + 1, cur.text),
+            )
+            .ok();
         }
         out
     }
@@ -707,13 +715,19 @@ mod tests {
     #[test]
     fn progress_reports_completed_fraction() {
         let mut p = Plan::new("g", vec!["a".into(), "b".into(), "c".into()]);
-        assert_eq!(f64::from(p.progress()).to_bits(), f64::from(0.0_f32).to_bits());
+        assert_eq!(
+            f64::from(p.progress()).to_bits(),
+            f64::from(0.0_f32).to_bits()
+        );
         p.set_status(0, PlanStatus::Done);
         let f = p.progress();
         assert!((f - 1.0 / 3.0).abs() < 1e-6);
         p.set_status(1, PlanStatus::Skipped);
         p.set_status(2, PlanStatus::Done);
-        assert_eq!(f64::from(p.progress()).to_bits(), f64::from(1.0_f32).to_bits());
+        assert_eq!(
+            f64::from(p.progress()).to_bits(),
+            f64::from(1.0_f32).to_bits()
+        );
     }
 
     #[test]

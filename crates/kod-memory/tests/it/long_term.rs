@@ -1,5 +1,5 @@
 use kod_memory::long_term::LongTermMemory;
-use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+use kod_types::{MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 

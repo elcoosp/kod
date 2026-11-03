@@ -376,9 +376,7 @@ mod post_semaphore_is_bounded {
         // satisfy it.
         let start = src.find("fn spawn_post").expect("spawn_post present");
         let tail = &src[start..];
-        let end = tail
-            .find("\n    }\n")
-            .map_or(src.len(), |i| start + i);
+        let end = tail.find("\n    }\n").map_or(src.len(), |i| start + i);
         let region = &src[start..end];
         assert!(
             !region.contains("no queue cap"),

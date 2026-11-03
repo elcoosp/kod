@@ -733,7 +733,8 @@ impl ChatWidget {
         } else {
             total_rows.saturating_sub(height).saturating_sub(offset)
         };
-        let skip_rows_u16 = u16::try_from(skip_rows_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+        let skip_rows_u16 =
+            u16::try_from(skip_rows_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
 
         // Bug-hunt: `area.width - 1` panics on a 0-width rect.
         let text_area = if show_bar {
@@ -958,7 +959,7 @@ mod coverage_chat_widget {
     use super::*;
     use crate::app::Message;
     use chrono::Utc;
-    use kod_types::{MessageId, MessageRole, MessageMetadata};
+    use kod_types::{MessageId, MessageMetadata, MessageRole};
 
     fn buffer_text(buf: &Buffer) -> String {
         buf.content()
@@ -1140,7 +1141,11 @@ mod coverage_chat_widget {
             .find(|l| {
                 let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
                 t.contains(needle)
-            }).map_or_else(|| panic!("no row containing {needle:?}"), |l| l.spans.clone())
+            })
+            .map_or_else(
+                || panic!("no row containing {needle:?}"),
+                |l| l.spans.clone(),
+            )
     }
 
     #[test]

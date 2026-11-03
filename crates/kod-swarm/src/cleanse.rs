@@ -175,9 +175,7 @@ impl CleanseScheduler {
         let mut fresh: Vec<FileKey> = self
             .pending
             .keys()
-            .filter(|f| {
-                !claimed.contains(f) && self.owned.get(*f).is_none_or(|o| o.released)
-            })
+            .filter(|f| !claimed.contains(f) && self.owned.get(*f).is_none_or(|o| o.released))
             .cloned()
             .collect();
         fresh.sort();

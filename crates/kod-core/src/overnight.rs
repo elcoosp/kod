@@ -104,7 +104,8 @@ impl OvernightManifest {
         // The std type is what a caller without the `time` dependency
         // produces. Seconds is the common unit; a sub-second overnight
         // duration is not a thing.
-        let as_time = time::Duration::seconds(i64::try_from(duration.as_secs()).unwrap_or(i64::MAX));
+        let as_time =
+            time::Duration::seconds(i64::try_from(duration.as_secs()).unwrap_or(i64::MAX));
         Self::for_duration(
             mission,
             as_time,
@@ -220,7 +221,11 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
     let failed = cards.len() - done;
 
     let mut out = format!("# Overnight: {mission}\n\n");
-    std::fmt::Write::write_fmt(&mut out, format_args!("{done} of {} subtasks completed", cards.len())).ok();
+    std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!("{done} of {} subtasks completed", cards.len()),
+    )
+    .ok();
     if failed > 0 {
         std::fmt::Write::write_fmt(&mut out, format_args!(", {failed} failed")).ok();
     }
@@ -243,7 +248,8 @@ pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String 
         std::fmt::Write::write_fmt(&mut out, format_args!("{mark} **{}**\n\n", card.name)).ok();
         std::fmt::Write::write_fmt(&mut out, format_args!("{}\n\n", card.summary.trim())).ok();
         if let Some(v) = &card.validation {
-            std::fmt::Write::write_fmt(&mut out, format_args!("*Validation:* {}\n\n", v.trim())).ok();
+            std::fmt::Write::write_fmt(&mut out, format_args!("*Validation:* {}\n\n", v.trim()))
+                .ok();
         }
         if !card.files_written.is_empty() {
             out.push_str("*Files:* ");

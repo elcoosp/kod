@@ -41,7 +41,9 @@ impl PreflightSample {
         let mut out = Vec::new();
         if let (Some(total), Some(free)) = (self.total_ram_bytes, self.free_ram_bytes)
             && total > 0
-            && (f64::from(u32::try_from(free).unwrap_or(u32::MAX)) / f64::from(u32::try_from(total).unwrap_or(u32::MAX))) < 0.10
+            && (f64::from(u32::try_from(free).unwrap_or(u32::MAX))
+                / f64::from(u32::try_from(total).unwrap_or(u32::MAX)))
+                < 0.10
         {
             out.push(format!("less than 10% RAM free ({free} of {total} bytes)"));
         }

@@ -73,8 +73,12 @@ impl TokenUsage {
     #[must_use]
     pub fn uncached_input_tokens(&self) -> usize {
         self.prompt_tokens
-            .saturating_sub(usize::try_from(self.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
-            .saturating_sub(usize::try_from(self.cache_creation_tokens.unwrap_or(0)).unwrap_or(usize::MAX))
+            .saturating_sub(
+                usize::try_from(self.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX),
+            )
+            .saturating_sub(
+                usize::try_from(self.cache_creation_tokens.unwrap_or(0)).unwrap_or(usize::MAX),
+            )
     }
 
     /// Fraction of input tokens served from cache this call.
@@ -89,7 +93,10 @@ impl TokenUsage {
         if self.prompt_tokens == 0 {
             return None;
         }
-        Some(f64::from(u32::try_from(read).unwrap_or(u32::MAX)) / f64::from(u32::try_from(self.prompt_tokens).unwrap_or(u32::MAX)))
+        Some(
+            f64::from(u32::try_from(read).unwrap_or(u32::MAX))
+                / f64::from(u32::try_from(self.prompt_tokens).unwrap_or(u32::MAX)),
+        )
     }
 
     /// H-E6: sum two usage reports from the same logical turn. In an
@@ -164,7 +171,9 @@ impl GenerationResponse {
     #[must_use]
     pub fn usage(&self) -> Option<&TokenUsage> {
         match self {
-GenerationResponse::Text { usage, .. } | GenerationResponse::ToolCalls { usage, .. } | GenerationResponse::Mixed { usage, .. } => usage.as_ref(),
+            GenerationResponse::Text { usage, .. }
+            | GenerationResponse::ToolCalls { usage, .. }
+            | GenerationResponse::Mixed { usage, .. } => usage.as_ref(),
         }
     }
 }
