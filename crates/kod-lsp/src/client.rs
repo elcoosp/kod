@@ -176,8 +176,7 @@ impl LspClient {
     pub fn is_alive(&mut self) -> bool {
         match self.child.try_wait() {
             Ok(None) => true,     // still running
-            Ok(Some(_)) => false, // exited
-            Err(_) => false,      // unreachable: unknown state, treat as dead
+            Ok(Some(_)) | Err(_) => false, // exited or unreachable; treat as dead
         }
     }
 

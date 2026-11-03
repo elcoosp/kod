@@ -1088,8 +1088,7 @@ mod integration_tests {
             // Error, RequiresConfirmation, and any future ToolResult
             // variant all mean "no dispatch happened"; only Success
             // with `source == "internal-url"` would be a bug.
-            Ok(_) => {}
-            Err(_) => {}
+            _ => {}
         }
     }
 

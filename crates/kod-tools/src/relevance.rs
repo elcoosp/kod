@@ -155,7 +155,6 @@ impl SearchBackend for RipgrepBackend {
                         results.hits.push(hit);
                     }
                 }
-                Some("begin" | "end" | "context" | "summary") => {}
                 _ => {}
             }
         }

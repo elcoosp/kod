@@ -292,9 +292,10 @@ fn run_one(stage: &Stage, input: String) -> Result<String, PipelineError> {
                 .collect::<Vec<_>>()
                 .join("\n"))
         }
-        Stage::HeadLines { n } => Ok(take_lines(&input, *n, LineBound::Head)),
+        Stage::HeadLines { n } | Stage::MaxLines { n } => {
+            Ok(take_lines(&input, *n, LineBound::Head))
+        }
         Stage::TailLines { n } => Ok(take_lines(&input, *n, LineBound::Tail)),
-        Stage::MaxLines { n } => Ok(take_lines(&input, *n, LineBound::Head)),
         Stage::Native { filter } => match crate::native::run(filter, &input) {
             Some(out) => Ok(out),
             None => Err(PipelineError::Stage {
