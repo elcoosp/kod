@@ -38,7 +38,7 @@ async fn setters_apply_and_the_manager_still_works() {
     let mut mgr = manager_in(dir.path());
 
     mgr.set_context_window(2048);
-    mgr.set_scorer(Default::default());
+    mgr.set_scorer(kod_memory::HybridScorer::default());
     mgr.set_redactor(Some(Redactor::default()));
     mgr.disable_redaction();
 

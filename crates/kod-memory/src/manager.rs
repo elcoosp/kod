@@ -2551,7 +2551,7 @@ mod confidence_bump_tests {
             .store_with_metadata(
                 MemoryType::LongTerm,
                 "the user prefers tabs over spaces",
-                Default::default(),
+                kod_types::MemoryMetadata::default(),
             )
             .await
             .expect("first store");
@@ -2569,7 +2569,7 @@ mod confidence_bump_tests {
             .store_with_metadata(
                 MemoryType::LongTerm,
                 "the user prefers tabs over spaces",
-                Default::default(),
+                kod_types::MemoryMetadata::default(),
             )
             .await
             .expect("second store");

@@ -80,7 +80,7 @@ impl HubTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
-                load_mode: Default::default(),
+                load_mode: kod_types::tool::LoadMode::default(),
             },
             hub,
             agent,
