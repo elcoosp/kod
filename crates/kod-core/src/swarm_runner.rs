@@ -42,6 +42,7 @@ use kod_provider::{GenerationOptions, LlmProvider};
 use kod_swarm::coordination::Task;
 use kod_swarm::{AgentBuilder, AgentSwarm, Capability};
 use kod_types::{AgentId, Priority, TaskId};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// One spawned agent's dispatch slot: `(id, name, subtask, write
@@ -2416,14 +2417,22 @@ impl SwarmRunner {
         let mut blocks = String::new();
         for r in per_agent {
             match &r.outcome {
-                AgentOutcome::Completed(text) => blocks.push_str(&format!(
-                    "\n### Agent: {}\nSubtask: {}\nResult:\n{}\n",
-                    r.name, r.subtask, text
-                )),
-                AgentOutcome::Failed(e) => blocks.push_str(&format!(
-                    "\n### Agent: {} (FAILED)\nSubtask: {}\nError: {}\n",
-                    r.name, r.subtask, e
-                )),
+                AgentOutcome::Completed(text) => {
+                    writeln!(
+                        blocks,
+                        "\n### Agent: {}\nSubtask: {}\nResult:\n{}",
+                        r.name, r.subtask, text
+                    )
+                    .ok();
+                }
+                AgentOutcome::Failed(e) => {
+                    writeln!(
+                        blocks,
+                        "\n### Agent: {} (FAILED)\nSubtask: {}\nError: {}",
+                        r.name, r.subtask, e
+                    )
+                    .ok();
+                }
             }
         }
 
@@ -2478,7 +2487,9 @@ impl SwarmRunner {
             std::fmt::Write::write_fmt(&mut out, format_args!("Subtask: {}\n\n", r.subtask)).ok();
             match &r.outcome {
                 AgentOutcome::Completed(text) => out.push_str(text),
-                AgentOutcome::Failed(e) => out.push_str(&format!("(failed: {e})")),
+                AgentOutcome::Failed(e) => {
+                    write!(out, "(failed: {e})").ok();
+                }
             }
             out.push_str("\n\n");
         }

@@ -17,6 +17,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
 };
+use std::fmt::Write as _;
 use std::io::Stdout;
 use std::sync::Arc;
 use std::time::Duration;
@@ -4576,7 +4577,7 @@ impl TuiLoop {
                                     }
                                 }
                             }
-                            msg.push_str(&format!("\nProgress: {:.0}%\n", plan.progress() * 100.0));
+                            writeln!(msg, "\nProgress: {:.0}%", plan.progress() * 100.0).ok();
                             self.app.push_system_message(msg.trim_end());
                         }
                         None => {

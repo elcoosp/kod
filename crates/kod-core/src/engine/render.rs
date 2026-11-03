@@ -858,48 +858,58 @@ pub(crate) fn render_compiler_auto_check(
     match baseline {
         None => {
             if diags.is_empty() {
-                block.push_str(&format!("`{source}` is clean.\n"));
+                writeln!(block, "`{source}` is clean.").ok();
             } else {
-                block.push_str(&format!(
+                write!(
+                    block,
                     "`{source}` reported {} diagnostic(s). \
                      (No baseline was captured, so all are shown — \
                      some may pre-date this write.)\n\n",
-                    diags.len(),
-                ));
+                    diags.len()
+                )
+                .ok();
                 render_diagnostics(block, diags, 20);
             }
         }
         Some(_) if !new_diags.is_empty() => {
-            block.push_str(&format!(
+            write!(
+                block,
                 "`{source}` reported {} NEW diagnostic(s) from this write:\n\n",
-                new_diags.len(),
-            ));
+                new_diags.len()
+            )
+            .ok();
             let owned: Vec<kod_tools::check::Diagnostic> =
                 new_diags.iter().map(|d| (*d).clone()).collect();
             render_diagnostics(block, &owned, 20);
             if resolved_count > 0 {
-                block.push_str(&format!(
-                    "\n({resolved_count} pre-existing diagnostic(s) resolved.)\n",
-                ));
+                writeln!(
+                    block,
+                    "\n({resolved_count} pre-existing diagnostic(s) resolved.)"
+                )
+                .ok();
             }
             block.push_str("\nFix the new errors before continuing.\n");
         }
         Some(_) if resolved_count > 0 => {
-            block.push_str(&format!(
+            writeln!(
+                block,
                 "`{source}`: your write introduced no new errors and \
-                 resolved {resolved_count} pre-existing diagnostic(s).\n",
-            ));
+                 resolved {resolved_count} pre-existing diagnostic(s)."
+            )
+            .ok();
         }
         Some(_) if diags.is_empty() => {
-            block.push_str(&format!("`{source}` is clean.\n"));
+            writeln!(block, "`{source}` is clean.").ok();
         }
         Some(_) => {
-            block.push_str(&format!(
+            writeln!(
+                block,
                 "`{source}`: your write introduced no new errors. \
                  {} pre-existing diagnostic(s) remain, \
-                 unrelated to this change.\n",
-                diags.len(),
-            ));
+                 unrelated to this change.",
+                diags.len()
+            )
+            .ok();
         }
     }
 }

@@ -35,6 +35,7 @@
 //! and it sidesteps the incremental-parser-vs-fresh-bytes confusion
 //! entirely.
 
+use std::fmt::Write as _;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -424,7 +425,9 @@ impl TuiSession {
                         0x1b => msg.push_str("\\x1b"),
                         0x07 => msg.push_str("\\a"),
                         b' '..=b'~' => msg.push(b as char),
-                        _ => msg.push_str(&format!("\\x{b:02x}")),
+                        _ => {
+                            write!(msg, "\\x{b:02x}").ok();
+                        }
                     }
                 }
                 msg.push_str("\n--- end raw ---\n");
