@@ -1567,7 +1567,7 @@ impl TuiLoop {
                         };
                         std::fmt::Write::write_fmt(
                             &mut buf,
-                            format_args!("<file path=\"{}\">\n{}\n</file>\n", f.display(), shown,),
+                            format_args!("<file path=\"{}\">\n{}\n</file>\n", f.display(), shown,)
                         )
                         .ok();
                     }
@@ -2124,7 +2124,7 @@ impl TuiLoop {
                             previous_error,
                         } => Event::AgentMessage(
                             "swarm".to_string(),
-                            format!("{name} retrying ({attempt}/{max_attempts}): {previous_error}",),
+                            format!("{name} retrying ({attempt}/{max_attempts}): {previous_error}",)
                         ),
                         kod_core::SwarmEvent::Merging => Event::SwarmMerging,
                         kod_core::SwarmEvent::WorktreeCreated {
@@ -4563,7 +4563,7 @@ impl TuiLoop {
                                 };
                                 std::fmt::Write::write_fmt(
                                     &mut msg,
-                                    format_args!("{} {}. {}\n", marker, step.id + 1, step.text,),
+                                    format_args!("{} {}. {}\n", marker, step.id + 1, step.text,)
                                 )
                                 .ok();
                                 if let Some(notes) = plan.notes.get(&step.id) {
@@ -4930,7 +4930,7 @@ impl TuiLoop {
                         } else {
                             std::fmt::Write::write_fmt(
                                 &mut msg,
-                                format_args!("  session:  ${:.4} (no cap)\n", snap.session_usd,),
+                                format_args!("  session:  ${:.4} (no cap)\n", snap.session_usd,)
                             )
                             .ok();
                         }
@@ -7343,7 +7343,7 @@ mod tests {
             rd.filter_map(|e| e.ok().map(|e| e.path())).any(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("session-") && n.ends_with(".html"))
+                    .is_some_and(|n| n.starts_with("session-") && n.to_lowercase().ends_with(".html"))
             })
         });
         assert!(

@@ -304,7 +304,7 @@ pub async fn run_swarm_inner(
                         .map(|p| p.display().to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    eprintln!("\n⚠ {agent_name} wrote outside its declared scope: {list}\n",);
+                    eprintln!("\n⚠ {agent_name} wrote outside its declared scope: {list}\n");
                 }
                 SwarmEvent::WorktreesMerged {
                     merged,

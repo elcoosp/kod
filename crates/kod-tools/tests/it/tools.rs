@@ -122,7 +122,7 @@ async fn test_list_files_respects_gitignore() {
                 "keep.txt listed: {files:?}"
             );
             assert!(
-                files.iter().any(|f| f.ends_with(".env")),
+                files.iter().any(|f| f.to_lowercase().ends_with(".env")),
                 "dotfiles stay visible: {files:?}"
             );
             assert!(

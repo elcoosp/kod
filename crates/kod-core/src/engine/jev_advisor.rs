@@ -418,7 +418,7 @@ impl KodEngine {
         if elided > 0 {
             std::fmt::Write::write_fmt(
                 &mut filtered,
-                format_args!("\n… ({elided} lines of context-only hunks elided by Jev)",),
+                format_args!("\n… ({elided} lines of context-only hunks elided by Jev)",)
             )
             .ok();
         }
