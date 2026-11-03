@@ -85,7 +85,7 @@ mod imp {
             std::fs::create_dir_all(parent).map_err(KodError::Io)?;
         }
         let _lock = SocketLock::acquire(path)?;
-        if let Ok(_) = UnixStream::connect(path).await {
+        if UnixStream::connect(path).await.is_ok() {
             Err(KodError::InvalidState(format!(
                 "another kod server is already listening on {}",
                 path.display()

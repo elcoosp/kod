@@ -285,9 +285,7 @@ fn intercept_cat(args: &[&str]) -> Option<Intercept> {
         }
         files.push(a);
     }
-    let Some(first) = files.first() else {
-        return None;
-    };
+    let first = files.first()?;
     let extra = if files.len() > 1 {
         format!(
             " (`cat` got {} paths — one `read_file` call per file)",

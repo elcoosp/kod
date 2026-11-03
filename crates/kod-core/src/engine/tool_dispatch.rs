@@ -923,7 +923,7 @@ impl KodEngine {
         // Tier 1.3 — thread the engine's read-protection and
         // redactor into the per-call context.
         if let Ok(guard) = self.read_protection.read() {
-            tool_context.read_protection = guard.clone();
+            tool_context.read_protection.clone_from(&*guard);
         }
         tool_context.redactor = Some(self.redactor.clone());
         // F2b-10: thread the config's `.git` write protection.
@@ -1729,7 +1729,7 @@ impl KodEngine {
                 // per-write diagnostics cost.
                 let lsp_config_auto = kod_config::KodConfig::load_cached()
                     .ok()
-                    .map_or(true, |c| c.lsp.auto_diagnostics);
+                    .is_none_or(|c| c.lsp.auto_diagnostics);
                 let lsp_wanted = self.auto_lsp_setting() && lsp_config_auto;
                 let compiler_wanted = self.auto_check_setting();
                 // Delta 7.2 batch mode: a round that writes several

@@ -283,7 +283,7 @@ fn sanitize_in_place(
             path: path.to_string(),
             keyword: "<deeply-nested-schema-dropped>".to_string(),
         });
-        *value = Value::Object(Default::default());
+        *value = Value::Object(serde_json::Map::default());
         return;
     }
     let Some(obj) = value.as_object_mut() else {

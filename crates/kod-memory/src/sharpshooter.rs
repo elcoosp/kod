@@ -656,7 +656,7 @@ mod tests {
             use std::fmt::Write as _;
             let mut s = String::new();
             for i in 0..200 {
-                let _ = write!(s, "line {i}\n");
+                let _ = writeln!(s, "line {i}");
             }
             s
         };

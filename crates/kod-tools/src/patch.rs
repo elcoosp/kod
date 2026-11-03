@@ -760,7 +760,7 @@ mod coverage_render_unified {
             use std::fmt::Write as _;
             let mut s = String::new();
             for i in 1..=25 {
-                let _ = write!(s, "{i}\n");
+                let _ = writeln!(s, "{i}");
             }
             s
         };

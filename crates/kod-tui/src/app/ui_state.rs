@@ -884,9 +884,7 @@ ConfirmKind::Clear | // The actual memory+checkpoint clear happens in the
     /// leave the modal closed. On parse failure the modal stays open
     /// and `None` is returned.
     pub fn edit_commit(&mut self) -> Option<(u64, serde_json::Value)> {
-        let Some(edit) = self.pending_edit.as_ref() else {
-            return None;
-        };
+        let edit = self.pending_edit.as_ref()?;
         let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&edit.buffer) else {
             return None;
         };

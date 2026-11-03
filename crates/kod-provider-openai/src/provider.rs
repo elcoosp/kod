@@ -1735,7 +1735,7 @@ mod coverage_openai_provider {
             messages: vec![assistant, tool],
             system: SystemPrompt::default(),
             tools: vec![],
-            options: Default::default(),
+            options: GenerationOptions::default(),
             cache_transcript: true,
             native_compaction_block: None,
             image_frames: Vec::new(),

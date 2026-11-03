@@ -330,7 +330,7 @@ impl ProtocolHandler for ConflictHandler {
             let body = &text[b.start..b.end];
             let id = stable_id(&path, b.start, body);
             let mut registered = b.clone();
-            registered.id = id.clone();
+            registered.id.clone_from(&id);
             self.store.register(&path, registered, body.to_string());
             std::fmt::Write::write_fmt(
                 &mut listing,

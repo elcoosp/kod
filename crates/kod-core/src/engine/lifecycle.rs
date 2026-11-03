@@ -728,7 +728,7 @@ impl KodEngine {
         // in which case we fall back to the previous behaviour
         // (the OS file lock releases when the last reference drops).
         if let Ok(router) = Arc::try_unwrap(self.router.clone()) {
-            router.close_memory()
+            router.close_memory();
         } else {
             tracing::debug!(
                 "router Arc still shared at shutdown; redb will close when \

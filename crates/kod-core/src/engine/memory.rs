@@ -155,7 +155,7 @@ impl KodEngine {
             let mut found = String::new();
             for m in h.iter().rev() {
                 if matches!(m.role, kod_types::MessageRole::User) {
-                    found = m.content.clone();
+                    found.clone_from(&m.content);
                     break;
                 }
             }

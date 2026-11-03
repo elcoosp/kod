@@ -225,9 +225,7 @@ impl SkillParser {
         let pattern = format!("{attr}='");
         let mut search_at = 0;
         loop {
-            let Some(found) = tag[search_at..].find(&pattern) else {
-                return None;
-            };
+            let found = tag[search_at..].find(&pattern)?;
             let idx = search_at + found;
             let preceded_ok = tag[..idx].chars().last().is_none_or(char::is_whitespace);
             if preceded_ok {

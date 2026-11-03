@@ -1659,7 +1659,7 @@ impl MemoryManager {
                 let Some(mut fresh) = self.long_term.get(id).await? else {
                     continue;
                 };
-                fresh.metadata.tags = tags.clone();
+                fresh.metadata.tags.clone_from(&tags);
                 updated.push(fresh);
             }
             if !updated.is_empty()

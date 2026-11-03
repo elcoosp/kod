@@ -817,7 +817,7 @@ mod instructions_proptests {
                 use std::fmt::Write as _;
                 let mut s = String::new();
                 for l in src.lines() {
-                    let _ = write!(s, "{l}\n");
+                    let _ = writeln!(s, "{l}");
                 }
                 s
             };
