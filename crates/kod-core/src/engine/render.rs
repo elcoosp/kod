@@ -699,9 +699,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .is_some();
 
         if timed_out {
-            out.push_str(&format!(
-                "\n[command timed out after {timeout_secs}s — killed]"
-            ));
+            write!(out, "\n[command timed out after {timeout_secs}s — killed]").ok();
         }
         if truncated {
             out.push_str("\n[output truncated at cap");
@@ -814,13 +812,15 @@ pub(crate) fn render_diagnostics(
         } else {
             d.message.clone()
         };
-        block.push_str(&format!(
+        write!(
+            block,
             "  {} {} {}:{}:{} — {}\n",
-            d.severity, code, d.file, d.line, d.column, short,
-        ));
+            d.severity, code, d.file, d.line, d.column, short
+        )
+        .ok();
     }
     if diags.len() > max {
-        block.push_str(&format!("  … and {} more.\n", diags.len() - max));
+        write!(block, "  … and {} more.\n", diags.len() - max).ok();
     }
 }
 
