@@ -101,7 +101,7 @@ impl Tool for HubTool {
             "list" => self.op_list().await,
             "send" => self.op_send(params).await,
             "inbox" => self.op_inbox().await,
-            "jobs" => self.op_jobs(),
+            "jobs" => Ok(self.op_jobs()),
             "start" | "ps" | "logs" | "stop" => Ok(ToolResult::Error(format!(
                 "hub op {op:?} is unavailable: this build has no process \
                  supervisor. Start long-running work with `execute_command` \
@@ -213,7 +213,7 @@ impl HubTool {
     }
 
     /// `jobs` — the background runner's snapshot.
-    fn op_jobs(&self) -> Result<ToolResult> {
+    fn op_jobs(&self) -> ToolResult {
         let snap = self.jobs.snapshot();
         let jobs: Vec<Value> = snap
             .iter()
@@ -224,10 +224,10 @@ impl HubTool {
                 })
             })
             .collect();
-        Ok(ToolResult::Success(serde_json::json!({
+        ToolResult::Success(serde_json::json!({
             "running": self.jobs.running_count(),
             "jobs": jobs,
-        })))
+        }))
     }
 }
 
