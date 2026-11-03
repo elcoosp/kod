@@ -335,7 +335,7 @@ impl WorkPool {
         let min_ratio = candidates[0].1.load_ratio();
         let tied = candidates
             .iter()
-            .take_while(|(_, s)| s.load_ratio() == min_ratio)
+            .take_while(|(_, s)| s.load_ratio().to_bits() == min_ratio.to_bits())
             .count();
         let idx = self.cursor % tied.max(1);
         self.cursor = self.cursor.wrapping_add(1);

@@ -43,7 +43,7 @@ impl SkillsConfig {
             return;
         }
         let clamped = self.match_threshold.clamp(0.0, 1.0);
-        if clamped != self.match_threshold {
+        if clamped.to_bits() != self.match_threshold.to_bits() {
             self.match_threshold = clamped;
         }
         // Floor max_skills_per_query at 1; a zero silently disables

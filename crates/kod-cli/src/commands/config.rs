@@ -325,25 +325,29 @@ pub fn run_config_validate() -> Result<()> {
             cfg.jev.thresholds.clamp();
 
             let mut changes: Vec<String> = Vec::new();
-            if cfg.limits.soft_warn_at != before_limits.soft_warn_at {
+            if cfg.limits.soft_warn_at.to_bits() != before_limits.soft_warn_at.to_bits() {
                 changes.push(format!(
                     "limits.soft_warn_at {} -> {} (must be in [0, 1])",
                     before_limits.soft_warn_at, cfg.limits.soft_warn_at,
                 ));
             }
-            if cfg.limits.max_cost_usd_per_session != before_limits.max_cost_usd_per_session {
+            if cfg.limits.max_cost_usd_per_session.to_bits()
+                != before_limits.max_cost_usd_per_session.to_bits()
+            {
                 changes.push(format!(
                     "limits.max_cost_usd_per_session {} -> {}",
                     before_limits.max_cost_usd_per_session, cfg.limits.max_cost_usd_per_session,
                 ));
             }
-            if cfg.limits.max_cost_usd_per_turn != before_limits.max_cost_usd_per_turn {
+            if cfg.limits.max_cost_usd_per_turn.to_bits()
+                != before_limits.max_cost_usd_per_turn.to_bits()
+            {
                 changes.push(format!(
                     "limits.max_cost_usd_per_turn {} -> {}",
                     before_limits.max_cost_usd_per_turn, cfg.limits.max_cost_usd_per_turn,
                 ));
             }
-            if cfg.skills.match_threshold != before_skills.match_threshold {
+            if cfg.skills.match_threshold.to_bits() != before_skills.match_threshold.to_bits() {
                 changes.push(format!(
                     "skills.match_threshold {} -> {} (must be in [0, 1])",
                     before_skills.match_threshold, cfg.skills.match_threshold,
