@@ -316,8 +316,8 @@ impl KodEngine {
         // only after the last read released, i.e. at the very end of
         // the response. Cloning is one atomic increment on the Arc, so
         // the read lock is held for microseconds.
-        let _provider_probe = self.registry.read().await.clone();
-        if _provider_probe.is_some() {
+        let provider_probe = self.registry.read().await.clone();
+        if provider_probe.is_some() {
             // S10 phase 1: the shared classification + prompt-build
             // pipeline lives in `prepare_turn`. The collected path is
             // the only one that asks the model to plan on the first
@@ -900,8 +900,8 @@ impl KodEngine {
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
-        let _provider_probe = self.registry.read().await.clone();
-        if _provider_probe.is_some() {
+        let provider_probe = self.registry.read().await.clone();
+        if provider_probe.is_some() {
             // S10 phase 2: same pipeline as `process_for`, but the
             // streaming path uses the real trace id for the retrieval
             // log (so `/memory eval` correlates entries with the reply
@@ -1444,8 +1444,8 @@ impl KodEngine {
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
-        let _provider_probe = self.registry.read().await.clone();
-        if _provider_probe.is_some() {
+        let provider_probe = self.registry.read().await.clone();
+        if provider_probe.is_some() {
             // Delta §11.6: start the goal in the runtime. A second
             // call replaces any previous goal (status Dropped).
             self.goal_runtime
