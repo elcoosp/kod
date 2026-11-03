@@ -8,6 +8,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use kod_types::ToolResult;
+use std::fmt::Write as _;
 
 /// Bytes of headroom reserved when capping a JSON tool result: enough
 /// room for the surrounding `{"path": "…", "content": "…", "truncated":
@@ -638,7 +639,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             out.push_str(&shown.join("\n"));
         }
         if files.len() > shown.len() {
-            out.push_str(&format!("\n… and {} more", files.len() - shown.len()));
+            write!(out, "\n… and {} more", files.len() - shown.len()).ok();
         }
         return out;
     }
@@ -648,7 +649,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         if let Some(stderr) = v.get("stderr").and_then(|s| s.as_str())
             && !stderr.trim().is_empty()
         {
-            out.push_str(&format!("\nstderr:\n{}", cap_lines(stderr.trim_end(), 4)));
+            write!(out, "\nstderr:\n{}", cap_lines(stderr.trim_end(), 4)).ok();
         }
         // The runaway-command guard in ExecuteCommandTool reports
         // "stdout_truncated" / "stderr_truncated" so downstream can

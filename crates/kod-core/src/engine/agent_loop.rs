@@ -1,5 +1,6 @@
 use super::*;
 use num_traits::ToPrimitive;
+use std::fmt::Write as _;
 
 /// Redact one prompt-scaffolding block, or return it unchanged when
 /// `in_prompt` redaction is off.
@@ -123,7 +124,7 @@ impl KodEngine {
                     // still read `pending` (apply_steers, the
                     // exhausted-rounds note). The provider no longer
                     // sees this string on the primary path.
-                    pending.push_str(&format!("\n\n{}", section.prompt_block));
+                    write!(pending, "\n\n{}", section.prompt_block).ok();
                     // Persist the structured slice (AD-02): the next
                     // `process_*` call reads `self.history[key]` as
                     // its starting messages, so the tool round-trip
@@ -178,7 +179,7 @@ impl KodEngine {
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
-                    pending.push_str(&format!("\n\n{}", section.prompt_block));
+                    write!(pending, "\n\n{}", section.prompt_block).ok();
                     // Persist the structured slice (AD-02): the next
                     // `process_*` call reads `self.history[key]` as
                     // its starting messages, so the tool round-trip
@@ -254,7 +255,7 @@ impl KodEngine {
             // to the pre-P1-b string (`steer.rs` pins that), so the
             // golden prompts and recorded transcripts are unchanged.
             let body = interrupt.render();
-            pending.push_str(&format!("\n\n{body}\n"));
+            write!(pending, "\n\n{body}\n").ok();
             messages.push(kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
                 kod_types::MessageRole::User,
@@ -628,7 +629,7 @@ impl KodEngine {
             // request messages. The text `pending` string is kept in
             // sync for `apply_steers` and the exhausted-rounds note.
             messages.extend(section.messages.iter().cloned());
-            pending.push_str(&format!("\n\n{}", section.prompt_block));
+            write!(pending, "\n\n{}", section.prompt_block).ok();
             // Persist the structured slice (AD-02). Same rationale as
             // the collected loop above.
             if !section.messages.is_empty() {
