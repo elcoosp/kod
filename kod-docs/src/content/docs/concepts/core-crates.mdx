@@ -1,0 +1,47 @@
+---
+title: Core crates
+description: How the engine's internal sub-crates (kod-core-*) fit together.
+sidebar:
+  order: 11
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The engine is not one crate. It is a family of six under `crates/kod-core*`,
+organised so that each subsystem can be tested without spinning up the
+whole engine:
+
+| Crate | Owns |
+|---|---|
+| `kod-core` | The engine itself: `KodEngine`, agent loop, transcript, compaction dispatch, telemetry wiring, Jev advisor, swarm runner. |
+| `kod-core-routing` | Task classification, context assembly, and model selection. Given a prompt and session state, it decides which provider/model to call and what context to send. |
+| `kod-core-state` | Session persistence (`kod-state.redb`), file-level checkpoints, cost tracking, sensitivity classification. |
+| `kod-core-serve` | ACP (Agent Client Protocol) JSON-RPC server for editor integration. Uses `tokio::sync::mpsc` channels to bridge the engine and connected clients. |
+| `kod-core-quality` | `snapcompact` (context compression via inline PNG), `shake` (mechanical compaction — a deterministic last-resort reduction pass), `repomap` (tree-sitter symbol index generation). |
+| `kod-core-tools` | The tool loop internals: dispatch guards, hook denial, fixtures, `execute_tool` orchestration. |
+
+## Dependency direction
+
+`kod-core` depends on all five sub-crates. The reverse is not true — the
+sub-crates only see the traits they need. That keeps the compiler's
+incremental build fast (a change inside `kod-core-routing` doesn't
+re-compile `kod-core-serve`) and lets each subsystem ship its own tests
+without instantiating the full engine.
+
+## When to reach for which
+
+- Adding a **new provider** → `kod-provider` (trait) + a new
+  `kod-provider-*` crate. The router decides when to use it.
+- Adding a **new tool** → `kod-tools`, then register it in
+  `kod-core-tools::register_default_tools`.
+- Adding a **new compaction strategy** → `kod-core-quality`, then wire
+  it into `kod-core`'s `compaction_dispatcher`.
+- Adding a **new storage backend** → `kod-core-state`.
+- Adding a **new editor transport** → `kod-core-serve` or a new sibling.
+
+## See also
+
+- [Crates reference](/reference/crates/) — full index of all 26 workspace crates
+- [Architecture](/concepts/architecture/) — high-level system diagram
+- [Agent loop](/concepts/agent-loop/) — the turn lifecycle
+- [Compaction](/concepts/compaction/) — how context shrinks across turns

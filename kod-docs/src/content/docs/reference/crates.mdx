@@ -1,0 +1,74 @@
+---
+title: Crates
+description: The 26 crates that make up the KOD workspace, grouped by layer.
+sidebar:
+  order: 8
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The KOD workspace is a Cargo workspace with **26 crates**. They fall into
+four layers, from the most stable foundation to the outermost interface:
+
+- **Foundation** — types, errors, config. No internal dependencies.
+- **Engine** — the orchestration core, split into six crates under
+  `kod-core`. See [Core crates](/concepts/core-crates/) for how the
+  engine's internal sub-crates fit together.
+- **Capability** — providers, tools, skills, memory, transport, and the
+  analysis crates (`kod-ast`, `kod-risk`, `kod-minimize`,
+  `kod-schema-dialect`). Each is independently usable.
+- **Interface** — the `kod` binary (`kod-cli`) and the terminal UI
+  (`kod-tui`).
+
+## Foundation
+
+| Crate | Description |
+|---|---|
+| `kod-types` | Shared types: message and tool IDs, roles, serialization, trust levels, redaction primitives. |
+| `kod-error` | `KodError` — the single error enum threaded through every fallible API. |
+| `kod-config` | `KodConfig` and its sections (`llm`, `tools`, `memory`, `skills`, `swarm`, `mcp`, `hooks`, `lsp`, `jev`, `security`, `limits`). TOML-backed with mtime cache. |
+
+## Engine
+
+| Crate | Description |
+|---|---|
+| `kod-core` | The engine: agent loop, compaction, transcript, telemetry wiring, Jev advisor, swarm runner. |
+| `kod-core-routing` | Task classification, context assembly, and model selection. |
+| `kod-core-state` | Session persistence, checkpoints, cost tracking, sensitivity classification. |
+| `kod-core-serve` | ACP JSON-RPC server for editor integration. |
+| `kod-core-quality` | `snapcompact` (PNG-based context compression), `shake` (mechanical compaction), `repomap` (tree-sitter symbol index). |
+| `kod-core-tools` | Tool loop, hook guards, dispatch, fixtures. |
+
+## Capability
+
+| Crate | Description |
+|---|---|
+| `kod-provider` | Provider trait, streaming primitives, retry policy, token usage, `testkit` mock providers. |
+| `kod-provider-anthropic` | Anthropic Messages API — SSE streaming, cache-control, beta headers, `parse_response` for content blocks. |
+| `kod-provider-openai` | OpenAI Chat Completions — SSE streaming, tool calling, structured outputs. |
+| `kod-ast` | Tree-sitter parsing for Rust, Python, TypeScript, JavaScript, Go, Ruby, Java, C; symbol extraction and repo map generation. |
+| `kod-risk` | Command risk classification: parse shell command lines, assign `RiskLevel`, flag destructive operations. |
+| `kod-schema-dialect` | Provider-side JSON Schema translation and sanitization (dropping unsupported keywords). |
+| `kod-minimize` | Output minimization pipeline: head/tail truncation, structured summarisation, `git diff` minimization. |
+| `kod-tools` | The tool implementations: `read_file`, `write_file`, `patch_file`, `bash`, `grep`, `git_diff`, `batch`, `web_fetch`, `internal_url` handlers. |
+| `kod-skills` | `SKILL.md` parser, matcher (trigram + description-token scoring), watcher. |
+| `kod-memory` | Long-term memory store (redb) with embedding-backed retrieval, hybrid scorer, compaction. |
+| `kod-lsp` | Language Server Protocol client — spawning, diagnostics, code actions. |
+| `kod-mcp` | Model Context Protocol client — server registration, transport, tool discovery. |
+| `kod-swarm` | Multi-agent orchestration: agent communication hub, blackboard, worktree management, yield queue. |
+| `kod-telemetry` | Tracing setup, span helpers, context injection. |
+| `kod-stats` | Session statistics: cost, latency, cache hit rate, per-tool usage. |
+
+## Interface
+
+| Crate | Description |
+|---|---|
+| `kod-cli` | The `kod` binary: argument parsing, subcommands (`serve`, `checkpoint`, `models`, `init`, `completions`, `update`, …), `fixtures` harness. |
+| `kod-tui` | The terminal UI: `KodApp` state, `TuiLoop` event loop, chat widget, syntax highlighting, keybinding table. |
+
+<Aside type="note">
+  The **Engine** crates all live under `crates/kod-core-*` and form a
+  layered subsystem. `kod-core` depends on all five; the sub-crates do
+  not depend on `kod-core`, which keeps the compiler's incremental build
+  fast and makes each subsystem independently testable.
+</Aside>
