@@ -106,7 +106,7 @@ async fn read_until_response<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             Ok(Ok(Some(f))) => f,
             Ok(Ok(None)) => panic!("server closed before responding to id={want_id}"),
             Ok(Err(e)) => panic!("frame read error: {e}"),
-            Err(_) => panic!("timed out waiting for response to id={want_id}"),
+            Err(e) => panic!("timed out waiting for response to id={want_id}: {e}"),
         };
         let has_id = frame.get("id").is_some();
         let method = frame.get("method").and_then(|m| m.as_str());

@@ -1053,7 +1053,7 @@ mod tests {
         match r {
             Ok(Err(_recv_error)) => {}
             Ok(Ok(_)) => panic!("receiver should not get a value after drain"),
-            Err(_) => panic!("receiver must resolve immediately after drain"),
+            Err(e) => panic!("receiver must resolve immediately after drain: {e}"),
         }
     }
 

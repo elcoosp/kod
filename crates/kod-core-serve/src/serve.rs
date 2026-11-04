@@ -1543,7 +1543,9 @@ mod panic_guard_tests {
             Ok(None) => panic!(
                 "channel closed with no error frame; the caller would wait on its request id"
             ),
-            Err(_) => panic!("no error frame within 1s; the caller would wait on its request id"),
+            Err(e) => {
+                panic!("no error frame within 1s; the caller would wait on its request id: {e}")
+            }
         };
         assert!(line.contains("\"error\""), "not an error frame: {line}");
         assert!(

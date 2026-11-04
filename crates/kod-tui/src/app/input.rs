@@ -351,8 +351,13 @@ impl KodApp {
             if b.end <= edit_start {
                 true
             } else if b.start >= edit_end {
-                b.start = (isize::try_from(b.start).unwrap_or(isize::MAX) + delta).max(0) as usize;
-                b.end = (isize::try_from(b.end).unwrap_or(isize::MAX) + delta).max(0) as usize;
+                b.start = usize::try_from(
+                    (isize::try_from(b.start).unwrap_or(isize::MAX) + delta).max(0),
+                )
+                .unwrap_or(usize::MAX);
+                b.end =
+                    usize::try_from((isize::try_from(b.end).unwrap_or(isize::MAX) + delta).max(0))
+                        .unwrap_or(usize::MAX);
                 true
             } else {
                 false

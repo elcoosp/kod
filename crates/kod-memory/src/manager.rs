@@ -1526,14 +1526,12 @@ impl MemoryManager {
             }
             // Sort by most recent touch descending, then truncate.
             group.sort_by(|a, b| {
-                let ta = a
-                    .metadata
-                    .last_retrieved_at_ms
-                    .unwrap_or_else(|| (a.timestamp.unix_timestamp() * 1000) as u64);
-                let tb = b
-                    .metadata
-                    .last_retrieved_at_ms
-                    .unwrap_or_else(|| (b.timestamp.unix_timestamp() * 1000) as u64);
+                let ta = a.metadata.last_retrieved_at_ms.unwrap_or_else(|| {
+                    u64::try_from(a.timestamp.unix_timestamp().saturating_mul(1000)).unwrap_or(0)
+                });
+                let tb = b.metadata.last_retrieved_at_ms.unwrap_or_else(|| {
+                    u64::try_from(b.timestamp.unix_timestamp().saturating_mul(1000)).unwrap_or(0)
+                });
                 tb.cmp(&ta)
             });
             group.truncate(FUSE_WINDOW);

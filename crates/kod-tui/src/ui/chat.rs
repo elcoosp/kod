@@ -827,9 +827,12 @@ impl ChatWidget {
                     }
                 }
             }
-            let paint = skip_rows_usize
-                .saturating_sub(window_start_row)
-                .min(u16::MAX as usize) as u16;
+            let paint = u16::try_from(
+                skip_rows_usize
+                    .saturating_sub(window_start_row)
+                    .min(u16::MAX as usize),
+            )
+            .unwrap_or(u16::MAX);
             (out, paint)
         } else {
             // Full path (short transcript, top of transcript, or

@@ -542,7 +542,7 @@ impl JevClient {
         // reads as level 0 and a 2.7 reads as level 2.
         let raw = answer.score;
         let last = (levels.len() - 1).to_f64().unwrap_or(f64::MAX);
-        let idx = usize::try_from(raw.round().clamp(0.0, last) as u64).unwrap_or(0);
+        let idx = usize::try_from(raw.round().clamp(0.0, last).to_u64().unwrap_or(0)).unwrap_or(0);
         let label = levels[idx].to_string();
         let confidence = answer
             .confidence

@@ -271,8 +271,10 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                     })?;
                 let old_count = count;
                 let new_count = new_lines.len();
-                let new_start = (isize::try_from(start).unwrap_or(isize::MAX) + new_side_offset)
-                    .max(0) as usize;
+                let new_start = usize::try_from(
+                    (isize::try_from(start).unwrap_or(isize::MAX) + new_side_offset).max(0),
+                )
+                .unwrap_or(usize::MAX);
                 std::fmt::Write::write_fmt(
                     &mut out,
                     format_args!("@@ -{start},{old_count} +{new_start},{new_count} @@\n"),

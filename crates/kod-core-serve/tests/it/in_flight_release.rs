@@ -76,7 +76,7 @@ async fn read_until_response<R: AsyncRead + Unpin>(r: &mut BufReader<R>, want_id
             Ok(Ok(Some(f))) => f,
             Ok(Ok(None)) => panic!("server closed before responding to id={want_id}"),
             Ok(Err(e)) => panic!("frame read error: {e}"),
-            Err(_) => panic!("timed out waiting for response to id={want_id}"),
+            Err(e) => panic!("timed out waiting for response to id={want_id}: {e}"),
         };
         let is_response = frame.get("id").and_then(serde_json::Value::as_i64) == Some(want_id)
             && frame.get("method").is_none();
