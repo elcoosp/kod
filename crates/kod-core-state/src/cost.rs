@@ -9,6 +9,7 @@
 //! comfortably in a u64.
 
 use kod_config::limits::OnExhausted;
+use num_traits::ToPrimitive;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -101,7 +102,10 @@ impl CostTracker {
             .turn_cap_micro
             .store(usd_to_micro(cfg.max_cost_usd_per_turn), Ordering::Relaxed);
         self.inner.soft_warn_milli.store(
-            u64::try_from((cfg.soft_warn_at * 1000.0).max(0.0) as u128).unwrap_or(u64::MAX),
+            (cfg.soft_warn_at * 1000.0)
+                .max(0.0)
+                .to_u64()
+                .unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
         *self.inner.on_exhausted.write() = cfg.on_exhausted;
@@ -237,7 +241,7 @@ fn usd_to_micro(usd: f64) -> u64 {
     if !usd.is_finite() || usd <= 0.0 {
         return 0;
     }
-    u64::try_from((usd * 1_000_000.0).round() as u128).unwrap_or(u64::MAX)
+    (usd * 1_000_000.0).round().to_u64().unwrap_or(u64::MAX)
 }
 
 fn micro_to_usd(micro: u64) -> f64 {

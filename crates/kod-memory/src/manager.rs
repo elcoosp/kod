@@ -7,6 +7,7 @@ use crate::{long_term::LongTermMemory, short_term::ShortTermMemory};
 use futures::FutureExt;
 use kod_error::{KodError, Result};
 use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType};
+use num_traits::ToPrimitive;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -572,7 +573,9 @@ impl MemoryManager {
                     let raised = crate::veracity::raise_confidence(
                         f64::from(current),
                         crate::veracity::Veracity::Stated.weight(),
-                    ) as f32;
+                    )
+                    .to_f32()
+                    .unwrap_or(f32::MAX);
                     if raised > current + f32::EPSILON {
                         let mut bumped = e.clone();
                         bumped.metadata.confidence = Some(raised);

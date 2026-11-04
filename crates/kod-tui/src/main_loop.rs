@@ -12,6 +12,7 @@ use crate::{
 use kod_config::{KodConfig, LlmConfig};
 use kod_core::{KodEngine, RouterConfig};
 use kod_error::{KodError, Result};
+use num_traits::ToPrimitive;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
