@@ -443,7 +443,7 @@ impl LlmProvider for AnthropicProvider {
                 let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
                     KodError::Provider(format!("anthropic: invalid JSON: {e}"))
                 })?;
-                parse_response(&parsed)
+                Ok(parse_response(&parsed))
             }
         })
         .await
@@ -1155,7 +1155,7 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
 /// than erroring — Anthropic does return empty content on a refusal or
 /// an immediate stop, and the engine treats an empty reply as "nothing
 /// to say" rather than a transport failure.
-fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
+fn parse_response(v: &serde_json::Value) -> GenerationResponse {
     let content = v
         .get("content")
         .and_then(|c| c.as_array())
@@ -1251,18 +1251,18 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     });
 
     if calls.is_empty() {
-        Ok(GenerationResponse::Text {
+        GenerationResponse::Text {
             content: text,
             usage,
-        })
+        }
     } else if text.is_empty() {
-        Ok(GenerationResponse::ToolCalls { calls, usage })
+        GenerationResponse::ToolCalls { calls, usage }
     } else {
-        Ok(GenerationResponse::Mixed {
+        GenerationResponse::Mixed {
             content: text,
             calls,
             usage,
-        })
+        }
     }
 }
 
@@ -1383,7 +1383,7 @@ mod coverage_provider_parse {
             "content": [{"type": "text", "text": "hello world"}],
             "usage": {"input_tokens": 7, "output_tokens": 3}
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::Text { content, usage } => {
                 assert_eq!(content, "hello world");
                 let u = usage.expect("usage present");
@@ -1403,7 +1403,7 @@ mod coverage_provider_parse {
                 {"type": "text", "text": "second"}
             ]
         });
-        let r = parse_response(&v).unwrap();
+        let r = parse_response(&v);
         assert_eq!(text_of(&r), "first second");
     }
 
@@ -1417,7 +1417,7 @@ mod coverage_provider_parse {
                 "input": {"path": "src/lib.rs"}
             }]
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::ToolCalls { calls, .. } => {
                 assert_eq!(calls.len(), 1);
                 assert_eq!(calls[0].id.as_deref(), Some("toolu_abc"));
@@ -1436,7 +1436,7 @@ mod coverage_provider_parse {
                 {"type": "tool_use", "id": "x", "name": "grep", "input": {}}
             ]
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::Mixed { content, calls, .. } => {
                 assert_eq!(content, "let me check that");
                 assert_eq!(calls.len(), 1);
@@ -1452,7 +1452,7 @@ mod coverage_provider_parse {
         // stop. The engine treats an empty reply as "nothing to say",
         // so this must not be an error.
         let v = json!({ "content": [] });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::Text { content, usage } => {
                 assert!(content.is_empty());
                 assert!(usage.is_none());
@@ -1464,7 +1464,7 @@ mod coverage_provider_parse {
     #[test]
     fn parse_response_missing_content_key_is_empty_text() {
         let v = json!({});
-        let r = parse_response(&v).unwrap();
+        let r = parse_response(&v);
         assert_eq!(text_of(&r), "");
     }
 
@@ -1479,7 +1479,7 @@ mod coverage_provider_parse {
                 {"type": "text", "text": "fallback"}
             ]
         });
-        let r = parse_response(&v).unwrap();
+        let r = parse_response(&v);
         assert_eq!(text_of(&r), "fallback");
         assert!(
             matches!(r, GenerationResponse::Text { .. }),
@@ -1492,7 +1492,7 @@ mod coverage_provider_parse {
         let v = json!({
             "content": [{"type": "tool_use", "name": "grep", "input": {}}]
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::ToolCalls { calls, .. } => {
                 assert!(calls[0].id.is_none());
             }
@@ -1505,7 +1505,7 @@ mod coverage_provider_parse {
         let v = json!({
             "content": [{"type": "tool_use", "id": "x", "name": "grep"}]
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::ToolCalls { calls, .. } => {
                 assert_eq!(calls[0].arguments, serde_json::Value::Null);
             }
@@ -1521,7 +1521,7 @@ mod coverage_provider_parse {
                 {"type": "text", "text": "kept"}
             ]
         });
-        let r = parse_response(&v).unwrap();
+        let r = parse_response(&v);
         assert_eq!(text_of(&r), "kept");
     }
 
@@ -1543,7 +1543,7 @@ mod coverage_provider_parse {
                 }
             }
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::Text { usage, .. } => {
                 let u = usage.expect("usage present");
                 assert_eq!(u.cache_creation_tokens, Some(200));
@@ -1559,7 +1559,7 @@ mod coverage_provider_parse {
             "content": [{"type": "text", "text": "x"}],
             "usage": {}
         });
-        match parse_response(&v).unwrap() {
+        match parse_response(&v) {
             GenerationResponse::Text { usage, .. } => {
                 let u = usage.expect("usage object present");
                 assert_eq!(u.prompt_tokens, 0);
@@ -1747,7 +1747,7 @@ mod parse_response_proptests {
         fn prop_variant_matches_blocks(blocks in arb_blocks()) {
             let v = blocks_to_value(&blocks);
             let (expected_text, expected_calls) = expected_from(&blocks);
-            let got = parse_response(&v).expect("parse");
+            let got = parse_response(&v);
             if expected_calls == 0 {
                 match got {
                     GenerationResponse::Text { content, .. } => {
@@ -1794,7 +1794,7 @@ mod parse_response_proptests {
                 "content": [{"type": "text", "text": "x"}],
                 "usage": usage,
             });
-            let got = parse_response(&v).expect("parse");
+            let got = parse_response(&v);
             let u = match got {
                 GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
                 other => panic!("expected Text, got {other:?}"),
@@ -1826,7 +1826,7 @@ mod parse_response_proptests {
                 "content": [{"type": "text", "text": "x"}],
                 "usage": usage,
             });
-            let got = parse_response(&v).expect("parse");
+            let got = parse_response(&v);
             let u = match got {
                 GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
                 other => panic!("expected Text, got {other:?}"),
@@ -1853,7 +1853,7 @@ mod parse_response_proptests {
                 "cache_creation": {"ephemeral_1h_input_tokens": 500}
             }
         });
-        let got = parse_response(&v).expect("parse");
+        let got = parse_response(&v);
         let u = match got {
             GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
             other => panic!("expected Text, got {other:?}"),
@@ -1869,7 +1869,7 @@ mod parse_response_proptests {
             "content": [{"type": "text", "text": "x"}],
             "usage": {}
         });
-        let got = parse_response(&v).expect("parse");
+        let got = parse_response(&v);
         let u = match got {
             GenerationResponse::Text { usage, .. } => usage.expect("usage present"),
             other => panic!("expected Text, got {other:?}"),
@@ -1887,7 +1887,7 @@ mod parse_response_proptests {
         let v = json!({
             "content": [{"type": "text", "text": "x"}]
         });
-        let got = parse_response(&v).expect("parse");
+        let got = parse_response(&v);
         match got {
             GenerationResponse::Text { usage, .. } => {
                 assert!(usage.is_none(), "expected None, got {usage:?}");
