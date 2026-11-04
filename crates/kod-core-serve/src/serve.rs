@@ -713,7 +713,7 @@ where
                     .params
                     .get("max_chars")
                     .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(4000) as usize;
+                    .map_or(4000, |n| usize::try_from(n).unwrap_or(usize::MAX));
                 let data = engine.peek_transcript(&key, max_chars).await;
                 write_ok(&out_tx, &req.id, data).await?;
             }

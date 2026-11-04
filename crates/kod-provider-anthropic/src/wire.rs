@@ -675,7 +675,7 @@ pub fn parse_sse_line(
                 .get("usage")
                 .and_then(|u| u.get("output_tokens"))
                 .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0) as usize;
+                .map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(usize::MAX));
             if out > 0 || state.input_tokens > 0 {
                 chunks.push(StreamChunk::Usage(kod_provider::TokenUsage {
                     // `state.input_tokens` already includes the cache
