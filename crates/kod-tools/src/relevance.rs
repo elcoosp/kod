@@ -149,13 +149,10 @@ impl SearchBackend for RipgrepBackend {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            match v.get("type").and_then(|t| t.as_str()) {
-                Some("match") => {
-                    if let Some(hit) = hit_from_rg_match(&v) {
-                        results.hits.push(hit);
-                    }
-                }
-                _ => {}
+            if let Some("match") = v.get("type").and_then(|t| t.as_str())
+                && let Some(hit) = hit_from_rg_match(&v)
+            {
+                results.hits.push(hit);
             }
         }
         Ok(results)

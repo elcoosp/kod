@@ -355,7 +355,9 @@ impl KodApp {
         self.rate_limit_deadline = None;
         self.set_phase(GenPhase::Idle);
         self.settle_running_tools(ToolStatus::Failed, "cancelled");
-        if !partial.is_empty() {
+        if partial.is_empty() {
+            self.push_system_message("Cancelled.");
+        } else {
             self.note_usage(partial.len());
             self.add_message(Message {
                 id: MessageId::new(),
@@ -366,8 +368,6 @@ impl KodApp {
                 sequence: 0,
             });
             self.stream_flushed_bubble = true;
-        } else {
-            self.push_system_message("Cancelled.");
         }
         // Same as the fail path: the partial bubble carries the time the
         // cancelled turn ran for; with no partial there is nothing to

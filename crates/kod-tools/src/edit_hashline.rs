@@ -157,6 +157,12 @@ pub struct Op {
 
 /// Compute the 4-hex tag for `text`. A short FNV-1a over the bytes,
 /// folded to two bytes. Stable across runs and platforms.
+///
+/// # Panics
+///
+/// The `unwrap` on the `u16::try_from` cannot fire: the value is
+/// masked with `& 0xFFFF` before the conversion, so it is provably
+/// within `u16` range at every input.
 #[must_use]
 pub fn tag_of(text: &str) -> Tag {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

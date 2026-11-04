@@ -699,18 +699,18 @@ impl MemoryManager {
             // T1-H1: guard the inflight counter. Drop runs on both
             // the normal exit and a panic, so `flush_embeddings`
             // never parks forever on a dead task.
-            struct _Guard {
+            struct InflightGuard {
                 inflight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
                 notify: std::sync::Arc<tokio::sync::Notify>,
             }
-            impl Drop for _Guard {
+            impl Drop for InflightGuard {
                 fn drop(&mut self) {
                     self.inflight
                         .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     self.notify.notify_one();
                 }
             }
-            let _g = _Guard {
+            let _g = InflightGuard {
                 inflight: std::sync::Arc::clone(&inflight),
                 notify: std::sync::Arc::clone(&notify),
             };
@@ -1665,7 +1665,7 @@ impl MemoryManager {
                 let Some(mut fresh) = self.long_term.get(id).await? else {
                     continue;
                 };
-                fresh.metadata.tags.clone_from(&tags);
+                fresh.metadata.tags.clone_from(tags);
                 updated.push(fresh);
             }
             if !updated.is_empty()

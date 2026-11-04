@@ -1237,18 +1237,17 @@ impl ToolContext {
             let existing = loop {
                 if let Ok(c) = std::fs::canonicalize(&p) {
                     break c;
-                } else {
-                    let name = p.file_name().ok_or_else(|| KodError::InvalidParameters {
-                        reason: format!("path has no existing ancestor: {}", joined.display()),
-                    })?;
-                    tail.push(name.to_os_string());
-                    p = p
-                        .parent()
-                        .ok_or_else(|| KodError::InvalidParameters {
-                            reason: format!("path has no existing ancestor: {}", joined.display()),
-                        })?
-                        .to_path_buf();
                 }
+                let name = p.file_name().ok_or_else(|| KodError::InvalidParameters {
+                    reason: format!("path has no existing ancestor: {}", joined.display()),
+                })?;
+                tail.push(name.to_os_string());
+                p = p
+                    .parent()
+                    .ok_or_else(|| KodError::InvalidParameters {
+                        reason: format!("path has no existing ancestor: {}", joined.display()),
+                    })?
+                    .to_path_buf();
             };
             let mut canonical = existing;
             for part in tail.iter().rev() {

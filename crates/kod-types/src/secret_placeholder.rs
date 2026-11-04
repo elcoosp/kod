@@ -221,6 +221,13 @@ impl SecretVault {
 
     /// The placeholder for `secret`. Deterministic — the same secret
     /// always produces the same placeholder for this vault's key.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic in practice: the `expect` on
+    /// `HmacSha256::new_from_slice` is a compile-time-shaped invariant
+    /// (HMAC-SHA256 accepts any key length), and the vault constructor
+    /// already rejected any invalid key material.
     #[must_use]
     pub fn placeholder_for(&self, secret: &str) -> String {
         let mut mac =

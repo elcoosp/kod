@@ -1078,18 +1078,15 @@ mod integration_tests {
         let r = tool
             .execute(&serde_json::json!({"path": "artifact://abc"}), &ctx)
             .await;
-        match r {
-            Ok(ToolResult::Success(v)) => {
-                assert!(
-                    v.get("source").is_none(),
-                    "no router means no internal-URL dispatch",
-                );
-            }
-            // Error, RequiresConfirmation, and any future ToolResult
-            // variant all mean "no dispatch happened"; only Success
-            // with `source == "internal-url"` would be a bug.
-            _ => {}
+        if let Ok(ToolResult::Success(v)) = r {
+            assert!(
+                v.get("source").is_none(),
+                "no router means no internal-URL dispatch",
+            );
         }
+        // Error, RequiresConfirmation, and any future ToolResult
+        // variant all mean "no dispatch happened"; only Success
+        // with `source == "internal-url"` would be a bug.
     }
 
     #[tokio::test]

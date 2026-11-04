@@ -22,7 +22,9 @@
 
 use async_trait::async_trait;
 use kod_tools::{Tool, ToolContext, ToolRegistry};
-use kod_types::{LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use kod_types::{
+    LoadMode, ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult, TrustLevel,
+};
 use std::sync::Arc;
 
 /// A tool whose `execute` panics unconditionally. The whole point of
@@ -39,7 +41,7 @@ impl Tool for PanickingTool {
             category: ToolCategory::System,
             parameters_schema: serde_json::json!({ "type": "object" }),
             permissions: ToolPermissions::default(),
-            trust_level: Default::default(),
+            trust_level: TrustLevel::default(),
             load_mode: LoadMode::default(),
         }
     }
@@ -67,7 +69,7 @@ impl Tool for OkTool {
             category: ToolCategory::System,
             parameters_schema: serde_json::json!({ "type": "object" }),
             permissions: ToolPermissions::default(),
-            trust_level: Default::default(),
+            trust_level: TrustLevel::default(),
             load_mode: LoadMode::default(),
         }
     }

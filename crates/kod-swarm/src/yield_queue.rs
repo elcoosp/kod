@@ -81,7 +81,7 @@ impl std::fmt::Debug for QueuedYield {
         f.debug_struct("QueuedYield")
             .field("kind", &self.kind)
             .field("skip_idle_flush", &self.skip_idle_flush)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

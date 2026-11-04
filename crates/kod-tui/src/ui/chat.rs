@@ -313,13 +313,13 @@ impl ChatWidget {
                 if !before.is_empty() {
                     out.push(Span::styled(before, span.style));
                 }
-                if !hit.is_empty() {
-                    out.push(Span::styled(hit, hit_style));
-                } else {
+                if hit.is_empty() {
                     // Non-ASCII fallback: tint the remainder once, then stop.
                     out.push(Span::styled(text[rest..].to_string(), hit_style));
                     rest = text.len();
                     break;
+                } else {
+                    out.push(Span::styled(hit, hit_style));
                 }
                 rest = end;
             }

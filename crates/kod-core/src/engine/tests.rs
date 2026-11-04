@@ -99,12 +99,10 @@ async fn background_mode_allows_a_read_tool() {
     let r = engine
         .run_tool("read_file", serde_json::json!({"path":"/nonexistent"}))
         .await;
-    match r {
-        Ok(kod_types::ToolResult::Error(e)) => {
-            assert!(!e.contains("policy denied"), "read_file must not be denied");
-        }
-        _ => {} // read succeeded or errored before running
+    if let Ok(kod_types::ToolResult::Error(e)) = r {
+        assert!(!e.contains("policy denied"), "read_file must not be denied");
     }
+    // Read succeeded or errored before running the tool — both are fine.
 }
 
 use super::*;

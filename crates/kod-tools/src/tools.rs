@@ -255,7 +255,8 @@ impl Tool for ReadFileTool {
                     use kod_config::ReadMode;
                     if let ReadMode::Refuse = rp.mode {
                         return Ok(ToolResult::Error(format!(
-                            "read_file refused: {target:?} matches a read-protection pattern.",
+                            "read_file refused: {} matches a read-protection pattern.",
+                            target.display(),
                         )));
                     }
                 }

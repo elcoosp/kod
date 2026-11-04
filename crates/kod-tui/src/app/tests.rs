@@ -1941,7 +1941,7 @@ mod coverage_split_hunks {
                 (3..=INPUT_MAX_ROWS).contains(&h),
                 "rows={rows} produced h={h} out of range",
             );
-            if rows as u128 > INPUT_MAX_ROWS as u128 {
+            if rows > usize::from(INPUT_MAX_ROWS) {
                 assert_eq!(h, INPUT_MAX_ROWS, "rows={rows} -> {h}");
             }
         }

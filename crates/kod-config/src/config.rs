@@ -1135,8 +1135,8 @@ mod proptests {
             any::<bool>(),
             prop::collection::hash_map("[a-z]{1,10}", "[ -~]{0,30}", 0..3),
         )
-            .prop_map(|(version, commands, hooks_enabled, pre_tool_use)| {
-                let cfg = KodConfig {
+            .prop_map(
+                |(version, commands, hooks_enabled, pre_tool_use)| KodConfig {
                     config_version: version,
                     commands,
                     hooks: crate::HooksConfig {
@@ -1145,9 +1145,8 @@ mod proptests {
                         ..Default::default()
                     },
                     ..KodConfig::default()
-                };
-                cfg
-            })
+                },
+            )
     }
 
     proptest! {
