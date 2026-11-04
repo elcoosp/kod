@@ -181,11 +181,11 @@ async fn mechanical_compaction_elides_large_fences_before_summarizing() {
     );
     // The first seven are the seeded turns, in order; the last two
     // are the run's own record.
-    for i in 0..7 {
+    for (i, msg) in post.iter().take(7).enumerate() {
         assert!(
-            post[i].content.starts_with("```") || post[i].content.contains("elided by shake"),
+            msg.content.starts_with("```") || msg.content.contains("elided by shake"),
             "seeded turn {i} was neither fenced nor elided: {:?}",
-            &post[i].content[..60.min(post[i].content.len())],
+            &msg.content[..60.min(msg.content.len())],
         );
     }
     assert!(
