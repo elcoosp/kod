@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn too_many_details_are_rejected() {
         let mut p = proposal();
-        p.details = (0..MAX_DETAILS + 1).map(|i| format!("d{i}")).collect();
+        p.details = (0..=MAX_DETAILS).map(|i| format!("d{i}")).collect();
         assert!(matches!(validate(&p), Err(RejectReason::TooManyDetails(_))));
     }
 

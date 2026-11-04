@@ -1368,7 +1368,12 @@ impl MemoryManager {
                 let last_touch = entry
                     .metadata
                     .last_retrieved_at_ms
-                    .and_then(|ms| OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok())
+                    .and_then(|ms| {
+                        OffsetDateTime::from_unix_timestamp(
+                            i64::try_from(ms / 1000).unwrap_or(i64::MAX),
+                        )
+                        .ok()
+                    })
                     .unwrap_or(entry.timestamp);
                 if last_touch < cutoff {
                     // T1-C7: collect the ids and batch the delete. The

@@ -702,7 +702,7 @@ fn has_test_attribute(lines: &[&str], symbol_line: usize) -> bool {
         return false;
     }
     // Walk upward from the line directly above the symbol.
-    let mut i = (symbol_line - 1) as isize - 1;
+    let mut i = isize::try_from(symbol_line - 1).unwrap_or(isize::MAX) - 1;
     while i >= 0 {
         let trimmed = lines[usize::try_from(i).unwrap_or(usize::MAX)].trim();
         if trimmed.is_empty() || trimmed.starts_with("//") {

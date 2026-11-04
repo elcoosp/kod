@@ -257,7 +257,7 @@ mod tests {
     async fn over_the_cap_is_a_tool_error_naming_the_cap() {
         let tool = BatchTool::default();
         let ctx = ToolContext::new(std::env::temp_dir());
-        let many: Vec<Value> = (0..MAX_INVOCATIONS + 1)
+        let many: Vec<Value> = (0..=MAX_INVOCATIONS)
             .map(|_| serde_json::json!({"tool": "read_file"}))
             .collect();
         let r = tool

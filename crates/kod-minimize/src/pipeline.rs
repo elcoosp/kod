@@ -492,7 +492,7 @@ mod tests {
         let s = run(
             &[Stage::Replace {
                 pattern: r"^  ".to_string(),
-                replacement: "".to_string(),
+                replacement: String::new(),
             }],
             "  indented\nplain",
         )

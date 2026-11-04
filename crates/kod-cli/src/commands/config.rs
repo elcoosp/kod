@@ -180,7 +180,7 @@ pub fn run_config_edit() -> Result<()> {
                     s.code()
                 )));
             }
-            Err(_) => continue,
+            Err(_) => {}
         }
     }
     Err(KodError::Internal(

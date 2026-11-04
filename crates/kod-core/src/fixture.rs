@@ -272,7 +272,6 @@ impl Fixture {
     /// # Errors
     ///
     /// Returns `Err` when the underlying operation fails.
-    #[must_use]
     pub fn from_json(s: &str) -> Result<Self, String> {
         serde_json::from_str(s).map_err(|e| e.to_string())
     }

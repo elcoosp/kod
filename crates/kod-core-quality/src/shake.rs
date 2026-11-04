@@ -1397,7 +1397,7 @@ mod shake_parser_proptests {
             };
             prop_assert!(end > start + 1, "end {:?} too small for start {:?}", end, start);
             prop_assert!(end <= content.len(), "end {:?} past content", end);
-            prop_assert_eq!(&content[start..start + 1], "<", "opener");
+            prop_assert_eq!(&content[start..=start], "<", "opener");
             prop_assert_eq!(&content[end - 1..end], ">", "closer");
             prop_assert!(!name.is_empty(), "empty name");
             prop_assert!(

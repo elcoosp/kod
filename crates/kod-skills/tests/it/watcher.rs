@@ -35,7 +35,7 @@ async fn drain_for(rx: &mut mpsc::Receiver<WatchEvent>, duration: Duration) {
             return;
         }
         match tokio::time::timeout(remaining, rx.recv()).await {
-            Ok(Some(_)) => continue,
+            Ok(Some(_)) => {}
             Ok(None) | Err(_) => return,
         }
     }

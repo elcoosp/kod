@@ -450,7 +450,7 @@ mod tests {
         }
     }
 
-    fn chunk<'a>(m: &'a ChatMessage, age: u32) -> Chunk<'a> {
+    fn chunk(m: &ChatMessage, age: u32) -> Chunk<'_> {
         Chunk {
             message: m,
             age_turns: age,

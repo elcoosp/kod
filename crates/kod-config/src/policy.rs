@@ -660,7 +660,10 @@ impl PolicyEngine {
             {
                 return PolicyDecision {
                     outcome: Decision::Deny,
-                    rule: format!("{tool} allow-list {allowed:?} does not include {p:?}"),
+                    rule: format!(
+                        "{tool} allow-list {allowed:?} does not include {}",
+                        p.display()
+                    ),
                     source: self.source_for(tool),
                 };
             }
@@ -2063,7 +2066,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
         let prefix_entry = PREFIX_WRAPPERS
             .iter()
             .find(|(w, _, _)| *w == first.as_str());
-        let flag_args: &[&str] = prefix_entry.map(|(_, f, _)| *f).unwrap_or(&[]);
+        let flag_args: &[&str] = prefix_entry.map_or(&[], |(_, f, _)| *f);
         let positional_skip: usize = prefix_entry.map_or(0, |(_, _, n)| *n);
         let is_prefix_wrapper = prefix_entry.is_some();
         if !is_command_string_wrapper && !is_prefix_wrapper {

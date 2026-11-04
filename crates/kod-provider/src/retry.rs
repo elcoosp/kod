@@ -750,10 +750,13 @@ mod hint_tests {
     #[test]
     fn rate_limit_reset_epoch_seconds_is_a_future_delta() {
         // One hour from now, in epoch seconds.
-        let now_s = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now_s = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap_or(i64::MAX);
         let future = (now_s + 3600).to_string();
         let r = extract_retry_hints(Some(429), &[hdr("x-ratelimit-reset", &future)], "");
         let d = r.delay.expect("epoch hint");

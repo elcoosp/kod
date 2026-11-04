@@ -142,7 +142,7 @@ async fn test_response_complete_lands_as_message() {
     tui.handle_event(Event::ResponseChunk("hi ".to_string()))
         .await
         .unwrap();
-    tui.handle_event(Event::ResponseComplete("".to_string()))
+    tui.handle_event(Event::ResponseComplete(String::new()))
         .await
         .unwrap();
 

@@ -431,7 +431,7 @@ impl CompactionDispatcher {
                         notices,
                     };
                 }
-                MethodOutcome::NoChange => continue,
+                MethodOutcome::NoChange => {}
                 MethodOutcome::Unavailable(reason) => {
                     notices.push(format!("`{}` unavailable: {reason}", method.name()));
                 }

@@ -246,7 +246,7 @@ fn test_path_completion_lists_matching_files() {
     // trailing space so the user can keep typing).
     app.accept_completion();
     assert!(app.input().starts_with("read "));
-    assert!(app.input().trim_end().ends_with(".txt"));
+    assert!(app.input().trim_end().to_lowercase().ends_with(".txt"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

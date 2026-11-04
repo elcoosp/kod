@@ -422,7 +422,7 @@ pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::
                 }
                 return Some(path);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => return None,
         }
     }

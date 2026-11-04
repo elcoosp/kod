@@ -535,8 +535,8 @@ fn is_valid_id(id: &str) -> bool {
 /// the session that wrote a snapshot and the session that restores it.
 #[must_use]
 pub fn fnv1a_hex(s: &str) -> String {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = OFFSET;
     for b in s.bytes() {
         h ^= u64::from(b);

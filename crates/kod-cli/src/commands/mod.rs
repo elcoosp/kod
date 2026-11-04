@@ -119,7 +119,7 @@ pub struct EngineBootstrapOptions<'a> {
     )>,
 }
 
-impl<'a> Default for EngineBootstrapOptions<'a> {
+impl Default for EngineBootstrapOptions<'_> {
     fn default() -> Self {
         Self {
             model_override: None,

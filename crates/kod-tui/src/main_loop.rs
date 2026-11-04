@@ -450,8 +450,10 @@ impl TuiLoop {
         let sandbox_label = match (mode, backend) {
             (kod_tools::context::SandboxMode::Disabled, _)
             | (kod_tools::context::SandboxMode::Auto, None) => "off".to_string(),
-            (kod_tools::context::SandboxMode::Auto, Some(b))
-            | (kod_tools::context::SandboxMode::Require, Some(b)) => b.to_string(),
+            (
+                kod_tools::context::SandboxMode::Auto | kod_tools::context::SandboxMode::Require,
+                Some(b),
+            ) => b.to_string(),
             (kod_tools::context::SandboxMode::Require, None) => "require-missing".to_string(),
         };
         self.app.set_sandbox_label(sandbox_label);
@@ -1567,11 +1569,7 @@ impl TuiLoop {
                         } else {
                             body
                         };
-                        std::fmt::Write::write_fmt(
-                            &mut buf,
-                            format_args!("<file path=\"{}\">\n{}\n</file>\n", f.display(), shown,),
-                        )
-                        .ok();
+                        writeln!(buf, "<file path=\"{}\">\n{}\n</file>", f.display(), shown).ok();
                     }
                     Err(e) => {
                         self.app.push_system_message(&format!(
@@ -2126,7 +2124,7 @@ impl TuiLoop {
                             previous_error,
                         } => Event::AgentMessage(
                             "swarm".to_string(),
-                            format!("{name} retrying ({attempt}/{max_attempts}): {previous_error}",),
+                            format!("{name} retrying ({attempt}/{max_attempts}): {previous_error}"),
                         ),
                         kod_core::SwarmEvent::Merging => Event::SwarmMerging,
                         kod_core::SwarmEvent::WorktreeCreated {
@@ -4563,11 +4561,7 @@ impl TuiLoop {
                                     kod_core::PlanStatus::Skipped => "·",
                                     kod_core::PlanStatus::Pending => " ",
                                 };
-                                std::fmt::Write::write_fmt(
-                                    &mut msg,
-                                    format_args!("{} {}. {}\n", marker, step.id + 1, step.text,),
-                                )
-                                .ok();
+                                writeln!(msg, "{} {}. {}", marker, step.id + 1, step.text).ok();
                                 if let Some(notes) = plan.notes.get(&step.id) {
                                     for n in notes {
                                         std::fmt::Write::write_fmt(
@@ -4930,11 +4924,7 @@ impl TuiLoop {
                             )
                             .ok();
                         } else {
-                            std::fmt::Write::write_fmt(
-                                &mut msg,
-                                format_args!("  session:  ${:.4} (no cap)\n", snap.session_usd,),
-                            )
-                            .ok();
+                            writeln!(msg, "  session:  ${:.4} (no cap)", snap.session_usd).ok();
                         }
                         if snap.turn_cap_usd > 0.0 {
                             std::fmt::Write::write_fmt(
@@ -8323,7 +8313,7 @@ mod tests {
         tui.handle_event(Event::ResponseChunk("turn two text".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ResponseComplete("".to_string()))
+        tui.handle_event(Event::ResponseComplete(String::new()))
             .await
             .unwrap();
         let bodies: Vec<&str> = tui

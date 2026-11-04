@@ -812,15 +812,15 @@ pub(crate) fn render_diagnostics(
         } else {
             d.message.clone()
         };
-        write!(
+        writeln!(
             block,
-            "  {} {} {}:{}:{} — {}\n",
+            "  {} {} {}:{}:{} — {}",
             d.severity, code, d.file, d.line, d.column, short
         )
         .ok();
     }
     if diags.len() > max {
-        write!(block, "  … and {} more.\n", diags.len() - max).ok();
+        writeln!(block, "  … and {} more.", diags.len() - max).ok();
     }
 }
 

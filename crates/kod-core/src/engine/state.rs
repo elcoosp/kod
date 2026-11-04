@@ -1150,7 +1150,7 @@ mod redaction_memo_tests {
     /// `#[ignore]` so CI never pays for it; run with
     /// `cargo test -p kod-core memo_timing -- --ignored --nocapture`.
     #[test]
-    #[ignore]
+    #[ignore = "slow; run with --ignored"]
     fn memo_timing() {
         use std::time::Instant;
         let r = kod_types::redact::Redactor::default();

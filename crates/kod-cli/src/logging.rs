@@ -134,7 +134,7 @@ impl Default for SessionSafeWriter {
     }
 }
 
-impl<'a> Write for SessionSafeWriterHandle<'a> {
+impl Write for SessionSafeWriterHandle<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.inner.write_shared(buf)
     }
