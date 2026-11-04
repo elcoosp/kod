@@ -149,7 +149,7 @@ impl Server {
             })),
         )
         .await;
-        if let Ok(Ok(_)) = sent {
+        if let Ok(Ok(())) = sent {
         } else {
             self.pending.lock().await.remove(&id);
             return Err(KodError::Internal(

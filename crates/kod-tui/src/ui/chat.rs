@@ -717,7 +717,7 @@ impl ChatWidget {
         let mut message_row_offsets: std::collections::HashMap<kod_types::MessageId, usize> =
             std::collections::HashMap::new();
         for &(msg_idx, start, _end, has_sep) in &cumulative {
-            let content_start = start + if has_sep { 1 } else { 0 };
+            let content_start = start + usize::from(u8::from(has_sep));
             message_row_offsets.insert(ordered[msg_idx].id.clone(), content_start);
         }
 
@@ -777,8 +777,7 @@ impl ChatWidget {
             // a `skip(...)` on the first contribution AND the
             // Paragraph scroll, double-skipping by one message's
             // worth of rows.
-            for cum_idx in fv..=lv {
-                let (msg_idx, _start, _end, has_sep) = cumulative[cum_idx];
+            for &(msg_idx, _start, _end, has_sep) in &cumulative[fv..=lv] {
                 let message = ordered[msg_idx];
                 if has_sep {
                     out.push(Line::from(vec![Span::styled(

@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn parse_float_array_caps_dims() {
-        let arr: Vec<f32> = (0..9000).map(|i| i as f32).collect();
+        let arr: Vec<f32> = (0..9000).map(|i| i.to_f32().unwrap_or(f32::MAX)).collect();
         let v = serde_json::to_value(&arr).unwrap();
         assert!(parse_float_array(&v).is_err());
     }

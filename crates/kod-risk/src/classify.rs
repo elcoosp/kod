@@ -136,8 +136,8 @@ fn unwrap_optional_positional_wrapper(
     let dd = tokens.iter().position(|t| unquote(t) == "--");
     let c_end = dd.unwrap_or(tokens.len());
 
-    for idx in 1..c_end {
-        if unquote(&tokens[idx]) == "-c" {
+    for tok in &tokens[1..c_end] {
+        if unquote(tok) == "-c" {
             return (None, Vec::new(), false);
         }
     }

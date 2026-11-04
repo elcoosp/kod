@@ -122,7 +122,7 @@ fn exponential_shape(half_life_days: f32) -> DecayShape {
 #[must_use]
 pub fn decay_at(ts: OffsetDateTime, now: OffsetDateTime, shape: DecayShape) -> f32 {
     let delta = now - ts;
-    let secs = delta.whole_seconds().max(0) as f32;
+    let secs = delta.whole_seconds().max(0).to_f32().unwrap_or(f32::MAX);
     if secs == 0.0 {
         return 1.0;
     }
@@ -367,7 +367,7 @@ impl HybridScorer {
             let idf = query.idf(q);
             max_possible += idf;
             if let Some(&count) = tf.get(q.as_str()) {
-                let count = count as f32;
+                let count = count.to_f32().unwrap_or(f32::MAX);
                 // BM25 TF term (with k1 = 1.2), normalised by the
                 // same idf so the sum lies in [0, idf * tf_sat].
                 let tf_sat = (count * 2.2) / (count + 1.2);
@@ -385,7 +385,7 @@ impl HybridScorer {
 #[must_use]
 pub fn recency(ts: OffsetDateTime, now: OffsetDateTime, half_life_days: f32) -> f32 {
     let delta = now - ts;
-    let secs = delta.whole_seconds().max(0) as f32;
+    let secs = delta.whole_seconds().max(0).to_f32().unwrap_or(f32::MAX);
     if secs == 0.0 {
         return 1.0;
     }
@@ -572,7 +572,7 @@ mod tests {
             let shape = weibull_shape_for(t);
             let mut prev = 1.0f32;
             for i in 0..100 {
-                let age = i as f32 * 24.0;
+                let age = i.to_f32().unwrap_or(f32::MAX) * 24.0;
                 let d = shape.decay(age);
                 assert!(
                     d <= prev + 1e-6,

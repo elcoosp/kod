@@ -221,7 +221,8 @@ impl SkillMatcher {
             // Weak lift only: enough to surface a genuinely related skill when
             // nothing stronger matches, but never enough to outrank an explicit
             // name or trigger hit on its own (≤ 0.2 vs ≥ 0.9).
-            let desc_score = (0.10 * desc_hits as f32).min(0.20);
+            let desc_score =
+                (0.10 * f32::from(u16::try_from(desc_hits.max(0)).unwrap_or(u16::MAX))).min(0.20);
             score += desc_score;
             reasons.push(MatchReason::SemanticSimilarity { score: desc_score });
         }

@@ -325,7 +325,7 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
         let remaining = data.len() - i;
         let block = remaining.min(65535);
         let is_last = i + block == data.len();
-        out.push(if is_last { 0x01 } else { 0x00 });
+        out.push(u8::from(is_last));
         out.extend_from_slice(&(u16::try_from(block).unwrap_or(u16::MAX)).to_le_bytes());
         out.extend_from_slice(&(!(u16::try_from(block).unwrap_or(u16::MAX))).to_le_bytes());
         out.extend_from_slice(&data[i..i + block]);

@@ -541,7 +541,7 @@ impl JevClient {
         // level index and clamp, so a 0.4 on a three-level rubric
         // reads as level 0 and a 2.7 reads as level 2.
         let raw = answer.score;
-        let last = (levels.len() - 1) as f64;
+        let last = (levels.len() - 1).to_f64().unwrap_or(f64::MAX);
         let idx = usize::try_from(raw.round().clamp(0.0, last) as u64).unwrap_or(0);
         let label = levels[idx].to_string();
         let confidence = answer

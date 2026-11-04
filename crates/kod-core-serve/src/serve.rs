@@ -348,11 +348,9 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
             // as-is, so a line of exactly `cap` content bytes
             // followed by `\n` was rejected while the same content
             // at EOF was accepted. Measure content only.
-            let terminator_len = if available.get(take.saturating_sub(1)) == Some(&b'\n') {
-                1
-            } else {
-                0
-            };
+            let terminator_len = usize::from(u8::from(
+                available.get(take.saturating_sub(1)) == Some(&b'\n'),
+            ));
             let content_take = take - terminator_len;
             if buf.len() + content_take > self.cap {
                 return Err(KodError::InvalidParameters {
