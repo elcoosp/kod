@@ -268,13 +268,13 @@ impl KodConfig {
     /// Returns `Ok(None)` when even the TOML syntax is broken
     /// (recovery cannot salvage anything), `Ok(Some(cfg))` when the
     /// file is valid TOML but at least one section failed.
-    fn recover_sections(path: &std::path::Path) -> Result<Option<Self>> {
+    fn recover_sections(path: &std::path::Path) -> Option<Self> {
         let Ok(raw) = std::fs::read_to_string(path) else {
-            return Ok(None);
+            return None;
         };
         let table: toml::Table = match raw.parse::<toml::Table>() {
             Ok(t) => t,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
 
         // Start from the default and override each section we can
@@ -320,7 +320,7 @@ impl KodConfig {
         recover!(jev, crate::jev::JevConfig);
         recover!(security, SecurityConfig);
 
-        Ok(Some(cfg))
+        Some(cfg)
     }
 
     /// M-11: mtime-validated config cache for hot paths. `load_default`
@@ -405,7 +405,7 @@ impl KodConfig {
                     // parse the file into a `toml::Table`, deserialize
                     // each known section independently, and keep the
                     // ones that work.
-                    if let Ok(Some(mut cfg)) = Self::recover_sections(&config_path) {
+                    if let Some(mut cfg) = Self::recover_sections(&config_path) {
                         tracing::error!(
                             path = %config_path.display(),
                             error = %whole_file_err,
@@ -1229,7 +1229,6 @@ mod proptests {
             );
             std::fs::write(&path, &content).unwrap();
             let recovered = KodConfig::recover_sections(&path)
-                .unwrap()
                 .expect("valid TOML with one broken section must be salvageable");
             let mut expected = KodConfig::default();
             expected.hooks.enabled = true;
@@ -1295,7 +1294,7 @@ mod recover_sections_proptests {
     fn control_missing_file_returns_none() {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("does-not-exist.toml");
-        let r = KodConfig::recover_sections(&path).expect("io error is swallowed");
+        let r = KodConfig::recover_sections(&path);
         assert!(r.is_none(), "missing file must return Ok(None)");
     }
 
@@ -1306,10 +1305,10 @@ mod recover_sections_proptests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "not = valid = toml\n").unwrap();
-        let r = KodConfig::recover_sections(&path).expect("parse error is swallowed");
+        let r = KodConfig::recover_sections(&path);
         assert!(
             r.is_none(),
-            "syntactically invalid TOML must return Ok(None), got {r:?}",
+            "syntactically invalid TOML must return None, got {r:?}",
         );
     }
 
@@ -1321,9 +1320,7 @@ mod recover_sections_proptests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "config_version = -1\n").unwrap();
-        let cfg = KodConfig::recover_sections(&path)
-            .expect("no parse error")
-            .expect("valid TOML is recoverable");
+        let cfg = KodConfig::recover_sections(&path).expect("valid TOML is recoverable");
         assert_eq!(
             cfg.config_version, 2,
             "config_version = -1 must fall back to the default 2, not 4294967295",
@@ -1337,9 +1334,7 @@ mod recover_sections_proptests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "config_version = 4294967296\n").unwrap();
-        let cfg = KodConfig::recover_sections(&path)
-            .expect("no parse error")
-            .expect("valid TOML is recoverable");
+        let cfg = KodConfig::recover_sections(&path).expect("valid TOML is recoverable");
         assert_eq!(
             cfg.config_version, 2,
             "config_version = 2^32 must fall back to the default 2",
@@ -1354,9 +1349,7 @@ mod recover_sections_proptests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "config_version = 3\n").unwrap();
-        let cfg = KodConfig::recover_sections(&path)
-            .expect("no parse error")
-            .expect("valid TOML is recoverable");
+        let cfg = KodConfig::recover_sections(&path).expect("valid TOML is recoverable");
         assert_eq!(cfg.config_version, 3);
     }
 }
