@@ -318,9 +318,8 @@ impl ChatWidget {
                     out.push(Span::styled(text[rest..].to_string(), hit_style));
                     rest = text.len();
                     break;
-                } else {
-                    out.push(Span::styled(hit, hit_style));
                 }
+                out.push(Span::styled(hit, hit_style));
                 rest = end;
             }
             if rest < text.len() {
