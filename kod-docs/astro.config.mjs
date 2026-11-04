@@ -83,13 +83,15 @@ export default defineConfig({
             { label: 'Tools Reference', slug: 'reference/tools' },
             { label: 'Config Reference', slug: 'reference/config' },
             { label: 'Skill File Format', slug: 'reference/skill-format' },
+            { label: 'Crates', slug: 'reference/crates' },
             { label: 'Changelog', slug: 'reference/changelog' },
           ],
         },
         {
           label: 'Concepts',
           items: [
-            { label: 'Architecture', slug: 'concepts/architecture' },
+            
+            { label: 'Core crates', slug: 'concepts/core-crates' },{ label: 'Architecture', slug: 'concepts/architecture' },
             { label: 'The Agent Loop', slug: 'concepts/agent-loop' },
             { label: 'Internal URLs', slug: 'concepts/internal-urls' },
             { label: 'Minimized Output', slug: 'concepts/output-minimization' },

@@ -7,6 +7,9 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
+
+> **Crate:** [`kod-minimize`](/reference/crates/#capability) — head/tail truncation, structured summarisation, `git diff` minimization.
+
 A large tool result gets **minimised**, not truncated.
 
 The difference matters. A cap chops at a byte boundary, and the part the model needed is very often the part that got cut: a verbose `pytest` run, a `cargo check` with fifty warnings, a `git status` on a big tree. A minimiser rewrites the output into a shorter form that keeps the informative content — a `git status` becomes branch plus file list, a `git log` becomes short hash plus subjects, a failing `cargo check` becomes the error slice.
