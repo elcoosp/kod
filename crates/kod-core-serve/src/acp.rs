@@ -862,7 +862,7 @@ fn kind_for_tool(name: &str) -> &'static str {
         "execute_command" => "execute",
         "web_fetch" => "fetch",
         "todo" | "ask_user" | "memory_save" | "memory_search" => "think",
-        "git_status" | "git_diff" | "git_commit" | "git_branch" | _ => "other",
+        _ => "other",
     }
 }
 

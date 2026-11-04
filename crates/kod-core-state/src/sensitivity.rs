@@ -244,7 +244,7 @@ mod sensitivity_proptests {
         prop_oneof![plain_path(), dotfile_path()]
     }
 
-    fn rank(s: &Sensitivity) -> u8 {
+    fn rank(s: Sensitivity) -> u8 {
         match s {
             Sensitivity::Public => 0,
             Sensitivity::Internal => 1,
@@ -286,7 +286,7 @@ mod sensitivity_proptests {
             all.push(p);
             let s = classify(&all, always_false, always_false);
             prop_assert!(
-                rank(&s) >= rank(&Sensitivity::Internal),
+                rank(s) >= rank(Sensitivity::Internal),
                 "dotfile in path list must be at least Internal, got {:?}", s,
             );
         }
@@ -322,7 +322,7 @@ mod sensitivity_proptests {
             after_paths.push(extra);
             let after = classify(&after_paths, always_false, always_false);
             prop_assert!(
-                rank(&after) >= rank(&before),
+                rank(after) >= rank(before),
                 "adding a path lowered classification: {:?} -> {:?}",
                 before, after,
             );

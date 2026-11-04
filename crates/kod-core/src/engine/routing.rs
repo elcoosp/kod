@@ -187,7 +187,7 @@ impl KodEngine {
     /// non-tab endpoints (the default trait impl is a no-op and
     /// `OpenAICompatProvider` only stamps when asked).
     pub(crate) async fn install_background_session(&self) {
-        if !self.tab_bridge_active() {
+        if !Self::tab_bridge_active() {
             return;
         }
         let bg = self.background_session_id.to_prefixed_string();

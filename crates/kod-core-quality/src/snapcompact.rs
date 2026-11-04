@@ -286,26 +286,26 @@ fn encode_mono_png(width: u32, height: u32, pixels: &[u8], row_bytes: usize) -> 
     ihdr.extend_from_slice(&width.to_be_bytes());
     ihdr.extend_from_slice(&height.to_be_bytes());
     ihdr.extend_from_slice(&[1, 0, 0, 0, 0]);
-    write_chunk(&mut out, b"IHDR", &ihdr);
+    write_chunk(&mut out, *b"IHDR", &ihdr);
 
     // IDAT: zlib stream (2-byte header, stored deflate blocks,
     // 4-byte Adler-32).
     let idat = zlib_stored(&raw);
-    write_chunk(&mut out, b"IDAT", &idat);
+    write_chunk(&mut out, *b"IDAT", &idat);
 
     // IEND.
-    write_chunk(&mut out, b"IEND", &[]);
+    write_chunk(&mut out, *b"IEND", &[]);
 
     out
 }
 
-fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+fn write_chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
     out.extend_from_slice(&(u32::try_from(data.len()).unwrap_or(u32::MAX)).to_be_bytes());
-    out.extend_from_slice(kind);
+    out.extend_from_slice(&kind);
     out.extend_from_slice(data);
     // CRC over kind + data.
     let mut crc_input = Vec::with_capacity(4 + data.len());
-    crc_input.extend_from_slice(kind);
+    crc_input.extend_from_slice(&kind);
     crc_input.extend_from_slice(data);
     let crc = crc32(&crc_input);
     out.extend_from_slice(&crc.to_be_bytes());

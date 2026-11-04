@@ -66,7 +66,7 @@ impl SkillParser {
             // Fall back to it instead of rejecting the skill.
             .unwrap_or_else(|| body.clone());
 
-        let examples = self.extract_examples(&body);
+        let examples = Self::extract_examples(&body);
         let constraints = Self::extract_section(&body, "## Constraints");
 
         Ok(Skill {
@@ -155,7 +155,7 @@ impl SkillParser {
     }
 
     /// Extract examples from <example> tags
-    fn extract_examples(&self, body: &str) -> Vec<SkillExample> {
+    fn extract_examples(body: &str) -> Vec<SkillExample> {
         let mut examples = Vec::new();
 
         // Find all <example>...</example> blocks

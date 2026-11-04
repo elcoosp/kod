@@ -6440,7 +6440,7 @@ impl TuiLoop {
             }
             KeyCode::Tab => match self.app.mode() {
                 AppMode::Normal => self.app.set_mode(AppMode::AgentPanel),
-                AppMode::AgentPanel | _ => self.app.set_mode(AppMode::Normal),
+                _ => self.app.set_mode(AppMode::Normal),
             },
             KeyCode::F(1) => {
                 self.app.toggle_help();
@@ -7887,7 +7887,7 @@ mod tests {
         struct ScriptedProvider;
         #[async_trait]
         impl LlmProvider for ScriptedProvider {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "scripted"
             }
             async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
@@ -7986,7 +7986,7 @@ mod tests {
         }
         #[async_trait]
         impl LlmProvider for CapturingProvider {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "capturing"
             }
             async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {

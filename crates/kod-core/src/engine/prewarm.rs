@@ -10,7 +10,7 @@ impl KodEngine {
     /// WS-A consults it for background-session stamping. Approximation:
     /// prewarm and background traffic both resolve through the default
     /// chain, so the default endpoint is the honest "active endpoint".
-    pub(crate) fn tab_bridge_active(&self) -> bool {
+    pub(crate) fn tab_bridge_active() -> bool {
         match kod_config::KodConfig::load_cached() {
             Ok(c) => c.llm.default_endpoint().tab_bridge,
             Err(_) => false,

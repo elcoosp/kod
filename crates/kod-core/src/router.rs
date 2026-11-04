@@ -1069,12 +1069,7 @@ impl TaskRouter {
     }
 
     /// Build context for processing
-    fn build_context(
-        &self,
-        _input: &str,
-        memory_context: &Option<MemoryContext>,
-        task_type: &TaskType,
-    ) -> String {
+    fn build_context(memory_context: Option<&MemoryContext>, task_type: TaskType) -> String {
         let mut context = String::new();
 
         // Add memory context if available
@@ -1393,7 +1388,7 @@ impl TaskRouter {
                 }
             });
         }
-        prompt.push_str(&self.build_context(input, &memory_context, task_type));
+        prompt.push_str(&Self::build_context(memory_context.as_ref(), *task_type));
 
         // Skill knowledge, two layers: the full name+description inventory is
         // always present (so "which skills do you have?" is answerable), and
