@@ -6367,7 +6367,8 @@ impl TuiLoop {
         if let KeyCode::Char(c) = key
             && let Some(action) = self.keybindings.get(&c).copied()
         {
-            return self.dispatch_key_action(action);
+            self.dispatch_key_action(action);
+            return Ok(());
         }
         match key {
             // Fixed single-char fallbacks not exposed through the
@@ -6484,7 +6485,7 @@ impl TuiLoop {
     /// The behaviour bodies are identical to what the old hardcoded
     /// match arms did; extracting them lets the binding table and the
     /// code path share one implementation.
-    fn dispatch_key_action(&mut self, action: KeyAction) -> Result<()> {
+    fn dispatch_key_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::Insert => self.app.set_input_mode(InputMode::Insert),
             KeyAction::Quit => {
@@ -6536,7 +6537,6 @@ impl TuiLoop {
                 }
             }
         }
-        Ok(())
     }
 
     /// Handle keys in insert mode
