@@ -53,7 +53,7 @@ export default defineConfig({
             { label: 'Your First Session', slug: 'getting-started/first-session' },
           ],
         },
-        {
+            {
           label: 'Guides',
           items: [
             { label: 'Terminal UI (TUI)', slug: 'guides/tui' },
@@ -75,7 +75,7 @@ export default defineConfig({
             { label: 'FAQ', slug: 'guides/faq' },
           ],
         },
-        {
+            {
           label: 'Reference',
           items: [
             { label: 'CLI Commands', slug: 'reference/cli' },
@@ -87,11 +87,11 @@ export default defineConfig({
             { label: 'Changelog', slug: 'reference/changelog' },
           ],
         },
-        {
+            {
           label: 'Concepts',
           items: [
-            
-            { label: 'Core crates', slug: 'concepts/core-crates' },{ label: 'Architecture', slug: 'concepts/architecture' },
+            { label: 'Core crates', slug: 'concepts/core-crates' },
+            { label: 'Architecture', slug: 'concepts/architecture' },
             { label: 'The Agent Loop', slug: 'concepts/agent-loop' },
             { label: 'Internal URLs', slug: 'concepts/internal-urls' },
             { label: 'Minimized Output', slug: 'concepts/output-minimization' },
@@ -102,7 +102,7 @@ export default defineConfig({
             { label: 'LLM Providers', slug: 'concepts/providers' },
           ],
         },
-        {
+            {
           label: 'Developers',
           items: [
             { label: 'Testing', slug: 'developers/testing' },
