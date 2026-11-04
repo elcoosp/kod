@@ -457,7 +457,7 @@ KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \
 
 ## Testing
 
-The workspace contains roughly 356 test attributes across 11 crates. `cargo test --workspace` runs unit tests, integration tests, and doc tests without external services.
+The workspace spans **26 crates** with **5,531 tests passing** (unit, integration, and doc tests combined). `cargo nextest run --workspace` runs the full suite without external services.
 
 | Crate | Description |
 |-------|-------------|

@@ -1,5 +1,831 @@
 # Changelog
 
+## [0.1.3] - 2026-10-15
+
+### Fixes
+
+- **core:** apply [jev] redact_paths — it was documented but never read (a6b49ad9)
+- **core:** obfuscate secrets in tool-call arguments before the provider (53e480e4)
+- **tools:** conflict://<id> must not bypass can_write/can_read (2e3ddf59)
+- **tools:** internal-URL read must redact a protected file (121002ec)
+- **tools:** grep and git_diff must honour read-protection (efe13f44)
+- **tools:** disable numbering when a redaction changes the line count (79774d05)
+- **tools:** numbered read must not let the redaction notice shift line numbers (64b631fd)
+- **tools:** speculative read must not skip redaction or numbering (37771f15)
+
+### Documentation
+
+- **handoff:** session 11 — security bug hunt addendum (b05bbc48)
+
+### Other
+
+- **lints:** content readers must consult read_protection (43d80bb1)
+- **tools:** class-level invariant for every read_file content path (f86a08ce)
+
+## [0.1.4] - 2026-10-16
+
+### Fixes
+
+- **state:** sweep stale session logs and empty recorder files (601a6707)
+- **state:** sweep stale plan project dirs (same shape as checkpoints) (c357ef63)
+- **state:** sweep stale checkpoint project dirs (f63ca175)
+- **core:** obfuscate the transcript before the compaction rungs send it (ceb91732)
+- **core:** register vendor secrets pasted into the prompt (df218b7f)
+- **core:** register vendor-shaped secrets first seen in tool output (371e7b0a)
+- **core:** scrub the secret vault on the Jev outbound path (6260e025)
+
+### Documentation
+
+- **handoff:** disk-hygiene sweep round (f63ca17, c357ef6, 601a670) (c72fa29e)
+- **handoff:** secret-vault coverage round (371e7b0, df218b7, ceb9173) (a0f2308e)
+- **handoff:** Jev outbound secret-scrubbing fix (6260e02) (c3302981)
+
+### Other
+
+- **core:** pin that a threshold rebuild preserves Jev scrubbing (a97cd0c0)
+
+## [0.1.5] - 2026-10-16
+
+### Fixes
+
+- **tools:** inject_intent_field must create properties when absent (ae406f61)
+- **tui:** a longer code fence must not be closed by a shorter one (c07b0531)
+- **tui:** a closing code fence with trailing space must close (30c49160)
+- **risk:** classify in-place writers' targets (a910a8fb)
+- **risk:** escalate interpreter code-string flags (8b7b230a)
+- **risk:** escalate unresolvable operands and mutating find (ae197347)
+- **risk:** classify tee's operands like a redirect target (0240eda0)
+- **tui:** correct the tui_keys.toml path doc; test the loader (b4ff57df)
+- **minimize:** honour MinimizeConfig — both fields were discarded (246e305b)
+
+### Documentation
+
+- **handoff:** inject_intent_field fix + round notes (ae406f6) (669fd6aa)
+- **handoff:** flaky TUI e2e root cause + fix (f6c28e0) (12174389)
+- **handoff:** markdown fence-parsing round (30c4916, c07b053) (12ac65a7)
+- **handoff:** command-risk classifier round 2 (8b7b230, a910a8f) (1094b7a0)
+- **handoff:** command-risk classifier bypasses (0240eda, ae19734) (65d88b3d)
+- **handoff:** MinimizeConfig + keybindings doc round (1fe38195)
+- **handoff:** MinimizeConfig discard fix (246e305) (aecc6d76)
+- **handoff:** v0.1.0 release marked superseded (da806304)
+
+### Other
+
+- **cli:** poll for the exported file instead of a fixed sleep (f6c28e0e)
+
+## [0.1.6] - 2026-10-17
+
+### Fixes
+
+- **lsp:** drain buffered notifications FIFO, not LIFO (badfee66)
+- **cli:** config validate applies the runtime clamps and reports them (dc7ae1ea)
+- **risk:** leading env-prefix and ln must not hide the gate (f1154535)
+
+### Documentation
+
+- **handoff:** LSP LIFO drain fix + round notes (badfee6) (9067b687)
+- **handoff:** config validate fix + round notes (dc7ae1e) (e6adf455)
+- **handoff:** risk bypasses round 3 + TUI e2e flake root cause (8b5aee29)
+
+### Other
+
+- **cli:** run_command waits for the mode hint, not fixed sleeps (6b3d4239)
+
+## [0.1.7] - 2026-10-17
+
+### Fixes
+
+- **risk:** add flock/chrt/unshare wrappers + test (SEC-A-04b) (5130cf3a)
+- **policy:** mirror flock/chrt/unshare wrappers (SEC-A-04b) (6b069209)
+- apply audit finding to Cargo.lock (112ef4af)
+- **anthropic:** backoff on pre-commit retry (TPD-09) (fbf67f1b)
+- **sandbox:** landlock ro_paths includes /dev/null|zero|urandom (SEC-A-21) (ba76f6ea)
+- **risk:** classify rm under stdin redirect, not only pipes (SEC-A-18) (81a75639)
+- **engine:** input_tokens is uncached input; cache_rate now correct (TPD-04) (b626431e)
+- **stats:** restore cache_rate denominator (round-31 was wrong) (TPD-04) (b71c908d)
+- **stats:** cache_rate denominator is input_tokens alone (TPD-04) (46a00e33)
+- **todo:** ids unique across tools sharing one list (BUG-D-10) (930058fd)
+- **compaction:** plan-step coercion falls back to to_string (BUG-C-12) (eb59dae5)
+- **config:** binary_candidates uses the risk tokenizer (SEC-A-12) (339a8155)
+- _... and 52 more_
+
+### Performance
+
+- **search:** run the walk + file scan on spawn_blocking (PERF-05) (2a11234a)
+- **grep:** run the walk + file scan on spawn_blocking (PERF-05) (a3221f61)
+- **engine:** set_ttsr_rules maintains ttsr_has_rules (PERF-11) (f01ddf16)
+- **engine:** init ttsr_has_rules in constructor (PERF-11) (e85c4289)
+- **engine:** add ttsr_has_rules flag to KodEngine (PERF-11) (c745f31b)
+- **engine:** short-circuit TTSR lock when no rules (PERF-11) (af22620a)
+- **lsp:** ensure_open offloads blocking IO via spawn_blocking (PERF-10) (0e6cd101)
+- **memory:** cache long-term view; retrieval avoids redb deserialize (PERF-06) (a64db7fa)
+- **tools:** search_files iterates the shared walk cache (PERF-04) (cfb42bbb)
+- **tools:** grep + list_files iterate the shared walk cache (PERF-04) (1511e242)
+- **tools:** walk-cache shares entries via Arc<Vec<PathBuf>> (PERF-04) (7c90e3f9)
+- **engine:** bound image_frames per key at 4 (PERF-03) (5d289fc8)
+- _... and 4 more_
+
+### Refactor
+
+- **tools:** re-export the alias table from kod-types (audit SEC-A-01) (45cecd9d)
+- **types:** declare the aliases module (audit SEC-A-01) (aa816fc7)
+- **types:** move the tool-alias table into kod-types (88b5b306)
+
+### Documentation
+
+- **handoff:** session-12.md (1e560722)
+
+### Other
+
+- apply rustfmt across workspace + clippy cleanups (v0.1.7 gate) (808d4c16)
+- replace @master with @stable on dtolnay/rust-toolchain (TPD-11b) (1931b8b2)
+- replace @master with @stable on dtolnay/rust-toolchain (TPD-11b) (59ab0f84)
+- **fuzz:** schema target uses spec_for_provider (SEC-B-06) (33fa17e9)
+- **fuzz:** declare kod-provider + kod-schema-dialect deps (SEC-B-06) (cfc70ae9)
+- **fuzz:** lockfile for new fuzz deps (SEC-B-06) (e7603e69)
+- **fuzz:** add schema sanitize target (SEC-B-06) (e4f9f103)
+- **fuzz:** add extract_json target (SEC-B-06) (2c0951d4)
+- **fuzz:** register extract_json + schema bins (SEC-B-06) (390e3382)
+- **stats:** pin cache_rate semantics with 3 explicit cases (TPD-04) (b44edb08)
+- **deps:** lockfile for kod-config -> kod-risk (SEC-A-12) (6d5015d2)
+- **config:** depend on kod-risk for the shared tokenizer (SEC-A-12) (69a89036)
+- _... and 8 more_
+
+## [0.1.8] - 2026-10-17
+
+### Fixes
+
+- **policy:** mirror script/su unwrap + quote-strip on join (SEC-A-04b) (ef14acaa)
+- **risk:** unwrap script/su — command-string escalates, positional reveals program (SEC-A-04b) (103a1a82)
+
+### Performance
+
+- **tui:** windowed render — materialize only visible messages (PERF-01 s2b) (d9ea5e8e)
+- **tui:** render loop reuses cached lines instead of re-parsing (PERF-01 s2a) (b79bfe37)
+- **tui:** render cache stores materialized lines (PERF-01 s2a) (3991b01b)
+
+### Documentation
+
+- **handoff:** session-14.md (217795bf)
+- BACKLOG.md — all audit items closed (v0.1.8) (c7e8a975)
+- **handoff:** session-13.md (2ccf7285)
+- BACKLOG.md for deferred design items (7aa0abc3)
+
+### Other
+
+- apply rustfmt across workspace (v0.1.8 gate) (6c204e98)
+- **fuzz:** add acp_frame + mcp_line targets (SEC-B-06) (3b969467)
+- **fuzz:** expose parse_line_for_fuzz for MCP line parser (SEC-B-06) (46c6b821)
+- **fuzz:** expose read_frame_for_fuzz for ACP framing parser (SEC-B-06) (8ef3041d)
+- pin external actions to commit SHAs (TPD-11b) (9246f985)
+
+## [0.1.9] - 2026-10-18
+
+### Fixes
+
+- **openai:** per-attempt wall-clock deadline on stream (P8) (81d998da)
+- **anthropic:** per-attempt wall-clock deadline on stream (P8) (3b56e43e)
+- **tui:** windowed render includes streaming body, drops double-skip (d7f699a8)
+
+### Documentation
+
+- **handoff:** post-v0.1.8 bug hunt section (8c72ef03)
+
+## [0.1.10] - 2026-10-18
+
+### Fixes
+
+- **mcp:** reject tool-cache entries with a future timestamp (P3) (bced40f1)
+- **tools:** release_all preserves mutual exclusion for held paths (P2) (9bb520cd)
+- **memory:** clamp score_with_weights composite to [0, 1] (P2) (ef110894)
+- **provider:** 1h cache tier prices at 2x input, not the 5m rate (P3) (9b79dd75)
+- **skills:** strip UTF-8 BOM before front-matter detection (P3) (89a4924b)
+- **patch:** filter empty hunks in to_unified_diff (P2, follow-up) (6413f6a7)
+- **patch:** drop all-empty Update patches + filter empty hunks (P2) (4a720549)
+- **cost:** SpendWindow uses Instant (monotonic) not SystemTime (P2) (9ac197b1)
+- **telemetry:** bound concurrent OTLP POSTs (P2) (639dc247)
+- **acp:** remove write-only sessions map (P2) (56b24e34)
+- **acp:** clear in_flight on run_prompt panic (P1) (aa21bf81)
+- **lsp:** cap opened documents; add did_close to bound server memory (P2) (0b54ceb3)
+- _... and 5 more_
+
+## [0.1.11] - 2026-10-18
+
+### Features
+
+- **types:** add truncate_bytes as byte-cap counterpart to truncate_chars (238e9606)
+
+### Fixes
+
+- **core:** router truncate_chars local helper caps by chars, not bytes (54c22183)
+- **routing:** truncate_chars local helper caps by chars, not bytes (46e0182d)
+- **core:** restore byte-intent caps after truncate_chars char-flip (44addb9c)
+- **types:** truncate_chars now caps by characters, not bytes (162e3d76)
+
+### Refactor
+
+- **core:** migrate router byte-budget sites to truncate_bytes (9db33097)
+- **core:** migrate cap_hook_output byte cap to truncate_bytes (fa074927)
+- **memory:** migrate MAX_CONTENT_BYTES sites to truncate_bytes (d7dc0066)
+
+### Documentation
+
+- complete BUG_REPORT_TRUNCATE_CHARS with full fix record (568baee5)
+- **handoff:** session-15.md (static bug-hunt arc closed) (6f5bb152)
+
+### Other
+
+- **types:** source lint — truncate helper name matches contract (022c1395)
+- **types:** add char-bounded property test for truncate_chars (04e1a91a)
+- **core:** update display tests to truncate_chars char semantics (3e3b0be0)
+- **types:** retarget byte-semantics property test to truncate_bytes (4e1c5256)
+- **tools:** three concurrency invariants for PathLockTable (620e6292)
+- **provider:** property tests for extract_json round-trip (3ef07d8c)
+- **state:** property tests for budget allocation arithmetic (fb818f9e)
+- **patch:** round-trip property tests for to_unified_diff -> apply_unified_diff (e60df0d6)
+- **risk:** property tests for classify invariants (e44c9eab)
+
+## [0.1.12] - 2026-10-19
+
+### Features
+
+- **types:** add strutil::truncate_with_ellipsis (90425928)
+
+### Fixes
+
+- **tui:** migrate three display previews to truncate_with_ellipsis (65c8e2a7)
+- **tools:** migrate web-fetch error-body preview to truncate_with_ellipsis (8b93eb96)
+- **anthropic:** migrate error snippet preview to truncate_with_ellipsis (5e81c4b5)
+- **core:** migrate transcript turn preview to truncate_with_ellipsis (336bba34)
+- **core-state:** migrate trace tool-result preview to truncate_with_ellipsis (d9515dde)
+- **cli:** migrate two display previews to truncate_with_ellipsis (f9b6ab8b)
+- **core:** close the fifth byte-guard site (tool_intent) in render.rs (e02f9582)
+- **core:** five byte-guard sites in render.rs on CJK input (fc143039)
+- **core:** isolate a panicking compaction-summary provider (d5544ca5)
+- **memory:** isolate a panicking embedder in fuse_duplicates (fd844890)
+- **memory:** isolate a panicking embedder on the retrieval path (69c94aaf)
+- **tools:** isolate a panicking tool as a ToolResult::Error (1dbf8cce)
+
+### Refactor
+
+- **serve:** extract serve_io(reader, writer) from serve() (ac84e3ee)
+
+### Documentation
+
+- **handoff:** correct the display-site count to 14 (8665a3a9)
+- **handoff:** byte/char display-site migration complete (68966fae)
+- **core:** rename budget_chars -> budget_bytes in render_mental_model_block (9a61fe84)
+- **handoff:** in_flight flag class exhausted (665a74de)
+- **handoff:** fault-injection arc completed (abb43df0)
+- **handoff:** record the fault-injection arc + L22 (8e04febe)
+- **handoff:** L21 extension — fork pressure hits the linker too (99e369cf)
+- **handoff:** record post-arc all-workspace gate + L21 (execfail vs regression) (f7e9a3ad)
+- **handoff:** record multi-client test; arc complete (91716667)
+- **handoff:** correct — LSP live is covered, not a gap (c4b30ea1)
+- **handoff:** record session-18 progress (L20, real MCP server) (e2713fd7)
+- **handoff:** L20 — write wr1.sh atomically, never in place (7e29e58e)
+- _... and 3 more_
+
+### Other
+
+- **types:** source lint — truncate display sites use the helper (2450be19)
+- **serve:** ACP in_flight busy guard is released on completion (58345bbc)
+- **memory:** source lint — every foreground embed goes through embed_safe (60b5f838)
+- **mcp:** garbage mid-conversation + timeout recovery (31e962ac)
+- **anthropic:** malformed SSE frame mid-stream parity (a33b58c3)
+- **openai:** malformed SSE frame mid-stream is dropped, not fatal (530ef015)
+- **core:** two concurrent clients on the serve unix socket (9b661200)
+- **mcp:** real filesystem server integration (#[ignore]d, availability-gated) (cf5a5293)
+- **serve:** drop dead write_call helper from acp_cancel (fe039cd1)
+- **serve:** ACP session/cancel dispatch + stop-reason mapping (a88e5826)
+- **serve:** ACP session/request_permission approval round-trip (0effff47)
+- **core:** engine <-> MCP tool dispatch end-to-end (6b006229)
+- _... and 2 more_
+
+## [0.1.13] - 2026-10-20
+
+### Features
+
+- **core:** raise MAX_GOAL_TURNS from 6 to 20 (087d6e1c)
+
+### Fixes
+
+- **routing:** bounded-digit status detection in TurnFailure::classify (fca3c8be)
+- **core-quality:** finite loadavg; saturating meminfo byte count; proptests (56fed904)
+- **risk:** escalate subshells after command separators (SEC-A-05b) (767e2802)
+- **tools:** reject zero line/column in compiler-output parsers; proptests + probes (88ca5f7e)
+- **provider:** mix a counter into the jitter seed; deterministic test for the collision (016c43b4)
+- **skills:** whitespace boundary before attribute names; proptests for extract_attribute (1231a4ea)
+- **swarm:** require whitespace boundary before `status`; proptests for completion_report::parse (af0301f0)
+- **swarm:** guard `start <= end` in parse_report; proptests for the report parser (45aec66f)
+- **mcp:** use url::Url for Origin::parse; proptests for the redirect policy (31bd1a54)
+- **anthropic:** saturating_add on SSE usage counters; proptests for parse_sse_line (dac58442)
+- **serve:** send an error frame when a spawned engine task panics (98e129bc)
+
+### Refactor
+
+- **serve:** extract serve_io; log abnormal connection termination (b38b7c2d)
+
+### Documentation
+
+- **handoff:** fix the split's stale cross-ref and numbering gap (a14bb3b0)
+- **handoff:** split session-18.md into starting + detail files (21a2146a)
+- **handoff:** gate at fca3c8b (4503/4503); retry-classifier fix + L52 (629c92a8)
+- **handoff:** gate at 56fed90 (4500/4500); preflight parsers fixed (12da1a01)
+- **handoff:** gate at 767e280 (4495/4495); L50, L51, risk-classifier round (fd9e8cea)
+- **handoff:** gate at 88ca5f7 (4493/4493); zero-position parser fix + L49 (49b00b5b)
+- **handoff:** gate at 016c43b (4488/4488); jitter-seed fix + L48 + count correction (060fc9d1)
+- **handoff:** gate at 4600d40 (4481/4481); section-extraction properties (216a7c1c)
+- **handoff:** gate at af0301f (4476/4476); completion_report fix + L47 (4a622fee)
+- **handoff:** gate at 02de4e8 (4470/4470); SKILL.md proptests + L46 (7ca7db38)
+- **handoff:** gate at 45aec66 (4463/4463); parse_report panic fix + L45 (a79c99d2)
+- **handoff:** gate at 31bd1a5 (4459/4459); MCP origin fix + L44 (5f03d2c9)
+- _... and 14 more_
+
+### Other
+
+- soften the tracked-config note on kache (c7ee6ecf)
+- kache stays local; nothing forced in CI (171508d9)
+- **skills:** section-extraction properties for parse_content (5 properties, 2 controls) (4600d403)
+- **skills:** proptests for SkillParser::parse_content (7 properties, 2 controls) (02de4e87)
+- **memory:** proptests for parse_reply (5 properties, 2 controls) (1ce1bb69)
+- **serve:** streaming E2E panic-guard + finding: only `process` was ever wedged (7f6cfd50)
+- **serve:** E2E panic-guard through serve_io (90e8126d)
+- **deps:** commit the Cargo.lock entry that b38b7c2 left behind (7252f61f)
+- add live-integrations job (rust-analyzer + npx) (4f794fc0)
+- **config:** proptests for LlmConfig::validate (never-panics, postconditions, idempotent) (5a005a93)
+- **config:** proptests for Policy::from_toml (never-panics, round-trip, preset_explicit) (47cc41a4)
+- **config:** commit the proptest dev-dep that 8b4e7f5 left behind (a23bce7a)
+- _... and 5 more_
+
+## [0.1.14] - 2026-10-20
+
+### Fixes
+
+- **kod-core-quality:** Go block imports lose all but the last (6945a779)
+- **kod-core-state:** validate end_line against line in extract_citations (fc88fe62)
+- **kod-core-quality:** prop_scan_regions_disjoint, not _and_sorted (e4478834)
+- **kod-core-quality:** sanitize_slug must not truncate onto a dash (225309eb)
+- **kod-core-quality:** silence irrefutable if-let in the prune proptest helper (60c1e5ee)
+
+### Documentation
+
+- **handoff:** session-19-detail.md — round R3 (otlp payloads) (dde9d658)
+- **handoff:** session-19-detail.md — rounds R1 (repomap extractors) and R2 (go block-import bug) (13ea5a6b)
+- **handoff:** session-19.md — record the verified gate at 61536ba (df017c85)
+- **handoff:** session-19.md — starting document for the next agent (61536baa)
+- **handoff:** record the post-extraction rounds (330185a6)
+- **handoff:** extract the post-v0.1.13 continuation to the detail file (08463999)
+- **handoff:** L58 — a property name that overclaims its contract (3043e612)
+- **handoff:** record the four rounds after f46c157 (4662da6b)
+- **handoff:** L57 and a correction to L56's advice (06d97d0e)
+- **handoff:** L56 and the post-v0.1.13 continuation record (f46c1571)
+- **handoff:** L55 — an ordering contract needs a triple, not a pair (b9f32dbb)
+- **handoff:** v0.1.13 tag line, L53, L54 (ae25ef7f)
+- _... and 1 more_
+
+### Other
+
+- **deps:** Cargo.lock companion for the otlp properties (027a05d2)
+- **kod-telemetry:** property tests for otlp payload builders (66888e38)
+- **kod-core-quality:** property tests for repomap extractors (c934ab09)
+- **kod-provider:** property tests for extract_retry_hints (f2a922fb)
+- **kod-provider:** property tests for image-budget helpers (26aab8f4)
+- **kod-stats:** robustness properties for validate (48b8d705)
+- **deps:** Cargo.lock companion for the previous commit (66867a05)
+- **kod-stats:** property tests for score_change and its keyword table (8a4eaca6)
+- **kod-core-state:** property tests for Plan's state machine (d9af4542)
+- **kod-core-state:** apply pending rustfmt drift (50a8cdaa)
+- **deps:** Cargo.lock companion for the previous commit (db0b64fc)
+- **kod-provider-openai:** property tests for normalize_base_url (02952ac9)
+- _... and 19 more_
+
+## [0.1.15] - 2026-10-21
+
+### Fixes
+
+- **kod-swarm:** normalize keeps non-ASCII alphanumerics (b37a059d)
+- **kod-core-serve:** CappedLines cap is content bytes, not line bytes (697820f3)
+- **kod-tui:** parse_overnight_duration saturates on overflow (9865642b)
+- **kod-swarm,kod-stats:** max_chars count chars, not bytes (610b4876)
+- **kod-skills:** MIN_*_MATCH_CHARS count chars, not bytes (92884ced)
+- **kod-memory:** prompt_is_eligible counts chars, not bytes (65ddd951)
+
+### Performance
+
+- **kod-stats:** shrink cap_file_body's property by 32x (e97e3443)
+
+### Refactor
+
+- **kod-core:** collapse router's truncate_chars into kod-types (d6a66717)
+
+### Documentation
+
+- **handoff:** record the cap_file_body perf fix (2293e1dc)
+- **handoff:** session-19 close with R7–R8 and the gate (8b3b2c55)
+- **handoff:** R4–R6 and session-19 close (c09b1579)
+- **handoff:** v0.1.14 released (45c6e311)
+
+### Other
+
+- **kod-types:** property tests for Redactor::redact (728de4e3)
+- **proptest:** commit the advisor normalize regression seed (60f6c581)
+- **proptest:** commit the CappedLines regression seed (e3c31848)
+- **kod-core-serve:** apply pending rustfmt drift (54483870)
+- **deps:** Cargo.lock companion for the kod-cli proptests (7d42107f)
+- **kod-cli:** property tests for parse_kv_args (3ffdbc04)
+- **kod-cli:** apply pending rustfmt drift (1bde9faa)
+- **kod-tui:** property tests for TuiLoop::parse_goal_flags (44fecf7d)
+- **kod-tui:** apply pending rustfmt drift (8838ccaa)
+- **deps:** Cargo.lock companion for the LSP property tests (c6f1feff)
+- **kod-lsp:** property tests for try_parse_frame (ec6deeb1)
+- **kod-core:** property tests for the render pure helpers (ddf85d71)
+- _... and 12 more_
+
+## [0.1.16] - 2026-10-21
+
+### Fixes
+
+- **kod-core-state:** sort pending_tool_calls output for determinism (0287c95e)
+- **kod-stats:** word-boundary short cues and saturate total (d0f28afc)
+- **kod-schema-dialect:** match rejected constructs case-insensitively (b50cc4b3)
+- **kod-core:** skip malformed subtasks instead of aborting the batch (7783456d)
+- **kod-tools:** round-trip trailing newlines through apply_unified_diff (8e62f476)
+- **kod-tools:** treat newline as a top-level separator in the bash interceptor (0b9c9c7a)
+- **kod-types:** resolve_tool_name strips all functions. prefixes (cb9564e9)
+- **kod-provider:** reject ":" in judgment question ids (490f6da4)
+- **kod-swarm:** has_touched recovers from a poisoned lock (5ba0deca)
+- **kod-swarm:** take_batch returns None on a zero budget (d6c63320)
+- **kod-swarm:** WorkPool::dispatch drops the item under FreshAgents (f29e6e3f)
+- **kod-core:** tool_quota::check saturates the soft-threshold arithmetic (b1184efd)
+
+### Documentation
+
+- **handoff:** session-24 entry point (8a066f7a)
+- **handoff:** session-23 entry point (253ab6b0)
+- **handoff:** session-22 entry point — all findings resolved, tag is the open decision (e70a1a8f)
+- **handoff:** correct the patch.rs claim — gate found a fourth case (7c2240ab)
+- **handoff:** patch.rs closed in 8e62f47; record what the six attempts taught (f7ab00b8)
+- **handoff:** session-21 close — survey exhausted, three findings for decision (0e6f41f2)
+- **handoff:** record the two late rounds and the survey false-zero rule (71406759)
+- **handoff:** session-21 entry point superseding the stale session-20 doc (20cc906f)
+- **handoff:** record the green full-workspace gate at 1b0c5ba (1b589782)
+- **handoff:** session-20 detail and the deferred patch.rs finding (63f4f26b)
+- **handoff:** v0.1.15 released (3fdd1223)
+
+### Other
+
+- **kod-core-quality:** integration tests for merge_all refusals and disarm (9af2b344)
+- **kod-config:** serde round-trip properties for SwarmConfig (f2652f71)
+- **kod-types:** model-based state machine for SecretVault (e94e6d93)
+- **kod-types:** metamorphic monotonicity for the truncators (7e030e92)
+- **kod-tools:** differential test between the two location parsers (e98a8071)
+- **kod-tui:** differential test against the engine duration formatter (33c1898b)
+- **kod-provider-anthropic:** properties for parse_response (d77d579f)
+- **kod-telemetry:** properties and characterizations for parse_headers (644bb1cb)
+- **kod-provider:** properties and a characterization for extract_json (28c1a02e)
+- **kod-config:** properties and characterizations for the AGENTS.md parser (be41a7fa)
+- **kod-stats:** properties and characterizations for the behavioral signals (22d29269)
+- **kod-provider:** properties for the two stream stall detectors (2881916f)
+- _... and 28 more_
+
+## [0.1.17] - 2026-10-21
+
+### Fixes
+
+- **kod-core:** do not retry a swarm agent whose error is permanent (41d5ab83)
+
+### Refactor
+
+- **kod-cli:** extract the JSON bodies of the three observability subcommands (4e57011c)
+- **kod-cli:** extract limits_lines and jev_tune_lines (aeb79e4b)
+- **kod-cli:** testable core for run_swarm and its first E2E test (6713a3dd)
+- **kod-cli:** provider seam and testable core for run_prompt (19e36acf)
+
+### Documentation
+
+- remove the stale docs/HANDOFF.md (1881801a)
+- remove the superseded per-session handoff files (2a3b951a)
+- consolidate the session handoffs into HANDOFF.md (13d5183b)
+
+### Other
+
+- **kod-cli:** path-injected observability commands (218e1f96)
+- **kod-core:** redaction and cache-key properties in jev.rs (a052bdf6)
+- **kod-core:** regression test for the permanent-error retry fix (eef582ec)
+- **kod-core:** end-to-end coverage for SwarmRunner::run over a mock provider (982214cb)
+
+## [0.1.18] - 2026-10-22
+
+### Fixes
+
+- **kod-cli:** finish the process::exit sweep in config.rs (3d77c61e)
+- **kod-cli:** prompt --remote returns Err on a daemon error frame (9c902031)
+- **kod-cli:** memory and sessions commands return Err instead of exiting (4db14d03)
+- **kod-cli:** skills subcommands return Err instead of exiting the process (abba12a6)
+- **kod-cli:** config export returns Err instead of exiting the process (efc36a90)
+
+### Documentation
+
+- HANDOFF.md points at v0.1.17 (ef13a03f)
+
+### Other
+
+- **kod-cli:** path-injected replay and jev-stats commands (8af5d50e)
+- **kod-cli:** fixtures subcommands, via a KOD_FIXTURES_DIR override (f70d8a3d)
+
+## [0.1.19] - 2026-10-22
+
+### Refactor
+
+- **kod-cli:** testable core for run_agent and its first E2E test (17109534)
+
+### Documentation
+
+- HANDOFF.md points at v0.1.18 (273ae60e)
+
+### Other
+
+- **kod-cli:** kod memory with a redirected long-term DB (70838fd2)
+- **kod-cli:** jev tune, budget show, limits show, config migrate (cc832635)
+- **kod-cli:** init, profile, and policy show/forget (99951f04)
+- **kod-cli:** the success paths of skills create/copy/rename/remove (232e011a)
+- **kod-cli:** jev status, tools listing, and doctor pipeline (5078564d)
+- **kod-cli:** kod models against a real loopback endpoint (53185ec0)
+
+## [0.1.20] - 2026-10-23
+
+### Fixes
+
+- **tests:** gate three spawn-based test files behind #[cfg(unix)] (d3a66931)
+- real bug fixes for the two CI-failing tests (4fb5f921)
+- **tests:** stabilise two flaky tests on CI (7dacd4fd)
+- **kod-schema-dialect:** mark contains_word as cfg(test) (ffa203ae)
+- **tests:** admin_models_mock used provider = "openai_compatible" (476d73f0)
+- **tests:** gate prompt_remote_daemon behind #[cfg(unix)] (51fdc74a)
+- **ci:** exercise sandbox_containment tests in CI, matching real_filesystem (daedfab0)
+- **kod-core-state:** KOD_CHECKPOINT_DIR override for for_working_dir (eacab9bd)
+- **kod-cli:** KOD_MAP_ROOT override for kod map (164ab7c5)
+- **kod-cli:** KOD_SESSIONS_DIR override for session-log walks (46ed01f5)
+- **kod-cli:** KOD_UPDATE_URL override for the update check (ddaf9252)
+
+### Refactor
+
+- **tests:** extract shared MockLlm into tests/common (473e47b7)
+
+### Documentation
+
+- HANDOFF.md addendum 13 -- final state, CI matrix at 5/6, follow-ups (8f46229f)
+- HANDOFF.md addendum 12 -- background_shell Linux CI investigation (7dd18124)
+- HANDOFF.md addendum 11 -- Windows portability of spawn-based tests (36e7994a)
+- HANDOFF.md addendum 8 -- fix session-totals rows too (293f1bd3)
+- HANDOFF.md addendum 8 -- correct kod-cli and kod-memory coverage (8555675c)
+- HANDOFF.md addendum 8 -- session close at 83.80% workspace, scripted arc ended (e07549b2)
+- HANDOFF.md addendum 7 -- kod-memory at 91.32%, crate done as script target (aa9676e8)
+- HANDOFF.md addendum 5 -- session close at 68.29% (fc163ef4)
+- HANDOFF.md addendum 4 -- coverage at 67.89%, cheap tier exhausted (a3295db1)
+- HANDOFF.md addendum 3 -- session close at 66.25% (c1cbeca6)
+- HANDOFF.md records the coverage arc at 61.71% (e60e9fd2)
+- HANDOFF.md records the 2026-10-22 coverage session (b89a76d4)
+- _... and 1 more_
+
+### Other
+
+- **kod-cli:** gate run_swarm_wrapper and run_agent_wrapper on Unix (0414eb79)
+- **kod-core:** background_shell -- 30s budget, ignore on Linux CI (2e2d8f30)
+- cargo clippy --fix, allow doc-list lint, delete dead fns, while-let loops (ad68c5a9)
+- cargo fmt --all -- session tests + pre-existing drift (88a5466d)
+- **kod-memory:** PendingMemory snapshot, freshness, revalidation (2d34093e)
+- **kod-memory:** set_embedder states -- configured, unusable, replacement (1533c773)
+- **kod-memory:** MemoryManager setters, short-term ops, clear_all, close (2f85f2e2)
+- **kod-memory:** LongTermMemory get_all, store_batch, update, remove_batch, contradictions_of, close (f0e3f1e8)
+- **kod-cli:** memory add/forget/delete/search against a tempdir DB (d44c5423)
+- **kod-cli:** run_chat spawns, hits the mock, exits on quit/EOF (e7c717ee)
+- **kod-cli:** run_agent wrapper against a mock endpoint (08959d36)
+- **kod-cli:** run_swarm wrapper against a scripted mock endpoint (46e57995)
+- _... and 15 more_
+
+## [0.1.21] - 2026-10-24
+
+### Fixes
+
+- **kod-core:** declare the bench target with harness = false (4a1f0a2a)
+- **kod-core:** apply forbidden_paths per file in jfind walk (28e6d3bd)
+- **kod-tools:** apply forbidden_paths per file in search_files walk (87f424e2)
+- **kod-core:** populate forbidden_paths from the policy in tool_dispatch (c4c5f0df)
+- **kod-tools:** apply forbidden_paths per file in grep and list_files walks (34961905)
+- **kod-mcp:** INIT_TIMEOUT_SECS 10 -> 60; cache ~/.npm in CI (9a117840)
+- **kod-core-state:** give sweep-test fixtures distinct mtimes (0d972a2f)
+- **kod-core:** cap a single tool call's streamed arguments (432b81cb)
+- **kod-core:** cancel during streaming was ignored until the stream ended (e9191055)
+- **kod-risk:** tokenizer heredoc loop was quadratic and had dead code (33e00a3d)
+- **kod-risk:** cfg(unix) on two more POSIX-path tests in paths.rs (4ff500f7)
+- **kod-risk:** cfg(unix) on two POSIX-path classify tests (43ac684e)
+- _... and 1 more_
+
+### Performance
+
+- **kod-tools:** cache compiled forbidden-path globsets (ea7c42f7)
+
+### Documentation
+
+- addendum 22 -- path_policy measured and fixed (1034x) (71526d85)
+- **bench:** path_policy header reflects the post-cache measurement (d561df7a)
+- HANDOFF.md addendum 21 -- session close, forbidden_paths + perf (f99ab134)
+- HANDOFF.md addendum 20 -- forbidden_paths is inert in production (7a12411c)
+- HANDOFF.md addendum 19 -- bug-hunting session final close (ee2b4dc8)
+- HANDOFF.md addendum 18 -- bug-hunting round 3 closed (38e67ab6)
+- HANDOFF.md addendum 18 -- bug-hunting round 3 closed (0eb64e72)
+- HANDOFF.md addendum 17 -- bug-hunting session closed (570cba34)
+- HANDOFF.md addendum 16 -- bug-hunting recon (d86f88e8)
+- HANDOFF.md addendum 15 -- CI fully green, session closed (532a359d)
+
+### Other
+
+- bench(kod-core): per-action functions -- risk, path policy, redact, binaries (2243017d)
+- bench(kod-core): baseline for parse_sse_line (d5739bbe)
+- **kod-core:** list_files walk honors forbidden_paths through the engine (111a1102)
+- **kod-core:** jfind walk honors forbidden_paths through the engine (1ca0dc4a)
+- **kod-core:** search_files walk honors forbidden_paths through the engine (68e92bf6)
+- **kod-core:** forbidden_paths reach the grep walk through the engine (25971c4e)
+- **kod-core-serve:** remove the 100ms in_flight barrier (bf2436a2)
+- **kod-cli:** retry stop_daemon to close a macOS socket-bind race (75763b9e)
+- revert daedfab's sandbox_containment step (6c049b21)
+- MCP real-filesystem step uses cargo test, not nextest (5b39ecc6)
+- LSP live test 60s->300s, distinguish skip types (c8d91f2d)
+- pin RUSTUP_TOOLCHAIN=stable on LSP live test (2083abe7)
+- _... and 1 more_
+
+## [0.1.22] - 2026-10-24
+
+### Fixes
+
+- **kod-core:** redact error and confirmation text on the prompt path (f8cdbff5)
+
+### Performance
+
+- **kod-types:** share the compiled built-in redaction rules (96eef93d)
+- **kod-risk:** tokenize once per assess, not twice (23ce5c57)
+
+### Documentation
+
+- **kod-config:** correct the stale "does not depend on kod-risk" claim (a3cf4de4)
+- addendum 23.1 -- error-path redaction gap found and fixed (26ca59bd)
+- addendum 23 -- perf sweep, three fixes and one rejection (cab92dc0)
+
+### Other
+
+- bench(kod-types): redact on tool-result-sized input; record the RegexSet prefilter as measured-and-rejected (412074f7)
+
+## [0.1.23] - 2026-10-26
+
+### Fixes
+
+- **kod-tools:** skip HTML elements by searching the input, not a lowercased copy (6ac9e539)
+- **kod-ast:** bound the parse so the TSX backtracking hang cannot stall (b5aa4af0)
+
+### Performance
+
+- **kod-core:** memoise the in-prompt redaction pass (275ed116)
+
+### Documentation
+
+- addendum 23.5 -- all four open items closed (c260720e)
+- addendum 23.4 -- CI green, and the redaction cost measured (ea959062)
+- **kod-core:** correct the stale doc on redact_tool_result_for_prompt (05efda99)
+- addendum 23.3 -- the TSX hang, root-caused and fixed (17a221e7)
+- addendum 23.2 -- releases, and a real TSX parse hang (38c76c8a)
+
+### Other
+
+- **kod-core:** pin the redaction memo through the engine and config (ac3d5b6c)
+- **kod-ast:** deadline-guard the arbitrary-input parse properties (f6fd235d)
+- cargo fmt --all (517725c7)
+
+## [0.1.24] - 2026-10-28
+
+### Features
+
+- wire the two dead modules -- preflight and presence (6754937e)
+
+### Fixes
+
+- **mcp:** serialise the two real-filesystem live tests (c77ca823)
+- **core:** the Jev-augmented skill list reaches the prompt (1e62253b)
+- **routing:** the fidelity cache keyed on the wrong thing (c870f6cc)
+- **core:** redact prompt scaffolding (plan, decisions, blackboard) (968c7d7b)
+- **core:** batch sub-calls respect per-tool quotas (10f12143)
+- **tools:** xd:// dispatch carries the caller's permissions (dd351d7e)
+- **cli:** surface the replay engine error instead of discarding it (c6393150)
+- **types:** redact secrets used as JSON object keys (8528ed1c)
+- **core:** /compact honours pinned messages (0d377b12)
+- **core:** @file expansion honours read_protection (969c5e09)
+- **core:** jfind honours read_protection before the judge sees content (d724980f)
+- **core:** /compact summarises what it drops instead of truncating (0a30fb15)
+
+### Performance
+
+- **skills:** render the inventory from names, not cloned bodies (a51179ec)
+
+### Documentation
+
+- **arch:** cover all 26 crates; correct delivered and roadmap (936ee7fa)
+- measure and reject the skill-matcher lowercase scan (c0800c5c)
+- record the refined_skills fix and its free perf win (91b645ed)
+- record the refined_skills finding and reject the double-match (17ed007a)
+- two more perf candidates measured and rejected (5ed8bd36)
+- measure and reject the obfuscate-per-round scan (204cf6d9)
+- addendum 26 -- fifth redaction gap, and the hunt's tally (1b134dbc)
+- addendum 25 -- bug hunt continued, four more defects (ba4fcefe)
+- addendum 24 -- bug hunt, four real defects (d49f6e6e)
+- snapcompact and handoff are implemented, not stubs (11b6e020)
+- cover compaction, and say which methods actually run (a9e08aaf)
+- cover the repository map (f25fcefe)
+- _... and 7 more_
+
+### Other
+
+- **deps:** lockfile for the kod-mcp serial_test dev-dependency (fd5fbae0)
+- **tests:** satisfy clippy in the fidelity-cache test (621b0a95)
+- **core:** pin that batch sub-calls respect policy (c32ffbe1)
+
+## [0.1.25] - 2026-10-29
+
+### Fixes
+
+- **core:** obfuscate secondary prompts through the vault (110bbc84)
+- **core-serve:** surface the last silent shutdown timeout (96b29ada)
+- **core:** surface shutdown-watchdog timeouts (09d4fdf1)
+- **core:** surface session-log and spool write failures (4b1ed1e8)
+
+### Refactor
+
+- **router:** collapse build_prompt* through PromptRequest (1bd54a1e)
+
+### Dependencies
+
+- bump tree-sitter 0.27 + grammar family (9bad1e6b)
+- bump Tier C (criterion, serial_test, dirs, similar, base64, parking_lot, rstest) (8c529d10)
+- bump hmac 0.13 + sha2 0.11 together (digest 0.11 pair) (bd79ad6e)
+- Tier A version bumps (patch/minor, API-compatible expected) (ca136a92)
+
+### Documentation
+
+- correct tree-sitter handoff + rename the test (9d985f23)
+- record dependency centralisation and tree-sitter decision (6cea14c4)
+- session handoff 2026-10-29 (8f4b5b0e)
+
+### Other
+
+- **tui:** cover /review's success path (spawns a job) (06c1ea7a)
+- **tui:** cover /review's second guard (no assistant turn) (29d2a0e1)
+- **tui:** cover /review's two guard paths (e99083d0)
+- **deps:** remove dead root workspace entries (0e2c96fb)
+- rustfmt on tree-sitter migration (0f4c19cd)
+- canonicalise hmac import (292ce779)
+- **deps:** centralise every dependency in the workspace root (8ef71ec0)
+- **core:** vault coverage for the summary provider path (8f26b0d7)
+- **cli:** give acp_handshake 45s under parallel load (7cb9bde2)
+- **core:** vault coverage for the plan provider path (9456ada4)
+- **sessions:** gate sessions_live on unix (0d6827cc)
+
+## [0.1.26] - 2026-10-30
+
+### Refactor
+
+- **tools:** extract FileInfoTool to its own module (e1187190)
+- **core:** route every secondary prompt through one helper (9304fbd5)
+
+### Documentation
+
+- handoff update — session arc, items 1-5, new process rules (5026487d)
+
+### Other
+
+- add auto_check to serial-subprocess group (20ad325e)
+- complete serial-subprocess membership (9a1db78e)
+- serialize subprocess-spawning tests via a nextest group (83a9f9c0)
+- **benches:** criterion::black_box -> std::hint::black_box (ad031316)
+- add RouterConfig::for_testing helper (cb93685c)
+
+## [0.1.27] - 2026-10-31
+
+### Fixes
+
+- **memory:** two defensive changes from the kod-memory audit (3af80f92)
+
+### Documentation
+
+- record sandbox audit outcome (0 changes, all candidates refuted) (7d67919e)
+- correct the kod-swarm C2 verdict (SAFE, confirmed) (dd792ba4)
+- record audit outcomes for kod-memory and kod-swarm (38c79286)
+
+### Other
+
+- revert acp_handshake 45s -> 15s; group alone suffices (549ce467)
+
+---
+
 ## [0.1.2] - 2026-10-15
 
 ### Security
