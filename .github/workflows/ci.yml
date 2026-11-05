@@ -261,7 +261,7 @@ jobs:
     - name: Run cargo-deny
       run: cargo deny check
 
-  docs:
+  docs-site:
     name: Docs (drift + build)
     runs-on: ubuntu-latest
 
