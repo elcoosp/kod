@@ -35,6 +35,7 @@ jobs:
           tool: git-cliff
 
       - name: Generate new section only
+        id: changelog
         run: |
           # --unreleased generates commits since the last tag, named under
           # the new tag. --strip header drops the file-level header so we
@@ -45,7 +46,21 @@ jobs:
                     --output /tmp/new_section.md
           echo "generated $(wc -l < /tmp/new_section.md) lines"
 
+          # A tag push whose only commits since the previous tag are
+          # `chore(release):` or `chore(deps):` produces a section with
+          # the release header but zero bullets. Gate the rest of the
+          # workflow on bullet count, not line count.
+          BULLETS=$(grep -cE '^- ' /tmp/new_section.md || echo 0)
+          if [ "$BULLETS" -eq 0 ]; then
+            echo "has_content=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No user-visible commits since previous tag; skipping changelog PR"
+          else
+            echo "has_content=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$BULLETS changelog entries found"
+          fi
+
       - name: Verify new section
+        if: steps.changelog.outputs.has_content == 'true'
         run: |
           set -e
           NEW=/tmp/new_section.md
@@ -81,6 +96,7 @@ jobs:
           fi
 
       - name: Prepend new section to CHANGELOG.md
+        if: steps.changelog.outputs.has_content == 'true'
         run: |
           python3 - <<'PYEOF'
           import re
@@ -110,6 +126,7 @@ jobs:
           PYEOF
 
       - name: Sync site changelog.mdx (preserve frontmatter)
+        if: steps.changelog.outputs.has_content == 'true'
         run: |
           python3 - <<'PYEOF'
           import re
@@ -133,6 +150,7 @@ jobs:
           PYEOF
 
       - name: Create pull request
+        if: steps.changelog.outputs.has_content == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
