@@ -18,7 +18,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 ## `artifact://`
 
-When the [minimizer](#minimized-tool-output) rewrites a large tool result into something shorter, the original is stored and referenced by an `artifact://<id>` URL in the result JSON. Reading that URL returns the untouched capture — the model can ask for it deliberately, and a human can fetch it from the session log.
+When the [minimizer](/concepts/output-minimization/) rewrites a large tool result into something shorter, the original is stored and referenced by an `artifact://<id>` URL in the result JSON. Reading that URL returns the untouched capture — the model can ask for it deliberately, and a human can fetch it from the session log.
 
 This is the difference between *truncating* and *minimising*: a 16 KiB cap throws away the tail, while an artifact keeps it reachable at the cost of one read.
 

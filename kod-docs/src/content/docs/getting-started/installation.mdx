@@ -17,7 +17,7 @@ Three things must be present on your machine before you build:
 - **A model server** that speaks the OpenAI chat-completions protocol. [Ollama](https://ollama.ai/) is the recommended default and what the bundled profiles target first, but LM Studio, MLX Omni Serve, vLLM, and OpenAI itself all work unchanged.
 - **Git**, required both for the built-in git tools (`git_status`, `git_diff`, `git_commit`, `git_branch`) and for `build.rs`, which stamps version information into the binary at compile time.
 
-Two optional extras unlock more later: [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux for `--sandbox`, and any [language server](/guides/tools/#lsp-tools) on your `PATH` (rust-analyzer, typescript-language-server, …) for the LSP tools. Neither is required to start.
+Two optional extras unlock more later: [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux for `--sandbox`, and any [language server](/guides/tools/) on your `PATH` (rust-analyzer, typescript-language-server, …) for the LSP tools. Neither is required to start.
 
 ## Build from source
 
