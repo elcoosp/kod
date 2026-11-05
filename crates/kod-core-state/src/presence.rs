@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn a_mark_round_trips_through_list() {
         let tmp = tempfile::TempDir::new().unwrap();
-        mark(tmp.path(), MarkerKind::Interactive, "session-a");
+        let _ = mark(tmp.path(), MarkerKind::Interactive, "session-a");
         let live = list(tmp.path(), MarkerKind::Interactive);
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].name, "session-a");
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn unmark_removes_the_entry() {
         let tmp = tempfile::TempDir::new().unwrap();
-        mark(tmp.path(), MarkerKind::Streaming, "s");
+        let _ = mark(tmp.path(), MarkerKind::Streaming, "s");
         unmark(tmp.path(), MarkerKind::Streaming, "s");
         assert!(list(tmp.path(), MarkerKind::Streaming).is_empty());
     }

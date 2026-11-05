@@ -510,7 +510,7 @@ mod tests {
     fn register_discovered_reports_only_new() {
         let v = SecretVault::with_key([1u8; 32]);
         let text = "key sk-ant-api03-abcdefghijklmnopqrstuv";
-        register_discovered(&v, scan_text(text));
+        let _ = register_discovered(&v, scan_text(text));
         let second = register_discovered(&v, scan_text(text));
         assert_eq!(second, 0, "the same secret is not re-counted");
     }
@@ -684,7 +684,7 @@ mod secret_sources_proptests {
             let discovered = scan_text(&text);
             let values: Vec<String> = discovered.iter().map(|d| d.value.clone()).collect();
             let v = SecretVault::with_key([11u8; 32]);
-            register_discovered(&v, discovered);
+            let _ = register_discovered(&v, discovered);
             let obfuscated = v.obfuscate(&text);
             for value in &values {
                 prop_assert!(
