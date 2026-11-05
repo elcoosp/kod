@@ -1,72 +1,65 @@
-# git-cliff configuration - generates the release notes attached to
-# a GitHub Release.
+# git-cliff configuration for KOD's CHANGELOG.md
 #
-# This is *not* CHANGELOG.md. The hand-written CHANGELOG carries the
-# narrative (why a change was made); these notes are the audience-facing
-# "what changed in this release", grouped by conventional-commit type
-# and linked to each commit.
+# Regenerates the file in the exact format the D1 recovery established:
+# - "## [X.Y.Z] - YYYY-MM-DD" headers (oldest first within a release)
+# - Per-category subsections: Security / Features / Fixes / Performance /
+#   Refactor / Dependencies / Documentation / Other
+# - Bullets in the form "- **scope:** message (short-sha)"
 #
-# Nothing is committed from this: the notes are generated in the release
-# workflow for the tag being published, so they cannot drift the way a
-# checked-in file would.
+# The v0.1.0-v0.1.2 entries were hand-curated before this config existed.
+# The workflow preserves them by only replacing content from v0.1.3 forward
+# (see .github/workflows/changelog.yml).
 #
-# No emoji. No GitHub API call: the commit URL is built from a fixed
-# base, so generation is offline and cannot hit an API rate limit.
+# To regenerate locally: `git-cliff --tag vX.Y.Z --output /tmp/new.md`
+# To regenerate only the tail (v0.1.3+): see workflow.
 
 [changelog]
-header = ""
+header = """
+# Changelog
+
+All notable changes to KOD are documented here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Releases from v0.1.3 onward are generated from conventional commits by
+[git-cliff](https://git-cliff.org). v0.1.0 through v0.1.2 are hand-curated.
+"""
 body = """
-{% if version %}\
-## {{ version | trim_start_matches(pat="v") }} - {{ timestamp | date(format="%Y-%m-%d") }}
-{% else %}\
-## Unreleased
-{% endif %}\
-{% if commits | length == 0 %}\
-Internal changes only (dependencies, CI, tests). No user-facing changes.
-{% else %}\
+{%- if version %}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{%- else %}
+## [Unreleased]
+{%- endif %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim }}
-{% for commit in commits %}\
-- {{ commit.message | upper_first }} ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/elcoosp/kod/commit/{{ commit.id }}))
+
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.id %} ({{ commit.id | truncate(length=7, end="") }}){% endif %}
+{%- endfor %}
 {% endfor %}
-{% endfor %}\
-{% endif %}\n
 """
 footer = ""
 trim = true
 
 [git]
 conventional_commits = true
-# A commit that does not follow the convention (and matches no parser
-# below) is dropped rather than dumped into the notes.
-filter_unconventional = true
+filter_unconventional = false
 split_commits = false
-
 commit_parsers = [
-    { message = "^feat", group = "Features" },
-    { message = "^fix", group = "Bug Fixes" },
-    { message = "^perf", group = "Performance" },
-    { message = "^refactor", group = "Refactoring" },
-    { message = "^docs", group = "Documentation" },
-    { message = "^revert", group = "Reverted" },
-    # Internal-only: omitted from the audience-facing notes.
-    { message = "^test", skip = true },
-    # Dependency bumps are user-facing (a security bump especially);
-    # group them rather than hiding them with the rest of `chore`.
-    { message = "^chore\\(deps\\)", group = "Dependencies" },
-    { message = "^chore", skip = true },
-    { message = "^style", skip = true },
-    { message = "^ci", skip = true },
-    { message = "^build", skip = true },
-    { message = "^deps", skip = true },
-    { message = "^cleanup", skip = true },
-    { message = "^release", skip = true },
-    # Anything else conventional but unrecognised: drop it rather than
-    # warn about a grouping error.
-    { message = ".*", skip = true },
+    { message = "^feat",                    group = "Features" },
+    { message = "^fix",                     group = "Fixes" },
+    { message = "^perf",                    group = "Performance" },
+    { message = "^refactor",                group = "Refactor" },
+    { message = "^security",                group = "Security" },
+    { message = "^deps|^chore\\(deps\\)",   group = "Dependencies" },
+    { message = "^docs",                    group = "Documentation" },
+    { message = "^chore\\(release\\)",      skip = true },
+    { message = "^release:",                skip = true },
+    { message = "^revert",                  group = "Other" },
+    { message = ".*",                       group = "Other" },
 ]
-
-protect_breaking_commits = false
-filter_commits = true
-tag_pattern = "v[0-9]*"
+filter_commits = false
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+"
 sort_commits = "oldest"
+protect_breaking_commits = false
