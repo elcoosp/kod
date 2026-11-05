@@ -5,9 +5,9 @@
     Multi-crate Cargo workspace with a full agent loop: skills, multi-layer memory, tool calling, streaming LLM providers, and both a TUI and a scriptable CLI. Point it at Ollama, LM Studio, MLX, vLLM, or any OpenAI-compatible endpoint — the model, the memory, and the tool loop all stay on your machine.
   </p>
   <p>
-    <img src="https://img.shields.io/badge/Rust-1.98.1%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
+    <img src="https://img.shields.io/badge/Rust-1.99%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License MIT"/>
-    <img src="https://img.shields.io/badge/Crates-20-6F4E37?style=flat-square" alt="Crates"/>
+    <img src="https://img.shields.io/badge/Crates-26-6F4E37?style=flat-square" alt="Crates"/>
     <img src="https://img.shields.io/badge/Backend-Ollama%20%7C%20OpenAI--Compatible-6A0DAD?style=flat-square" alt="Backend"/>
     <img src="https://img.shields.io/badge/Interface-TUI%20%2B%20CLI-4B32C3?style=flat-square" alt="Interface"/>
     <img src="https://img.shields.io/badge/Skills-Markdown%20%2B%20Hot%20Reload-00BFFF?style=flat-square" alt="Skills"/>
@@ -56,12 +56,24 @@ Verify before unpacking:
 
 ```bash
 sha256sum -c kod-x86_64-unknown-linux-musl.tar.gz.sha256
-minisign -Vm kod-x86_64-unknown-linux-musl.tar.gz -P "$(cat docs/minisign.pub)"
 ```
+
+Every archive ships a `.sha256` — that is the canonical integrity check
+for any release. Minisign signatures (`.minisig`) are **opt-in**: they
+appear only when the maintainer has configured `MINISIGN_SECRET_KEY` as
+a repository secret for the release workflow. When present, verify with
+the maintainer's public key:
+
+```bash
+minisign -Vm kod-x86_64-unknown-linux-musl.tar.gz -P <public-key>
+```
+
+When no `.minisig` file is present alongside the archive, signing is not
+enabled for that release and `.sha256` is the integrity check to use.
 
 ### Requirements
 
-- Rust 1.98.1 or newer (`rustup toolchain install 1.98.1`).
+- Rust 1.99 or newer (`rustup toolchain install 1.99`).
 - A provider endpoint: a local Ollama server, or an OpenAI-compatible
   or Anthropic API key. `kod doctor` reports what is configured.
 
@@ -132,6 +144,9 @@ KOD is a Cargo workspace. Each crate has a single responsibility and a narrow pu
 | `kod-types` | Shared types: strongly-typed IDs, messages, skills, memory, tools. |
 | `kod-error` | `KodError` enum and `Result` alias. |
 | `kod-config` | `KodConfig`, `LlmConfig`, `MemoryConfig`, `SkillsConfig`, `SwarmConfig`, model profiles. |
+| `kod-ast` | Tree-sitter parsing with a process-global parse cache (powers the repo map). |
+| `kod-ast` | Tree-sitter parsing with a process-global parse cache (powers the repo map). |
+| `kod-ast` | Tree-sitter parsing with a process-global parse cache (powers the repo map). |
 | `kod-provider` | `LlmProvider` trait, `GenerationOptions`, streaming chunk types. |
 | `kod-provider-openai` | OpenAI-compatible implementation (backed by `adk-model`). |
 | `kod-provider-anthropic` | Anthropic Messages API provider (native wire; `adk-model` for the legacy text path). |
@@ -142,6 +157,21 @@ KOD is a Cargo workspace. Each crate has a single responsibility and a narrow pu
 | `kod-tools` | `Tool` trait, registry, built-in tools, per-path lock table, sandbox invocation. |
 | `kod-swarm` | Agent lifecycle, communication hub, task coordinator, shared workspace. |
 | `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, repository map, session log, hooks. |
+| `kod-core-quality` | Codebase analysis, cleanup, and quality gates: `snapcompact`, `shake`, `repomap`. |
+| `kod-core-routing` | Task routing and provider selection policy for the engine. |
+| `kod-core-serve` | Unix-socket daemon and ACP bridge (JSON-RPC over stdio). |
+| `kod-core-state` | Persistent state, journals, ledgers, and cost accounting. |
+| `kod-core-tools` | Adapter layer wrapping KOD's built-in tools for the engine's dispatch loop. |
+| `kod-core-quality` | Codebase analysis, cleanup, and quality gates: `snapcompact`, `shake`, `repomap`. |
+| `kod-core-routing` | Task routing and provider selection policy for the engine. |
+| `kod-core-serve` | Unix-socket daemon and ACP bridge (JSON-RPC over stdio). |
+| `kod-core-state` | Persistent state, journals, ledgers, and cost accounting. |
+| `kod-core-tools` | Adapter layer wrapping KOD's built-in tools for the engine's dispatch loop. |
+| `kod-core-quality` | Codebase analysis, cleanup, and quality gates: `snapcompact`, `shake`, `repomap`. |
+| `kod-core-routing` | Task routing and provider selection policy for the engine. |
+| `kod-core-serve` | Unix-socket daemon and ACP bridge (JSON-RPC over stdio). |
+| `kod-core-state` | Persistent state, journals, ledgers, and cost accounting. |
+| `kod-core-tools` | Adapter layer wrapping KOD's built-in tools for the engine's dispatch loop. |
 | `kod-tui` | Terminal UI: app state, event handling, widgets, keybindings, themes. |
 | `kod-cli` | The `kod` binary: command definitions and handlers. |
 | `kod-risk` | Path-danger classification: ranks filesystem paths by blast radius for approval and sandboxing. |
@@ -182,7 +212,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate-by-crate b
 
 ### Prerequisites
 
-- **Rust** 1.98.1 or newer (install via [rustup](https://rustup.rs/)). The workspace uses the 2024 edition.
+- **Rust** 1.99 or newer (install via [rustup](https://rustup.rs/)). The workspace uses the 2024 edition.
 - **A model server** — [Ollama](https://ollama.ai/) is the recommended default, but any OpenAI-compatible endpoint works.
 - **Git** — required for the git tools and for `build.rs` (version stamping).
 
@@ -227,22 +257,43 @@ ollama pull qwen2.5-coder:7b
 kod [--verbose] <COMMAND>
 
 Commands:
-  chat         Start a chat session (plain REPL)
-  tui          Launch the interactive terminal UI
-  agent        Run a single agent against a goal
-  swarm        Decompose a goal, run N agents, merge results
-  skills       List loaded skills
-  config       Show the effective configuration
-  models       List models the configured provider offers
-  profile      List, show, or switch model profiles
-  sessions     Inspect, export, or clear the saved TUI session
-  map          Print the repository map
-  replay       Re-run the tool calls from a session log
-  serve        Run a daemon that keeps one engine alive across client invocations
-  doctor       Print a diagnostics report
-  init         First-run helper
-  test         Run the built-in self-tests
-  completions  Print a shell completion script
+  chat                    Start a chat session
+  tui                     Launch the interactive terminal UI
+  agent                   Run an agent with a specific goal
+  swarm                   Decompose a goal into N subtasks, run them concurrently, merge
+  prompt                  One-shot prompt, non-interactive; reads `-` from stdin
+  run                     Like prompt, but streams tokens to stdout as they arrive
+  serve                   Long-lived daemon that `--remote` clients attach to
+  acp                     Agent Client Protocol bridge on stdin/stdout (editor integration)
+  skills                  List, scaffold, edit, or export skills
+  validate-skills         Parse every skill file; exit non-zero on failure
+  validate-skills-strict  Same, but treat missing version fields as failures
+  config                  Show, path, edit, validate, or migrate the config
+  memory                  Inspect, search, export, or import long-term memory
+  sessions                Inspect, export, import, or clear the saved TUI session
+  checkpoint              List, diff, restore, or clear file checkpoints
+  replay                  Re-run the tool calls recorded in a session log
+  map                     Print the repository map (symbols per source file)
+  models                  List the models the configured provider offers
+  profile                 List, show, or switch model profiles
+  tools                   List registered tools or print one tool's schema
+  theme                   List built-in TUI themes or print one palette
+  policy                  Inspect or forget effective tool-policy decisions
+  sandbox                 Report whether the platform sandbox primitive is available
+  jev                     Jev (TypeSafe AI) status, statistics, and threshold tuning
+  budget                  Session cost and current limits
+  limits                  Per-tool quotas and counters
+  plan                    Plan artifact for the current session
+  decisions               Durable decisions recorded for the current session
+  trace                   Inspect the structured turn traces written by the engine
+  commit-check            Validate a conventional-commit message against staged changes
+  if-bench                Run the if-bench instruction-following eval on the default endpoint
+  fixture                 Save and replay deterministic streaming fixtures
+  doctor                  Print a diagnostics report (config, endpoint, sandbox, git)
+  init                    First-run helper: write config, print next commands
+  test                    Run the built-in self-tests
+  update                  Check GitHub for a newer release (read-only)
+  completions             Print a shell completion script
 ```
 
 A few worth calling out:
@@ -457,7 +508,7 @@ KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \
 
 ## Testing
 
-The workspace spans **26 crates** with **5,531 tests passing** (unit, integration, and doc tests combined). `cargo nextest run --workspace` runs the full suite without external services.
+The workspace spans **26 crates** with **5,678 tests passing** (unit, integration, and doc tests combined). `cargo nextest run --workspace` runs the full suite without external services.
 
 | Crate | Description |
 |-------|-------------|
@@ -524,8 +575,7 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including p
 ### Tracked gaps
 
 - **`kod chat --remote` / `kod prompt --remote` / `kod agent --remote` attach to a running `kod serve` daemon**. Response routing for approvals and `ask_user` is implemented: the daemon dispatches `respond_to_approval` and `respond_to_question` methods, so a client that sees an approval marker can answer it. What is not yet wired is the *initial forward* of a marker to a client that has not yet connected — a daemon started with a strict policy on a fresh socket is the case that still times out to deny. A client already attached to a `process_streaming` call receives the marker on the same connection and can answer.
-- **The swarm runner dispatches one agent per subtask index-1:1.** `TaskCoordinator::least_loaded_agent` and `find_agents_with_capability` exist but the runner does not consult them; a work-stealing dispatch is a follow-up.
-- **No per-agent heartbeat watchdog.** A stuck agent times out; a swarm whose N agents each finish just under their cap is bounded by the overall run timeout (`swarm_timeout_secs`, default 30 min).
+- **Per-agent heartbeat watchdog is present but coarse.** `swarm_runner.rs` runs a per-run watchdog that polls every 10 s and aborts any agent whose last heartbeat is older than 90 s, plus a per-agent timeout (`agent_timeout_secs`, default 300 s = 5 min). What is *not* yet wired is finer-grained progress reporting inside a single tool round — a single very slow tool call still consumes the full 5-minute budget before the watchdog intervenes.
 - **`docs/SPEC.md`** describes a larger aspirational system than the workspace implements. It is kept as a design reference; `docs/ARCHITECTURE.md` and `docs/TESTING.md` describe the code as it exists.
 
 > [!WARNING]
