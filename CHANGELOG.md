@@ -185,6 +185,7 @@ This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
 - **clippy:** Remaining unnecessary_wraps (provider, config) (df6d79a)
 - **clippy:** Unwrap unnecessary Result in parse_response (b486703)
 
+
 ## [0.1.3] - 2026-10-15
 
 ### Fixes
