@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
-          toolchain: "1.98.1"
+          toolchain: "1.99"
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
-          toolchain: "1.98.1"
+          toolchain: "1.99"
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
@@ -201,7 +201,7 @@ jobs:
         cargo test -p kod-core --test it -- prompt_plan
 
   msrv:
-    name: MSRV (1.98.1)
+    name: MSRV (1.99)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -209,7 +209,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       with:
-        toolchain: "1.98.1"
+        toolchain: "1.99"
 
     - name: Cache cargo registry
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4

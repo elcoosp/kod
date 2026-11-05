@@ -1,0 +1,84 @@
+name: Publish crates to crates.io
+
+# Manual-trigger only. Publishing to crates.io is irreversible for a
+# given version (you can yank, but yanked versions stay listed). This
+# workflow is deliberately NOT on tag push — a human runs it after
+# confirming the tag and binaries look right.
+#
+# Prerequisites:
+#   1. Tag matching workspace version exists (e.g. v0.1.27)
+#   2. CARGO_REGISTRY_TOKEN secret set (create at
+#      https://crates.io/settings/tokens with `publish-new` scope)
+#
+# Run: Actions → Publish crates → Run workflow → type CONFIRM
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type CONFIRM to publish to crates.io'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event.inputs.confirm == 'CONFIRM'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify workspace version matches latest tag
+        run: |
+          set -e
+          WORKSPACE_VERSION=$(grep -E '^version' Cargo.toml | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          EXPECTED_TAG="v$WORKSPACE_VERSION"
+          if [ "$EXPECTED_TAG" != "$LATEST_TAG" ]; then
+            echo "::error::workspace version ($WORKSPACE_VERSION) doesn't match latest tag ($LATEST_TAG)"
+            echo "  expected tag: $EXPECTED_TAG"
+            echo "  actual tag:   $LATEST_TAG"
+            exit 1
+          fi
+          echo "version verified: workspace = $WORKSPACE_VERSION, tag = $LATEST_TAG"
+
+      - name: Install cargo-release
+        uses: taiki-e/install-action@cargo-release
+
+      - name: Dry-run (compose packages, no upload)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo release publish --workspace --dry-run
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # cargo-release publishes in dependency order:
+          #   leaves first (kod-types, kod-error) then up the tree
+          #   (kod-core, then kod-cli/kod-tui last).
+          # Already-published versions are skipped (idempotent).
+          cargo release publish --workspace --execute --no-confirm
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published crates"
+            echo ""
+            echo "Version: \`${{ github.ref_name }}\`"
+            echo ""
+            echo "| Crate | crates.io |"
+            echo "|-------|-----------|"
+            for cargo in crates/*/Cargo.toml; do
+              name=$(grep -E '^name' "$cargo" | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+              echo "| \`$name\` | https://crates.io/crates/$name |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
