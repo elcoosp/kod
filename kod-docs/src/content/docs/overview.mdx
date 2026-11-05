@@ -28,7 +28,7 @@ If “where does my code go when I run this?” is a question you want a one-lin
 
 The harness ships a full feature set across five areas:
 
-**Agent harness.** A skills system based on Markdown files with YAML front matter, matched by triggers, tags, capabilities, and name, with hot reload on edit. Multi-layer memory with short-term (in-memory, FIFO) and long-term (`redb`, persistent) stores, global or project-scoped. A streaming agentic loop that classifies tasks, builds a grounded prompt, streams tokens live, executes tool calls, and feeds results back for up to 29 tool rounds. An agent swarm that decomposes a goal into subtasks, runs them concurrently, detects file conflicts, and merges the results.
+**Agent harness.** A skills system based on Markdown files with YAML front matter, matched by triggers, tags, capabilities, and name, with hot reload on edit. Multi-layer memory with short-term (in-memory, FIFO) and long-term (`redb`, persistent) stores, global or project-scoped. A streaming agentic loop that classifies tasks, builds a grounded prompt, streams tokens live, executes tool calls, and feeds results back for up to 40 tool rounds. An agent swarm that decomposes a goal into subtasks, runs them concurrently, detects file conflicts, and merges the results.
 
 **Safety.** Every tool call passes through a four-layer policy engine (preset → global config → project `.kod/policy.toml` → CLI override) before it runs. Writes can require explicit approval, shell commands can be sandboxed through `bwrap` or `sandbox-exec`, and every mutating call snapshots the target file so it can be restored with `kod checkpoint restore`.
 

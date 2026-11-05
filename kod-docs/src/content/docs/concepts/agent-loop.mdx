@@ -28,7 +28,7 @@ Everything KOD does funnels through one loop: the engine takes an input, builds 
 
 ## The round cap
 
-The loop runs at most **29 tool rounds** per prompt before the engine forces a wrap-up: one final call asks the model to summarise what was done and what remains. A typical non-trivial task uses 3–15 rounds, so 40 is a generous margin that still catches a runaway loop (a small model endlessly re-reading the same file) before you have waited minutes for nothing. The cap is fixed, not configurable — it is one of the few places KOD chooses a hard limit over unbounded adaptivity, and it is the reason a `kod agent` run always exits.
+The loop runs at most **40 tool rounds** per prompt before the engine forces a wrap-up: one final call asks the model to summarise what was done and what remains. A typical non-trivial task uses 3–15 rounds, so 40 is a generous margin that still catches a runaway loop (a small model endlessly re-reading the same file) before you have waited minutes for nothing. The cap is fixed, not configurable — it is one of the few places KOD chooses a hard limit over unbounded adaptivity, and it is the reason a `kod agent` run always exits.
 
 The `/goal` loop is separately capped at **6 turns** before it stops and reports progress, which you can refine with `/goal` or `/steer`.
 
