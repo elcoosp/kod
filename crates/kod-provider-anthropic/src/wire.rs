@@ -37,7 +37,11 @@
 //! entry so the API accepts the request.
 
 use kod_provider::request::{CompletionRequest, SystemPrompt};
-use kod_types::{ChatMessage, LoadMode, MessageMetadata, MessageRole, ToolDefinition};
+#[cfg(test)]
+use kod_types::LoadMode;
+#[cfg(test)]
+use kod_types::MessageMetadata;
+use kod_types::{ChatMessage, MessageRole, ToolDefinition};
 use serde_json::{Value, json};
 
 /// Build the JSON body for `POST /v1/messages`.

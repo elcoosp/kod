@@ -14,7 +14,9 @@
 //!    scores near zero; a fact from yesterday scores near one.
 
 use crate::stopwords;
-use kod_types::{MemoryEntry, MemoryMetadata, MemoryType};
+#[cfg(test)]
+use kod_types::MemoryMetadata;
+use kod_types::{MemoryEntry, MemoryType};
 use num_traits::ToPrimitive;
 use time::OffsetDateTime;
 

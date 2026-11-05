@@ -100,7 +100,7 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
                     // else: discard, but keep reading so git does not
                     // block writing into a full pipe.
                 }
-                Err(_) | Ok(0) => break,
+                Err(_) => break,
             }
         }
         let mut err: Vec<u8> = Vec::with_capacity(1024);

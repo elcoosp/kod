@@ -3,7 +3,9 @@
 //! Uses FIFO eviction when capacity is exceeded. Suitable for
 //! session-scoped context that doesn't need persistence.
 
-use kod_types::{MemoryEntry, MemoryId, MemoryMetadata};
+#[cfg(test)]
+use kod_types::MemoryMetadata;
+use kod_types::{MemoryEntry, MemoryId};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 

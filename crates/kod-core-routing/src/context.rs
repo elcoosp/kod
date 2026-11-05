@@ -3,7 +3,9 @@
 //! Combines user input, memory context, and skills into a structured
 //! context that can be serialized into a prompt for the LLM.
 
-use kod_types::{MemoryContext, MemoryMetadata, Skill};
+#[cfg(test)]
+use kod_types::MemoryMetadata;
+use kod_types::{MemoryContext, Skill};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
