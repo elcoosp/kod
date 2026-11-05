@@ -1,0 +1,43 @@
+# cargo-release config for the kod workspace.
+#
+# This is used by `cargo release publish --workspace` in
+# .github/workflows/publish-crates.yml. It only affects the PUBLISH
+# subcommand — tagging, pushing, and CHANGELOG manipulation are done
+# manually or by separate workflows.
+#
+# Reference: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+
+[workspace.metadata.release]
+# Publish to crates.io (not an alternate registry)
+registry = "crates-io"
+
+# Run `cargo package --verify` for each crate before uploading.
+# Catches missing files, broken metadata, dirty dep state.
+verify = true
+
+# Publish all publishable crates in dependency order (leaves first).
+publish = true
+
+# Do NOT push to git after publishing — git push is a separate
+# decision left to the operator.
+push = false
+
+# Do NOT create or push tags — those exist already (or are managed
+# by GitHub Releases workflow).
+tag = false
+
+# Do NOT sign tags — no GPG key configured for the CI runner.
+sign-tag = false
+sign-commit = false
+
+# Tag name convention matches the rest of the repo (v0.1.27, v0.1.28, ...).
+tag-name = "v{{version}}"
+
+# Do NOT modify git history (no squash, no rewrite).
+consolidate-commits = false
+
+# When bumping a crate that others depend on, update dependents'
+# version constraints automatically ("upgrade" makes 0.1.28 depend on
+# 0.1.28). We're not using `cargo release version`, but this default
+# is correct for future use.
+dependent-version = "upgrade"

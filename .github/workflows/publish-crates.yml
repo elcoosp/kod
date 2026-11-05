@@ -50,7 +50,9 @@ jobs:
           echo "version verified: workspace = $WORKSPACE_VERSION, tag = $LATEST_TAG"
 
       - name: Install cargo-release
-        uses: taiki-e/install-action@cargo-release
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-release
 
       - name: Dry-run (compose packages, no upload)
         env:
