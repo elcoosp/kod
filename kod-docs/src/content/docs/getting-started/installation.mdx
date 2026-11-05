@@ -13,14 +13,7 @@ KOD is distributed as a single Rust binary that you build from source. There is 
 
 Three things must be present on your machine before you build:
 
-- **Rust 1.98.1
-=============================================================
-=== Batch D7: fix homepage version + install MSRV + tool count ===
-=============================================================
-Starting HEAD: 1dfb0525
-
-=== Step 0: state + ground truth ===
-  (expected empty).1 or newer**, installed via [rustup](https://rustup.rs/). The workspace uses the 2024 edition, so older toolchains will refuse to build it. `rust-toolchain.toml` in the repository pins the expected version.
+- **Rust 1.98.1 or newer**, installed via [rustup](https://rustup.rs/). The workspace uses the 2024 edition, so older toolchains will refuse to build it. `rust-toolchain.toml` in the repository pins the expected version.
 - **A model server** that speaks the OpenAI chat-completions protocol. [Ollama](https://ollama.ai/) is the recommended default and what the bundled profiles target first, but LM Studio, MLX Omni Serve, vLLM, and OpenAI itself all work unchanged.
 - **Git**, required both for the built-in git tools (`git_status`, `git_diff`, `git_commit`, `git_branch`) and for `build.rs`, which stamps version information into the binary at compile time.
 
