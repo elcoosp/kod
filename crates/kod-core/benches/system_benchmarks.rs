@@ -32,13 +32,14 @@
 mod common;
 
 use common::BenchEnvironment;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kod_core::router::{RouterConfig, TaskRouter};
 use kod_memory::MemoryManager;
 use kod_memory::short_term::ShortTermMemory;
 use kod_skills::{SkillLoader, SkillMatcher};
 use kod_swarm::{AgentBuilder, Capability};
 use kod_types::{MemoryEntry, MemoryMetadata, MemoryType};
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::Duration;
 use time::OffsetDateTime;

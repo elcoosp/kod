@@ -38,6 +38,7 @@
 //! * Not a tool yet. The `jfind` tool wrapper is a follow-up; this
 //!   module is the algorithm.
 
+#[cfg(test)]
 use num_traits::ToPrimitive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -1,4 +1,6 @@
-use super::{ApprovalDecision, Arc, KodEngine, LlmProvider, RouterConfig, ToolCall};
+#[cfg(test)]
+use super::RouterConfig;
+use super::{ApprovalDecision, Arc, KodEngine, LlmProvider, ToolCall};
 
 impl KodEngine {
     /// Install a per-project policy (D3-C1). Called by the CLI/TUI

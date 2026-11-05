@@ -11,6 +11,7 @@
 //! enough to detect a drift in what the model sees without depending
 //! on exact message contents (which change with every run).
 
+#[cfg(test)]
 use kod_types::tool::LoadMode;
 use serde::{Deserialize, Serialize};
 

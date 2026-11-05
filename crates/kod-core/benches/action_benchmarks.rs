@@ -29,7 +29,8 @@
 //! regression to millisecond scale means the cache was removed or
 //! short-circuited.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn benchmark_risk_assess(c: &mut Criterion) {
     use kod_risk::{RiskContext, assess};
