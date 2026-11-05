@@ -44,7 +44,7 @@ While a generation runs you have three options, all non-destructive:
 
 1. **Steer** — type a plain prompt. It is queued and delivered to the model as guidance; the work already done is kept. This is identical to `/steer` and is usually the right move.
 2. **Cancel** — `Esc` (normal mode) or `/cancel`. The round stops; completed tool results stay in the session.
-3. **Wait** — the tool loop caps itself at 40 tool rounds per prompt, so no run is infinite.
+3. **Wait** — the tool loop caps itself at 29 tool rounds per prompt, so no run is infinite.
 
 After the fact, `/retry` resends the last prompt, `e` edits your last message before resending — faster than re-typing a long instruction — and `/regenerate` asks for a fresh reply without resending your prompt.
 
