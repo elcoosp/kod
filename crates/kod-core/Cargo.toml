@@ -29,29 +29,29 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }
 futures = { workspace = true }
-kod-core-state = { path = "../kod-core-state", version = "0.1.27" }
-kod-core-routing = { path = "../kod-core-routing", version = "0.1.27" }
-kod-core-quality = { path = "../kod-core-quality", version = "0.1.27" }
-kod-core-tools = { path = "../kod-core-tools", version = "0.1.27" }
-kod-types = { path = "../kod-types", version = "0.1.27" }
-kod-error = { path = "../kod-error", version = "0.1.27" }
-kod-stats = { path = "../kod-stats", version = "0.1.27" }
-kod-telemetry = { path = "../kod-telemetry", version = "0.1.27" }
-kod-risk = { path = "../kod-risk", version = "0.1.27" }
-kod-schema-dialect = { path = "../kod-schema-dialect", version = "0.1.27" }
-kod-config = { path = "../kod-config", version = "0.1.27" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.28" }
+kod-core-routing = { path = "../kod-core-routing", version = "0.1.28" }
+kod-core-quality = { path = "../kod-core-quality", version = "0.1.28" }
+kod-core-tools = { path = "../kod-core-tools", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
+kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-stats = { path = "../kod-stats", version = "0.1.28" }
+kod-telemetry = { path = "../kod-telemetry", version = "0.1.28" }
+kod-risk = { path = "../kod-risk", version = "0.1.28" }
+kod-schema-dialect = { path = "../kod-schema-dialect", version = "0.1.28" }
+kod-config = { path = "../kod-config", version = "0.1.28" }
 regex = { workspace = true }
 ignore = { workspace = true }
-kod-provider = { path = "../kod-provider", version = "0.1.27" }
-kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.27" }
-kod-provider-anthropic = { path = "../kod-provider-anthropic", version = "0.1.27" }
-kod-skills = { path = "../kod-skills", version = "0.1.27" }
-kod-memory = { path = "../kod-memory", version = "0.1.27" }
-kod-tools = { path = "../kod-tools", version = "0.1.27" }
-kod-ast = { path = "../kod-ast", version = "0.1.27" }
-kod-lsp = { path = "../kod-lsp", version = "0.1.27" }
-kod-mcp = { path = "../kod-mcp", version = "0.1.27" }
-kod-swarm = { path = "../kod-swarm", version = "0.1.27" }
+kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.28" }
+kod-provider-anthropic = { path = "../kod-provider-anthropic", version = "0.1.28" }
+kod-skills = { path = "../kod-skills", version = "0.1.28" }
+kod-memory = { path = "../kod-memory", version = "0.1.28" }
+kod-tools = { path = "../kod-tools", version = "0.1.28" }
+kod-ast = { path = "../kod-ast", version = "0.1.28" }
+kod-lsp = { path = "../kod-lsp", version = "0.1.28" }
+kod-mcp = { path = "../kod-mcp", version = "0.1.28" }
+kod-swarm = { path = "../kod-swarm", version = "0.1.28" }
 
 time = { workspace = true }
 parking_lot = { workspace = true }
@@ -70,12 +70,12 @@ harness = false
 
 [dev-dependencies]
 httpmock = { workspace = true }
-kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.27" }
-kod-core-serve = { path = "../kod-core-serve", version = "0.1.27" }
+kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.28" }
+kod-core-serve = { path = "../kod-core-serve", version = "0.1.28" }
 serial_test = { workspace = true }
 toml = { workspace = true }
 futures = { workspace = true }
-kod-swarm = { path = "../kod-swarm", version = "0.1.27" }
+kod-swarm = { path = "../kod-swarm", version = "0.1.28" }
 proptest = { workspace = true }
 rstest = { workspace = true }
 tempfile = { workspace = true }
@@ -84,8 +84,8 @@ criterion = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
-kod-provider = { path = "../kod-provider", version = "0.1.27" }
-kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
 
 [lints]
 workspace = true

@@ -11,9 +11,25 @@
 # Publish to crates.io (not an alternate registry)
 registry = "crates-io"
 
-# Run `cargo package --verify` for each crate before uploading.
-# Catches missing files, broken metadata, dirty dep state.
-verify = true
+# Verify: DISABLED for the first-ever workspace publish.
+#
+# Reason: cargo package --verify builds each crate from its tarball.
+# Non-leaf crates (everything except kod-types, kod-error, kod-ast,
+# kod-*leaves) depend on kod-* crates that don't exist on crates.io
+# yet. verify would try to fetch them from the registry, fail with
+# "no matching package named `kod-types` found", and abort the whole
+# publish.
+#
+# cargo-release handles dependency ordering itself: it publishes
+# leaves first, then waits for crates.io to index them (30-60s each),
+# then publishes the next layer. This is the correct mechanism for
+# first publish.
+#
+# After the workspace is on crates.io, flip this to `true` for
+# subsequent releases — then verify works as intended (each new
+# version depends on already-published older versions, which ARE
+# fetchable).
+verify = false
 
 # Publish all publishable crates in dependency order (leaves first).
 publish = true

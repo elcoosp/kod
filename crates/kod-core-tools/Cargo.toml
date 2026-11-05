@@ -31,20 +31,20 @@ futures = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
 sha2 = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.27" }
-kod-error = { path = "../kod-error", version = "0.1.27" }
-kod-config = { path = "../kod-config", version = "0.1.27" }
-kod-provider = { path = "../kod-provider", version = "0.1.27" }
-kod-memory = { path = "../kod-memory", version = "0.1.27" }
-kod-tools = { path = "../kod-tools", version = "0.1.27" }
-kod-lsp = { path = "../kod-lsp", version = "0.1.27" }
-kod-mcp = { path = "../kod-mcp", version = "0.1.27" }
-kod-swarm = { path = "../kod-swarm", version = "0.1.27" }
-kod-skills = { path = "../kod-skills", version = "0.1.27" }
-kod-risk = { path = "../kod-risk", version = "0.1.27" }
-kod-core-state = { path = "../kod-core-state", version = "0.1.27" }
-kod-core-routing = { path = "../kod-core-routing", version = "0.1.27" }
-kod-core-quality = { path = "../kod-core-quality", version = "0.1.27" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
+kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-config = { path = "../kod-config", version = "0.1.28" }
+kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-memory = { path = "../kod-memory", version = "0.1.28" }
+kod-tools = { path = "../kod-tools", version = "0.1.28" }
+kod-lsp = { path = "../kod-lsp", version = "0.1.28" }
+kod-mcp = { path = "../kod-mcp", version = "0.1.28" }
+kod-swarm = { path = "../kod-swarm", version = "0.1.28" }
+kod-skills = { path = "../kod-skills", version = "0.1.28" }
+kod-risk = { path = "../kod-risk", version = "0.1.28" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.28" }
+kod-core-routing = { path = "../kod-core-routing", version = "0.1.28" }
+kod-core-quality = { path = "../kod-core-quality", version = "0.1.28" }
 
 [dev-dependencies]
 proptest = { workspace = true }

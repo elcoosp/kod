@@ -17,7 +17,7 @@ all-features = true
 
 [dependencies]
 thiserror = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
 
 [lints]
 workspace = true

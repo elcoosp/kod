@@ -22,19 +22,19 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
-kod-error = { path = "../kod-error", version = "0.1.27" }
-kod-provider = { path = "../kod-provider", version = "0.1.27" }
-kod-types = { path = "../kod-types", version = "0.1.27" }
-kod-core = { path = "../kod-core", version = "0.1.27" }
-kod-core-state = { path = "../kod-core-state", version = "0.1.27" }
+kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
+kod-core = { path = "../kod-core", version = "0.1.28" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.28" }
 
 [dev-dependencies]
 proptest = { workspace = true }
 async-trait = { workspace = true }
-kod-config = { path = "../kod-config", version = "0.1.27" }
-kod-error = { path = "../kod-error", version = "0.1.27" }
-kod-provider = { path = "../kod-provider", version = "0.1.27" }
-kod-types = { path = "../kod-types", version = "0.1.27" }
+kod-config = { path = "../kod-config", version = "0.1.28" }
+kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
 futures = { workspace = true }
 tempfile = { workspace = true }
 

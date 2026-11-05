@@ -23,9 +23,9 @@ walkdir = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.27" }
-kod-error = { path = "../kod-error", version = "0.1.27" }
-kod-config = { path = "../kod-config", version = "0.1.27" }
+kod-types = { path = "../kod-types", version = "0.1.28" }
+kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-config = { path = "../kod-config", version = "0.1.28" }
 
 [dev-dependencies]
 proptest = { workspace = true }
