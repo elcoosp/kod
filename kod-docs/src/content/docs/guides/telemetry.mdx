@@ -3,9 +3,10 @@ title: Telemetry
 description: Export turn- and tool-level records to an OpenTelemetry collector. Off unless you set an endpoint.
 sidebar:
   order: 16
+type: how-to
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Code } from '@astrojs/starlight/components';
 
 KOD can export structured records to an OpenTelemetry collector. It is **off by default and costs nothing when off** — the handle is constructed from the environment, and an unset endpoint yields a disabled no-op that every record call short-circuits on.
 
@@ -13,16 +14,12 @@ KOD can export structured records to an OpenTelemetry collector. It is **off by 
 
 Set the standard OTLP environment variable before starting `kod`:
 
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
-kod tui
-```
+<Code lang="bash" code={`export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+kod tui`} />
 
 Startup prints one line confirming the export, including the service name:
 
-```
-kod: OTLP telemetry enabled (service.name="kod")
-```
+<Code lang="ansi" code={`kod: OTLP telemetry enabled (service.name="kod")`} />
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is the only switch. There is no config-file key — telemetry is operator infrastructure, not agent behaviour, so it lives entirely in the environment where a deployment can set it without touching a project's `.kod/`.
 

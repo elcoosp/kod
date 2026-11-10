@@ -3,9 +3,10 @@ title: Model Profiles
 description: The built-in model profiles — local-fast, local-capable, local-reasoning, cloud-openai — and how to switch, inspect, and seed config from them.
 sidebar:
   order: 4
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 First-run friction is the single easiest adoption problem to fix, and KOD fixes it with **model profiles**: named presets that bundle a model name, base URL, context window, and generation settings. Instead of learning what a `context_window` is, you run `kod profile use local-fast` and get a working session.
 
@@ -22,12 +23,10 @@ Every local profile carries a one-line install command (`ollama pull qwen2.5-cod
 
 ## The `kod profile` commands
 
-```bash
-kod profile list             # show the built-in presets (add --json for scripts)
+<Code lang="bash" code={`kod profile list             # show the built-in presets (add --json for scripts)
 kod profile show             # print the effective [llm] config
 kod profile use local-fast   # write the preset's values into config.toml
-kod profile use local-capable --dry-run   # print what would be written
-```
+kod profile use local-capable --dry-run   # print what would be written`} />
 
 `use` edits the first `[llm.endpoints]` block in your config file in place. With `--dry-run` it prints the changes without touching anything, which is useful when you want to copy values into a custom config rather than apply them.
 

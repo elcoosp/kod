@@ -3,9 +3,10 @@ title: FAQ
 description: Quick answers to the questions KOD users ask most — where data lives, how to reset things, why calls get blocked, and which command to use when.
 sidebar:
   order: 14
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 Short answers to the questions that come up most in practice. Each one links to the page with the full story.
 
@@ -31,13 +32,11 @@ Everything lives under your home directory — nothing is uploaded:
 
 Per area, from safest to most destructive:
 
-```bash
-kod sessions clear          # forget the TUI conversation
+<Code lang="bash" code={`kod sessions clear          # forget the TUI conversation
 kod memory clear            # empty long-term memory (prompts; add --yes)
 kod checkpoint clear        # drop this project's file snapshots
 rm ~/.kod/tui_history.json  # clear prompt history
-kod init --force            # rewrite config from defaults (backs up the old file)
-```
+kod init --force            # rewrite config from defaults (backs up the old file)`} />
 
 Deleting the memory `redb` file by hand works too — it is recreated empty on next use. `/clearall` in the TUI wipes chat, memory, *and* checkpoints behind one confirmation.
 

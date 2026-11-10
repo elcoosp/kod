@@ -3,17 +3,17 @@ title: Architecture
 description: How KOD is organised — the components behind the interface, the data flow through the engine, and the design principles behind it.
 sidebar:
   order: 1
+type: explanation
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 
 > **Primary crate:** [`kod-core`](/reference/crates/#engine). Sub-crates: [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). See [Core crates](/concepts/core-crates/).
 
 KOD is a multi-crate Rust workspace where each crate has a single responsibility and a narrow public API, so each part can be built and reasoned about in isolation. Twenty-six crates stack into four layers:
 
-```
-┌─────────────────────────────────────────────────────┐
+<Code lang="text" code={`┌─────────────────────────────────────────────────────┐
 │                    CLI / TUI                         │
 │           (kod-cli, kod-tui)                        │
 ├─────────────────────────────────────────────────────┤
@@ -25,8 +25,7 @@ KOD is a multi-crate Rust workspace where each crate has a single responsibility
 ├─────────────────────────────────────────────────────┤
 │                   Foundation                         │
 │        (kod-types, kod-error, kod-config)            │
-└─────────────────────────────────────────────────────┘
-```
+└─────────────────────────────────────────────────────┘`} />
 
 ## The twenty-six crates
 
@@ -49,8 +48,7 @@ The layering is strict: interfaces depend on core, core depends on providers and
 
 ## Data flow through one round
 
-```
-user input
+<Code lang="text" code={`user input
    │
    ▼
 ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
@@ -68,8 +66,7 @@ user input
 ┌────────────────┐   ┌────────────────┐
 │  Final reply   │──▶│  Session log   │
 │  → CLI / TUI   │   │  (JSONL)       │
-└────────────────┘   └────────────────┘
-```
+└────────────────┘   └────────────────┘`} />
 
 1. **User input** arrives from the CLI or TUI.
 2. **Task classification** (`kod-core::router`) decides the task type and how the round is shaped.

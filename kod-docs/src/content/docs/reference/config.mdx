@@ -3,9 +3,10 @@ title: Config Reference
 description: Every configuration key KOD reads — section, type, default, and notes — in one table.
 sidebar:
   order: 4
+type: reference
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Code } from '@astrojs/starlight/components';
 
 The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Application Support/kod/config.toml` (macOS), is auto-generated on first run, and every key below is optional — out-of-range values are clamped into valid ranges at load time with a warning. A missing or corrupt file falls back to defaults rather than failing the session.
 
@@ -143,12 +144,10 @@ The [TypeSafe AI](https://typesafe.ai) integration. Opt-in; off by default.
 | `pre_tool_use` | map: tool → command template | — | Runs before matching tool calls; `{path}`-style placeholders substituted from call arguments. |
 | `post_tool_use` | map: tool → command template | — | Runs after matching tool calls. |
 
-```toml
-[hooks]
+<Code lang="toml" code={`[hooks]
 enabled = true
 pre_tool_use  = { write_file = "rustfmt {path}" }
-post_tool_use = { write_file = "cargo check" }
-```
+post_tool_use = { write_file = "cargo check" }`} />
 
 ## `[mcp.servers.<name>]`
 
@@ -168,11 +167,9 @@ Tools are exposed to the model as `mcp:<server>.<tool>`.
 
 User-defined TUI slash commands. Each key registers `/key`; `{args}` in the value is replaced by everything typed after the command name, `{cwd}` by the working directory.
 
-```toml
-[commands]
+<Code lang="toml" code={`[commands]
 review  = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\n\n{args}"
-```
+explain = "Explain what this code does:\\n\\n{args}"`} />
 
 ## Project policy: `.kod/policy.toml`
 
@@ -203,9 +200,7 @@ Committed to the repository, layered over the global config (see [Policy & Permi
 
 A `theme.toml` next to the config selects the TUI palette:
 
-```toml
-theme = "light"        # or "dark", or a full [theme] table below
-```
+<Code lang="toml" code={`theme = "light"        # or "dark", or a full [theme] table below`} />
 
 A bare `theme = "light"` line is accepted, as is a full `[theme]` table overriding individual ratatui colors (`black`, `red`, `green`, …). Loading is best-effort: an invalid theme file falls back to the default dark theme with a warning rather than failing the session. `kod theme show <name>` prints a built-in palette as JSON.
 

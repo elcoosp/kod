@@ -3,9 +3,10 @@ title: Contributing
 description: How to contribute to KOD — the workspace conventions, what a good change looks like, the check suite your PR must pass, and how bug reports become fixes faster.
 sidebar:
   order: 2
+type: explanation
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 Contributions, bug reports, and design discussions are welcome — KOD is a work in progress and says so up front. Contributions are licensed under MIT, the same terms as the project. This page condenses the repository's `CONTRIBUTING.md` into the practical loop: pick a scope, follow the crate conventions, pass the gates, open the PR.
 
@@ -31,12 +32,10 @@ Each crate has a single responsibility and a narrow public API — keep it that 
 
 ## The gates your PR must pass
 
-```bash
-cargo fmt --all -- --check
+<Code lang="bash" code={`cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-./scripts/test.sh      # the whole suite in one shot
-```
+./scripts/test.sh      # the whole suite in one shot`} />
 
 Clippy warnings are errors (`-D warnings`), and the `clippy.toml` encodes the project's lint preferences — run the linter before pushing, not in CI. Tests must pass offline; if you added a live-model test, gate it with `#[ignore]` and honour the `KOD_TEST_MODEL` / `KOD_TEST_DB` conventions (see [Testing](/developers/testing/)).
 

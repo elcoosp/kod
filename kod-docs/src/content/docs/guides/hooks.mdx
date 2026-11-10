@@ -3,20 +3,19 @@ title: Hooks
 description: Running your own shell commands around tool calls — pre_tool_use and post_tool_use hooks driven by config templates.
 sidebar:
   order: 12
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 Hooks let you run your own shell commands at two points in the tool lifecycle: **before** a tool executes (`pre_tool_use`) and **after** it completes (`post_tool_use`). They are driven entirely by config templates — no scripting language to learn, no plugin API to import — which keeps them auditable like everything else in KOD: a hook is a line in your `config.toml`.
 
 ## Enabling hooks
 
-```toml
-[hooks]
+<Code lang="toml" code={`[hooks]
 enabled = false
 # pre_tool_use  = { write_file = "rustfmt {path}" }
-# post_tool_use = { write_file = "cargo check" }
-```
+# post_tool_use = { write_file = "cargo check" }`} />
 
 Hooks are disabled by default. Flipping `enabled = true` activates both maps. Each entry keys a **tool name** (`write_file`, `patch_file`, `execute_command`, …) to a **shell command template**, and `{path}`-style placeholders are substituted with the tool call's arguments before execution.
 

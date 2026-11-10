@@ -3,9 +3,10 @@ title: Terminal UI (TUI)
 description: Living in the KOD TUI — layout, modes, tool rows, search, themes, slash commands, completions, and the context meter.
 sidebar:
   order: 1
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 The TUI is KOD's primary interface: a ratatui-based terminal application with a chat area, live tool rows, an agent panel, type-ahead search, themes, and slash commands. It talks to the same engine as the CLI, so everything it does — session logging, policy decisions, memory updates — behaves identically to `kod chat`. The difference is comfort: the TUI is built for long, interactive sessions where you inspect what the agent is doing while it does it.
 
@@ -71,11 +72,9 @@ Three deserve a call-out:
 
 Anything you put in a `[commands]` block in `config.toml` becomes a slash command:
 
-```toml
-[commands]
+<Code lang="toml" code={`[commands]
 review = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\n\n{args}"
-```
+explain = "Explain what this code does:\\n\\n{args}"`} />
 
 `/review` sends the first template verbatim; `/explain <selection>` replaces `{args}` with everything you typed after the command name, and `{cwd}` with the working directory. Custom commands appear in the completion popup alongside the built-ins.
 

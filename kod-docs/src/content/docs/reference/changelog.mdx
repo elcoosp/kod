@@ -3,7 +3,10 @@ title: Changelog
 description: Notable changes in KOD — features, fixes, and behaviour changes, newest first.
 sidebar:
   order: 6
+type: reference
 ---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ## [0.1.28] - 2026-11-05
 
@@ -197,7 +200,7 @@ This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
 
 - **core:** apply [jev] redact_paths — it was documented but never read (a6b49ad9)
 - **core:** obfuscate secrets in tool-call arguments before the provider (53e480e4)
-- **tools:** conflict://<id> must not bypass can_write/can_read (2e3ddf59)
+- **tools:** conflict://`<id>` must not bypass can_write/can_read (2e3ddf59)
 - **tools:** internal-URL read must redact a protected file (121002ec)
 - **tools:** grep and git_diff must honour read-protection (efe13f44)
 - **tools:** disable numbering when a redaction changes the line count (79774d05)
@@ -312,7 +315,7 @@ This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
 - **memory:** cache long-term view; retrieval avoids redb deserialize (PERF-06) (a64db7fa)
 - **tools:** search_files iterates the shared walk cache (PERF-04) (cfb42bbb)
 - **tools:** grep + list_files iterate the shared walk cache (PERF-04) (1511e242)
-- **tools:** walk-cache shares entries via Arc<Vec<PathBuf>> (PERF-04) (7c90e3f9)
+- **tools:** walk-cache shares entries via `Arc<Vec<PathBuf>>` (PERF-04) (7c90e3f9)
 - **engine:** bound image_frames per key at 4 (PERF-03) (5d289fc8)
 - _... and 4 more_
 
@@ -490,7 +493,7 @@ This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
 - **serve:** drop dead write_call helper from acp_cancel (fe039cd1)
 - **serve:** ACP session/cancel dispatch + stop-reason mapping (a88e5826)
 - **serve:** ACP session/request_permission approval round-trip (0effff47)
-- **core:** engine <-> MCP tool dispatch end-to-end (6b006229)
+- **core:** engine &lt;-&gt; MCP tool dispatch end-to-end (6b006229)
 - _... and 2 more_
 
 ## [0.1.13] - 2026-10-20
@@ -2053,3 +2056,10 @@ All notable changes to KOD will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## Related
+
+<CardGrid>
+<LinkCard title="CLI Commands" href="/reference/cli/" description="Complete reference for the kod binary — every subcommand, its flags, and its pur" />
+<LinkCard title="Config Reference" href="/reference/config/" description="Every configuration key KOD reads — section, type, default, and notes — in one t" />
+<LinkCard title="Crates" href="/reference/crates/" description="The 26 crates that make up the KOD workspace, grouped by layer." />
+</CardGrid>

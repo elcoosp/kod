@@ -3,9 +3,10 @@ title: Configuration
 description: How KOD reads config.toml — locations, every section ([llm] endpoints, [memory], [skills], [swarm], [tools], [hooks], [mcp], [commands]), clamping behaviour, and the config subcommands.
 sidebar:
   order: 3
+type: how-to
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
 
 KOD reads its configuration from a single TOML file, auto-generated on first run, with sane defaults for every key. You can go from zero config to a working session without touching anything — the config exists so you can *stop* accepting defaults, not so you have to set them.
 
@@ -20,8 +21,7 @@ KOD reads its configuration from a single TOML file, auto-generated on first run
 
 A config only needs the blocks you care about — every omitted section fills from defaults. The example below is a realistic *complete* file:
 
-```toml
-# ── Models ─────────────────────────────────────────────────────
+<Code lang="toml" code={`# ── Models ─────────────────────────────────────────────────────
 [llm]
 network_access = false          # opt-in network access for web_fetch
 
@@ -82,19 +82,16 @@ enabled = false
 # ── Custom slash commands (optional) ───────────────────────────
 # [commands]
 # review = "Review the last change in {cwd} and point out risks."
-# explain = "Explain what this code does:\n\n{args}"
-```
+# explain = "Explain what this code does:\\n\\n{args}"`} />
 
 ## Endpoints instead of a single model
 
 The `[llm]` section holds a **list of named endpoints**, not one flat model. The first endpoint is the default; everything that affects the wire — `base_url`, `model`, `temperature`, `max_tokens` — lives on the endpoint. That is what lets you point different work at different servers:
 
-```toml
-[llm.routing]
+<Code lang="toml" code={`[llm.routing]
 by_task  = { Debugging = "cloud", Simple = "local" }
 fallback = ["local", "cloud"]     # try in order when the primary fails
-swarm    = { Planning = "cloud", Coding = "local" }
-```
+swarm    = { Planning = "cloud", Coding = "local" }`} />
 
 - `by_task` maps a [task type](/concepts/router/) (`Simple`, `Debugging`, …) to an endpoint name.
 - `fallback` is the ordered retry chain for retryable errors.
@@ -106,14 +103,12 @@ Names that do not match a defined endpoint are dropped with a warning at load ti
 
 Endpoint blocks never contain key material — only the *name* of the environment variable that holds it:
 
-```toml
-[[llm.endpoints]]
+<Code lang="toml" code={`[[llm.endpoints]]
 name        = "openai"
 provider    = "openai-compatible"
 base_url    = "https://api.openai.com/v1"
 model       = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"
-```
+api_key_env = "OPENAI_API_KEY"`} />
 
 A shared or committed config therefore cannot leak a secret. The memory section has the same pattern for the optional embedding API (`memory.embedding_api_key_env`).
 
@@ -133,11 +128,9 @@ Three things can be scoped to a project directory instead of your home directory
 
 The `[commands]` block registers your own TUI slash commands. Each key becomes `/key`, and its value is the prompt that gets sent:
 
-```toml
-[commands]
+<Code lang="toml" code={`[commands]
 review  = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\n\n{args}"
-```
+explain = "Explain what this code does:\\n\\n{args}"`} />
 
 `{args}` is replaced by everything typed after the command name; `{cwd}` by the current working directory. `/review` needs no arguments; `/explain foo.bar` sends the template with `foo.bar` substituted in.
 
@@ -147,19 +140,13 @@ Because configuration comes from defaults plus your edits, the useful question i
 
 <Tabs>
 <TabItem label="Effective config">
-  ```bash
-  kod config show-merged   # defaults merged with user config, reproducible
-  ```
+  <Code lang="bash" code={`kod config show-merged   # defaults merged with user config, reproducible`} />
 </TabItem>
 <TabItem label="Raw file">
-  ```bash
-  kod config show-raw      # verbatim file contents, comments included
-  ```
+  <Code lang="bash" code={`kod config show-raw      # verbatim file contents, comments included`} />
 </TabItem>
 <TabItem label="Just the LLM block">
-  ```bash
-  kod profile show         # the effective [llm] section
-  ```
+  <Code lang="bash" code={`kod profile show         # the effective [llm] section`} />
 </TabItem>
 </Tabs>
 

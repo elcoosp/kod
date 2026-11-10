@@ -47,9 +47,9 @@
   --sl-color-bg-accent: var(--kod-purple-300);
   --sl-color-bg-accent-dark: #1f1a16;
 
-  --sl-color-accent-low: #3f355e;
-  --sl-color-accent: var(--kod-purple-500);
-  --sl-color-accent-high: var(--kod-purple-300);
+  --sl-color-accent-low: hsl(180 50% 93%);
+  --sl-color-accent: hsl(180 50% 35%);
+  --sl-color-accent-high: hsl(180 50% 28%);
 
   --sl-color-text: var(--sl-color-white);
   --sl-color-text-accent: var(--sl-color-accent-high);
@@ -745,4 +745,10 @@ footer .meta a {
 }
 footer .meta a:hover {
   color: var(--sl-color-text-accent);
+}
+
+[data-theme="dark"] {
+	--sl-color-accent-low: hsl(180 50% 16%);
+	--sl-color-accent: hsl(180 50% 60%);
+	--sl-color-accent-high: hsl(180 50% 75%);
 }

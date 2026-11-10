@@ -34,7 +34,7 @@ hero:
       variant: secondary
 ---
 
-import { Card, CardGrid, LinkCard, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside, Card, CardGrid, Code, LinkButton, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
 
 <div class="landing-section">
 
@@ -105,32 +105,28 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
 
 <Tabs>
 <TabItem label="Build from source">
-  ```bash
-  git clone https://github.com/elcoosp/kod.git
-  cd kod && cargo build --release
+  <Code lang="bash" code={`git clone https://github.com/elcoosp/kod.git
+cd kod && cargo build --release
 
-  ollama serve &                 # or LM Studio, MLX, vLLM, …
-  ollama pull qwen2.5-coder:7b
+ollama serve &                 # or LM Studio, MLX, vLLM, …
+ollama pull qwen2.5-coder:7b
 
-  ./target/release/kod doctor
-  ./target/release/kod profile use local-fast
-  ./target/release/kod tui
-  ```
+./target/release/kod doctor
+./target/release/kod profile use local-fast
+./target/release/kod tui`} />
 </TabItem>
 <TabItem label="Try the CLI first">
-  ```bash
-  # one-shot agent run against a goal
-  kod agent -g "add a doc comment to every public function in src/lib.rs"
+  <Code lang="bash" code={`# one-shot agent run against a goal
+kod agent -g "add a doc comment to every public function in src/lib.rs"
 
-  # a single non-interactive prompt, ideal for scripts
-  kod prompt "explain what src/net.rs does in three bullets"
+# a single non-interactive prompt, ideal for scripts
+kod prompt "explain what src/net.rs does in three bullets"
 
-  # a swarm of 4 agents on something bigger
-  kod swarm -g "implement and test a rate limiter" -n 4
+# a swarm of 4 agents on something bigger
+kod swarm -g "implement and test a rate limiter" -n 4
 
-  # replay a recorded session as a regression check
-  kod replay ~/.kod/sessions/1730000000000.jsonl --execute
-  ```
+# replay a recorded session as a regression check
+kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
 </TabItem>
 </Tabs>
 
@@ -164,6 +160,8 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
     Where sessions live, how to reset memory, why a key is blocked — the answers end users ask for.
   </Card>
 </CardGrid>
+
+<LinkButton href="/getting-started/first-session/" icon="right-arrow">Get started</LinkButton>
 
 </div>
 

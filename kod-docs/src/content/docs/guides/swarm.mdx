@@ -3,9 +3,10 @@ title: Agent Swarms
 description: kod swarm — decomposing a goal into subtasks, running up to 8 agents concurrently, detecting file conflicts, and merging the results.
 sidebar:
   order: 10
+type: how-to
 ---
 
-import { Aside, LinkCard, Steps } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, Steps } from '@astrojs/starlight/components';
 
 A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` decomposes a goal into N subtasks, spawns N agents, runs them **concurrently** against a shared workspace, detects file conflicts between them, and asks the model to merge the per-agent results into a single answer.
 
@@ -21,9 +22,7 @@ A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` 
 
 ## Running one
 
-```bash
-kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4
-```
+<Code lang="bash" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
 
 Flags that matter: `-n, --agents` overrides the configured agent count (still clamped to 2–8) and `--model` switches the model for the whole run. Inside the TUI, `/swarm <goal>` starts the same flow interactively. Disabling result merging is a config decision, not a flag: set `swarm.merge_results = false` in `config.toml` to always get labeled per-agent output.
 
@@ -33,13 +32,11 @@ Flags that matter: `-n, --agents` overrides the configured agent count (still cl
 
 ## Configuration
 
-```toml
-[swarm]
+<Code lang="toml" code={`[swarm]
 max_agents         = 5     # the decompose step targets this; runner clamps to 2–8
 merge_results      = true  # false = concatenate per-agent results under labels
 agent_timeout_secs = 300   # per-agent wall clock; a stuck agent is cancelled; 0 disables
-agent_retries      = 1     # extra attempts after a timeout or provider error
-```
+agent_retries      = 1     # extra attempts after a timeout or provider error`} />
 
 The config section is minimal on purpose — it carries only the values the swarm runner actually consumes. Coordination strategy and lock timeouts are not tunable because they are not parameters worth exposing; the defaults encode one opinionated pipeline.
 
@@ -47,11 +44,9 @@ The config section is minimal on purpose — it carries only the values the swar
 
 If your config defines multiple endpoints, `[llm.routing].swarm` maps swarm capabilities to endpoints — the same multi-model routing that `by_task` provides for ordinary prompts:
 
-```toml
-[llm.routing.swarm]
+<Code lang="toml" code={`[llm.routing.swarm]
 Planning = "cloud"   # the decompose/merge step thinks with the bigger model
-Coding   = "local"   # the per-agent implementation work stays local
-```
+Coding   = "local"   # the per-agent implementation work stays local`} />
 
 See [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) for the endpoint blocks these names refer to.
 

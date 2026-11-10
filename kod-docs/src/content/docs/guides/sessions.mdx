@@ -3,9 +3,10 @@ title: Sessions, Replay & Checkpoints
 description: How KOD records every tool call as JSONL, how kod replay turns sessions into regression checks, and how checkpoints give you file-level undo.
 sidebar:
   order: 11
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 KOD's audit story rests on three mechanisms that all live on disk, in plain formats: the **session log** (JSONL), **replay** (re-execution without the model), and **checkpoints** (file snapshots before every mutating call). Together they mean any session — yesterday's or last month's — can be reviewed, re-run, or rolled back.
 
@@ -17,15 +18,13 @@ Because the format is line-delimited JSON, the log is inspectable with ordinary 
 
 Inspecting sessions from the CLI:
 
-```bash
-kod sessions latest                  # path of the newest session log
+<Code lang="bash" code={`kod sessions latest                  # path of the newest session log
 kod sessions count                   # how many logs exist, combined size
 kod sessions show                    # where the TUI session lives, message count
 kod sessions export session.md       # TUI session as Markdown (default)
 kod sessions export session.json --format json   # or JSON, for round-tripping
 kod sessions import session.json     # replace the saved session (refuses malformed files)
-kod sessions clear                   # delete the saved session state
-```
+kod sessions clear                   # delete the saved session state`} />
 
 The TUI conversation (prompts, replies, layout state) is saved separately at `~/.kod/tui_session.json` and is what `sessions export`/`import`/`clear` operate on; the JSONL logs in `~/.kod/sessions/` are the audit trail of tool calls.
 
@@ -33,13 +32,11 @@ The TUI conversation (prompts, replies, layout state) is saved separately at `~/
 
 `kod replay <session.jsonl>` re-runs the tool calls a session made, **without the model**. Every `read_file`, `write_file`, and `execute_command` is checkable against the codebase at any later commit. This turns a historical session into a regression test: did the fix the agent made last week still hold? Does the refactoring it performed still pass?
 
-```bash
-# print what would run — always do this first
+<Code lang="bash" code={`# print what would run — always do this first
 kod replay ~/.kod/sessions/1730000000000.jsonl
 
 # actually re-execute the tool calls
-kod replay ~/.kod/sessions/1730000000000.jsonl --execute
-```
+kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
 
 <Aside type="caution">
   <code>--execute</code> performs real writes and commands against your working tree. Review the dry run first; do not pass <code>--execute</code> until you trust the session.
@@ -49,22 +46,18 @@ kod replay ~/.kod/sessions/1730000000000.jsonl --execute
 
 KOD snapshots the target file **before every mutating call** — `write_file` and `patch_file` — so the damage any single tool call can do is bounded and reversible:
 
-```bash
-kod checkpoint list             # snapshots for this project, newest first (--limit 20)
+<Code lang="bash" code={`kod checkpoint list             # snapshots for this project, newest first (--limit 20)
 kod checkpoint diff <id>        # unified diff between snapshot and current file
 kod checkpoint restore <id>     # put a file back
-kod checkpoint clear            # drop the checkpoint store for this project
-```
+kod checkpoint clear            # drop the checkpoint store for this project`} />
 
 Checkpoints are per-file, not per-commit — they undo what *the agent* changed, which is usually exactly the granularity you want after a bad run. They are stored under `~/.kod/checkpoints/<project-hash>/`, keyed by your working directory, so two projects never see each other's checkpoints. `restore` does not delete the snapshot — a restore can itself be restored. Inside the TUI, `/checkpoints` lists them, `/diff` shows the most recent file diff, and `/rollback [id]` restores.
 
 ## How they compose
 
-```
-tool call ──▶ policy decision (logged) ──▶ checkpoint snapshot ──▶ execute ──▶ result (logged)
+<Code lang="text" code={`tool call ──▶ policy decision (logged) ──▶ checkpoint snapshot ──▶ execute ──▶ result (logged)
                                                                                      │
-             ◀────────────────── kod replay --execute ────────────────────────────────┘
-```
+             ◀────────────────── kod replay --execute ────────────────────────────────┘`} />
 
 A practical audit loop: run `kod sessions latest`, read the JSONL to see what happened, replay it against a different branch or commit to see whether it still makes sense, and restore checkpoints if you want the files back the way they were.
 

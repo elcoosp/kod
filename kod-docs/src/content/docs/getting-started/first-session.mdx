@@ -3,17 +3,16 @@ title: Your First Session
 description: A guided tour of the KOD TUI — modes, keybindings, slash commands, steering a running generation, and the context meter.
 sidebar:
   order: 4
+type: tutorial
 ---
 
-import { Steps, Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, Steps } from '@astrojs/starlight/components';
 
 The TUI is where KOD is most itself: a header, a chat area with live tool rows, a status line, an input box, and a set of keybindings borrowed from the muscle memory you already have from Vim. This page walks through one realistic session from launch to exit and points out the parts that make the interface pleasant to live in.
 
 ## Launch and look around
 
-```bash
-kod tui
-```
+<Code lang="bash" code={`kod tui`} />
 
 The status line greets you with `Connected · <model> · N skill(s)` and reminds you that `/help` exists. If you have run KOD before, your previous conversation is restored automatically from `~/.kod/tui_session.json` — quit and reopen anytime, it keeps your place.
 
@@ -25,9 +24,7 @@ The interface has four regions. The **header** shows the session state and model
 1. Press `i` to enter insert mode.
 2. Type a goal that will make the agent use tools, for example:
 
-   ```
-   explain the retry logic in src/net.rs and add a doc comment to the retry function
-   ```
+   <Code lang="text" code={`explain the retry logic in src/net.rs and add a doc comment to the retry function`} />
 
 3. Press <kbd>Enter</kbd> to send. Tokens stream in live; tool rows appear as the agent works.
 </Steps>
@@ -85,10 +82,8 @@ Insert mode adds line editing: `Enter` sends, `Ctrl+J` (or `Shift+Enter`) insert
 
 Press `q` in normal mode. If a generation is running, the TUI asks for confirmation rather than silently dropping the stream. Your session is saved under `~/.kod/` and can be inspected later with `kod sessions`:
 
-```bash
-kod sessions show                          # where the session lives, message count
-kod sessions export session.md             # write it out as Markdown (or --format json)
-```
+<Code lang="bash" code={`kod sessions show                          # where the session lives, message count
+kod sessions export session.md             # write it out as Markdown (or --format json)`} />
 
 <Aside type="note">
   Everything the TUI does is recorded: prompts, replies, and every tool call with its arguments and result. That is what makes <code>kod replay</code> possible — see [Sessions, Replay & Checkpoints](/guides/sessions/).

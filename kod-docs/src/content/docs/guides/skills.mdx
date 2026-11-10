@@ -3,9 +3,10 @@ title: Skills
 description: Writing and managing KOD skills — the Markdown + YAML format, the four search directories, matching rules, hot reload, and the kod skills subcommands.
 sidebar:
   order: 5
+type: how-to
 ---
 
-import { Steps, Aside, LinkCard, FileTree } from '@astrojs/starlight/components';
+import { Aside, Code, FileTree, LinkCard, Steps } from '@astrojs/starlight/components';
 
 Skills are KOD's knowledge-reuse mechanism: plain Markdown files with YAML front matter that get matched against your prompts and injected into the grounded prompt. They are how you teach the harness *your* conventions — your refactoring patterns, your testing style, your house rules — in files you can read, diff, and version like any other text.
 
@@ -26,8 +27,7 @@ Setting `skills.skills_dir` in the config replaces all of the above with a singl
 
 A skill is a Markdown file with YAML front matter. The parser splits the body into three sections — instructions, examples, and constraints — and all three reach the model when the skill is matched:
 
-```markdown
----
+<Code lang="markdown" code={`---
 name: rust-refactoring
 description: Rust refactoring with idiomatic patterns
 version: 1.0.0
@@ -52,8 +52,7 @@ You are an expert Rust refactoring assistant...
 ## Constraints
 
 - Never change public API without explicit request
-- Preserve existing tests
-```
+- Preserve existing tests`} />
 
 What each part does:
 
@@ -67,8 +66,7 @@ What each part does:
 
 The `kod skills` subcommand tree is a small skill package manager:
 
-```bash
-kod skills                       # list (same as `kod skills list`)
+<Code lang="bash" code={`kod skills                       # list (same as \`kod skills list\`)
 kod skills new my-skill          # scaffold in the first writable dir
 kod skills show my-skill         # full markdown content
 kod skills source my-skill       # absolute path of the file
@@ -77,8 +75,7 @@ kod skills search "refactor"     # search names, descriptions, tags
 kod skills rename my-skill my-skill-v2
 kod skills copy my-skill other-name
 kod skills export my-skill -     # write to stdout / a path
-kod skills remove my-skill       # refuses without --yes outside cwd
-```
+kod skills remove my-skill       # refuses without --yes outside cwd`} />
 
 `new` refuses to overwrite an existing file, `rename`/`copy` rewrite the `name:` field inside the file so the front matter never drifts, and `remove` asks for `--yes` unless the target is inside the current directory. For CI, `kod validate-skills` exits non-zero on malformed skills — and `kod validate-skills-strict` also fails skills that omit a `version` — so broken front matter fails your pipeline instead of silently not matching.
 
@@ -91,17 +88,13 @@ kod skills remove my-skill       # refuses without --yes outside cwd
 <Steps>
 1. Scaffold it:
 
-   ```bash
-   kod skills new python-testing
-   ```
+   <Code lang="bash" code={`kod skills new python-testing`} />
 
 2. Edit the front matter — give it two or three triggers that match how you actually ask for the task.
 3. Write **constraints** first (the rules that must never be broken), then instructions, then one small example.
 4. Verify it matches:
 
-   ```bash
-   kod skills search "testing"
-   ```
+   <Code lang="bash" code={`kod skills search "testing"`} />
 </Steps>
 
 Examples of the format — including `python-testing` and `code-review` — ship in the repository under `skills/examples/`.

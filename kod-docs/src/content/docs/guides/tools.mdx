@@ -3,9 +3,10 @@ title: Tools
 description: What KOD's built-in tools can do — file system, git, shell, project checks, memory, LSP, and web — and how every call is permission-gated, path-locked, and sandboxed.
 sidebar:
   order: 7
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 Tools are how the agent touches your system. KOD ships 24 built-in tools, and every single call passes through the same gauntlet: the [policy engine](/guides/policy/) decides allow/deny/ask, the executor enforces a timeout, a per-path advisory lock table prevents concurrent writes to the same file, and `--sandbox` can route shell commands through the platform sandbox. `kod tools list` prints the registry exactly as the model sees it; `kod tools show <name>` prints one tool's schema.
 
@@ -54,11 +55,9 @@ A per-path advisory lock table means two agents (say, in a [swarm](/guides/swarm
 
 Two config switches add automatic verification after every successful write:
 
-```toml
-[tools]
+<Code lang="toml" code={`[tools]
 auto_lsp   = true    # default — cheap, sub-second per file
-auto_check = false   # opt-in — runs the compiler, which is not free
-```
+auto_check = false   # opt-in — runs the compiler, which is not free`} />
 
 - **`auto_lsp`** runs the language server's diagnostics pass on the touched files and appends a `## LSP diagnostics` block to the next turn's prompt. It only runs for languages that have a server on `PATH`; a session with none installed simply sees no block. The same capability is available to the agent on demand via `lsp_diagnostics`, `lsp_definition`, `lsp_references`, and `lsp_hover`.
 - **`auto_check`** runs the project check (`cargo`, `tsc`, `ruff`, `go vet`) and appends its diagnostics the same way. A baseline is captured at startup, so the model is shown *its* errors, not pre-existing ones. On a large workspace this adds a compiler run per write — that is why it defaults to off. The TUI's `/check` runs the same check on demand.

@@ -3,9 +3,10 @@ title: Policy & Permissions
 description: The four-layer policy engine — presets, global config, project .kod/policy.toml, and CLI overrides — with per-tool allow/deny/ask, path globs, and command allowlists.
 sidebar:
   order: 8
+type: how-to
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
 
 A `Policy` says what the agent is allowed to do, project by project. It is read from `.kod/policy.toml` in the project root, merged over a preset, and consulted by the engine **before every tool call**. The decision replaces ad-hoc flags and scattered permission bitmasks: one engine, one decision point, one log entry per call.
 
@@ -36,8 +37,7 @@ Within a layer, `[tools.<name>]` entries give a per-tool decision (`allow` / `de
 
 ## Writing a `.kod/policy.toml`
 
-```toml
-# .kod/policy.toml — committed to the repo
+<Code lang="toml" code={`# .kod/policy.toml — committed to the repo
 preset = "standard"
 
 [tools.write_file]
@@ -56,8 +56,7 @@ network = true
 domains = ["docs.rs", "crates.io"]
 
 [git]
-history_protected = true   # .git is mounted read-only at the sandbox
-```
+history_protected = true   # .git is mounted read-only at the sandbox`} />
 
 Field reference:
 
@@ -79,16 +78,12 @@ Path globs follow gitignore intuition, implemented with `globset` and `literal_s
 
 <Tabs>
 <TabItem label="Show the policy">
-  ```bash
-  kod policy show
-  ```
+  <Code lang="bash" code={`kod policy show`} />
 </TabItem>
 <TabItem label="Explain one call">
-  ```bash
-  kod policy explain write_file path=src/main.rs
-  kod policy explain execute_command command="cargo test"
-  kod policy explain web_fetch url=https://docs.rs/
-  ```
+  <Code lang="bash" code={`kod policy explain write_file path=src/main.rs
+kod policy explain execute_command command="cargo test"
+kod policy explain web_fetch url=https://docs.rs/`} />
 </TabItem>
 </Tabs>
 

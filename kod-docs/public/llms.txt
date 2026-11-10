@@ -1,0 +1,47 @@
+# kod
+
+> AI-agent index.
+
+- [Page not found](/404/)
+- [The Agent Loop](/concepts/agent-loop/) — Inside one KOD engine round — classification, grounding, streaming, tool rounds, steering, cancellation, and the round cap.
+- [Architecture](/concepts/architecture/) — How KOD is organised — the components behind the interface, the data flow through the engine, and the design principles behind it.
+- [Citation Checks](/concepts/citation-checks/) — When a reply cites a file and line, the engine verifies the location exists and annotates the ones that do not.
+- [Compaction](/concepts/compaction/) — When a session runs out of context window, and what actually gets removed.
+- [Core crates](/concepts/core-crates/) — How the engine's internal sub-crates (kod-core-*) fit together.
+- [Internal URLs](/concepts/internal-urls/) — The four schemes read_file and write_file dispatch on — artifact, memory, xd, conflict — and what each one gives the model.
+- [Minimized Tool Output](/concepts/output-minimization/) — How large command output is rewritten into something the model can use, and how the raw form stays reachable.
+- [LLM Providers](/concepts/providers/) — KOD's provider layer — endpoints, the single OpenAI-compatible code path, base-URL normalisation, and streaming with live tool-call assembly.
+- [The Repository Map](/concepts/repo-map/) — How the symbol map is built, what it skips, and why a thin map is usually a size cap rather than a bug.
+- [Task Router](/concepts/router/) — How KOD classifies your prompt — the task types, how classification shapes grounding and skill matching, and how to steer it.
+- [Goals and Decisions](/concepts/session-state/) — The two things a session remembers about itself — a budgeted objective, and the choices made along the way.
+- [Contributing](/developers/contributing/) — How to contribute to KOD — the workspace conventions, what a good change looks like, the check suite your PR must pass, and how bug reports become fixes faster.
+- [Testing](/developers/testing/) — How KOD is tested — the suite layout, offline-by-default design, live-model tests, benchmarks, and the pre-release checklist.
+- [Your First Session](/getting-started/first-session/) — A guided tour of the KOD TUI — modes, keybindings, slash commands, steering a running generation, and the context meter.
+- [Installation](/getting-started/installation/) — Prerequisites, building KOD from source, first-run setup with kod init and kod doctor, and shell completion installation.
+- [Quickstart](/getting-started/quickstart/) — From zero to your first KOD chat, one-shot agent run, and session replay in about five minutes.
+- [Scriptable CLI](/guides/cli/) — Driving KOD from the command line — prompt, run, serve, agent, swarm, replay, and the housekeeping commands, with practical recipes.
+- [Configuration](/guides/configuration/) — How KOD reads config.toml — locations, every section ([llm] endpoints, [memory], [skills], [swarm], [tools], [hooks], [mcp], [commands]), clamping behaviour, and the config subcommands.
+- [FAQ](/guides/faq/) — Quick answers to the questions KOD users ask most — where data lives, how to reset things, why calls get blocked, and which command to use when.
+- [Hooks](/guides/hooks/) — Running your own shell commands around tool calls — pre_tool_use and post_tool_use hooks driven by config templates.
+- [Language Server Integration](/guides/lsp/) — Which servers KOD looks for, how diagnostics reach the model, and what happens when none is installed.
+- [MCP Servers](/guides/mcp/) — Connect Model Context Protocol servers, how their tools are named and gated, and why startup is fast on the second run.
+- [Memory](/guides/memory/) — How KOD's multi-layer memory works — short-term FIFO, long-term redb storage, global vs project scope, retrieval, and the kod memory commands.
+- [Policy & Permissions](/guides/policy/) — The four-layer policy engine — presets, global config, project .kod/policy.toml, and CLI overrides — with per-tool allow/deny/ask, path globs, and command allowlists.
+- [Model Profiles](/guides/profiles/) — The built-in model profiles — local-fast, local-capable, local-reasoning, cloud-openai — and how to switch, inspect, and seed config from them.
+- [Sandboxing](/guides/sandboxing/) — Running KOD's shell commands under OS-level containment — bwrap on Linux, sandbox-exec on macOS — and why it fails loudly rather than silently.
+- [Sessions, Replay & Checkpoints](/guides/sessions/) — How KOD records every tool call as JSONL, how kod replay turns sessions into regression checks, and how checkpoints give you file-level undo.
+- [Skills](/guides/skills/) — Writing and managing KOD skills — the Markdown + YAML format, the four search directories, matching rules, hot reload, and the kod skills subcommands.
+- [Agent Swarms](/guides/swarm/) — kod swarm — decomposing a goal into subtasks, running up to 8 agents concurrently, detecting file conflicts, and merging the results.
+- [Telemetry](/guides/telemetry/) — Export turn- and tool-level records to an OpenTelemetry collector. Off unless you set an endpoint.
+- [Tools](/guides/tools/) — What KOD's built-in tools can do — file system, git, shell, project checks, memory, LSP, and web — and how every call is permission-gated, path-locked, and sandboxed.
+- [Troubleshooting](/guides/troubleshooting/) — Common KOD problems and fixes — endpoint issues, config trouble, memory errors, permission confusion, and what kod doctor tells you.
+- [Terminal UI (TUI)](/guides/tui/) — Living in the KOD TUI — layout, modes, tool rows, search, themes, slash commands, completions, and the context meter.
+- [KOD · Your terminal. Your model. Your code.](/) — KOD is a local-first AI coding agent harness for the terminal, written in Rust. Skills, multi-layer memory, a streaming tool loop, and both a TUI and a scriptable CLI — with nothing leaving your machine.
+- [Overview](/overview/) — What KOD is, why it exists, and how it differs from cloud-hosted coding agents. Local-first philosophy, feature map, and where to go next.
+- [Changelog](/reference/changelog/) — Notable changes in KOD — features, fixes, and behaviour changes, newest first.
+- [CLI Commands](/reference/cli/) — Complete reference for the kod binary — every subcommand, its flags, and its purpose.
+- [Config Reference](/reference/config/) — Every configuration key KOD reads — section, type, default, and notes — in one table.
+- [Crates](/reference/crates/) — The 26 crates that make up the KOD workspace, grouped by layer.
+- [Skill File Format](/reference/skill-format/) — The exact anatomy of a KOD skill — front matter fields, the three body sections, directory precedence, and validation rules.
+- [Tools Reference](/reference/tools/) — The 31 built-in tools — arguments, results, and the safety machinery around each one.
+- [TUI Keybindings](/reference/tui-keys/) — Every TUI keybinding (normal and insert mode), how to rebind keys, and every slash command, with what each one does.

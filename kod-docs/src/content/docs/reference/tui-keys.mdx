@@ -3,9 +3,10 @@ title: TUI Keybindings
 description: Every TUI keybinding (normal and insert mode), how to rebind keys, and every slash command, with what each one does.
 sidebar:
   order: 2
+type: reference
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Code } from '@astrojs/starlight/components';
 
 The TUI is modal: **normal mode** navigates and commands, **insert mode** edits prompts. Press `i` to enter insert mode; `Esc` returns to normal mode (and cancels a running generation). `?` or `h` opens the in-app help overlay at any time.
 
@@ -47,11 +48,9 @@ The TUI is modal: **normal mode** navigates and commands, **insert mode** edits 
 
 Normal-mode single-character keys are configurable. Put a `[keys]` table in `.kod-keys.toml` (project) or `tui_keys.toml` next to your config (global) — each entry maps an **action name** to a key:
 
-```toml
-[keys]
+<Code lang="toml" code={`[keys]
 quit = "Q"
-scroll_down = "J"
-```
+scroll_down = "J"`} />
 
 Recognised action names: `insert`, `quit`, `help`, `panel`, `scroll_up`, `scroll_down`, `top`, `bottom`, `edit_last`, `undo`, `toggle_tools`, `search_prefix`, `copy_last`. Unknown names are ignored, and a corrupt file silently keeps the defaults — key config must never break startup.
 

@@ -3,16 +3,16 @@ title: Skill File Format
 description: The exact anatomy of a KOD skill — front matter fields, the three body sections, directory precedence, and validation rules.
 sidebar:
   order: 5
+type: reference
 ---
 
-import { Aside, FileTree } from '@astrojs/starlight/components';
+import { Aside, Code, FileTree } from '@astrojs/starlight/components';
 
 A skill is a Markdown file with YAML front matter. KOD parses the front matter, splits the body into three sections, caches the result, and matches skills against prompts — with a file watcher enabling hot reload on edit. This page is the exact contract.
 
 ## Anatomy
 
-```markdown
----
+<Code lang="markdown" code={`---
 name: rust-refactoring
 description: Rust refactoring with idiomatic patterns
 version: 1.0.0
@@ -37,8 +37,7 @@ You are an expert Rust refactoring assistant...
 ## Constraints
 
 - Never change public API without explicit request
-- Preserve existing tests
-```
+- Preserve existing tests`} />
 
 ## Front matter fields
 

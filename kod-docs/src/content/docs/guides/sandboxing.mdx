@@ -3,9 +3,10 @@ title: Sandboxing
 description: Running KOD's shell commands under OS-level containment — bwrap on Linux, sandbox-exec on macOS — and why it fails loudly rather than silently.
 sidebar:
   order: 9
+type: how-to
 ---
 
-import { Aside, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 Sandboxing is KOD's hard containment layer for `execute_command`. Where the [policy engine](/guides/policy/) is a decision-maker, the sandbox is a wall: when `--sandbox` is active, shell commands execute through the platform's confinement primitive — **`bwrap`** (bubblewrap) on Linux or **`sandbox-exec`** on macOS — instead of directly in your session.
 
@@ -19,14 +20,12 @@ The design rule that makes this trustworthy: **KOD fails loudly if the primitive
 
 ## Enabling and verifying it
 
-```bash
-# per-invocation (chat, tui, prompt, agent, swarm)
+<Code lang="bash" code={`# per-invocation (chat, tui, prompt, agent, swarm)
 kod chat --sandbox
 kod agent -g "run the test suite and fix failures" --sandbox
 
 # confirm the primitive exists before a long unattended run
-kod sandbox check
-```
+kod sandbox check`} />
 
 `kod sandbox check` reports which primitive is available on your platform — and, when it is missing, the install command — so you can confirm support up front rather than discovering its absence mid-run.
 

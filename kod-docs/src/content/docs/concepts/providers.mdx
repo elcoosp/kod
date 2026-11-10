@@ -3,9 +3,10 @@ title: LLM Providers
 description: KOD's provider layer — endpoints, the single OpenAI-compatible code path, base-URL normalisation, and streaming with live tool-call assembly.
 sidebar:
   order: 4
+type: explanation
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
 
 KOD talks to models through one abstraction: the `LlmProvider` trait in `kod-provider`, implemented today by `kod-provider-openai` (backed by `adk-model`). The design bet is that almost every model server you might run locally — and OpenAI itself — speaks the same OpenAI chat-completions wire protocol, so one implementation covers all of them.
 
@@ -15,45 +16,37 @@ All of these work unchanged, on the same code path:
 
 <Tabs>
 <TabItem label="Ollama (default)">
-  ```toml
-  [[llm.endpoints]]
-  name     = "local"
-  provider = "openai-compatible"
-  base_url = "http://localhost:11434/v1"
-  model    = "qwen2.5-coder:7b"
-  context_window = 32768
-  ```
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "local"
+provider = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+model    = "qwen2.5-coder:7b"
+context_window = 32768`} />
 </TabItem>
 <TabItem label="LM Studio">
-  ```toml
-  [[llm.endpoints]]
-  name     = "lmstudio"
-  provider = "openai-compatible"
-  base_url = "http://localhost:1234/v1"
-  model    = "your-model"
-  context_window = 16384
-  ```
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "lmstudio"
+provider = "openai-compatible"
+base_url = "http://localhost:1234/v1"
+model    = "your-model"
+context_window = 16384`} />
 </TabItem>
 <TabItem label="vLLM">
-  ```toml
-  [[llm.endpoints]]
-  name     = "vllm"
-  provider = "openai-compatible"
-  base_url = "http://localhost:8000/v1"
-  model    = "your-model"
-  context_window = 32768
-  ```
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "vllm"
+provider = "openai-compatible"
+base_url = "http://localhost:8000/v1"
+model    = "your-model"
+context_window = 32768`} />
 </TabItem>
 <TabItem label="OpenAI (cloud)">
-  ```toml
-  [[llm.endpoints]]
-  name     = "openai"
-  provider = "openai-compatible"   # "OpenAI" works too — same thing
-  base_url = "https://api.openai.com/v1"
-  model    = "gpt-4o-mini"
-  api_key_env = "OPENAI_API_KEY"   # the key lives in the environment
-  context_window = 128000
-  ```
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "openai"
+provider = "openai-compatible"   # "OpenAI" works too — same thing
+base_url = "https://api.openai.com/v1"
+model    = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"   # the key lives in the environment
+context_window = 128000`} />
 </TabItem>
 </Tabs>
 

@@ -3,22 +3,21 @@ title: Testing
 description: How KOD is tested — the suite layout, offline-by-default design, live-model tests, benchmarks, and the pre-release checklist.
 sidebar:
   order: 1
+type: how-to
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
 
 The workspace's test suite runs unit tests, integration tests, and doc tests **without external services** — it is designed to be fast and offline, with live-model tests opt-in behind `#[ignore]`. `cargo test --workspace` is the single entry point; CI runs the same suite on every push.
 
 ## Quick start
 
-```bash
-just test                        # or:
+<Code lang="bash" code={`just test                        # or:
 cargo test --workspace           # all crates, all tests
 cargo test --workspace -- --test-threads=8     # faster, parallel
 cargo test --workspace --lib     # unit tests only
 cargo test --workspace --tests   # integration tests only
-cargo test --workspace -- --list | tail -1     # exact current total
-```
+cargo test --workspace -- --list | tail -1     # exact current total`} />
 
 Per-crate, the dense suites are `kod-tui` (app state, events, keybindings, completion, search, streaming, main loop), `kod-core` (engine lifecycle, classification, memory wiring, grounding, tool rounds, session log, swarm runner), `kod-tools` (built-in tools, path resolution, sandbox invocation, permission enforcement), `kod-skills` (parser, loader, matcher, watcher, full pipeline), and `kod-memory` (FIFO eviction, `redb` round-trips, retrieval, compaction). `kod-provider` is trait-only and has no tests by design.
 
@@ -28,16 +27,12 @@ Tests that exercise the real provider are `#[ignore]`-gated so `cargo test` stay
 
 <Tabs>
 <TabItem label="Provider tests">
-  ```bash
-  KOD_TEST_MODEL=qwen2.5:0.5b \
-    cargo test -p kod-provider-openai -- --ignored --nocapture
-  ```
+  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
+  cargo test -p kod-provider-openai -- --ignored --nocapture`} />
 </TabItem>
 <TabItem label="TUI main-loop test">
-  ```bash
-  KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \
-    cargo test -p kod-tui --test main_loop -- --ignored --nocapture
-  ```
+  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
+  cargo test -p kod-tui --test main_loop -- --ignored --nocapture`} />
 </TabItem>
 </Tabs>
 
@@ -47,20 +42,16 @@ In-process tests build the router with `enable_memory=false` to avoid database c
 
 ## Benchmarks
 
-```bash
-cargo bench --workspace          # or: just bench
-```
+<Code lang="bash" code={`cargo bench --workspace          # or: just bench`} />
 
 Benchmarks live under `kod-core/benches/` and cover the engine's hot paths.
 
 ## Debugging a failing test
 
-```bash
-cargo test --workspace -- --nocapture              # full output
+<Code lang="bash" code={`cargo test --workspace -- --nocapture              # full output
 cargo test <name> -- --nocapture --test-threads=1  # serial, for races
 cargo test <name> -- --backtrace                   # backtrace
-cargo test -- --ignored                            # include live tests
-```
+cargo test -- --ignored                            # include live tests`} />
 
 Common causes: Ollama not reachable (only affects `#[ignore]`-gated tests), permission errors in tool tests (path resolution assumptions), and TUI tests in CI (run serially where timing matters).
 
@@ -68,9 +59,7 @@ Common causes: Ollama not reachable (only affects `#[ignore]`-gated tests), perm
 
 The full check suite — format + lint + test + release build — is scripted:
 
-```bash
-./scripts/test.sh
-```
+<Code lang="bash" code={`./scripts/test.sh`} />
 
 Which mirrors the manual order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, then a release build. A `justfile` provides the shortcuts (`just build`, `just test`, `just lint`, `just check`, `just bench`).
 

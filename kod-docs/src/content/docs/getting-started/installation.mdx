@@ -3,9 +3,10 @@ title: Installation
 description: Prerequisites, building KOD from source, first-run setup with kod init and kod doctor, and shell completion installation.
 sidebar:
   order: 2
+type: how-to
 ---
 
-import { Steps, Aside, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+import { Aside, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 KOD is distributed as a single Rust binary that you build from source. There is no package to download from a registry and no runtime to install: `cargo build --release` compiles the agent, the tools, the memory store, and the terminal UI into one executable at `./target/release/kod`.
 
@@ -24,23 +25,17 @@ Two optional extras unlock more later: [bubblewrap](https://github.com/container
 <Steps>
 1. Clone the repository and build the workspace in release mode:
 
-   ```bash
-   git clone https://github.com/elcoosp/kod.git
-   cd kod
-   cargo build --release
-   ```
+   <Code lang="bash" code={`git clone https://github.com/elcoosp/kod.git
+cd kod
+cargo build --release`} />
 
 2. Confirm the binary landed and runs:
 
-   ```bash
-   ./target/release/kod --version
-   ```
+   <Code lang="bash" code={`./target/release/kod --version`} />
 
 3. Optionally put it on your `PATH`:
 
-   ```bash
-   cp ./target/release/kod ~/.local/bin/   # or another directory on PATH
-   ```
+   <Code lang="bash" code={`cp ./target/release/kod ~/.local/bin/   # or another directory on PATH`} />
 </Steps>
 
 The workspace builds on Linux, macOS, and Windows. A debug build (`cargo build`) is fine for trying things out, but the streaming tool loop is noticeably snappier in release mode.
@@ -53,11 +48,9 @@ KOD does not need any configuration to start — every setting has a sane defaul
 
 `kod doctor` prints a diagnostics report covering the configuration file, the model endpoint, discovered skills, the memory database, the sandbox primitive, and git. It is the fastest way to answer “is my setup actually working?” without launching a session, and it exits non-zero if any check fails — so you can also use it to gate a script:
 
-```bash
-kod doctor            # human-readable report
+<Code lang="bash" code={`kod doctor            # human-readable report
 kod doctor --json     # machine-readable, for scripts
-kod doctor --fix      # create missing directories, write a default config
-```
+kod doctor --fix      # create missing directories, write a default config`} />
 
 `--fix` never modifies an existing config file; it only fills in what is missing.
 
@@ -65,19 +58,15 @@ kod doctor --fix      # create missing directories, write a default config
 
 `kod init` prints where the config lives, the model profiles you can switch to, and the next three commands a new user should run. It is idempotent — running it twice changes nothing. With `--force` it rewrites the config from defaults (backing up the old one):
 
-```bash
-kod init
-kod init --force      # reset to defaults, backing up the current file
-```
+<Code lang="bash" code={`kod init
+kod init --force      # reset to defaults, backing up the current file`} />
 
 ### Point KOD at a model
 
 Model profiles bundle a model name, base URL, context window, and generation settings into a preset so a first-run user does not have to know what a `context_window` is. The built-in presets are `local-fast` (Qwen 2.5 Coder 7B), `local-capable` (32B), `local-reasoning` (DeepSeek-R1 14B), and `cloud-openai` (GPT-4o mini):
 
-```bash
-ollama pull qwen2.5-coder:7b    # one-time model download
-kod profile use local-fast      # writes the preset into config.toml
-```
+<Code lang="bash" code={`ollama pull qwen2.5-coder:7b    # one-time model download
+kod profile use local-fast      # writes the preset into config.toml`} />
 
 <Aside type="tip">
   Local profiles list their one-line install command (`ollama pull …`) right in `kod profile list`, so you can copy-paste without leaving the terminal.
@@ -85,9 +74,7 @@ kod profile use local-fast      # writes the preset into config.toml
 
 ### Start a session
 
-```bash
-kod tui
-```
+<Code lang="bash" code={`kod tui`} />
 
 The TUI opens, restores your previous session if you have one, and greets you with the loaded model and skill count. If you prefer a plain REPL, `kod chat` gives you the same agent in a scriptable shell.
 
@@ -97,25 +84,17 @@ KOD can print a completion script for your shell, ready to source:
 
 <Tabs>
   <TabItem label="Bash">
-    ```bash
-    kod completions bash > ~/.local/share/bash-completion/completions/kod
-    ```
+    <Code lang="bash" code={`kod completions bash > ~/.local/share/bash-completion/completions/kod`} />
   </TabItem>
   <TabItem label="Zsh">
-    ```bash
-    kod completions zsh > ~/.zfunc/_kod
-    ```
+    <Code lang="bash" code={`kod completions zsh > ~/.zfunc/_kod`} />
   </TabItem>
   <TabItem label="Fish">
-    ```bash
-    kod completions fish > ~/.config/fish/completions/kod.fish
-    ```
+    <Code lang="bash" code={`kod completions fish > ~/.config/fish/completions/kod.fish`} />
   </TabItem>
   <TabItem label="Elvish / PowerShell">
-    ```bash
-    kod completions elvish
-    kod completions powershell
-    ```
+    <Code lang="bash" code={`kod completions elvish
+kod completions powershell`} />
   </TabItem>
 </Tabs>
 
