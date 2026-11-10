@@ -1,7 +1,7 @@
 //! `kod fixture` subcommands — golden-transcript capture and replay
 //! for prompt regressions.
 
-use super::{Result, KodError};
+use super::{KodError, Result};
 
 /// Replay a saved fixture against the current engine, printing any
 /// divergence in the request shape (Tier 1.5). Returns the number of

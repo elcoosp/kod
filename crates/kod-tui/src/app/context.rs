@@ -2,7 +2,10 @@
 //!
 //! Extracted from `app/mod.rs` (S9).
 
-use super::{KodApp, COMPACT_AT_FRACTION_NUM, COMPACT_AT_FRACTION_DEN, Message, MessageId, MessageRole, Utc, MessageMetadata};
+use super::{
+    COMPACT_AT_FRACTION_DEN, COMPACT_AT_FRACTION_NUM, KodApp, Message, MessageId, MessageMetadata,
+    MessageRole, Utc,
+};
 
 impl KodApp {
     /// Set the model name shown in the status bar.

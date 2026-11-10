@@ -1,4 +1,7 @@
-use super::{KodEngine, MAX_TURN_CHARS, cap_transcript, MAX_HISTORY_TURNS, DEFAULT_TRANSCRIPT_KEY, PathBuf, Result, KodError, LlmProvider, Deserialize, Serialize};
+use super::{
+    DEFAULT_TRANSCRIPT_KEY, Deserialize, KodEngine, KodError, LlmProvider, MAX_HISTORY_TURNS,
+    MAX_TURN_CHARS, PathBuf, Result, Serialize, cap_transcript,
+};
 
 impl KodEngine {
     /// Keyed variant of the transcript + memory writer.

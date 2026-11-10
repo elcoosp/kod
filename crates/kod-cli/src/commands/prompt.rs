@@ -2,7 +2,10 @@
 //! `--remote` variant. These produce output on stdout and exit; they
 //! are the scripted interface, not the interactive REPL.
 
-use super::{Result, KodError, Write, BufRead, KodConfig, EngineBootstrapOptions, engine_from_config, install_session_recorder, install_jev, sessions_dir};
+use super::{
+    BufRead, EngineBootstrapOptions, KodConfig, KodError, Result, Write, engine_from_config,
+    install_jev, install_session_recorder, sessions_dir,
+};
 
 /// Send a prompt to a running kod daemon over the unix socket.
 ///

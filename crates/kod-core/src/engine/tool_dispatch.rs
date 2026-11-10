@@ -1,4 +1,9 @@
-use super::{KodEngine, ToolCall, Result, ToolResult, truncate_bytes, PolicyGateResult, question_marker, AWAIT_APPROVAL_SECS, ApprovalRequest, ApprovalDecision, format_call_brief, ApprovalBatch, tool_approval_batch_marker, redact_rendered_text, ToolRound, Arc, summarize_tool_result, cap_rendered_result, render_diagnostics, diag_key};
+use super::{
+    AWAIT_APPROVAL_SECS, ApprovalBatch, ApprovalDecision, ApprovalRequest, Arc, KodEngine,
+    PolicyGateResult, Result, ToolCall, ToolResult, ToolRound, cap_rendered_result, diag_key,
+    format_call_brief, question_marker, redact_rendered_text, render_diagnostics,
+    summarize_tool_result, tool_approval_batch_marker, truncate_bytes,
+};
 
 /// Outcome of [`KodEngine::await_decision`]. Three-way because the
 /// caller maps each variant to a different downstream message

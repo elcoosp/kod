@@ -279,8 +279,8 @@ enum MatchSite {
 
 fn scope_allows(scope: &RuleScope, site: MatchSite) -> bool {
     match (scope, site) {
-(RuleScope::Text | RuleScope::Thinking, MatchSite::Text) |
-(RuleScope::Tool { .. }, MatchSite::Tool) => true,
+        (RuleScope::Text | RuleScope::Thinking, MatchSite::Text)
+        | (RuleScope::Tool { .. }, MatchSite::Tool) => true,
         _ => false,
     }
 }

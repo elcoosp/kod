@@ -324,7 +324,10 @@ mod tests {
 
     #[test]
     fn parse_headers_of_none_is_empty() {
-        assert_eq!(parse_headers(None), [] as [(std::string::String, std::string::String); 0]);
+        assert_eq!(
+            parse_headers(None),
+            [] as [(std::string::String, std::string::String); 0]
+        );
     }
 
     #[test]
@@ -517,7 +520,10 @@ mod parse_headers_proptests {
     /// not a header.
     #[test]
     fn empty_key_is_dropped() {
-        assert_eq!(parse_headers(Some("=orphan")), [] as [(std::string::String, std::string::String); 0]);
+        assert_eq!(
+            parse_headers(Some("=orphan")),
+            [] as [(std::string::String, std::string::String); 0]
+        );
         let h = parse_headers(Some("good=1,=orphan,other=2"));
         assert_eq!(h.len(), 2);
         assert_eq!(h[0].0, "good");
@@ -547,8 +553,14 @@ mod parse_headers_proptests {
     /// A bare comma (no pairs at all) is empty.
     #[test]
     fn commas_only_is_empty() {
-        assert_eq!(parse_headers(Some(",")), [] as [(std::string::String, std::string::String); 0]);
-        assert_eq!(parse_headers(Some(",,")), [] as [(std::string::String, std::string::String); 0]);
+        assert_eq!(
+            parse_headers(Some(",")),
+            [] as [(std::string::String, std::string::String); 0]
+        );
+        assert_eq!(
+            parse_headers(Some(",,")),
+            [] as [(std::string::String, std::string::String); 0]
+        );
     }
 
     /// `=""` is a pair with an empty value, not a dropped pair —

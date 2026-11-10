@@ -271,7 +271,10 @@ async fn deny_always_registers_session_rule() {
     let engine = engine_in(temp.path());
     engine.start().await.unwrap();
 
-    assert_eq!(engine.deny_rules().await, [] as [kod_config::SessionDeny; 0]);
+    assert_eq!(
+        engine.deny_rules().await,
+        [] as [kod_config::SessionDeny; 0]
+    );
 
     let rule = kod_config::SessionDeny {
         tool: "write_file".to_string(),

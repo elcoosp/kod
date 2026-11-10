@@ -1,4 +1,4 @@
-use super::{KodEngine, LlmProvider, Deserialize, Serialize, Result};
+use super::{Deserialize, KodEngine, LlmProvider, Result, Serialize};
 
 impl KodEngine {
     /// Delta §12.6: continuous memory extraction.

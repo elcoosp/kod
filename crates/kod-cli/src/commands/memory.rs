@@ -5,7 +5,10 @@
 //! (`preview_line`, `render_session_markdown`, `count_roles`) live
 //! here too — they have no other callers.
 
-use super::{MemoryAction, Result, KodConfig, BufRead, KodError, Write, SessionsAction, preview, sessions_dir, RouterConfig, KodEngine, install_policy_async, CheckpointAction};
+use super::{
+    BufRead, CheckpointAction, KodConfig, KodEngine, KodError, MemoryAction, Result, RouterConfig,
+    SessionsAction, Write, install_policy_async, preview, sessions_dir,
+};
 
 /// Dispatch a memory subcommand.
 ///

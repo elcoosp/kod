@@ -1,4 +1,13 @@
-use super::{KodEngine, Arc, LlmProvider, RoundContext, Result, ToolCall, ToolResult, MAX_TOOL_ROUNDS, KodError, GenerationResponse, append_round_text, cap_transcript, MAX_HISTORY_TURNS, TOOL_ROUNDS_EXHAUSTED_NOTE, ModelRef, StreamRoundOutcome, stream_reset_marker, usage_marker, tool_args_marker, format_call_brief, format_tool_header, summarize_tool_result, tool_done_marker, thinking_marker, ToolDefinition, GenerationOptions, StreamChunk, EARLY_TERM_CHECK_EVERY_CHUNKS, EARLY_TERM_MIN_CHARS, EarlyTermination, tool_start_marker, MIN_INLINE_IMAGE_TOKENS, simple_hash, CompletionRequest, strip_conversation_tail, SystemPrompt, SystemSegment};
+use super::{
+    Arc, CompletionRequest, EARLY_TERM_CHECK_EVERY_CHUNKS, EARLY_TERM_MIN_CHARS, EarlyTermination,
+    GenerationOptions, GenerationResponse, KodEngine, KodError, LlmProvider, MAX_HISTORY_TURNS,
+    MAX_TOOL_ROUNDS, MIN_INLINE_IMAGE_TOKENS, ModelRef, Result, RoundContext, StreamChunk,
+    StreamRoundOutcome, SystemPrompt, SystemSegment, TOOL_ROUNDS_EXHAUSTED_NOTE, ToolCall,
+    ToolDefinition, ToolResult, append_round_text, cap_transcript, format_call_brief,
+    format_tool_header, simple_hash, stream_reset_marker, strip_conversation_tail,
+    summarize_tool_result, thinking_marker, tool_args_marker, tool_done_marker, tool_start_marker,
+    usage_marker,
+};
 use num_traits::ToPrimitive;
 use std::fmt::Write as _;
 

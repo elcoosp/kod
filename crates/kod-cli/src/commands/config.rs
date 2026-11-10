@@ -1,6 +1,6 @@
 //! `kod config` subcommands: show / path / edit / migrate / validate.
 
-use super::{Result, KodConfig, KodError};
+use super::{KodConfig, KodError, Result};
 
 /// Print the effective config as TOML.
 ///

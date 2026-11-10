@@ -1,4 +1,7 @@
-use super::{KodEngine, LlmProvider, Arc, ProviderRegistry, ModelRef, DEFAULT_TRANSCRIPT_KEY, Result, Deserialize, Serialize, KodError};
+use super::{
+    Arc, DEFAULT_TRANSCRIPT_KEY, Deserialize, KodEngine, KodError, LlmProvider, ModelRef,
+    ProviderRegistry, Result, Serialize,
+};
 
 impl KodEngine {
     /// P7: drop endpoints whose declared trust tier does not clear

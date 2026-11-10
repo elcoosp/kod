@@ -1,6 +1,9 @@
 //! `kod swarm` (embedded and `--remote`).
 
-use super::{Result, KodError, Write, BufRead, KodConfig, EngineBootstrapOptions, engine_from_config, SwarmRunner, SwarmEvent, io};
+use super::{
+    BufRead, EngineBootstrapOptions, KodConfig, KodError, Result, SwarmEvent, SwarmRunner, Write,
+    engine_from_config, io,
+};
 
 /// Attach to a running swarm daemon and drive it from this client.
 ///

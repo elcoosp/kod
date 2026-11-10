@@ -3,7 +3,11 @@
 //!
 //! Extracted from `app/mod.rs` (S9).
 
-use super::{KodApp, GenPhase, Instant, Deserialize, Serialize, Theme, Message, html_escape, AppMode, MessageRole, PendingApprovalBatch, PendingApproval, PendingQuestion, ConfirmKind, PendingEdit, InputMode};
+use super::{
+    AppMode, ConfirmKind, Deserialize, GenPhase, InputMode, Instant, KodApp, Message, MessageRole,
+    PendingApproval, PendingApprovalBatch, PendingEdit, PendingQuestion, Serialize, Theme,
+    html_escape,
+};
 
 impl KodApp {
     /// The current generation phase.

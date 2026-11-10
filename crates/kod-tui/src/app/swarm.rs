@@ -6,7 +6,10 @@
 //! from the runner. The two coexist because the panel renders both
 //! views.
 
-use super::{KodApp, AgentInfo, HashMap, SwarmAgentView, MessageId, Message, MessageRole, Utc, MessageMetadata, GenPhase};
+use super::{
+    AgentInfo, GenPhase, HashMap, KodApp, Message, MessageId, MessageMetadata, MessageRole,
+    SwarmAgentView, Utc,
+};
 
 impl KodApp {
     /// All tracked agents.

@@ -5,7 +5,7 @@
 //! approval, plus the `ToolFilterState` that decides when to re-run
 //! the Jev tool-inventory filter within a session.
 
-use super::{Serialize, Deserialize};
+use super::{Deserialize, Serialize};
 
 /// The serialized shape of an approval request. Sent as JSON inside an
 /// [`tool_approval_marker`] chunk, decoded by the consumer.

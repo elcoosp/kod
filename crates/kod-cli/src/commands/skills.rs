@@ -1,6 +1,6 @@
 //! `kod skills` subcommands: list / validate / new / show / edit / remove.
 
-use super::{Result, KodConfig, KodError, Write, BufRead, shell_quote};
+use super::{BufRead, KodConfig, KodError, Result, Write, shell_quote};
 
 /// List every skill discovered across the configured sources.
 ///
