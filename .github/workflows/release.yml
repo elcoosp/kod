@@ -256,7 +256,7 @@ jobs:
       uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff  # v4
       with:
         config: cliff.toml
-        args: --latest --strip header
+        args: "--latest --strip header --config-url https://raw.githubusercontent.com/elcoosp/docs-toolkit/main/git-cliff/cliff.toml"
       env:
         OUTPUT: RELEASE_NOTES.md
 
