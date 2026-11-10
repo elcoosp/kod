@@ -1,0 +1,23 @@
+# Additive changelog — for repos that already have their own release.yml.
+# This file generates + commits CHANGELOG.md on tag push. It does NOT
+# create a GitHub release — your release.yml handles binaries, cargo
+# publish, and release creation.
+#
+# Works alongside an existing release.yml without conflict.
+
+name: Changelog
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    uses: elcoosp/docs-toolkit/.github/workflows/changelog.yml@main
+    with:
+      mode: changelog-only
+    secrets: inherit
