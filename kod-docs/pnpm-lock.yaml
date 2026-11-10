@@ -27,9 +27,9 @@ importers:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@24.13.5)
     devDependencies:
-      '@fontsource/roboto':
-        specifier: ^5.3.0
-        version: 5.3.0
+      '@elcoosp/docs-toolkit':
+        specifier: github:elcoosp/docs-toolkit#dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5
+        version: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5(@astrojs/starlight@0.42.0(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5)))(@types/node@24.13.5)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd(csstype@3.2.3)(linkedom@0.18.15))(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5))(react@19.3.1)
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -39,9 +39,6 @@ importers:
       astro-takumi:
         specifier: github:elcoosp/astro-takumi#c4b8331abb1dc2f157d62fba634eeb17f5e689cd
         version: https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd(csstype@3.2.3)(linkedom@0.18.15)
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
       jsdom:
         specifier: 26.1.0
         version: 26.1.0
@@ -275,6 +272,21 @@ packages:
     resolution: {integrity: sha512-Vh5uy9Y1JBMId6J1f68TMXnZrTCvNdo9Fu2k0d1YnJngR+sM5kWTKl441c/3TFs+cG0NWOjRWgQ/iaWhbYx+7A==}
     engines: {node: '>=14'}
 
+  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5':
+    resolution: {gitHosted: true, integrity: sha512-278y7eGsDuanCvMCYVdJ7R4pa68keMKx2Ly0mZeJctYuzxK+EFNI2DsVWfDNArgKu+0DLGw+WNoQ98gOwRnF+A==, tarball: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5}
+    version: 0.1.0
+    engines: {node: '>=22.18.0'}
+    hasBin: true
+    peerDependencies:
+      '@astrojs/starlight': ^0.42.0
+      astro: ^7.0.0
+      astro-takumi: '*'
+      playwright: ^1.65.0
+      react: ^19.3.1
+    peerDependenciesMeta:
+      playwright:
+        optional: true
+
   '@emnapi/core@1.11.1':
     resolution: {integrity: sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==}
 
@@ -469,9 +481,6 @@ packages:
 
   '@fontsource-variable/jetbrains-mono@5.3.0':
     resolution: {integrity: sha512-F32xpS2NsGYoQi2ADSkKTgpJj7ozajsGgDJ8woTnqjmIB+dxDIqImjl4pXZVEExu8UFZ2ndhmX18EBS/hdz3Lw==}
-
-  '@fontsource/roboto@5.3.0':
-    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2380,6 +2389,16 @@ snapshots:
 
   '@ctrl/tinycolor@4.2.1': {}
 
+  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5(@astrojs/starlight@0.42.0(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5)))(@types/node@24.13.5)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd(csstype@3.2.3)(linkedom@0.18.15))(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5))(react@19.3.1)':
+    dependencies:
+      '@astrojs/starlight': 0.42.0(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5))
+      astro: 7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.5)
+      astro-takumi: https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd(csstype@3.2.3)(linkedom@0.18.15)
+      react: 19.3.1
+      sharp: 0.35.5(@types/node@24.13.5)
+    transitivePeerDependencies:
+      - '@types/node'
+
   '@emnapi/core@1.11.1':
     dependencies:
       '@emnapi/wasi-threads': 1.2.2
@@ -2509,8 +2528,6 @@ snapshots:
   '@fontsource-variable/inter@5.3.0': {}
 
   '@fontsource-variable/jetbrains-mono@5.3.0': {}
-
-  '@fontsource/roboto@5.3.0': {}
 
   '@img/colour@1.1.0': {}
 

@@ -1,49 +1,30 @@
-// @ts-check
-import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
-import astroTakumi from 'astro-takumi';
-import fs from 'node:fs';
-import { makeRender } from './src/og-render.mjs';
-// https://astro.build/config
-const __logoB64 = fs.readFileSync("./src/assets/logo.png").toString("base64");
-const __render = makeRender({
-  logoDataUrl: "data:image/png;base64," + __logoB64,
-  accentHex: "#2d8686",
-  accentHexA12: "#2d86861a",
-  domain: "kod.vercel.app",
-  projectName: "KOD",
-});
+import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
 
-export default defineConfig({
-	vite: {
-		ssr: { external: ["jsdom", "astro-takumi"] },
-	},
+export default await defineDocsConfig({
   site: 'https://kod.vercel.app',
-  integrations: [
-    starlight({
-			routeMiddleware: "./src/routeData.ts",
+  domain: 'kod.vercel.app',
+  title: "KOD",
+  description: "Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.",
+  sidebar: [],
+  extraStarlight: {
       expressiveCode: {
-      	themes: ['github-light', 'github-dark'],
+      	themes: ['github-light', 'github-dark']
       },
       title: 'KOD',
       description:
         'Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.',
-
-
-      logo: { src: './src/assets/logo.png' },
       favicon: '/favicon.png',
       social: [
         {
           icon: 'github',
           label: 'KOD on GitHub',
-          href: 'https://github.com/elcoosp/kod',
+          href: 'https://github.com/elcoosp/kod'
         },
       ],
       lastUpdated: false,
-      customCss: ['./src/styles/custom.css'],
       tableOfContents: {
         minHeadingLevel: 2,
-        maxHeadingLevel: 3,
+        maxHeadingLevel: 3
       },
       pagefind: true,
       sidebar: [
@@ -54,7 +35,7 @@ export default defineConfig({
             { label: 'Installation', slug: 'getting-started/installation' },
             { label: 'Quickstart', slug: 'getting-started/quickstart' },
             { label: 'Your First Session', slug: 'getting-started/first-session' },
-          ],
+          ]
         },
             {
           label: 'Guides',
@@ -76,7 +57,7 @@ export default defineConfig({
             { label: 'Telemetry', slug: 'guides/telemetry' },
             { label: 'Troubleshooting', slug: 'guides/troubleshooting' },
             { label: 'FAQ', slug: 'guides/faq' },
-          ],
+          ]
         },
             {
           label: 'Reference',
@@ -88,7 +69,7 @@ export default defineConfig({
             { label: 'Skill File Format', slug: 'reference/skill-format' },
             { label: 'Crates', slug: 'reference/crates' },
             { label: 'Changelog', slug: 'reference/changelog' },
-          ],
+          ]
         },
             {
           label: 'Concepts',
@@ -103,27 +84,15 @@ export default defineConfig({
             { label: 'Compaction', slug: 'concepts/compaction' },
             { label: 'Task Router', slug: 'concepts/router' },
             { label: 'LLM Providers', slug: 'concepts/providers' },
-          ],
+          ]
         },
             {
           label: 'Developers',
           items: [
             { label: 'Testing', slug: 'developers/testing' },
             { label: 'Contributing', slug: 'developers/contributing' },
-          ],
+          ]
         },
-      ],
-    }),
-  
-		astroTakumi({
-			options: {
-				domBackend: "linkedom",
-				fonts: [fs.readFileSync("./node_modules/@fontsource/roboto/files/roboto-latin-400-normal.woff2")],
-				width: 1200,
-				height: 630,
-				format: "png",
-			},
-			render: __render,
-		}),
-	],
+      ]
+    },
 });

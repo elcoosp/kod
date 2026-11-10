@@ -6,10 +6,9 @@
   "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
     "dev": "astro dev",
-    "build": "pnpm og:compile && astro build",
+    "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro",
-    "og:compile": "./node_modules/.bin/esbuild src/og-render.jsx --loader:.jsx=jsx --jsx=automatic --format=esm --outfile=src/og-render.mjs"
+    "astro": "astro"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.0",
@@ -23,14 +22,13 @@
     "node": ">=22.12.0"
   },
   "devDependencies": {
-    "@fontsource/roboto": "^5.3.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "astro-takumi": "github:elcoosp/astro-takumi#c4b8331abb1dc2f157d62fba634eeb17f5e689cd",
-    "esbuild": "^0.28.2",
     "jsdom": "26.1.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "@elcoosp/docs-toolkit": "github:elcoosp/docs-toolkit#dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
