@@ -1,8 +1,8 @@
 allowBuilds:
   esbuild: true
   sharp: true
-  astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd: true
-  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5': true
+  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/d8bb48f1f293a6441cc5964ffa26ebd0121290cd': true
+  astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e: true
 onlyBuiltDependencies:
 - esbuild
 - sharp

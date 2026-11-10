@@ -24,11 +24,10 @@
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "astro-takumi": "github:elcoosp/astro-takumi#c4b8331abb1dc2f157d62fba634eeb17f5e689cd",
-    "jsdom": "26.1.0",
+    "astro-takumi": "github:elcoosp/astro-takumi#4bb9e47833c48388b17da9612d77bc9f600d525e",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@elcoosp/docs-toolkit": "github:elcoosp/docs-toolkit#dd2fa6d7981534c0e3b230f4eed59e38bd51e4e5"
+    "@elcoosp/docs-toolkit": "github:elcoosp/docs-toolkit#d8bb48f1f293a6441cc5964ffa26ebd0121290cd"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
