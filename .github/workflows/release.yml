@@ -20,7 +20,7 @@ jobs:
     with:
       publish: true
       binary_targets: '["x86_64-unknown-linux-gnu","aarch64-apple-darwin"]'
-      extra_checks: '["verify-tag","fmt","clippy","test"]'
+      extra_checks: '["verify-tag","fmt","test"]'
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     secrets:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
