@@ -1,0 +1,18 @@
+# Drop-in .github/workflows/binaries.yml for binary repos only.
+# Replace [{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","cross":false},{"target":"aarch64-apple-darwin","os":"macos-14","cross":false}] with the repo's matrix.
+name: Binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    uses: elcoosp/docs-toolkit/.github/workflows/binaries.yml@main
+    with:
+      binary_name: 'kod'
+      asset_prefix: 'kod-v'
+      binary_targets: '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","cross":false},{"target":"aarch64-apple-darwin","os":"macos-14","cross":false}]'
