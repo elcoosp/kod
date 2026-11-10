@@ -7,7 +7,7 @@ fn test_app_creation() {
     assert_eq!(app.mode(), &AppMode::Normal);
     assert_eq!(app.input_mode(), &InputMode::Normal);
     assert!(app.messages().is_empty());
-    assert!(app.input().is_empty());
+    assert_eq!(app.input(), "");
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn test_no_path_completion_for_plain_words() {
     for ch in "hello world".chars() {
         app.add_char(ch);
     }
-    assert!(app.path_candidates().is_empty());
+    assert_eq!(app.path_candidates(), [] as [std::string::String; 0]);
     assert!(!app.show_completions());
 }
 

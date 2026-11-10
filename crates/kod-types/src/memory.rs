@@ -147,7 +147,7 @@ mod coverage_memory_metadata {
         let legacy = r#"{"session_id":null,"tags":[],"embedding":null}"#;
         let m: MemoryMetadata = serde_json::from_str(legacy).unwrap();
         assert!(m.session_id.is_none());
-        assert!(m.tags.is_empty());
+        assert_eq!(m.tags, [] as [std::string::String; 0]);
         assert!(m.embedding.is_none());
         assert!(m.project_key.is_none());
         assert!(m.last_retrieved_at_ms.is_none());

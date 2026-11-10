@@ -5,7 +5,7 @@
 //! daemon-client variants; `run_acp` speaks the Agent Client
 //! Protocol over stdin/stdout.
 
-use super::*;
+use super::{Result, KodError, io, Write, BufRead, is_control_marker, KodConfig, engine_from_config, EngineBootstrapOptions, Arc, install_policy_async};
 
 /// Attach to a running daemon's chat session over the unix socket.
 ///

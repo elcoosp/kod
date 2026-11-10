@@ -279,9 +279,8 @@ enum MatchSite {
 
 fn scope_allows(scope: &RuleScope, site: MatchSite) -> bool {
     match (scope, site) {
-(RuleScope::Text, MatchSite::Text) | // `Thinking` shares the text site: the caller that wants to
-        // separate reasoning does so before calling.
-        (RuleScope::Thinking, MatchSite::Text) | (RuleScope::Tool { .. }, MatchSite::Tool) => true,
+(RuleScope::Text | RuleScope::Thinking, MatchSite::Text) |
+(RuleScope::Tool { .. }, MatchSite::Tool) => true,
         _ => false,
     }
 }

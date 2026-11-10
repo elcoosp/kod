@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn a_bare_program_is_single_with_no_args() {
         assert_eq!(single("ls").0, "ls");
-        assert!(single("ls").1.is_empty());
+        assert_eq!(single("ls").1, [] as [std::string::String; 0]);
     }
 
     #[test]

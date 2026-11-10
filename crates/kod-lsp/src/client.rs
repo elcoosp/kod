@@ -1485,7 +1485,7 @@ mod coverage_lsp_parsers {
     #[test]
     fn hover_null_is_empty_text_and_no_range() {
         let h = parse_hover(&json!(null));
-        assert!(h.text.is_empty());
+        assert_eq!(h.text, "");
         assert!(h.range.is_none());
     }
 
@@ -1545,7 +1545,7 @@ mod coverage_lsp_parsers {
     #[test]
     fn hover_missing_contents_yields_empty_text() {
         let v = json!({});
-        assert!(parse_hover(&v).text.is_empty());
+        assert_eq!(parse_hover(&v).text, "");
     }
 
     // ---- uri_to_path ---------------------------------------------------

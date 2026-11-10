@@ -3643,7 +3643,7 @@ mod coverage_cli_subactions {
                 action: PolicyAction::Explain { tool, args },
             }) => {
                 assert_eq!(tool, "write_file");
-                assert!(args.is_empty());
+                assert_eq!(args, [] as [std::string::String; 0]);
             }
             _ => panic!("expected Policy::Explain"),
         }

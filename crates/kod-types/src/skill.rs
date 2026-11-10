@@ -189,12 +189,12 @@ mod coverage_skill_metadata {
         let m: SkillMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(m.name, "a");
         assert_eq!(m.description, "d");
-        assert!(m.version.is_empty());
-        assert!(m.category.is_empty());
-        assert!(m.tags.is_empty());
-        assert!(m.capabilities.is_empty());
-        assert!(m.requirements.is_empty());
-        assert!(m.triggers.is_empty());
+        assert_eq!(m.version, "");
+        assert_eq!(m.category, "");
+        assert_eq!(m.tags, [] as [std::string::String; 0]);
+        assert_eq!(m.capabilities, [] as [std::string::String; 0]);
+        assert_eq!(m.requirements, [] as [std::string::String; 0]);
+        assert_eq!(m.triggers, [] as [std::string::String; 0]);
         assert!(m.author.is_none());
     }
 

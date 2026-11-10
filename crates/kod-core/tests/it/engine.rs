@@ -36,7 +36,7 @@ async fn test_engine_process_input() {
         }
         Err(e) => {
             // May fail if no LLM provider configured, but shouldn't panic
-            assert!(!e.to_string().is_empty());
+            assert_ne!(e.to_string(), "");
         }
     }
 }

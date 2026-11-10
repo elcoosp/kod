@@ -10,7 +10,7 @@ async fn test_agent_creation() {
     assert_eq!(agent.name(), "architect");
     assert_eq!(agent.state(), AgentState::Idle);
     // ID should be a valid AgentId
-    assert!(!agent.id().to_string().is_empty());
+    assert_ne!(agent.id().to_string(), "");
 }
 
 #[tokio::test]

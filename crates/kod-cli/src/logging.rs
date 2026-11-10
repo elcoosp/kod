@@ -116,11 +116,10 @@ impl SessionSafeWriter {
         if !term::tui_active() {
             return std::io::stderr().flush();
         }
-        if let Ok(mut slot) = self.file.lock() {
-            if let Some(file) = slot.as_mut() {
+        if let Ok(mut slot) = self.file.lock()
+            && let Some(file) = slot.as_mut() {
                 return file.flush();
             }
-        }
         Ok(())
     }
 }

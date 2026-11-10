@@ -285,8 +285,8 @@ mod coverage_git_access_and_calls {
         assert!(!p.execute_commands);
         assert!(!p.network_access);
         assert_eq!(p.git_access, GitAccess::None);
-        assert!(p.allowed_paths.is_empty());
-        assert!(p.forbidden_paths.is_empty());
+        assert_eq!(p.allowed_paths, [] as [std::string::String; 0]);
+        assert_eq!(p.forbidden_paths, [] as [std::string::String; 0]);
     }
 
     #[test]

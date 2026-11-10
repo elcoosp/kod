@@ -271,7 +271,7 @@ mod coverage_engine_context {
         let c = EngineContext::new("hello");
         assert_eq!(c.user_input, "hello");
         assert!(c.skills.is_empty());
-        assert!(c.tools_available.is_empty());
+        assert_eq!(c.tools_available, [] as [std::string::String; 0]);
         assert!(c.system_prompt.is_none());
     }
 

@@ -6,7 +6,7 @@
 //! up/down history ring. They do not touch messages or generation
 //! state.
 
-use super::*;
+use super::{KodApp, InputMode, Message, MessageId, MessageRole, Utc, MessageMetadata};
 
 impl KodApp {
     /// The current input mode.

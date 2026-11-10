@@ -514,10 +514,10 @@ impl EventHandler {
                         return event;
                     }
                 }
-                _ = wake_notify().notified() => {
+                () = wake_notify().notified() => {
                     // Priority queue may have a new entry; loop.
                 }
-                _ = tokio::time::sleep_until(deadline) => {
+                () = tokio::time::sleep_until(deadline) => {
                     return Event::Tick;
                 }
             }

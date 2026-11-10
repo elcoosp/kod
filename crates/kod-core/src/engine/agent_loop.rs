@@ -1,4 +1,4 @@
-use super::*;
+use super::{KodEngine, Arc, LlmProvider, RoundContext, Result, ToolCall, ToolResult, MAX_TOOL_ROUNDS, KodError, GenerationResponse, append_round_text, cap_transcript, MAX_HISTORY_TURNS, TOOL_ROUNDS_EXHAUSTED_NOTE, ModelRef, StreamRoundOutcome, stream_reset_marker, usage_marker, tool_args_marker, format_call_brief, format_tool_header, summarize_tool_result, tool_done_marker, thinking_marker, ToolDefinition, GenerationOptions, StreamChunk, EARLY_TERM_CHECK_EVERY_CHUNKS, EARLY_TERM_MIN_CHARS, EarlyTermination, tool_start_marker, MIN_INLINE_IMAGE_TOKENS, simple_hash, CompletionRequest, strip_conversation_tail, SystemPrompt, SystemSegment};
 use num_traits::ToPrimitive;
 use std::fmt::Write as _;
 
@@ -855,7 +855,7 @@ impl KodEngine {
             // See `policy_gate.rs` for the approval-wait analogue.
             let next = tokio::select! {
                 biased;
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                     if self.is_cancelled_for(holder) {
                         return Err(kod_error::KodError::InvalidState(
                             "cancelled by user".to_string(),

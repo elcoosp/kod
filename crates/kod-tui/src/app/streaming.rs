@@ -9,7 +9,7 @@
 //! type, so a caller in `mod.rs` writes `app.add_response_chunk(...)`
 //! exactly as before.
 
-use super::*;
+use super::{KodApp, Instant, GenPhase, Message, MessageId, MessageRole, Utc, ToolStatus, GoalBudget, SPINNER_FRAMES};
 use kod_types::message::MessageMetadata;
 
 impl KodApp {

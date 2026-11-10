@@ -6,7 +6,7 @@
 //! drive a live turn except `kod trace replay`, which builds a fresh
 //! engine and re-runs one prompt.
 
-use super::*;
+use super::{Result, KodConfig, KodError, newest_session_log};
 
 /// Find the newest `.jsonl` under `~/.kod/sessions/`.
 /// `kod jev status` — print the effective Jev config.

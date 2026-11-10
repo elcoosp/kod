@@ -551,7 +551,7 @@ mod tests {
             TurnFailure::Unknown { raw: "x".into() },
         ];
         for v in &variants {
-            assert!(!v.summary().is_empty());
+            assert_ne!(v.summary(), "");
         }
     }
 

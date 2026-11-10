@@ -147,7 +147,7 @@ mod tests {
             Lang::C,
         ] {
             let _ = l.language();
-            assert!(!l.name().is_empty());
+            assert_ne!(l.name(), "");
         }
     }
 }

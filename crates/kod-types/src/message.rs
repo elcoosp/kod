@@ -432,7 +432,7 @@ mod coverage_message_render {
     fn metadata_default_is_all_empty_and_unpinned() {
         let m = MessageMetadata::default();
         assert!(m.skill_applied.is_none());
-        assert!(m.tools_used.is_empty());
+        assert_eq!(m.tools_used, [] as [std::string::String; 0]);
         assert!(m.agent_id.is_none());
         assert!(m.thinking_time_ms.is_none());
         assert!(m.token_count.is_none());

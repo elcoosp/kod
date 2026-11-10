@@ -214,7 +214,7 @@ pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
                     Err(e) => tracing::warn!(error = %e, "accept failed"),
                 }
             }
-            _ = shutdown.notified() => {
+            () = shutdown.notified() => {
                 tracing::info!("shutdown requested; stopping listener");
                 break;
             }

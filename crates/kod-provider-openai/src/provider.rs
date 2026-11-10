@@ -1391,7 +1391,7 @@ mod coverage_openai_helpers {
         // so an empty string would be a hard failure for a user
         // who configured no key at all.
         let key = resolve_api_key(None);
-        assert!(!key.is_empty());
+        assert_ne!(key, "");
     }
 
     #[test]

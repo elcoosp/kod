@@ -56,7 +56,7 @@ fn snapshot_records_ids_from_both_tiers() {
 #[test]
 fn empty_snapshot_is_fresh() {
     let snapshot = PendingMemory::snapshot(empty_context());
-    assert!(snapshot.ids.is_empty());
+    assert_eq!(snapshot.ids, [] as [kod_types::MemoryId; 0]);
     assert!(snapshot.is_fresh());
 }
 
