@@ -1,19 +1,36 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-
+import astroTakumi from 'astro-takumi';
+import fs from 'node:fs';
+import { makeRender } from './src/og-render.mjs';
 // https://astro.build/config
+const __logoB64 = fs.readFileSync("./src/assets/logo.png").toString("base64");
+const __render = makeRender({
+  logoDataUrl: "data:image/png;base64," + __logoB64,
+  accentHex: "#2d8686",
+  accentHexA12: "#2d86861a",
+  domain: "kod.vercel.app",
+  projectName: "KOD",
+});
+
 export default defineConfig({
-  site: 'https://docs.kod.dev',
+	vite: {
+		ssr: { external: ["jsdom", "astro-takumi"] },
+	},
+  site: 'https://kod.vercel.app',
   integrations: [
     starlight({
+			routeMiddleware: "./src/routeData.ts",
+      expressiveCode: {
+      	themes: ['github-light', 'github-dark'],
+      },
       title: 'KOD',
       description:
         'Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.',
-      logo: {
-        src: './src/assets/logo.png',
-        alt: 'KOD logo',
-      },
+
+
+      logo: { src: './src/assets/logo.png' },
       favicon: '/favicon.png',
       social: [
         {
@@ -24,20 +41,6 @@ export default defineConfig({
       ],
       lastUpdated: false,
       customCss: ['./src/styles/custom.css'],
-      head: [
-        {
-          tag: 'meta',
-          attrs: { property: 'og:image', content: '/og.png' },
-        },
-        {
-          tag: 'meta',
-          attrs: { name: 'twitter:card', content: 'summary_large_image' },
-        },
-        {
-          tag: 'meta',
-          attrs: { name: 'twitter:image', content: '/og.png' },
-        },
-      ],
       tableOfContents: {
         minHeadingLevel: 2,
         maxHeadingLevel: 3,
@@ -111,5 +114,16 @@ export default defineConfig({
         },
       ],
     }),
-  ],
+  
+		astroTakumi({
+			options: {
+				domBackend: "linkedom",
+				fonts: [fs.readFileSync("./node_modules/@fontsource/roboto/files/roboto-latin-400-normal.woff2")],
+				width: 1200,
+				height: 630,
+				format: "png",
+			},
+			render: __render,
+		}),
+	],
 });

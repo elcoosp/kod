@@ -1,0 +1,10 @@
+# pnpm-workspace.yaml
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  'astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/c4b8331abb1dc2f157d62fba634eeb17f5e689cd': true
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
