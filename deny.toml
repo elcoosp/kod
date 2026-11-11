@@ -156,6 +156,9 @@ ignore = [
     # Dev-only: `terminal-testlib` (the TUI e2e harness) ->
     # `portable-pty` -> `serial`. Never linked into the `kod` binary.
     "RUSTSEC-2017-0008",
+
+    # pin-utils unmaintained — transitive dependency of the tokio ecosystem.
+    "RUSTSEC-2024-0428",
 ]
 
 
