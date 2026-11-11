@@ -1,6 +1,8 @@
 import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
 
 export default await defineDocsConfig({
+  llmsTxt: {},
+  changelog: { repo: 'elcoosp/kod' },
   site: 'https://kod.vercel.app',
   domain: 'kod.vercel.app',
   title: "KOD",

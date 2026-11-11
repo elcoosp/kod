@@ -27,7 +27,7 @@
     "astro-takumi": "github:elcoosp/astro-takumi#4bb9e47833c48388b17da9612d77bc9f600d525e",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@elcoosp/docs-toolkit": "github:elcoosp/docs-toolkit#8084231ffe3841ce1f199644aeb0c0af71b137bb"
+    "@elcoosp/docs-toolkit": "github:elcoosp/docs-toolkit#5f81909ef959d9ea743bbaf54013280addc91d06"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
