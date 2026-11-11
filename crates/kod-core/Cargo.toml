@@ -57,7 +57,7 @@ time = { workspace = true }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
 thiserror = { workspace = true }
-typesafe-ai-rs = { workspace = true }
+typesafe-ai-rs = { git = "https://github.com/elcoosp/typesafe-ai-rs", rev = "35e6f7f6e4e4e77f28b5d276ee0eabd23a220b71", default-features = false, features = ["rustls-tls"] }
 # Criterion benchmarks. `harness = false` is REQUIRED: without it
 # rustc's built-in test harness runs instead of `criterion_main!`,
 # finds zero `#[bench]`-annotated functions, and prints
