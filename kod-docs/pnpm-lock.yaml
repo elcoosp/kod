@@ -28,8 +28,8 @@ importers:
         version: 0.35.5(@types/node@24.19.2)
     devDependencies:
       '@elcoosp/docs-toolkit':
-        specifier: github:elcoosp/docs-toolkit#366fd96a041b8a5d342913af9c35a1f00d2834eb
-        version: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/366fd96a041b8a5d342913af9c35a1f00d2834eb(@astrojs/starlight@0.42.0(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1)))(@types/node@24.19.2)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e(csstype@3.2.3)(linkedom@0.18.15))(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1))(react@19.3.1)
+        specifier: github:elcoosp/docs-toolkit#aed4c39da3e461b4ce803e7f2845a5e36bb7ed21
+        version: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/aed4c39da3e461b4ce803e7f2845a5e36bb7ed21(@astrojs/starlight@0.42.0(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1)))(@types/node@24.19.2)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e(csstype@3.2.3)(linkedom@0.18.15))(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1))(react@19.3.1)
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -308,8 +308,8 @@ packages:
     resolution: {integrity: sha512-6V0+8vw/GmH92URQ/Ki12FPhoB3nqaQUJE+5xgbFbB5ok0OXYK5jCQsQQoyR3BzCddHsCpyCFRnIcI1PSOVYkQ==}
     engines: {node: '>=14'}
 
-  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/366fd96a041b8a5d342913af9c35a1f00d2834eb':
-    resolution: {gitHosted: true, integrity: sha512-2OMqHOYPrrmP3shazD1EYSSQhZT5tcEkHMxY3RxdeHoDQ/KrMTKslbQ1CpJOX1/dffOvzVwljrKcKksnHgQMFQ==, tarball: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/366fd96a041b8a5d342913af9c35a1f00d2834eb}
+  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/aed4c39da3e461b4ce803e7f2845a5e36bb7ed21':
+    resolution: {gitHosted: true, integrity: sha512-bNGW1Rj3TJsfg+3WIY9hiioShc4zH6xvdw/yiljar8HQSXXk86w0CuBhj84SHgvdOwd2zS5dqJdnnx4xPqhc/g==, tarball: https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/aed4c39da3e461b4ce803e7f2845a5e36bb7ed21}
     version: 0.4.1
     engines: {node: '>=22.18.0'}
     hasBin: true
@@ -2211,7 +2211,7 @@ snapshots:
 
   '@ctrl/tinycolor@4.3.0': {}
 
-  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/366fd96a041b8a5d342913af9c35a1f00d2834eb(@astrojs/starlight@0.42.0(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1)))(@types/node@24.19.2)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e(csstype@3.2.3)(linkedom@0.18.15))(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1))(react@19.3.1)':
+  '@elcoosp/docs-toolkit@https://codeload.github.com/elcoosp/docs-toolkit/tar.gz/aed4c39da3e461b4ce803e7f2845a5e36bb7ed21(@astrojs/starlight@0.42.0(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1)))(@types/node@24.19.2)(astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e(csstype@3.2.3)(linkedom@0.18.15))(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1))(react@19.3.1)':
     dependencies:
       '@astrojs/rss': 4.0.19
       '@astrojs/starlight': 0.42.0(astro@7.4.9(@types/node@24.19.2)(yaml@2.9.1))
