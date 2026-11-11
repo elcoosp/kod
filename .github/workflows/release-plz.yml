@@ -1,27 +1,14 @@
-name: Release
+name: Release Plz
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Print plan without opening PR / releasing'
-        type: boolean
-        default: true
-
-permissions:
-      id-token: write
-  contents: write
-  pull-requests: write
 
 jobs:
-  release:
+  release-plz:
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     uses: elcoosp/docs-toolkit/.github/workflows/release-plz.yml@main
-    with:
-      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-    secrets:
-      # Prefer a PAT — GITHUB_TOKEN is 1,000 req/hr/repo (installation limit);
-      # a PAT is 5,000 req/hr per token, shared across all repos using it.
-      GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    secrets: inherit
