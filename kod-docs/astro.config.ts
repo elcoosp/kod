@@ -32,14 +32,14 @@ export default await defineDocsConfig({
         {
           label: 'Get Started',
           items: [
-            { label: 'Overview', slug: 'overview' },
+            { label: 'Overview', translations: { fr: 'Aperçu' }, slug: 'overview' },
             { label: 'Installation', slug: 'getting-started/installation' },
             { label: 'Quickstart', slug: 'getting-started/quickstart' },
             { label: 'Your First Session', slug: 'getting-started/first-session' },
           ]
         },
             {
-          label: 'Guides',
+          label: 'Guides', translations: { fr: 'Guides' },
           items: [
             { label: 'Terminal UI (TUI)', slug: 'guides/tui' },
             { label: 'Scriptable CLI', slug: 'guides/cli' },
@@ -61,7 +61,7 @@ export default await defineDocsConfig({
           ]
         },
             {
-          label: 'Reference',
+          label: 'Reference', translations: { fr: 'Référence' },
           items: [
             { label: 'CLI Commands', slug: 'reference/cli' },
             { label: 'TUI Keybindings', slug: 'reference/tui-keys' },
@@ -69,7 +69,7 @@ export default await defineDocsConfig({
             { label: 'Config Reference', slug: 'reference/config' },
             { label: 'Skill File Format', slug: 'reference/skill-format' },
             { label: 'Crates', slug: 'reference/crates' },
-            { label: 'Changelog', slug: 'reference/changelog' },
+            { label: 'Changelog', translations: { fr: 'Journal des modifications' }, slug: 'reference/changelog' },
           ]
         },
             {
