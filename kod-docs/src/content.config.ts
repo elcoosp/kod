@@ -3,7 +3,6 @@ import { docsLoader, i18nLoader } from '@astrojs/starlight/loaders';
 import { docsSchema, i18nSchema } from '@astrojs/starlight/schema';
 import { fileURLToPath } from 'node:url';
 
-// Correct path: from src/content.config.ts up to <docs>/node_modules
 const toolkitI18nPath = fileURLToPath(new URL('../node_modules/@elcoosp/docs-toolkit/i18n/', import.meta.url));
 
 export const collections = {
