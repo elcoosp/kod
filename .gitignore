@@ -57,3 +57,5 @@ fuzz/target/
 *.wr-bak.*
 publish-plan.txt
 publish-tier0.sh
+-e 
+node_modules/
