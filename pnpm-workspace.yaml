@@ -1,0 +1,3 @@
+allowBuilds:
+  astro-takumi: true
+  esbuild: true
