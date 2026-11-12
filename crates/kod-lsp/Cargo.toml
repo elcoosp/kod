@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-lsp"
 description = "Minimal Language Server Protocol client for KOD."
 readme = "README.md"

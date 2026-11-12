@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-core"
 description = "Core engine coordinating all KOD subsystems."
 readme = "README.md"

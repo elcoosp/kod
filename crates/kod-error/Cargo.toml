@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-error"
 description = "Error types and diagnostic context for the KOD workspace."
 readme = "README.md"

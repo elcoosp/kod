@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-memory"
 description = "Multi-layer short-term and long-term memory for KOD."
 readme = "README.md"

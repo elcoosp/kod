@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-telemetry"
 description = "OTLP GenAI telemetry for KOD."
 readme = "README.md"

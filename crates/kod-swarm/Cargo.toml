@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-swarm"
 description = "Coordinated multi-agent swarm collaboration for KOD."
 readme = "README.md"

@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-provider"
 description = "LLM provider abstraction layer for KOD."
 readme = "README.md"

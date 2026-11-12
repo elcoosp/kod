@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-ast"
 description = "Tree-sitter parsing with a process-global parse cache for KOD."
 readme = "README.md"

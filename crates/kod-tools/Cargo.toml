@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-tools"
 description = "Tool system for agent-environment interaction in KOD."
 readme = "README.md"

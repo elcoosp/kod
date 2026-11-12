@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/logo.png" alt="KOD Logo" width="200"/>
+  <img src="https://cdn.jsdelivr.net/gh/elcoosp/kod@main/docs/logo.png" alt="KOD Logo" width="200"/>
   <p>
     <strong>A local-first AI coding agent harness for the terminal, written in Rust.</strong><br/>
     Multi-crate Cargo workspace with a full agent loop: skills, multi-layer memory, tool calling, streaming LLM providers, and both a TUI and a scriptable CLI. Point it at Ollama, LM Studio, MLX, vLLM, or any OpenAI-compatible endpoint — the model, the memory, and the tool loop all stay on your machine.
@@ -204,7 +204,7 @@ user input
 └────────────────┘   └────────────────┘
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate-by-crate breakdown, and [`docs/SPEC.md`](docs/SPEC.md) for the longer design document.
+See [`docs/ARCHITECTURE.md`](https://github.com/elcoosp/kod/blob/main/docs/ARCHITECTURE.md) for the full crate-by-crate breakdown, and [`docs/SPEC.md`](https://github.com/elcoosp/kod/blob/main/docs/SPEC.md) for the longer design document.
 
 ---
 
@@ -534,7 +534,7 @@ To see the exact current total:
 cargo test --workspace -- --list | tail -1
 ```
 
-See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including per-crate test inventories and CI behaviour.
+See [`docs/TESTING.md`](https://github.com/elcoosp/kod/blob/main/docs/TESTING.md) for the full testing guide, including per-crate test inventories and CI behaviour.
 
 ---
 
@@ -571,7 +571,6 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including p
 - **`/policy` in the TUI** and `kod policy forget <n>` in the CLI
   for dropping session deny rules (design §6.2).
 
-
 ### Tracked gaps
 
 - **`kod chat --remote` / `kod prompt --remote` / `kod agent --remote` attach to a running `kod serve` daemon**. Response routing for approvals and `ask_user` is implemented: the daemon dispatches `respond_to_approval` and `respond_to_question` methods, so a client that sees an approval marker can answer it. What is not yet wired is the *initial forward* of a marker to a client that has not yet connected — a daemon started with a strict policy on a fresh socket is the case that still times out to deny. A client already attached to a `process_streaming` call receives the marker on the same connection and can answer.
@@ -580,12 +579,6 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including p
 
 > [!WARNING]
 > KOD is not a drop-in replacement for a full-featured IDE agent. It is a working harness whose goal is auditability and local-first control. Expect rough edges.
-
----
-
-## License
-
-MIT — see [`LICENSE`](LICENSE) for the full text. By contributing, you agree that your contributions will be licensed under the same terms.
 
 ---
 

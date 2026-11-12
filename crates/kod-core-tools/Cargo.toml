@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-core-tools"
 description = "Adapter layer wrapping KOD's built-in tools for the engine."
 readme = "README.md"

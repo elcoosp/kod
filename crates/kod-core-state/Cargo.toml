@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-core-state"
 description = "Persistent state, journals, ledgers, and cost accounting for KOD."
 readme = "README.md"

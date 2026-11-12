@@ -1,4 +1,6 @@
 [package]
+documentation = "https://kod.vercel.app"
+
 name = "kod-config"
 description = "Configuration loading and validation for the KOD workspace."
 readme = "README.md"
