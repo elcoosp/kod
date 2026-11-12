@@ -1,14 +1,12 @@
 import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
-import starlightChangelogs from 'starlight-changelogs';
+import starlightChangelogs, { makeChangelogsSidebarLinks } from 'starlight-changelogs';
 export default await defineDocsConfig({
   plugins: [starlightChangelogs()],
   llmsTxt: {},
-  changelog: { repo: 'elcoosp/kod' },
   site: 'https://kod.vercel.app',
   domain: 'kod.vercel.app',
   title: "KOD",
   description: "Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.",
-  sidebar: [],
   extraStarlight: {
       expressiveCode: {
       	themes: ['github-light', 'github-dark']
@@ -95,6 +93,47 @@ export default await defineDocsConfig({
             { label: 'Testing', translations: { fr: "Tests" }, slug: 'developers/testing' },
             { label: 'Contributing', translations: { fr: "Contribution" }, slug: 'developers/contributing' },
           ]
+        },
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
+        },
+      
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
+        },
+      
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
+        },
+      
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
+        },
+      
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
+        },
+      
+        {
+          label: 'Changelog',
+          items: makeChangelogsSidebarLinks([
+            { type: 'all', base: 'changelog', label: 'All versions' },
+          ]),
         },
       ]
     },
