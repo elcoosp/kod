@@ -4,10 +4,7 @@ allowBuilds:
   esbuild: true
   sharp: true
   astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e: true
+  tsdown: true
 minimumReleaseAgeExclude:
 - '@elcoosp/docs-toolkit@0.5.0'
 - '@elcoosp/docs-toolkit'
-onlyBuiltDependencies:
-- esbuild
-- sharp
-- astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e
