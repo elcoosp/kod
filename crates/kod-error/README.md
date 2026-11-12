@@ -15,6 +15,3 @@ Depended on by every other crate; end users reach it through
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

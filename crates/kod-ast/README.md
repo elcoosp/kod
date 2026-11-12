@@ -34,6 +34,3 @@ Reached transitively through `kod-core` and `kod-core-quality`.
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

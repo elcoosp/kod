@@ -13,6 +13,3 @@ The entry point for embedding KOD programmatically.
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

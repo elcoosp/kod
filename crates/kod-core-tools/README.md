@@ -31,6 +31,3 @@ Internal adapter; end users reach it through `kod-core`.
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

@@ -14,6 +14,3 @@ Direct use is for embeddings that need to read the same config.
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

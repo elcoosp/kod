@@ -13,6 +13,3 @@ Reached transitively through `kod-core-routing`.
 
 See the [KOD workspace](https://github.com/elcoosp/kod).
 
-## License
-
-MIT

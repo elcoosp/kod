@@ -15,6 +15,3 @@ users reach it through `kod-core` or `kod-provider`.
 See the [KOD workspace](https://github.com/elcoosp/kod) for the CLI,
 the engine, and the documentation site.
 
-## License
-
-MIT
