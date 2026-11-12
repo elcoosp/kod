@@ -20,7 +20,7 @@
     "sharp": "^0.35.5",
     "linkedom": "^0.18.0",
     "mermaid": "^11.0.0",
-    "@elcoosp/docs-toolkit": "^0.5.9"
+    "@elcoosp/docs-toolkit": "^0.5.10"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -31,6 +31,6 @@
     "astro-takumi": "github:elcoosp/astro-takumi#4bb9e47833c48388b17da9612d77bc9f600d525e",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@elcoosp/docs-toolkit": "^0.5.9"
+    "@elcoosp/docs-toolkit": "^0.5.10"
   }
 }
