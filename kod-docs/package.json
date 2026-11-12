@@ -5,9 +5,9 @@
   "private": true,
   "description": "Documentation site for KOD \u2014 the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
+    "dev": "tsx ./node_modules/astro/bin/astro.mjs dev",
+    "build": "tsx ./node_modules/astro/bin/astro.mjs build",
+    "preview": "tsx ./node_modules/astro/bin/astro.mjs preview",
     "astro": "astro",
     "predev": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true",
     "prebuild": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true"
@@ -20,8 +20,8 @@
     "sharp": "^0.35.5",
     "linkedom": "^0.18.0",
     "mermaid": "^11.0.0",
-    "@elcoosp/docs-toolkit": "^0.5.12",
-    "starlight-changelogs": "^0.7.0"
+    "@elcoosp/docs-toolkit": "file:../../docs-toolkit",
+    "starlight-changelogs": "^0.7.1"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -32,6 +32,7 @@
     "astro-takumi": "github:elcoosp/astro-takumi#4bb9e47833c48388b17da9612d77bc9f600d525e",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@elcoosp/docs-toolkit": "^0.5.12"
+    "@elcoosp/docs-toolkit": "file:../../docs-toolkit",
+    "tsx": "^4.19.2"
   }
 }

@@ -1,5 +1,4 @@
 import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
-import starlightChangelogs, { makeChangelogsSidebarLinks } from 'starlight-changelogs';
 export default await defineDocsConfig({
   plugins: [starlightChangelogs()],
   llmsTxt: {},
@@ -69,72 +68,4 @@ export default await defineDocsConfig({
             { label: 'Config Reference', translations: { fr: "Référence de configuration" }, slug: 'reference/config' },
             { label: 'Skill File Format', translations: { fr: "Format de fichier de compétence" }, slug: 'reference/skill-format' },
             { label: 'Crates', translations: { fr: "Crates" }, slug: 'reference/crates' },
-            { label: 'Changelog', translations: { fr: 'Journal des modifications' }, slug: 'reference/changelog' },
-          ]
-        },
-            {
-          label: 'Concepts', translations: { fr: "Concepts" },
-          items: [
-            { label: 'Core crates', translations: { fr: "Crates de base" }, slug: 'concepts/core-crates' },
-            { label: 'Architecture', translations: { fr: "Architecture" }, slug: 'concepts/architecture' },
-            { label: 'The Agent Loop', translations: { fr: "La boucle de l'agent" }, slug: 'concepts/agent-loop' },
-            { label: 'Internal URLs', translations: { fr: "URL internes" }, slug: 'concepts/internal-urls' },
-            { label: 'Minimized Output', translations: { fr: "Sortie minimisée" }, slug: 'concepts/output-minimization' },
-            { label: 'Goals & Decisions', translations: { fr: "Objectifs et décisions" }, slug: 'concepts/session-state' },
-            { label: 'The Repository Map', translations: { fr: "La carte du référentiel" }, slug: 'concepts/repo-map' },
-            { label: 'Compaction', translations: { fr: "Compactage" }, slug: 'concepts/compaction' },
-            { label: 'Task Router', translations: { fr: "Routeur de tâches" }, slug: 'concepts/router' },
-            { label: 'LLM Providers', translations: { fr: "Fournisseurs de LLM" }, slug: 'concepts/providers' },
-          ]
-        },
-            {
-          label: 'Developers', translations: { fr: "Développeurs" },
-          items: [
-            { label: 'Testing', translations: { fr: "Tests" }, slug: 'developers/testing' },
-            { label: 'Contributing', translations: { fr: "Contribution" }, slug: 'developers/contributing' },
-          ]
-        },
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      
-        {
-          label: 'Changelog',
-          items: makeChangelogsSidebarLinks([
-            { type: 'all', base: 'changelog', label: 'All versions' },
-          ]),
-        },
-      ]
-    },
-});
+            });
