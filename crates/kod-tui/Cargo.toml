@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["tui", "terminal", "ratatui", "ai-agent", "llm"]
+keywords = ["ai", "tui", "llm", "coding-agent", "terminal"]
 categories = ["command-line-utilities", "command-line-interface"]
 
 [package.metadata.docs.rs]

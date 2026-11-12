@@ -10,7 +10,7 @@ authors.workspace = true
 rust-version.workspace = true
 build = "build.rs"
 
-keywords = ["cli", "ai-agent", "coding-agent", "terminal", "llm"]
+keywords = ["ai", "cli", "llm", "coding-agent", "terminal"]
 categories = ["command-line-utilities", "command-line-interface"]
 
 [package.metadata.docs.rs]

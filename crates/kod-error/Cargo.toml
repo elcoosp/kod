@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["error", "diagnostics", "ai-agent", "llm"]
+keywords = ["ai", "error", "llm", "coding-agent", "types"]
 categories = ["rust-patterns"]
 
 [package.metadata.docs.rs]

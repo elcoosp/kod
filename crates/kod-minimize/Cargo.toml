@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["minimize", "output", "shell", "compress", "cli"]
+keywords = ["ai", "minimize", "llm", "coding-agent", "context"]
 categories = ["command-line-utilities", "text-processing"]
 
 [package.metadata.docs.rs]

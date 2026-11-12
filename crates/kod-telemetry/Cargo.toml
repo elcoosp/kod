@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["telemetry", "otlp", "tracing", "observability", "llm"]
+keywords = ["ai", "telemetry", "llm", "coding-agent", "metrics"]
 categories = ["development-tools", "network-programming"]
 
 [package.metadata.docs.rs]

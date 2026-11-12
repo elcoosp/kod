@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["tools", "ai-agent", "execution", "async", "llm"]
+keywords = ["ai", "tools", "llm", "coding-agent", "framework"]
 categories = ["development-tools", "asynchronous"]
 
 [package.metadata.docs.rs]

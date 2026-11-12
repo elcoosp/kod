@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-keywords = ["json-schema", "schema", "llm", "validation", "dialect"]
+keywords = ["ai", "schema", "llm", "coding-agent", "json"]
 categories = ["parsing", "development-tools"]
 
 [package.metadata.docs.rs]

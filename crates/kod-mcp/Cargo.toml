@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["mcp", "model-context", "stdio", "llm", "tools"]
+keywords = ["ai", "mcp", "llm", "coding-agent", "tools"]
 categories = ["api-bindings", "development-tools"]
 
 [package.metadata.docs.rs]

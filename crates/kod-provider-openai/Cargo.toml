@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["openai", "gpt", "llm", "provider", "api"]
+keywords = ["ai", "openai", "llm", "coding-agent", "provider"]
 categories = ["api-bindings", "asynchronous"]
 
 [package.metadata.docs.rs]

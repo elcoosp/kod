@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["memory", "storage", "ai-agent", "llm", "context"]
+keywords = ["ai", "memory", "llm", "coding-agent", "context"]
 categories = ["development-tools", "database"]
 
 [package.metadata.docs.rs]

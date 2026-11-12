@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-keywords = ["risk", "sandbox", "command", "security", "safety"]
+keywords = ["ai", "risk", "llm", "coding-agent", "safety"]
 categories = ["development-tools", "command-line-utilities"]
 
 [package.metadata.docs.rs]

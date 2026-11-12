@@ -9,7 +9,7 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-keywords = ["tree-sitter", "ast", "parsing", "syntax", "code"]
+keywords = ["ai", "ast", "llm", "coding-agent", "parser"]
 categories = ["parsing", "development-tools"]
 
 [package.metadata.docs.rs]
