@@ -8,3 +8,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
 - '@elcoosp/docs-toolkit@0.5.0'
 - '@elcoosp/docs-toolkit'
+onlyBuiltDependencies:
+- sharp
+- astro-takumi
+- esbuild
