@@ -32,14 +32,14 @@ export default await defineDocsConfig({
         {
           label: 'Get Started', translations: { fr: "Démarrage" },
           items: [
-            { label: 'Overview', translations: { fr: 'Aperçu' }, slug: 'overview' },
-            { label: 'Installation', translations: { fr: "Installation" }, slug: 'getting-started/installation' },
+            { label: 'Overview', slug: 'overview' },
+            { label: 'Installation', slug: 'getting-started/installation' },
             { label: 'Quickstart', translations: { fr: "Démarrage rapide" }, slug: 'getting-started/quickstart' },
             { label: 'Your First Session', translations: { fr: "Votre première session" }, slug: 'getting-started/first-session' },
           ]
         },
             {
-          label: 'Guides', translations: { fr: 'Guides' },
+          label: 'Guides',
           items: [
             { label: 'Terminal UI (TUI)', translations: { fr: "Interface terminal (TUI)" }, slug: 'guides/tui' },
             { label: 'Scriptable CLI', translations: { fr: "CLI scriptable" }, slug: 'guides/cli' },
@@ -62,22 +62,22 @@ export default await defineDocsConfig({
           ]
         },
             {
-          label: 'Reference', translations: { fr: 'Référence' },
+          label: 'Reference',
           items: [
             { label: 'CLI Commands', translations: { fr: "Commandes CLI" }, slug: 'reference/cli' },
             { label: 'TUI Keybindings', translations: { fr: "Raccourcis TUI" }, slug: 'reference/tui-keys' },
             { label: 'Tools Reference', translations: { fr: "Référence des outils" }, slug: 'reference/tools' },
             { label: 'Config Reference', translations: { fr: "Référence de configuration" }, slug: 'reference/config' },
             { label: 'Skill File Format', translations: { fr: "Format de fichier de compétence" }, slug: 'reference/skill-format' },
-            { label: 'Crates', translations: { fr: "Crates" }, slug: 'reference/crates' },
-            { label: 'Changelog', translations: { fr: 'Journal des modifications' }, slug: 'reference/changelog' },
+            { label: 'Crates', slug: 'reference/crates' },
+            { label: 'Changelog', slug: 'reference/changelog' },
           ]
         },
             {
-          label: 'Concepts', translations: { fr: "Concepts" },
+          label: 'Concepts',
           items: [
             { label: 'Core crates', translations: { fr: "Crates de base" }, slug: 'concepts/core-crates' },
-            { label: 'Architecture', translations: { fr: "Architecture" }, slug: 'concepts/architecture' },
+            { label: 'Architecture', slug: 'concepts/architecture' },
             { label: 'The Agent Loop', translations: { fr: "La boucle de l'agent" }, slug: 'concepts/agent-loop' },
             { label: 'Internal URLs', translations: { fr: "URL internes" }, slug: 'concepts/internal-urls' },
             { label: 'Minimized Output', translations: { fr: "Sortie minimisée" }, slug: 'concepts/output-minimization' },
