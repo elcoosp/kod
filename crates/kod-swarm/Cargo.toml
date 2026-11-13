@@ -27,12 +27,12 @@ parking_lot = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true }
 futures = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.28" }
-kod-error = { path = "../kod-error", version = "0.1.28" }
-kod-config = { path = "../kod-config", version = "0.1.28" }
-kod-memory = { path = "../kod-memory", version = "0.1.28" }
-kod-tools = { path = "../kod-tools", version = "0.1.28" }
-kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
+kod-config = { path = "../kod-config", version = "0.1.29" }
+kod-memory = { path = "../kod-memory", version = "0.1.29" }
+kod-tools = { path = "../kod-tools", version = "0.1.29" }
+kod-provider = { path = "../kod-provider", version = "0.1.29" }
 
 [dev-dependencies]
 proptest = { workspace = true }

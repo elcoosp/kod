@@ -32,13 +32,13 @@ adk-core = { workspace = true }
 # which kod-provider-anthropic does not use. See the sibling note in
 # kod-provider-openai.
 adk-model = { workspace = true, features = ["anthropic"] }
-kod-types = { path = "../kod-types", version = "0.1.28" }
-kod-error = { path = "../kod-error", version = "0.1.28" }
-kod-provider = { path = "../kod-provider", version = "0.1.28" }
-kod-config = { path = "../kod-config", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
+kod-provider = { path = "../kod-provider", version = "0.1.29" }
+kod-config = { path = "../kod-config", version = "0.1.29" }
 
 [dev-dependencies]
-kod-provider = { path = "../kod-provider", version = "0.1.28", features = ["testkit"] }
+kod-provider = { path = "../kod-provider", version = "0.1.29", features = ["testkit"] }
 proptest = { workspace = true }
 time = { workspace = true }
 httpmock = { workspace = true }

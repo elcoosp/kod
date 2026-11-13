@@ -22,15 +22,15 @@ all-features = true
 # `forbidden_binaries` / `binaries` see the same de-quoted program the
 # risk gate does. kod-risk depends on nothing in kod-config, so this
 # direction is safe (no cycle).
-kod-risk = { path = "../kod-risk", version = "0.1.28" }
-kod-types = { path = "../kod-types", version = "0.1.28" }
+kod-risk = { path = "../kod-risk", version = "0.1.29" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
 serde = { workspace = true }
 globset = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
 tracing = { workspace = true }
-kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
 
 [dev-dependencies]
 proptest = { workspace = true }

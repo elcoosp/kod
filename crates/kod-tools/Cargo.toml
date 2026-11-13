@@ -33,10 +33,10 @@ libc = { workspace = true }
 similar = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
 futures = { workspace = true }
-kod-config = { path = "../kod-config", version = "0.1.28" }
-kod-minimize = { path = "../kod-minimize", version = "0.1.28" }
-kod-types = { path = "../kod-types", version = "0.1.28" }
-kod-error = { path = "../kod-error", version = "0.1.28" }
+kod-config = { path = "../kod-config", version = "0.1.29" }
+kod-minimize = { path = "../kod-minimize", version = "0.1.29" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
 
 [dev-dependencies]
 proptest = { workspace = true }
