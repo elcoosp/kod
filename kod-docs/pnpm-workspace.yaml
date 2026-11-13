@@ -2,4 +2,5 @@ allowBuilds:
   "astro-takumi@https://codeload.github.com/elcoosp/astro-takumi/tar.gz/4bb9e47833c48388b17da9612d77bc9f600d525e": true
   esbuild: true
 minimumReleaseAgeExclude:
-  - "@elcoosp/docs-toolkit@0.5.18 || 0.5.19 || 0.5.20 || 0.5.21 || 0.5.23 || 0.5.24 || 0.5.28 || 0.5.30 || 0.5.31"
+  - "@astrojs/starlight@0.42.11"
+  - "@elcoosp/docs-toolkit@0.5.37"

@@ -8,6 +8,9 @@ export default await defineDocsConfig({
   title: "KOD",
   description: "Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.",
   extraStarlight: {
+    components: {
+      MarkdownContent: './src/components/MarkdownContent.astro',
+    },
       expressiveCode: {
       	themes: ['github-light', 'github-dark']
       },
