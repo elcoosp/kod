@@ -1,0 +1,96 @@
+---
+title: Politique et permissions
+description: Le moteur de politique à quatre couches — préréglages, config globale, .kod/policy.toml du projet, et overrides CLI — avec allow/deny/ask par outil, globs de chemins et listes blanches de commandes.
+sidebar:
+  order: 8
+type: how-to
+---
+
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+
+Une `Policy` dit ce que l'agent est autorisé à faire, projet par projet. Elle est lue depuis `.kod/policy.toml` à la racine du projet, fusionnée au-dessus d'un préréglage, et consultée par le moteur **avant chaque appel d'outil**. La décision remplace les drapeaux ad hoc et les masques de bits de permission éparpillés : un moteur, un point de décision, une entrée de journal par appel.
+
+## Quatre couches, les dernières remplaçant les premières
+
+1. **Préréglage** — `read-only`, `standard` ou `yolo`. Le préréglage par défaut est `standard`.
+2. **Config globale** — les sections `[tools]` et `[llm]` de votre `config.toml` (défauts d'accès réseau).
+3. **Politique du projet** — `.kod/policy.toml`, commité dans le dépôt comme un `.editorconfig`.
+4. **Override CLI** — `--preset yolo` sur la ligne de commande.
+
+À l'intérieur d'une couche, les entrées `[tools.<name>]` donnent une décision par outil (`allow` / `deny` / `ask`) plus des globs de chemins et des listes blanches de commandes optionnels. Un `deny` l'emporte toujours sur un `allow` en cas de conflit de glob — la même règle que `ToolContext::is_path_allowed` applique.
+
+## Les trois préréglages
+
+| Préréglage | Lectures | Écritures / shell | Utilisez-le pour |
+| --- | --- | --- | --- |
+| `read-only` | autorisées | **refusées sans demander** | exécutions non surveillées, revue de code, audit |
+| `standard` *(défaut)* | autorisées | **nécessitent approbation** | travail interactif quotidien |
+| `yolo` | autorisées | **autorisées sans demander** | bacs à sable jetables de confiance |
+
+`standard` demande avant les écritures et les commandes shell : une boîte de dialogue d'approbation dans la TUI (`y`/`n`/Esc), une invite stdin dans `kod chat`. Une approbation sans réponse expire après **120 secondes et par défaut refuse** — une boîte de dialogue vers laquelle personne ne marche ne doit pas suspendre la boucle d'outils pour toujours.
+
+`read-only` est le bon défaut pour tout script non surveillé — un script ne peut pas répondre à une invite d'approbation, donc demander serait un mensonge. `yolo` existe pour les bacs à sable jetables de confiance où les invites coûtent plus qu'elles ne protègent.
+
+<Aside type="caution">
+  <code>kod agent</code> et <code>kod prompt</code> n'ont pas de consommateur interactif : sous <code>standard</code>, les appels nécessitant une approbation sont refusés immédiatement avec un message que le modèle et vous pouvez traiter, plutôt que de bloquer. Concevez les exécutions non surveillées autour de <code>--preset read-only</code> ou d'une politique de projet explicite.
+</Aside>
+
+## Écrire un `.kod/policy.toml`
+
+<Code lang="toml" code={`# .kod/policy.toml — committed to the repo
+preset = "standard"
+
+[tools.write_file]
+mode = "ask"
+paths    = ["src/**", "docs/**"]
+forbidden = ["**/.env", "**/*.pem"]
+
+[tools.execute_command]
+mode = "ask"
+binaries           = ["cargo", "rustfmt", "git"]
+forbidden_binaries = ["curl", "rm"]
+
+[tools.web_fetch]
+mode    = "allow"
+network = true
+domains = ["docs.rs", "crates.io"]
+
+[git]
+history_protected = true   # .git is mounted read-only at the sandbox`} />
+
+Référence des champs :
+
+- `mode` — remplace la décision du préréglage pour cet outil : `allow`, `deny` ou `ask`.
+- `paths` — liste blanche de globs de chemins ; un chemin ne correspondant à aucun est refusé.
+- `forbidden` — globs de chemins interdits ; le refus l'emporte sur l'autorisation.
+- `binaries` / `forbidden_binaries` — listes de commandes autorisées/refusées, significatives pour `execute_command` ; une commande dont le premier token n'est pas dans la liste blanche est refusée. C'est de l'ergonomie, jamais une garantie de sécurité — le bac à sable l'est.
+- `network` — override par outil de l'`llm.network_access` global.
+- `domains` — liste blanche de domaines pour `web_fetch` quand le réseau est activé.
+- `git.history_protected` — monte `.git` en lecture seule au bac à sable (défaut vrai).
+
+## Sémantique des globs
+
+Les globs de chemins suivent l'intuition de gitignore, implémentée avec `globset` et `literal_separator(true)` : `*` ne traverse pas `/`, `**` le fait. Un motif est essayé de trois façons — verbatim (pour les motifs absolus), relatif au répertoire de travail (la forme habituelle relative au projet comme `src/**`), et, sauf si le motif est ancré, préfixé par `**/` afin que `src/**` corresponde aussi aux fichiers sous des répertoires imbriqués comme un glob de shell le ferait.
+
+## Demander « pourquoi a-t-il été refusé ? » sans session
+
+`kod policy show` imprime la politique effective — le préréglage en vigueur, chaque override par outil, et quelle couche a défini chaque règle. `kod policy explain` répond à la question plus pointue, *qu'est-ce que le moteur déciderait pour cet appel exact ?* :
+
+<Tabs>
+<TabItem label="Afficher la politique">
+  <Code lang="bash" code={`kod policy show`} />
+</TabItem>
+<TabItem label="Expliquer un appel">
+  <Code lang="bash" code={`kod policy explain write_file path=src/main.rs
+kod policy explain execute_command command="cargo test"
+kod policy explain web_fetch url=https://docs.rs/`} />
+</TabItem>
+</Tabs>
+
+Le verdict correspond à ce qu'une session ferait : la couche de politique du projet est chargée depuis le répertoire courant, les règles de refus limitées à la session (ajoutées à l'exécution, par exemple par un essaim) ne sont pas présentes dans un processus CLI frais, et un override CLI `--preset` n'est *pas* appliqué — l'inspection montre la réponse de la config, pas une hypothétique.
+
+## Chaque décision est journalisée
+
+`PolicyEngine::decide` est pur par rapport à l'appel d'outil : il prend le nom de l'outil, les arguments JSON et le `ToolContext` effectif (dont le `working_dir` ancre les chemins relatifs), et retourne un `PolicyDecision { outcome, rule, source }`. Le moteur journalise cela comme un `SessionEntry::PolicyDecision` puis exécute, refuse ou demande. Cela signifie que le journal de session JSONL répond à *pourquoi* un appel a été autorisé ou refusé, pas seulement *ce qui* s'est passé — rejouez-le, lisez-le ou diffusez-le.
+
+<LinkCard title="Suivant : Bac à sable" href="/guides/sandboxing/" description="Confinement au niveau de l'OS pour les commandes shell — bwrap et sandbox-exec." />

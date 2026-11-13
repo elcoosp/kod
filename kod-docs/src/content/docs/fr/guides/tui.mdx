@@ -1,0 +1,95 @@
+---
+title: Interface Terminal (TUI)
+description: Vivre dans la TUI de KOD — disposition, modes, lignes d'outils, recherche, thèmes, commandes slash, complétions et compteur de contexte.
+sidebar:
+  order: 1
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+La TUI est l'interface principale de KOD : une application terminal basée sur ratatui avec une zone de chat, des lignes d'outils en direct, un panneau d'agent, une recherche au fil de la frappe, des thèmes et des commandes slash. Elle parle au même moteur que la CLI, donc tout ce qu'elle fait — journalisation des sessions, décisions de politique, mises à jour de mémoire — se comporte exactement comme `kod chat`. La différence est le confort : la TUI est conçue pour les sessions interactives longues où vous inspectez ce que fait l'agent pendant qu'il le fait.
+
+Lancez-la avec `kod tui`. Drapeaux que vous utiliserez réellement : `--model <name>` pour démarrer avec un modèle différent, `--preset read-only` pour verrouiller la session, et `--sandbox` pour confiner les commandes shell.
+
+## La disposition
+
+Quatre régions divisent l'écran :
+
+- **En-tête** — l'état de la session, le modèle chargé et le préréglage de politique actif.
+- **Zone de chat** — vos prompts, les réponses en streaming de l'assistant et une ligne par appel d'outil. Les lignes d'outils se rendent en direct pendant que l'agent travaille : nom de l'outil, chemin ou commande cible, et un résultat ✓/✗.
+- **Ligne d'état** — indicateur de mode (normal/insertion), le compteur de contexte et d'autres informations vitales de session.
+- **Boîte de saisie** — l'éditeur de prompt, avec historique, complétions et édition multi-lignes.
+
+Les lignes d'outils sont réduites par défaut pour que la transcription reste lisible. C'est un compromis délibéré : vous obtenez une vue narrative propre, et chaque appel d'outil reste à une frappe de distance.
+
+## Modes et déplacement
+
+La TUI est modale. Le **mode normal** est pour la navigation et les commandes ; le **mode insertion** est pour taper des prompts. Appuyez sur `i` pour entrer en mode insertion et `Esc` pour revenir au mode normal — et notez que `Esc` en mode normal annule une génération en cours.
+
+Le défilement et la recherche fonctionnent en mode normal : `j`/`k` se déplacent ligne par ligne, `g`/`G` sautent au message le plus ancien/le plus récent, `PgUp`/`PgDn` paginent, et `f` ouvre une recherche au fil de la frappe avec `n`/`N` qui cyclent les correspondances. `/grep <regex>` recherche la transcription avec une expression régulière à la place. `y` copie la dernière réponse de l'assistant dans le presse-papiers, et `?` ouvre la superposition d'aide si vous perdez le fil.
+
+## Lignes d'outils et transparence
+
+Chaque appel d'outil que fait l'agent se rend comme sa propre ligne. Développer une ligne (`o` pour la ligne réduite la plus récente, `t` pour basculer toutes) montre les arguments et le résultat — y compris les diffs unifiés attachés aux résultats de `write_file` et `patch_file`. Regarder les diffs apparaître en ligne est le moyen le plus rapide de construire la confiance dans une exécution : vous voyez exactement ce qui a changé, caractère par caractère, avant même de regarder git.
+
+Quand une écriture atterrit, KOD peut faire un suivi automatiquement : avec `tools.auto_lsp = true` (le défaut), une passe de diagnostics de serveur de langage s'exécute sur le fichier touché et ses résultats sont ajoutés au prochain prompt ; avec `tools.auto_check = true`, le compilateur ou linter du projet s'exécute aussi. Voir [Outils](/guides/tools/#write-follow-ups-lsp-and-check).
+
+<Aside type="tip">
+  Si vous n'apprenez qu'un seul raccourci, apprenez <code>t</code>. Basculer la visibilité de la sortie des outils vous permet de passer entre les vues « narrative » et « expertise complète » de la même session.
+</Aside>
+
+## Piloter, annuler, réessayer
+
+Pendant qu'une génération s'exécute, vous avez trois options, toutes non destructrices :
+
+1. **Piloter** — tapez un prompt simple. Il est mis en file d'attente et délivré au modèle comme conseil ; le travail déjà effectué est conservé. C'est identique à `/steer` et c'est généralement la bonne chose à faire.
+2. **Annuler** — `Esc` (mode normal) ou `/cancel`. Le tour s'arrête ; les résultats d'outils terminés restent dans la session.
+3. **Attendre** — la boucle d'outils se plafonne à 40 tours d'outils par prompt, donc aucune exécution n'est infinie.
+
+Après les faits, `/retry` renvoie le dernier prompt, `e` édite votre dernier message avant de le renvoyer — plus rapide que de retaper une longue instruction — et `/regenerate` demande une nouvelle réponse sans renvoyer votre prompt.
+
+## Commandes slash
+
+Taper `/` en mode insertion ouvre un popup de complétion ; `Tab` le cycle. Il y a une cinquantaine de commandes intégrées — la table complète et annotée vit dans [TUI Keybindings](/reference/tui-keys/#slash-commands). Elles se regroupent en quelques familles :
+
+- **Conversation** : `/clear`, `/undo`, `/compact`, `/summarize`, `/edit`, `/retry`, `/regenerate`, `/delete`, `/branch`, `/fork`, `/handoff`
+- **Modèle et outils** : `/model`, `/skills`, `/tools`, `/goal`, `/system`, `/map`, `/check`, `/git-status`
+- **Fichiers et historique** : `/attach`, `/diff`, `/rollback`, `/checkpoints`, `/export`, `/save`, `/load`
+- **Mémoire** : `/memory [search|delete|clear]` — le stockage à long terme, sans quitter le chat
+- **Introspection** : `/context`, `/stats`, `/whoami`, `/debug last-prompt`, `/log`
+- **Maintenance** : `/theme`, `/search`, `/grep`, `/copy`, `/raw`, `/pin`, `/unpin`, `/reset`, `/doctor`, `/init`, `/help`, `/swarm`, `/quit`, `/clearall`
+
+Trois méritent d'être soulignées :
+
+- `/compact` résume la conversation pour récupérer de la marge dans la fenêtre de contexte ; `/pin <n>` protège un message d'être compacté, et `/context` montre où va la fenêtre.
+- `/fork [label]` sauvegarde le chat courant comme une fourche restaurable — une assurance bon marché avant un prompt risqué. `/branch` dépose un marqueur étiqueté dans la transcription à la place.
+- `/handoff` écrit un document de passation et démarre une nouvelle session avec lui comme contexte — la façon propre de terminer une longue session et de reprendre le lendemain.
+
+`/clearall` est l'option radicale : chat, mémoire à long terme *et* points de contrôle pour ce projet, derrière une confirmation.
+
+## Commandes slash personnalisées
+
+Tout ce que vous mettez dans un bloc `[commands]` dans `config.toml` devient une commande slash :
+
+<Code lang="toml" code={`[commands]
+review = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\\n\\n{args}"`} />
+
+`/review` envoie le premier modèle textuellement ; `/explain <selection>` remplace `{args}` par tout ce que vous avez tapé après le nom de la commande, et `{cwd}` par le répertoire de travail. Les commandes personnalisées apparaissent dans le popup de complétion à côté des commandes intégrées.
+
+## Thèmes
+
+La TUI est livrée avec les thèmes `dark` et `light`, sélectionnés avec `/theme [dark|light]` ou `theme = "light"` dans un `theme.toml` à côté de la config. Une table `[theme]` personnalisée complète dans ce fichier remplace des couleurs individuelles (la palette accepte les mêmes noms de couleurs que ratatui : `black`, `red`, `green`, …), donc vous pouvez faire correspondre exactement les couleurs de votre terminal. `kod theme list` imprime les thèmes intégrés et `kod theme show dark` vide une palette en JSON — pratique pour écrire la vôtre.
+
+## Complétions, historique et souris
+
+En mode insertion, `Tab` cycle les complétions pour les commandes slash, les noms de modèles (après `/model `) et les chemins de fichiers. `Up`/`Down` parcourent directement l'historique, et le brouillon que vous étiez en train de taper est mis de côté — `Down` au-delà de l'entrée la plus récente le ramène. L'édition de ligne suit les conventions habituelles — `Ctrl+W` supprime un mot, `Ctrl+U` efface la ligne, `Ctrl+K` tue jusqu'à la fin, `Ctrl+Left`/`Ctrl+Right` sautent par mot — et `Ctrl+J` (ou `Shift+Enter`) insère un saut de ligne sans envoyer.
+
+La souris fonctionne aussi : la molette défile le chat, et `Option`/`Shift`+glisser sélectionne du texte de la manière habituelle.
+
+<Aside type="note">
+  La TUI reprend là où vous vous êtes arrêté : la session est sauvegardée dans <code>~/.kod/tui_session.json</code> (remplacez le répertoire avec <code>KOD_TUI_STATE_DIR</code>) et l'historique des prompts dans <code>tui_history.json</code> à côté. Pour démarrer délibérément à zéro, déplacez ces fichiers de côté — ou pointez <code>KOD_TUI_STATE_DIR</code> vers un répertoire vide.
+</Aside>
+
+<LinkCard title="Référence : TUI Keybindings" href="/reference/tui-keys/" description="Chaque raccourci clavier et commande slash en une table." />

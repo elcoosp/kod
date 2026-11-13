@@ -1,0 +1,59 @@
+---
+title: Serveurs MCP
+description: Connecter des serveurs Model Context Protocol, comment leurs outils sont nommés et filtrés, et pourquoi le démarrage est rapide à la seconde exécution.
+sidebar:
+  order: 12
+type: how-to
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+Les serveurs MCP étendent l'agent avec des outils qu'il n'embarque pas lui-même. Chaque serveur est un sous-processus qui parle le Model Context Protocol ; KOD le lance au démarrage, lui demande quels outils il a, et enregistre un adaptateur par outil.
+
+## Configurer un serveur
+
+Un bloc `[mcp.servers.<name>]` par serveur. Le nom est la clé de routage.
+
+<Code lang="toml" code={`[mcp.servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+enabled = true
+call_timeout_secs = 60
+
+[mcp.servers.filesystem.env]
+LOG_LEVEL = "info"`} />
+
+| Clé | Défaut | Notes |
+| --- | --- | --- |
+| `command` | — | Le programme à lancer, résolu contre `$PATH`. |
+| `args` | `[]` | Arguments pour celui-ci. |
+| `env` | `{}` | Ajouté à l'environnement de l'enfant. L'enfant hérite du vôtre, donc un `PATH` que vous définissez dans le shell atteint le serveur. |
+| `enabled` | `true` | Quand faux, le bloc est configuré mais aucun processus n'est lancé — utile pour garder les paramètres d'un serveur comme un enregistrement. |
+| `call_timeout_secs` | `60` | Timeout par `tools/call`. `initialize` et `tools/list` utilisent des timeouts client fixes. |
+
+Une section `[mcp]` absente signifie aucun outil MCP, ce qui est le défaut.
+
+## Comment les outils sont nommés
+
+Un serveur nommé `filesystem` annonçant `read_file` devient **`mcp:filesystem.read_file`** dans l'inventaire d'outils du modèle.
+
+Le point est le séparateur, et la division se fait sur le *premier* point après le préfixe `mcp:` — donc un serveur qui nomme un outil `foo.bar` se mappe correctement depuis `mcp:filesystem.foo.bar`. Les noms d'outils sont textuels du serveur ; seuls le préfixe et le nom du serveur sont de KOD.
+
+## Filtrage
+
+Chaque adaptateur MCP déclare un masque de bits de permission entièrement faux. C'est délibéré : **le moteur de politique est la frontière de sécurité, pas le masque de bits.** Sous le préréglage `standard` par défaut, les outils MCP demandent avant de s'exécuter. Pour en autoriser un :
+
+<Code lang="toml" code={`[tools."mcp:filesystem.read_file"]
+mode = "allow"`} />
+
+Les entrées de politique adressent le nom complet, y compris le préfixe `mcp:`.
+
+## Le démarrage est mis en cache
+
+Le premier démarrage d'un serveur coûte un spawn de processus plus un aller-retour `tools/list`. Le résultat est mis en cache sous le répertoire de cache de la plateforme (`kod/mcp/`), indexé sur la commande, les arguments et l'environnement, avec une TTL de **30 jours**. Un second démarrage lit le cache et enregistre les outils sans lancer de processus — ce qui compte quand plusieurs serveurs sont configurés.
+
+Une entrée de cache est supprimée à la lecture quand elle est périmée, donc un `args` ou `env` modifié produit une clé différente et une liste fraîche plutôt qu'une liste périmée.
+
+<Aside type="caution">
+  Le cache signifie qu'un serveur qui *change ses outils sans changer sa ligne de commande* garde l'ancienne liste jusqu'à ce que la TTL expire. Modifiez un argument inutilisé pour l'invalider, ou videz le répertoire de cache.
+</Aside>

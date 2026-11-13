@@ -1,0 +1,115 @@
+---
+title: Compétences
+description: Écrire et gérer les compétences KOD — le format Markdown + YAML, les quatre répertoires de recherche, les règles de correspondance, le rechargement à chaud, et les sous-commandes kod skills.
+sidebar:
+  order: 5
+type: how-to
+---
+
+import { Aside, Code, FileTree, LinkCard, Steps } from '@astrojs/starlight/components';
+
+Les compétences sont le mécanisme de réutilisation des connaissances de KOD : des fichiers Markdown simples avec front matter YAML qui sont mis en correspondance avec vos prompts et injectés dans le prompt ancré. C'est ainsi que vous enseignez au harnais *vos* conventions — vos motifs de refactorisation, votre style de test, vos règles maison — dans des fichiers que vous pouvez lire, diffuser et versionner comme n'importe quel autre texte.
+
+Les objectifs de conception sont délibérément ennuyeux : pas de base de données, pas de démon, pas de rebuild. Une compétence est un fichier sur disque ; l'éditer prend effet au prochain prompt.
+
+## Où vivent les compétences
+
+KOD découvre les compétences dans quatre répertoires standard, dans l'ordre — les répertoires ultérieurs masquent les précédents pour les compétences qui partagent un nom :
+
+1. `~/.kod/skills` — emplacement KOD canonique
+2. `~/.agents/skills` — compatibilité de style Claude
+3. `<project>/.kod/skills` — KOD local au projet
+4. `<project>/.agents/skills` — style Claude local au projet
+
+Définir `skills.skills_dir` dans la config remplace tout ce qui précède avec un seul répertoire personnalisé. `kod skills` (et `/skills` dans la TUI) liste l'ensemble fusionné de chaque répertoire actif, et `kod skills --json` émet le même inventaire pour les scripts.
+
+## Le format de fichier
+
+Une compétence est un fichier Markdown avec front matter YAML. Le parseur divise le corps en trois sections — instructions, exemples et contraintes — et les trois atteignent le modèle quand la compétence est mise en correspondance :
+
+<Code lang="markdown" code={`---
+name: rust-refactoring
+description: Rust refactoring with idiomatic patterns
+version: 1.0.0
+category: coding
+tags: [rust, refactoring, idioms]
+capabilities: [code-refactoring, ownership-analysis]
+triggers:
+  - "refactor rust"
+  - "make more idiomatic"
+---
+
+## Instructions
+
+You are an expert Rust refactoring assistant...
+
+## Examples
+
+<example input="Refactor this loop">
+...
+</example>
+
+## Constraints
+
+- Never change public API without explicit request
+- Preserve existing tests`} />
+
+Ce que fait chaque partie :
+
+- **`triggers`** — des phrases qui devraient activer la compétence. La correspondance considère les déclencheurs, les tags, les capacités et le nom, scorés contre un seuil (`skills.match_threshold`, 0.7 par défaut) ; le [Routeur de tâches](/concepts/router/) décide quelles compétences accompagnent un prompt.
+- **`tags` et `capabilities`** — des signaux d'activation plus grossiers, utiles quand une compétence devrait s'attacher à un *type* de tâche plutôt qu'à une phrase.
+- **Instructions** — les conseils opératoires injectés dans le prompt.
+- **Exemples** — des démonstrations concrètes entrée/sortie ; ils coûtent des tokens mais affûtent sensiblement le comportement.
+- **Contraintes** — des règles dures que le modèle est invité à respecter. Mettez vos non-négociables ici.
+
+## Gérer les compétences depuis la CLI
+
+L'arbre de sous-commandes `kod skills` est un petit gestionnaire de paquets de compétences :
+
+<Code lang="bash" code={`kod skills                       # list (same as \`kod skills list\`)
+kod skills new my-skill          # scaffold in the first writable dir
+kod skills show my-skill         # full markdown content
+kod skills source my-skill       # absolute path of the file
+kod skills edit my-skill         # open in $EDITOR
+kod skills search "refactor"     # search names, descriptions, tags
+kod skills rename my-skill my-skill-v2
+kod skills copy my-skill other-name
+kod skills export my-skill -     # write to stdout / a path
+kod skills remove my-skill       # refuses without --yes outside cwd`} />
+
+`new` refuse d'écraser un fichier existant, `rename`/`copy` réécrivent le champ `name:` à l'intérieur du fichier afin que le front matter ne dérive jamais, et `remove` demande `--yes` sauf si la cible est dans le répertoire courant. Pour la CI, `kod validate-skills` sort avec un code non nul sur les compétences mal formées — et `kod validate-skills-strict` échoue aussi les compétences qui omettent une `version` — donc un front matter cassé fait échouer votre pipeline au lieu de ne pas correspondre silencieusement.
+
+<Aside type="tip">
+  Le rechargement à chaud est activé par défaut (<code>skills.enable_hot_reload</code>). Gardez une compétence de projet ouverte dans un panneau, éditez-la, et le prochain prompt dans l'autre panneau voit le changement — la boucle la plus rapide pour affiner les déclencheurs et les contraintes.
+</Aside>
+
+## Une première compétence pratique
+
+<Steps>
+1. Échafaudez-la :
+
+   <Code lang="bash" code={`kod skills new python-testing`} />
+
+2. Éditez le front matter — donnez-lui deux ou trois déclencheurs qui correspondent à la façon dont vous demandez réellement la tâche.
+3. Écrivez d'abord les **contraintes** (les règles qui ne doivent jamais être enfreintes), puis les instructions, puis un petit exemple.
+4. Vérifiez qu'elle correspond :
+
+   <Code lang="bash" code={`kod skills search "testing"`} />
+</Steps>
+
+Des exemples du format — y compris `python-testing` et `code-review` — sont livrés dans le dépôt sous `skills/examples/`.
+
+<FileTree>
+- ~/.kod/skills/
+  - rust-refactoring.md
+  - python-testing.md
+  - code-review.md
+- my-project/.kod/skills/
+  - house-style.md
+</FileTree>
+
+<Aside type="note">
+  Si une compétence ne se déclenche jamais, vérifiez ce que le matcher voit : <code>kod skills show &lt;name&gt;</code> imprime le fichier tel qu'il est analysé, et <code>kod skills search "&lt;mots de votre prompt&gt;"</code> vous dit si le texte de déclencheur se chevauche. Les deux sont couverts dans la [FAQ](/guides/faq/#why-is-my-skill-never-matched).
+</Aside>
+
+<LinkCard title="Référence : Format de fichier de compétence" href="/reference/skill-format/" description="Le schéma exact du front matter, les règles d'analyse de section et l'ordre de masquage." />

@@ -1,0 +1,131 @@
+---
+title: CLI Scriptable
+description: Piloter KOD depuis la ligne de commande — prompt, run, serve, agent, swarm, replay, et les commandes de maintenance, avec des recettes pratiques.
+sidebar:
+  order: 2
+type: how-to
+---
+
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+
+La CLI est la moitié scriptable de KOD. Elle expose le même moteur que la TUI — le même moteur de politique, la mémoire, les compétences et la journalisation des sessions — via des commandes ponctuelles qui se composent bien avec les pipes, les tâches cron et les scripts shell. Là où la TUI optimise pour les sessions interactives longues, la CLI optimise pour les sessions *répétables*.
+
+La surface complète des commandes est documentée dans [Commandes CLI](/reference/cli/). Cette page est la visite pratique.
+
+## La forme du binaire
+
+<Code lang="bash" code={`kod [--verbose] <COMMAND>`} />
+
+Les commandes se répartissent en cinq groupes approximatifs :
+
+- **Sessions** — `chat` (REPL simple), `tui` (interface complète), `agent` (objectif ponctuel), `prompt` / `run` (prompt unique), `swarm` (multi-agents), `serve` (démon).
+- **Gestion des modèles** — `models`, `profile`, `theme`, et les parties `[llm]` de `config`.
+- **Inspection** — `skills`, `sessions`, `memory`, `map`, `doctor`, `config`, `tools`, `policy`, `sandbox`.
+- **Audit et réparation** — `replay`, `checkpoint`.
+- **Configuration** — `init`, `test`, `completions`, `update`.
+
+`kod` seul imprime un court résumé d'accueil : les quatre points d'entrée, où vit votre configuration, et quels répertoires de compétences ont été trouvés.
+
+## Les quatre façons d'envoyer un prompt
+
+**`kod chat`** démarre un REPL simple avec sortie en streaming — la façon la plus légère d'interagir avec le modèle. Pas de lignes d'outils, pas de panneau, juste la conversation. Drapeaux utiles : `--model` pour remplacer le modèle pour cette session, `--system-prompt` pour remplacer celui intégré, `--sandbox` pour router les commandes shell via le bac à sable de la plateforme, et `--preset` pour remplacer la politique pour la session.
+
+**`kod prompt "<text>"`** répond à un prompt et quitte — pas de bannière, pas de REPL. La réponse va sur stdout et les diagnostics sur stderr, donc ça se pipe proprement. `-` lit le prompt depuis stdin. C'est la commande que vous voulez dans les pipelines shell :
+
+<Code lang="bash" code={`kod prompt "summarise the TODO comments in src/ in a bullet list"
+git diff main..feature | kod prompt -   # read the prompt from stdin`} />
+
+**`kod run "<text>"`** est `prompt` sous forme de streaming : la réponse s'imprime sur stdout au fur et à mesure qu'elle est générée plutôt qu'à la fin. Même convention `-` pour stdin, même sortie propre.
+
+**`kod agent -g "<goal>"`** exécute un seul agent contre un objectif — la boucle complète avec des appels d'outils — et quitte une fois terminé. C'est la bête de somme pour l'automatisation :
+
+<Code lang="bash" code={`kod agent -g "add a doc comment to every public function in src/lib.rs"
+kod agent -n reviewer -g "summarise the changes in the last commit" --preset read-only`} />
+
+<Aside type="caution">
+  <code>kod agent</code> n'a pas de consommateur interactif. Quand la politique dit qu'une écriture nécessite une approbation, l'exécution refuse l'écriture avec un message explicatif au lieu d'attendre — un processus non surveillé ne peut pas cliquer sur <em>oui</em>. Pour les scripts, soit passez <code>--preset read-only</code>, acceptez les refus par conception, soit utilisez <code>--preset yolo</code> uniquement là où vous le voulez vraiment.
+</Aside>
+
+## Le démon : `kod serve`
+
+Démarrer un moteur par prompt ponctuel coûte le démarrage du processus et l'initialisation du moteur. `kod serve` démarre un moteur de longue durée derrière une socket Unix ; `kod prompt --remote` envoie des prompts à celui-ci au lieu de construire un moteur en processus :
+
+<Code lang="bash" code={`kod serve &                        # daemon, listening on the default socket
+kod prompt --remote "lint-check my last commit message"
+kod serve --stop                   # ask the daemon to exit`} />
+
+La socket vit à `$XDG_RUNTIME_DIR/kod.sock` (Linux) ou `~/.kod/run/kod.sock` (macOS) ; `--socket <path>` la remplace. C'est uniquement une socket Unix, jamais TCP — il n'y a pas de surface réseau.
+
+## Inspecter le monde
+
+`kod skills` liste l'ensemble fusionné de compétences de chaque répertoire standard (ou `--json` pour les scripts). `kod map` imprime la carte de référentiel que le moteur utilise pour l'ancrage — pratique pour vérifier ce que l'agent peut voir (`--max-chars` plafonne la sortie, 16000 par défaut). `kod models` liste ce que le fournisseur configuré propose, avec `--filter` pour restreindre. `kod tools list` imprime le registre d'outils que le modèle voit, `kod tools show write_file` le schéma d'un outil, et `kod policy show` les permissions effectives. `kod doctor` exécute la suite de diagnostics : config, endpoint, compétences, mémoire, bac à sable, git.
+
+`kod config` est une petite boîte à outils en soi :
+
+<Tabs>
+<TabItem label="Dump the effective config">
+  <Code lang="bash" code={`# defaults merged with whatever you set — self-documenting
+kod config show-merged`} />
+</TabItem>
+<TabItem label="Validate before use">
+  <Code lang="bash" code={`# exits non-zero on invalid TOML — CI-friendly
+kod config validate`} />
+</TabItem>
+<TabItem label="Edit, export, reset">
+  <Code lang="bash" code={`kod config edit                     # $EDITOR
+kod config export my-baseline.toml  # effective config to a file
+kod config init-from local-fast     # backup + write from a profile`} />
+</TabItem>
+</Tabs>
+
+## Audit : relecture et points de contrôle
+
+Deux commandes rendent concrète l'histoire de l'audit de KOD :
+
+<Code lang="bash" code={`# re-run every tool call from a past session — without the model
+kod replay ~/.kod/sessions/1730000000000.jsonl --execute
+
+# list file-level checkpoints, inspect one, restore it
+kod checkpoint list
+kod checkpoint diff <id>
+kod checkpoint restore <id>`} />
+
+`replay` est le test de régression : toute session enregistrée peut être ré-exécutée contre la base de code à n'importe quel commit ultérieur pour voir si les mêmes opérations ont encore du sens (ou passent encore). Sans `--execute`, il imprime ce qui s'exécuterait. `checkpoint` est l'annulation : KOD prend un instantané de chaque fichier avant qu'un appel d'outil mutant ne le touche, donc les dommages de `write_file` et `patch_file` sont toujours récupérables — et `checkpoint diff` vous montre exactement ce que la restauration changerait.
+
+<Aside type="caution">
+  <code>--execute</code> effectue de vraies écritures et commandes contre votre arbre de travail. Révisez une session avec <code>kod replay &lt;file&gt;</code> simple d'abord quand vous n'êtes pas sûr de son contenu.
+</Aside>
+
+## Recettes
+
+Quelques modèles qui fonctionnent bien en pratique :
+
+<Tabs>
+<TabItem label="Nightly audit">
+  <Code lang="bash" code={`# classify recent changes, read-only, no writes possible
+kod agent --preset read-only \\
+  -g "review yesterday's commits and flag risky patterns" \\
+  | tee "$HOME/logs/kod-audit-$(date +%F).txt"`} />
+</TabItem>
+<TabItem label="Explain a diff in CI">
+  <Code lang="bash" code={`git diff origin/main..HEAD | kod prompt - > /tmp/pr-summary.txt`} />
+</TabItem>
+<TabItem label="Long-running daemon for scripts">
+  <Code lang="bash" code={`kod serve &
+for f in $(git diff --name-only); do
+  kod prompt --remote "review $f for obvious bugs" >> review.md
+done
+kod serve --stop`} />
+</TabItem>
+<TabItem label="Skill CI gate">
+  <Code lang="bash" code={`# machine-readable skill inventory + validation for CI
+kod skills --json
+kod validate-skills`} />
+</TabItem>
+</Tabs>
+
+<Aside type="tip">
+  <code>--preset read-only</code> est le bon défaut pour toute exécution non surveillée. Il refuse <code>write_file</code>, <code>patch_file</code> et <code>execute_command</code> d'emblée plutôt que de demander — un script non surveillé ne peut de toute façon pas répondre à une invite d'approbation.
+</Aside>
+
+<LinkCard title="Référence : Commandes CLI" href="/reference/cli/" description="Chaque sous-commande, drapeau et défaut en un seul endroit." />

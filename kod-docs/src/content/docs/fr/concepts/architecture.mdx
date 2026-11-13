@@ -1,0 +1,106 @@
+---
+title: Architecture
+description: Comment KOD est organisé — les composants derrière l'interface, le flux de données à travers le moteur, et les principes de conception.
+sidebar:
+  order: 1
+type: explanation
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+> **Crate principal :** [`kod-core`](/reference/crates/#engine). Sous-crates : [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). Voir [Crates principaux](/concepts/core-crates/).
+
+KOD est un espace de travail Rust multi-crates où chaque crate a une responsabilité unique et une API publique étroite, afin que chaque partie puisse être construite et raisonnée en isolation. Vingt-six crates s'empilent en quatre couches :
+
+<Code lang="text" code={`┌─────────────────────────────────────────────────────┐
+│                    CLI / TUI                         │
+│           (kod-cli, kod-tui)                        │
+├─────────────────────────────────────────────────────┤
+│                   Core Engine                        │
+│                      (kod-core)                     │
+├─────────────────────────────────────────────────────┤
+│                LLM Providers                         │
+│        (kod-provider, kod-provider-openai)           │
+├─────────────────────────────────────────────────────┤
+│                   Foundation                         │
+│        (kod-types, kod-error, kod-config)            │
+└─────────────────────────────────────────────────────┘`} />
+
+## Les vingt-six crates
+
+| Crate | Responsabilité |
+| --- | --- |
+| `kod-types` | Types partagés : IDs fortement typés (`AgentId`, `MessageId`, `SkillId`, …), messages, compétences, mémoire, outils. |
+| `kod-error` | Enum `KodError` et alias `Result` — erreurs complètes avec détection de récupération. |
+| `kod-config` | Analyse et validation de la configuration : endpoints, routage, mémoire, compétences, essaim, hooks, MCP, et le côté config du moteur de politique. |
+| `kod-provider` | Trait `LlmProvider`, `GenerationOptions`, et types de chunks en streaming. |
+| `kod-provider-openai` | Implémentation compatible OpenAI (soutenue par `adk-model`) : un seul chemin de code pour Ollama, LM Studio, MLX, vLLM, OpenAI. |
+| `kod-skills` | Parseur, chargeur, matcher et watcher de rechargement à chaud pour les compétences. |
+| `kod-memory` | Mémoire à court terme et stockage à long terme `redb`, plus le constructeur de contexte. |
+| `kod-tools` | Trait `Tool`, registre, les 24 outils intégrés, table de verrous par chemin, invocation de bac à sable. |
+| `kod-swarm` | Cycle de vie des agents, hub de communication, coordinateur de tâches, espace de travail partagé. |
+| `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, carte du référentiel, journal de session, hooks, intégration LSP et MCP. |
+| `kod-tui` | Interface terminal : état de l'app, gestion des événements, widgets, raccourcis, thèmes. |
+| `kod-cli` | Le binaire `kod` : définitions et handlers de commandes. |
+
+L'empilement est strict : les interfaces dépendent du core, le core dépend des fournisseurs et des crates de domaine, et tout repose sur la fondation. Aucun crate ne dépasse latéralement la couche inférieure.
+
+## Flux de données à travers un tour
+
+<Code lang="text" code={`user input
+   │
+   ▼
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│  TaskRouter    │──▶│  Memory +      │──▶│  Grounded      │
+│  (classify)    │   │  Skill match   │   │  prompt        │
+└────────────────┘   └────────────────┘   └────────────────┘
+                                                │
+                                                ▼
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│  Tool results  │◀──│  LLM provider  │──▶│  Streaming     │
+│  fed back      │   │  (streaming)   │   │  chunks → UI   │
+└────────────────┘   └────────────────┘   └────────────────┘
+        │
+        ▼
+┌────────────────┐   ┌────────────────┐
+│  Final reply   │──▶│  Session log   │
+│  → CLI / TUI   │   │  (JSONL)       │
+└────────────────┘   └────────────────┘`} />
+
+1. **L'entrée utilisateur** arrive de la CLI ou de la TUI.
+2. **La classification des tâches** (`kod-core::router`) décide le type de tâche et la forme du tour.
+3. **La construction de contexte** (`kod-memory`, `kod-skills`) assemble les entrées de mémoire et les compétences correspondantes.
+4. **La génération LLM** (`kod-provider-*`) diffuse des tokens et assemble les appels d'outils en direct.
+5. **L'exécution d'outils** (`kod-tools`) exécute les appels filtrés par la politique et renvoie les résultats.
+6. **La réponse** atteint l'interface pendant que le **journal de session** enregistre tout.
+
+## Principes de conception
+
+1. **Modularité** — chaque crate a une responsabilité unique et une API publique étroite.
+2. **Performance** — parsing zéro-copie, pooling d'objets, mise en cache, réutilisation de connexions.
+3. **Extensibilité** — abstractions basées sur les traits pour les fournisseurs et les outils ; les serveurs MCP se branchent depuis la config.
+4. **Sûreté de typage** — les IDs fortement typés empêchent de mélanger un `AgentId` avec un `SessionId`.
+5. **Gestion des erreurs** — types d'erreurs complets avec détection de récupération.
+6. **Échouer bruyamment** — les configs corrompues avertissent et récupèrent, les primitives de bac à sable manquantes avortent, les fournisseurs absents refusent au lieu d'inventer des réponses.
+7. **Documentation** — chaque composant documenté ; les docs décrivent le code tel qu'il est.
+
+## Posture de performance
+
+L'espace de travail est délibéré sur l'utilisation des ressources : E/S asynchrones basées sur Tokio partout, mise en cache multi-niveaux pour les compétences et la mémoire, pooling d'objets et internement de chaînes pour garder les allocations basses, et réutilisation de connexions HTTP pour le fournisseur. Rien d'exotique — c'est l'accumulation de choisir les allocations avec soin dans un programme qui diffuse des tokens tout en exécutant des outils.
+
+## Ce qui n'est délibérément pas là
+
+Le `docs/SPEC.md` du dépôt décrit un système aspirationnel plus large — une intégration de débogueur, une API de plugin complète. Ce sont des références de conception, pas des fonctionnalités construites. L'intégration LSP, les serveurs MCP et la mémoire sémantique basée sur des vecteurs, en revanche, *sont* construites et documentées sur ce site. L'architecture ci-dessus est le système tel qu'il existe.
+
+<Aside type="note">
+  La section [Project Status du README](https://github.com/elcoosp/kod#project-status) est la liste faisant autorité de ce qui fonctionne de bout en bout par rapport à ce qui est sur la feuille de route ; ce site la suit.
+</Aside>
+
+<LinkCard title="Concepts : La boucle de l'agent" href="/concepts/agent-loop/" description="Ce qui se passe à l'intérieur d'un tour du moteur, étape par étape." />
+
+## Voir aussi
+
+- [Référence des crates](/reference/crates/) — index complet des 26 crates de l'espace de travail
+- [Crates principaux](/concepts/core-crates/) — comment les sous-crates internes du moteur s'assemblent
+- [Boucle de l'agent](/concepts/agent-loop/) — le cycle de vie du tour
+- [Compactage](/concepts/compaction/) — la réduction de contexte entre les tours

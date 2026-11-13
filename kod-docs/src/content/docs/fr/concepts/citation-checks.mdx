@@ -1,0 +1,45 @@
+---
+title: Vérifications de citation
+description: Quand une réponse cite un fichier et une ligne, le moteur vérifie que l'emplacement existe et annote ceux qui n'existent pas.
+sidebar:
+  order: 7
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Une réponse de recherche qui dit "le bug est dans `parser.rs:42`" n'est utile que si la ligne 42 existe. Les modèles hallucinent des numéros de ligne, et la correction la moins chère est une passe déterministe qui lit l'emplacement cité et rapporte ce qu'elle a trouvé.
+
+## Ce qui est vérifié
+
+Deux choses, toutes deux locales — pas d'appel au modèle, pas de réseau :
+
+1. le chemin cité se résout et est un fichier
+2. le numéro de ligne cité est dans le nombre de lignes de ce fichier
+
+Une citation ne passe que si les deux tiennent. Une qui échoue à l'un ou l'autre est annotée avec `⚠` et la raison.
+
+## Ce qui n'est délibérément pas vérifié
+
+Une heuristique "est-ce que la ligne citée contient un mot de la prose environnante" semble attrayante et n'est pas implémentée. Un faux `⚠` sur une citation correcte est pire qu'aucune annotation : un utilisateur qui voit le marqueur sur une bonne citation apprend à l'ignorer. La passe ne rapporte que ce qu'elle peut prouver — l'emplacement existe, ou il n'existe pas.
+
+## Où ça s'exécute
+
+La vérification de citation s'applique uniquement aux réponses de type **Research**. Un tour de codage ne paie jamais pour ça.
+
+Il y a deux passes, et la seconde est optionnelle :
+
+1. **Syntaxique** — s'exécute toujours. Les deux vérifications ci-dessus, purement locales.
+2. **Sémantique** — ne s'exécute que lorsqu'un endpoint Jev est configuré. Elle demande si la ligne citée soutient réellement la prose, ce qui est l'affirmation plus forte. Elle est fail-open : une erreur Jev renvoie la réponse inchangée et journalise au niveau heuristique. Une réponse avec plus de dix citations n'a que les dix premières vérifiées — une réponse à cent citations est pathologique, et le plafond garde le tour borné.
+
+## Quand vous voyez le bloc
+
+Une réponse sans citations, ou avec chaque citation vérifiée, revient propre. Le bloc d'annotation n'apparaît que lorsqu'au moins une citation n'a pas pu être vérifiée, donc une session saine ne le voit jamais.
+
+<Aside type="note">
+  La passe ne modifie jamais la réponse. Elle ajoute un bloc de vérification listant ce qu'elle a trouvé, afin que l'affirmation originale reste lisible à côté de son verdict. Sur le chemin de streaming, le bloc est émis comme un chunk, c'est pourquoi il apparaît comme faisant partie de la réponse plutôt que comme un message séparé.
+</Aside>
+
+## Pourquoi les numéros de ligne, pas le contenu
+
+Les numéros de ligne sont bon marché à vérifier et impossibles à vérifier par accident : soit le fichier a 42 lignes, soit il ne les a pas. La correspondance de contenu aurait besoin de savoir ce que le modèle *voulait* citer, ce qui est l'hallucination qu'on vérifie.

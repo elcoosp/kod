@@ -1,0 +1,39 @@
+---
+title: Objectifs et décisions
+description: Les deux choses qu'une session se rappelle d'elle-même — un objectif budgété et les choix faits en cours de route.
+sidebar:
+  order: 8
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Une session garde deux types d'état durable au-delà de la transcription : un **objectif** avec son propre budget, et un **journal de décisions**.
+
+## Objectifs
+
+Un objectif actif par session, avec un budget de tokens et un budget de temps. Le point est qu'un objectif commencé dix tours après a sa propre comptabilité — « combien ça a coûté » est une question différente de « combien la session a coûté ».
+
+Le coût est `(prompt_tokens − cache_read_tokens) + completion_tokens`, accumulé sur la durée de vie de l'objectif. `cache_read` est soustrait parce qu'un token servi depuis le cache a déjà été payé par l'écriture qui l'a mis là ; le compter à nouveau facturerait deux fois un long préfixe. Les tokens écrits *vers* le cache font partie de `prompt_tokens` et sont donc comptés — une rotation de cache peut écrire cent mille tokens qui facturent au taux d'écriture, et un budget qui les ignorerait sous-compterait exactement les longues sessions qu'il existe pour borner.
+
+Quand le coût accumulé dépasse l'un ou l'autre budget, le statut devient `BudgetLimited` et un message de pilotage est émis — une fois, dédupliqué — plutôt que de continuer à dépenser tranquillement.
+
+Un objectif encore `Active` quand l'agent s'arrête reçoit un message de continuation caché ; un que l'utilisateur a mis en pause reste en pause ; un objectif complété rapporte son budget final.
+
+## Décisions
+
+Un journal en cours des choix, afin qu'un tour ultérieur ne renverse pas silencieusement un précédent :
+
+| Type | Exemple |
+| --- | --- |
+| `user_preference` | "utiliser des tabs, pas des espaces" |
+| `approach` | "utiliser `similar` pour le diff" |
+| `file_change` | "ajouter le Tier 3.4 au plan" |
+| `constraint` | "ne pas ajouter de nouvelles dépendances" |
+| `other` | tout ce qui est signalé et ne correspond à aucun des ci-dessus |
+
+Les entrées sont par transcription. Une tranche récente est rendue dans le prompt, c'est ainsi que le modèle voit une contrainte énoncée vingt tours auparavant sans que tout le journal soit renvoyé.
+
+<Aside type="note">
+  Ni l'un ni l'autre ne remplace la transcription. Un objectif borne les dépenses ; un journal de décisions garde une préférence énoncée visible. Si quelque chose doit survivre aux deux, il appartient à une compétence ou à la mémoire à long terme.
+</Aside>

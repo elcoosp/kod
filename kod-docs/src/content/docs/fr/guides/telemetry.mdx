@@ -1,0 +1,46 @@
+---
+title: Télémétrie
+description: Exporter des enregistrements au niveau du tour et de l'outil vers un collecteur OpenTelemetry. Désactivé sauf si vous définissez un endpoint.
+sidebar:
+  order: 16
+type: how-to
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+KOD peut exporter des enregistrements structurés vers un collecteur OpenTelemetry. C'est **désactivé par défaut et ne coûte rien quand c'est désactivé** — le handle est construit à partir de l'environnement, et un endpoint non défini produit un no-op désactivé sur lequel chaque appel d'enregistrement court-circuite.
+
+## L'activer
+
+Définissez la variable d'environnement OTLP standard avant de démarrer `kod` :
+
+<Code lang="bash" code={`export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+kod tui`} />
+
+Le démarrage imprime une ligne confirmant l'export, y compris le nom du service :
+
+<Code lang="ansi" code={`kod: OTLP telemetry enabled (service.name="kod")`} />
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` est le seul interrupteur. Il n'y a pas de clé de fichier de config — la télémétrie est une infrastructure d'opérateur, pas un comportement d'agent, donc elle vit entièrement dans l'environnement où un déploiement peut la définir sans toucher au `.kod/` d'un projet.
+
+## Ce qui est exporté
+
+| Enregistrement | Quand |
+| --- | --- |
+| tour | une fois par tour terminé : modèle, utilisation de tokens, durée, résultat |
+| outil | une fois par appel d'outil : nom de l'outil, durée, succès ou échec |
+
+Le **contenu** du prompt et de la completion n'est pas exporté. Les enregistrements décrivent la forme d'une session — quels outils ont été exécutés, combien de temps un tour a pris, combien de tokens il a coûté — pas ce qui a été dit.
+
+<Aside type="caution">
+  Les arguments d'outils ne sont pas non plus inclus, mais les *noms* des outils le sont. Un outil personnalisé dont le nom encode un secret le ferait fuiter via l'enregistrement ; ne nommez pas les outils d'après leurs entrées.
+</Aside>
+
+## Quand c'est désactivé
+
+`Telemetry::from_env()` renvoie un handle désactivé. Chaque méthode `record_*` est un no-op, aucun exportateur n'est construit, et aucune tâche d'arrière-plan n'est lancée. Une session qui n'a jamais défini l'endpoint ne paie rien pour l'existence de la fonctionnalité.
+
+## Voir aussi
+
+- [Coût et limites](/reference/config/#limits) — la comptabilité budgétaire de la session elle-même, qui est distincte de ce que la télémétrie exporte.
+- [Traçage](/guides/troubleshooting/) — le fichier de trace de tour local (`kod trace`), utile quand vous voulez des enregistrements sans collecteur.

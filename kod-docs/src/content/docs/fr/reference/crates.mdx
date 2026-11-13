@@ -1,0 +1,66 @@
+---
+title: Crates
+description: Les 26 crates qui composent l'espace de travail KOD, regroupés par couche.
+sidebar:
+  order: 8
+type: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+L'espace de travail KOD est un espace de travail Cargo avec **26 crates** dans **4 couches**, de la fondation la plus stable à l'interface la plus externe :
+
+- **Fondation** — types, erreurs, config. Aucune dépendance interne.
+- **Moteur** — le cœur d'orchestration et ses cinq sous-crates sous `kod-core-*`. Voir [Crates principaux](/concepts/core-crates/) pour comment la famille s'assemble.
+- **Capacité** — fournisseurs, outils, compétences, mémoire, transport, et les crates d'analyse (`kod-ast`, `kod-risk`, `kod-minimize`, `kod-schema-dialect`). Chacun est utilisable indépendamment.
+- **Interface** — le binaire `kod` (`kod-cli`) et l'interface terminal (`kod-tui`).
+
+## Fondation
+
+| Crate | Description |
+|---|---|
+| `kod-types` | IDs, types de messages et d'outils, rôles, sérialisation, niveaux de confiance, primitives de rédaction. |
+| `kod-error` | `KodError` — l'enum d'erreur unique enfilé à travers chaque API faillible. |
+| `kod-config` | `KodConfig` avec ses types par section et son cache TOML validé par mtime. |
+
+## Moteur
+
+| Crate | Description |
+|---|---|
+| `kod-core` | Le moteur : boucle de l'agent, transcription, répartition du compactage, câblage télémétrie, conseiller Jev, exécuteur d'essaim. |
+| `kod-core-routing` | Classification des tâches, assemblage du contexte et sélection du modèle. |
+| `kod-core-state` | Persistance de session, points de contrôle de fichiers, comptabilité des coûts, classification de sensibilité. |
+| `kod-core-serve` | Serveur JSON-RPC ACP sur un démon socket Unix, reliant le moteur et les clients éditeur. |
+| `kod-core-quality` | `snapcompact`, `shake` et `repomap` — analyse, compactage et portes qualité. |
+| `kod-core-tools` | Couche d'adaptation enveloppant chaque implémentation `Tool` pour la boucle de répartition du moteur. |
+
+## Capacité
+
+| Crate | Description |
+|---|---|
+| `kod-provider` | Trait de fournisseur, primitives de streaming, politique de nouvelle tentative, `TokenUsage`, fournisseurs mock `testkit`. |
+| `kod-provider-anthropic` | API Anthropic Messages — streaming SSE, en-têtes de contrôle de cache, filtrage beta. |
+| `kod-provider-openai` | OpenAI Chat Completions — streaming SSE, appel d'outils, sorties structurées. |
+| `kod-ast` | Parsing tree-sitter pour 8 langages, avec un cache de parse global au processus. Alimente la carte du référentiel. |
+| `kod-risk` | Classification du rayon d'action des commandes : analyser les lignes shell, attribuer un `RiskLevel`, signaler les opérations destructrices. |
+| `kod-schema-dialect` | Traduction et assainissement JSON Schema par fournisseur (suppression des mots-clés non pris en charge). |
+| `kod-minimize` | Minimiseur de sortie shell : troncature tête/queue, résumé structuré, réduction de `git diff`. |
+| `kod-tools` | Implémentations d'outils : `read_file`, `write_file`, `patch_file`, `bash`, `grep`, `web_fetch`, gestionnaires `internal_url`. |
+| `kod-skills` | Parseur `SKILL.md`, matcher (scoring trigramme + tokens de description), et watcher. |
+| `kod-memory` | Stockage de mémoire multi-couches à court et long terme (redb) avec récupération soutenue par embeddings. |
+| `kod-lsp` | Client minimal du Language Server Protocol : spawn, diagnostics, actions de code. |
+| `kod-mcp` | Client minimal du Model Context Protocol sur stdio : enregistrement de serveur, découverte d'outils. |
+| `kod-swarm` | Collaboration multi-agents : hub de communication d'agents, tableau noir, gestion de worktree, file de yield. |
+| `kod-telemetry` | Traçage OTLP GenAI, helpers de span, injection de contexte. |
+| `kod-stats` | Statistiques de session : coût, latence, taux de succès du cache, utilisation par outil. |
+
+## Interface
+
+| Crate | Description |
+|---|---|
+| `kod-cli` | Le binaire `kod` : parsing d'arguments, sous-commandes (`serve`, `checkpoint`, `models`, `init`, `completions`, `update`, …), harnais `fixtures`. |
+| `kod-tui` | Interface terminal : état `KodApp`, boucle d'événements `TuiLoop`, widget de chat, coloration syntaxique, table de raccourcis. |
+
+<Aside type="note">
+  Les crates **Moteur** vivent sous `crates/kod-core-*` et forment un sous-système en couches. `kod-core` dépend des cinq ; les sous-crates ne dépendent pas de `kod-core`. Cela garde la compilation incrémentale rapide et rend chaque sous-système testable indépendamment.
+</Aside>

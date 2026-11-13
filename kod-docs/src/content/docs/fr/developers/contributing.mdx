@@ -1,0 +1,66 @@
+---
+title: Contribuer
+description: Comment contribuer à KOD — les conventions de l'espace de travail, à quoi ressemble un bon changement, la suite de vérifications que votre PR doit passer, et comment les rapports de bogues deviennent des correctifs plus vite.
+sidebar:
+  order: 2
+type: explanation
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Les contributions, les rapports de bogues et les discussions de conception sont les bienvenus — KOD est un travail en cours et le dit d'emblée. Les contributions sont sous licence MIT, les mêmes termes que le projet. Cette page condense le `CONTRIBUTING.md` du dépôt en une boucle pratique : choisir une portée, suivre les conventions du crate, passer les portes, ouvrir la PR.
+
+## Trouver le bon crate à toucher
+
+La modularité de l'espace de travail est votre carte. Un changement a généralement une maison évidente :
+
+| Vous changez… | Travaillez dans |
+| --- | --- |
+| Types partagés, IDs, messages | `kod-types` |
+| Variantes d'erreur, logique de récupération | `kod-error` |
+| Clés de config, validation, profils, config de politique | `kod-config` |
+| Comportement du fournisseur, gestion des endpoints | `kod-provider-openai` |
+| Parsing de compétences, correspondance, rechargement à chaud | `kod-skills` |
+| Éviction de mémoire, stockage, récupération | `kod-memory` |
+| Un outil intégré, verrous de chemin, appels de bac à sable | `kod-tools` |
+| Coordination d'essaim, partage d'espace de travail | `kod-swarm` |
+| La boucle du moteur, le routeur, la carte du référentiel, le journal de session, les hooks, le câblage LSP/MCP | `kod-core` |
+| Comportement de la TUI, thèmes, raccourcis | `kod-tui` |
+| Surface de commandes, doctor, complétions | `kod-cli` |
+
+Chaque crate a une responsabilité unique et une API publique étroite — gardez-le ainsi. Si un changement semble nécessiter d'atteindre latéralement à travers les couches, c'est une odeur de conception qui vaut la peine d'être soulevée dans une issue d'abord.
+
+## Les portes que votre PR doit passer
+
+<Code lang="bash" code={`cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+./scripts/test.sh      # the whole suite in one shot`} />
+
+Les avertissements Clippy sont des erreurs (`-D warnings`), et le `clippy.toml` encode les préférences de lint du projet — exécutez le linter avant de pousser, pas en CI. Les tests doivent passer hors ligne ; si vous avez ajouté un test avec un modèle réel, bloquez-le avec `#[ignore]` et respectez les conventions `KOD_TEST_MODEL` / `KOD_TEST_DB` (voir [Tests](/developers/testing/)).
+
+## Conventions qui comptent
+
+- **Les tests documentent le comportement.** Un nouveau comportement veut un test qui l'épingle ; les corrections de bogues veulent un test qui échoue sans le correctif.
+- **Échouer bruyamment.** La base de code préfère systématiquement les erreurs explicites aux replis silencieux — les configs corrompues avertissent et récupèrent, les primitives de bac à sable manquantes avortent, les fournisseurs absents renvoient `InvalidState`. Suivez ce grain.
+- **Les docs décrivent le code tel qu'il est.** Le texte aspirationnel appartient aux issues ou à `docs/SPEC.md`, pas aux docs orientées utilisateur. Quand vous changez le comportement, les pages affectées sur ce site veulent la même PR ou un suivi rapide — chaque drapeau de commande et clé de config dans ces docs a été vérifié une fois contre la source ; gardez-le ainsi.
+- **Entrées de changelog.** Les changements notables obtiennent une puce dans `CHANGELOG.md` sous la bonne section — les notes de release en sont assemblées, et la page de changelog des docs la reflète.
+
+## Bons rapports de bogues
+
+Un rapport qui inclut ce qui suit est corrigé nettement plus vite :
+
+1. Ce que vous avez exécuté (la commande exacte) et ce que vous attendiez.
+2. Ce qui s'est passé, avec la sortie stderr/TUI pertinente.
+3. Un extrait de la session JSONL (elle enregistre chaque appel d'outil *et* la décision de politique qui l'a filtré).
+4. La sortie de `kod doctor` (ou `kod doctor --json`) — elle répond aux cinq premières questions qu'un mainteneur poserait de toute façon.
+
+## Où la conception se fait
+
+Les grands changements commencent comme des issues, pas des PR. Le dépôt garde `docs/SPEC.md` comme référence de conception pour la forme plus large que KOD pourrait prendre, avec `docs/ARCHITECTURE.md` et `docs/TESTING.md` décrivant le code tel qu'il existe. Si votre idée touche la boucle du moteur, la politique ou la coordination d'essaim, une issue d'abord épargne à tout le monde une réécriture.
+
+<Aside type="tip">
+  La première contribution crédible la plus rapide est souvent un test : les suites sont denses mais à grain fin, et un nouveau cas pour un bord dans <code>classify_task</code>, la correspondance de globs ou la gestion des raccourcis est à la fois réellement utile et un excellent moyen d'apprendre la base de code.
+</Aside>
+
+<LinkCard title="Développeurs : Tests" href="/developers/testing/" description="La disposition de la suite et les commandes exactes que la CI exécute." />

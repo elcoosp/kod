@@ -1,0 +1,54 @@
+---
+title: Hooks
+description: Exécuter vos propres commandes shell autour des appels d'outils — hooks pre_tool_use et post_tool_use pilotés par des modèles de config.
+sidebar:
+  order: 12
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Les hooks vous permettent d'exécuter vos propres commandes shell à deux moments du cycle de vie d'un outil : **avant** qu'un outil ne s'exécute (`pre_tool_use`) et **après** qu'il ne se termine (`post_tool_use`). Ils sont entièrement pilotés par des modèles de config — aucun langage de script à apprendre, aucune API de plugin à importer — ce qui les garde auditables comme tout le reste dans KOD : un hook est une ligne dans votre `config.toml`.
+
+## Activer les hooks
+
+<Code lang="toml" code={`[hooks]
+enabled = false
+# pre_tool_use  = { write_file = "rustfmt {path}" }
+# post_tool_use = { write_file = "cargo check" }`} />
+
+Les hooks sont désactivés par défaut. Basculer `enabled = true` active les deux maps. Chaque entrée associe un **nom d'outil** (`write_file`, `patch_file`, `execute_command`, …) à un **modèle de commande shell**, et les espaces réservés de style `{path}` sont substitués par les arguments de l'appel d'outil avant l'exécution.
+
+## À quoi ils servent
+
+La paire canonique des commentaires de config montre la forme voulue :
+
+- **`pre_tool_use` sur `write_file` : `rustfmt {path}`** — chaque fichier que l'agent écrit est formaté dès qu'il atterrit, donc le style est appliqué à la source plutôt que revu à la fin.
+- **`post_tool_use` sur `write_file` : `cargo check`** — chaque écriture est immédiatement suivie d'une vérification de compilation, donc une édition cassée fait surface dans le même tour qui l'a produite au lieu de cinq prompts plus tard.
+
+Le même modèle s'étend naturellement : exécuter `eslint --fix` après les éditions JavaScript, `gofmt` après les écritures Go, ou une suite de tests rapide après tout `patch_file` sur un crate qui vous importe.
+
+<Aside type="tip">
+  Si tout ce que vous voulez, ce sont des diagnostics post-écriture, vérifiez si les interrupteurs intégrés le font d'abord : <code>tools.auto_lsp = true</code> (défaut) ajoute les diagnostics de serveur de langage après les écritures, et <code>tools.auto_check = true</code> exécute le compilateur/linter du projet avec une sortie consciente de la base de référence. Les hooks sont pour les commandes qui sont *les vôtres* — formateurs avec des règles maison, cloches de notification, scripts d'instantané.
+</Aside>
+
+## Comment les hooks se rapportent à la politique
+
+Les hooks s'exécutent *à l'intérieur* du cycle de vie de l'outil, pas à sa place. L'ordre par appel est :
+
+1. Décision de politique (préréglage → global → projet → CLI) — allow, deny ou ask.
+2. Si autorisé : hook `pre_tool_use` pour cet outil, s'il y en a un de configuré.
+3. L'outil s'exécute (en bac à sable si demandé, verrouillé par chemin, avec point de contrôle si mutant).
+4. Hook `post_tool_use`, s'il est configuré.
+
+Un appel d'outil refusé n'atteint jamais ses hooks — il n'y a rien autour de quoi accrocher. Les commandes de hook sont elles-mêmes des commandes shell, donc traitez-les avec le même soin que les listes blanches de politique : elles s'exécutent avec vos permissions, en dehors du bac à sable de l'outil.
+
+<Aside type="caution">
+  Gardez les hooks rapides. Un hook <code>post_tool_use</code> s'exécute après chaque appel d'outil correspondant — un hook qui prend 30 secondes transforme chaque écriture en un tour de 30 secondes. <code>cargo check</code> est un bon hook ; <code>cargo test</code> ne l'est généralement pas.
+</Aside>
+
+## Où vivent les hooks dans le moteur
+
+Le système de hooks vit dans `kod-core` aux côtés du journal de session. Les commandes de hook s'exécutent dans le shell de votre session avec vos privilèges ; leur sortie n'est pas injectée dans le prompt du modèle — si vous voulez que le modèle *voie* le résultat d'une vérification, c'est précisément à cela que servent `tools.auto_check` et l'outil `check` (voir [Outils](/guides/tools/#write-follow-ups-lsp-and-check)).
+
+<LinkCard title="Guides : Outils" href="/guides/tools/" description="Les familles d'outils auxquelles les hooks s'attachent." />

@@ -1,0 +1,132 @@
+---
+title: TUI Keybindings
+description: Chaque raccourci clavier de la TUI (mode normal et insertion), comment remapper les touches, et chaque commande slash, avec ce que chacune fait.
+sidebar:
+  order: 2
+type: reference
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+La TUI est modale : le **mode normal** navigue et commande, le **mode insertion** édite les prompts. Appuyez sur `i` pour entrer en mode insertion ; `Esc` revient au mode normal (et annule une génération en cours). `?` ou `h` ouvre la superposition d'aide de l'application à tout moment.
+
+## Mode normal
+
+| Touche | Action |
+| --- | --- |
+| `i` (ou `I`) | entrer en mode insertion |
+| `Esc` / `Ctrl-C` | annuler le prompt en cours |
+| `j` / `k` | défiler vers le bas / le haut (les flèches et la molette de la souris fonctionnent aussi) |
+| `g` / `G`, `Home` / `End` | sauter au plus ancien / plus récent |
+| `PgUp` / `PgDn` | défiler par page |
+| `t` | basculer la visibilité de la sortie des outils |
+| `o` | développer la ligne d'outil réduite la plus récente |
+| `Enter` | développer la ligne d'outil sous le focus (focus chat) |
+| `f` | démarrer une recherche au fil de la frappe |
+| `n` / `N` | correspondance suivante / précédente (après `/search`) |
+| `y` | copier la dernière réponse de l'assistant |
+| `a` (ou `Tab`) | ouvrir le panneau d'agent |
+| `e` | éditer votre dernier message |
+| `u` | annuler un `/clear` |
+| `?` (ou `h`) | superposition d'aide |
+| `q` | quitter — demande confirmation quand une génération est en cours |
+
+## Mode insertion
+
+| Touche | Action |
+| --- | --- |
+| `Enter` | envoyer le prompt |
+| `Ctrl+J` (ou `Shift+Enter`) | insérer un saut de ligne |
+| `Tab` | cycler les complétions (commandes slash, noms de modèles, chemins de fichiers) |
+| `Up` / `Down` | parcourir l'historique des prompts (votre brouillon non envoyé est conservé) |
+| `Ctrl+W` | supprimer le mot avant le curseur |
+| `Ctrl+U` | effacer la ligne avant le curseur |
+| `Ctrl+K` | tuer jusqu'à la fin de la ligne |
+| `Ctrl+Left` / `Ctrl+Right` | sauter par mot |
+
+## Remapper les touches
+
+Les touches à caractère unique du mode normal sont configurables. Mettez une table `[keys]` dans `.kod-keys.toml` (projet) ou `tui_keys.toml` à côté de votre config (global) — chaque entrée associe un **nom d'action** à une touche :
+
+<Code lang="toml" code={`[keys]
+quit = "Q"
+scroll_down = "J"`} />
+
+Noms d'action reconnus : `insert`, `quit`, `help`, `panel`, `scroll_up`, `scroll_down`, `top`, `bottom`, `edit_last`, `undo`, `toggle_tools`, `search_prefix`, `copy_last`. Les noms inconnus sont ignorés, et un fichier corrompu garde silencieusement les défauts — la config de touches ne doit jamais casser le démarrage.
+
+## Commandes slash
+
+Tapez `/` en mode insertion ; le popup de complétion liste les commandes disponibles (Tab pour cycler). Les commandes personnalisées du bloc `[commands]` de votre config apparaissent ici aussi.
+
+| Commande | Objectif |
+| --- | --- |
+| `/help` | afficher la superposition d'aide |
+| `/clear` | effacer la conversation (réversible avec `/undo` ou `u`) |
+| `/clearall` | effacer chat + mémoire à long terme + points de contrôle (demande confirmation) |
+| `/undo` | annuler un `/clear` |
+| `/compact` | résumer la conversation pour récupérer de la marge de contexte |
+| `/summarize` | résumer par LLM la session jusqu'ici |
+| `/model [<name>]` | afficher ou changer le modèle — instantané, même en cours de génération |
+| `/goal <text>` | définir un objectif permanent vers lequel l'agent travaille (`/goal clear` le supprime) |
+| `/steer <instruction>` | piloter une génération en cours (taper un prompt simple fait la même chose) |
+| `/cancel` | annuler la génération en cours |
+| `/retry` | se reconnecter + renvoyer le dernier prompt |
+| `/edit` | éditer votre dernier message |
+| `/regenerate` | régénérer la dernière réponse de l'assistant |
+| `/delete` | supprimer le dernier échange utilisateur + assistant |
+| `/system <text>` | remplacer le prompt système (`/system clear` réinitialise) |
+| `/skills` | lister les compétences chargées |
+| `/tools` | basculer les détails de sortie des outils |
+| `/map` | imprimer la carte du référentiel (symboles de haut niveau par fichier) |
+| `/check` | exécuter le compilateur/linter du projet (Cargo, tsc, ruff, go vet) |
+| `/git-status` | git status --porcelain=v2 dans le répertoire courant |
+| `/attach <path>` | attacher un fichier au prochain prompt |
+| `/diff` | montrer le diff de fichier le plus récent (depuis les points de contrôle) |
+| `/checkpoints` | lister les points de contrôle de fichiers pour ce projet |
+| `/rollback [id]` | restaurer un fichier depuis un point de contrôle |
+| `/export [path]` | exporter la session en Markdown |
+| `/save <path>` | sauvegarder la session dans un fichier |
+| `/load <path>` | charger une session depuis un fichier JSON |
+| `/branch [label]` | déposer un marqueur de point de branche dans la transcription |
+| `/fork [label]` | sauvegarder le chat courant comme une fourche restaurable |
+| `/handoff` | écrire un document de passation et démarrer une nouvelle session avec lui comme contexte |
+| `/memory` | mémoire à long terme : `/memory [search <q> \| delete <id> \| clear]` |
+| `/context` | visualiser l'utilisation de la fenêtre de contexte et les totaux de session |
+| `/stats` | statistiques par session : rôles, outils, tokens, temps écoulé |
+| `/whoami` | résumé de session : modèle, compétences, contexte, chemins |
+| `/debug` | diagnostics : `/debug last-prompt` vide le dernier prompt ancré |
+| `/last-prompt` | raccourci pour `/debug last-prompt` |
+| `/log [N]` | montrer les entrées récentes du journal de session |
+| `/search [<text>]` | rechercher dans la transcription (`n`/`N` sautent entre les correspondances) |
+| `/grep <regex>` | rechercher par regex dans l'historique du chat |
+| `/copy` | copier la dernière réponse de l'assistant |
+| `/raw` | imprimer la dernière réponse de l'assistant brute (sans décoration) |
+| `/theme [dark\|light]` | changer le thème |
+| `/pin <n>` / `/unpin <n>` | épingler un message pour qu'il survive au compactage / retirer une épingle |
+| `/reset` | réinitialiser l'état transitoire : saisie, recherche, expansions, pièces jointes |
+| `/doctor` | imprimer un rapport de diagnostic (identique à `kod doctor`) |
+| `/init` | infos d'accueil : chemin de config, profils de modèle, prochaines étapes |
+| `/swarm <goal>` | lancer une exécution d'essaim multi-agents |
+| `/quit` | quitter la TUI |
+| `/budget` | coût et limites de session : `/budget`, `/budget raise <usd>`, `/budget reset` |
+| `/limits` | quotas par outil : `/limits`, `/limits reset` |
+| `/policy` | politique d'outil : `/policy`, `/policy forget <n>` |
+| `/plan` | montrer le plan : `/plan next`, `/plan skip`, `/plan note <text>`, `/plan clear` |
+| `/plan-mode` | basculer le mode plan : `/plan-mode on` / `off` |
+| `/decisions` | décisions durables de cette session : `/decisions drop <id>`, `/decisions clear` |
+| `/learned` | lister ou effacer les approbations apprises limitées à la session : `/learned clear` |
+| `/trust` | montrer ou effacer la teinte du tour : `/trust show` / `clear` |
+| `/review` | lancer une revue cross-model du dernier tour de l'assistant |
+| `/refine <instruction>` | affiner la dernière réponse de l'assistant |
+| `/prewalk <endpoint/model>` | armer un transfert de modèle à sens unique |
+| `/remember <text>` | stocker un fait durable dans la mémoire à long terme |
+| `/blackboard` | tableau noir d'essaim : `/blackboard show` / `clear` |
+| `/jobs` | lister les tâches d'arrière-plan |
+| `/trace` | traces de tour structurées : `/trace last` / `list` |
+| `/jev` | intégration TypeSafe AI : `/jev status`, `stats`, `cache clear`, `test` |
+| `/wt` | déplacer cette session dans un worktree portant des changements non commités : `/wt [--clean]` |
+| `/export-html [path]` | exporter la session comme un fichier HTML autonome |
+
+<Aside type="tip">
+  La redirection la plus rapide pour une exécution qui prend la mauvaise direction est de taper un prompt simple pendant qu'elle génère — identique à <code>/steer</code>, et ça préserve tout le travail déjà effectué.
+</Aside>

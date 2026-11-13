@@ -1,0 +1,88 @@
+---
+title: Mémoire
+description: Comment fonctionne la mémoire multi-couches de KOD — FIFO à court terme, stockage redb à long terme, portée globale vs projet, récupération, et les commandes kod memory.
+sidebar:
+  order: 6
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Le système de mémoire de KOD a deux couches avec un seul travail chacune : la mémoire **à court terme** garde la session courante cohérente, et la mémoire **à long terme** persiste les faits à travers les sessions dans un fichier que vous pouvez inspecter et supprimer. Les deux sont locales par défaut — le stockage à long terme est une base de données `redb` sous votre répertoire personnel, pas un service cloud.
+
+## Mémoire à court terme
+
+La mémoire à court terme est en mémoire avec une limite de capacité (`memory.short_term_capacity`, 100 entrées par défaut). Elle se comporte comme une FIFO : les nouvelles entrées poussent les anciennes dehors une fois le tampon plein. Le but n'est pas l'archive — c'est de garder la conversation *courante* ancrée afin que le modèle ne perde pas le fil au milieu d'une longue session.
+
+La capacité interagit avec la fenêtre de contexte du modèle. Le moteur lit `llm.endpoints[].context_window` et dimensionne le budget de contexte par prompt du gestionnaire de mémoire en conséquence, donc une longue session ne laisse pas tomber silencieusement des entrées de mémoire qui tiendraient confortablement dans un grand modèle.
+
+## Mémoire à long terme
+
+La mémoire à long terme est une base de données clé-valeur `redb` persistante. Les entrées survivent aux sessions, et la récupération utilise le scoring par mots-clés et par récence contre votre prompt : quand vous dites quelque chose lié à un fait stocké, le fait accompagne dans le prompt ancré.
+
+Où vit la base de données est contrôlé par `memory.scope` :
+
+- `"global"` (défaut) — une base de données à `~/.kod/data/kod.redb`, partagée par tous les projets.
+- `"project"` — une base de données par projet, à `<cwd>/.kod/memory.redb`, donc le code de travail et les expériences personnelles ne se contaminent jamais.
+
+Définir `memory.long_term_db_path` remplace les deux avec un emplacement explicite.
+
+<Aside type="tip">
+  La portée projet est le choix le moins surprenant pour les personnes qui travaillent sur de nombreux dépôts. La portée globale est pratique quand vos notes portent sur l'outillage et les flux de travail plutôt que sur des bases de code spécifiques. Dans les deux cas, le fichier est le vôtre : ouvrez-le, inspectez-le, supprimez-le.
+</Aside>
+
+## Travailler avec la mémoire depuis la CLI et la TUI
+
+La mémoire est un citoyen de première classe de la surface de commandes, pas une boîte noire :
+
+<Code lang="bash" code={`kod memory list                     # every long-term entry, newest first
+kod memory search "rate limiter"    # case-insensitive substring search
+kod memory delete <short-id>        # remove one entry (id from list/search)
+kod memory export memories.json     # dump everything (or \`-\` for stdout)
+kod memory import memories.json     # append entries; existing ones kept
+kod memory clear                    # delete everything — prompts unless --yes`} />
+
+Dans la TUI, `/memory` liste les entrées et supporte les mêmes opérations : `/memory search <q>`, `/memory delete <id>`, `/memory clear`.
+
+## Ce qui est mémorisé
+
+Deux chemins mettent des faits dans la mémoire à long terme :
+
+1. **L'agent lui-même.** Les outils `memory_save` et `memory_search` sont enregistrés chaque fois que la mémoire est activée — le modèle peut décider de persister un fait durable ("l'utilisateur préfère `unwrap_or_else` à `unwrap` ici") et le rechercher plus tard, et vous verrez ces appels comme des lignes d'outils ordinaires.
+2. **Extraction de session, à la demande.** Définir `memory.extract_on_shutdown = true` exécute un appel LLM bon marché à la fin d'une session, extrayant les faits durables de la transcription et en stockant jusqu'à `memory.extract_max_entries` (12 par défaut). C'est désactivé par défaut parce que ça coûte un appel LLM par session.
+
+Le moteur stocke les faits qu'il juge durables — décisions, préférences, corrections que vous avez faites (« on n'utilise pas camelCase ici ») — plutôt que des transcriptions entières. Les transcriptions elles-mêmes vivent dans le journal de session (voir [Sessions, Replay & Checkpoints](/guides/sessions/)), qui est un mécanisme différent avec un but différent : l'audit, pas le rappel.
+
+## Optionnel : recherche sémantique
+
+Par défaut, la récupération est mots-clés + récence — déterministe et gratuite. KOD peut en plus intégrer les entrées pour une correspondance sémantique :
+
+<Code lang="toml" code={`[memory]
+enable_semantic_search = true
+embedding_endpoint     = "ollama"   # or "openai"; "none" (default) disables
+# embedding_url = "http://localhost:11434"   # derived from llm.base_url if unset
+# embedding_api_key_env = "OPENAI_API_KEY"   # for the openai endpoint
+# embedding_model = "all-MiniLM-L6-v2"`} />
+
+`embedding_endpoint = "ollama"` utilise l'`/api/embed` d'Ollama, dérivant l'URL de votre `base_url` LLM sauf si `embedding_url` est défini. `openai` parle `/v1/embeddings` avec la clé lue depuis la variable d'environnement nommée.
+
+## Réglage
+
+<Code lang="toml" code={`[memory]
+short_term_capacity = 100        # FIFO entries kept per session
+scope               = "global"   # or "project"
+# long_term_db_path      = "/data/kod/memory.redb"  # explicit path
+# compaction_interval_secs = 3600`} />
+
+Conseils pratiques :
+
+- **Augmentez `short_term_capacity`** pour les sessions interactives très longues sur des modèles avec de grandes fenêtres de contexte ; le moteur budgètera contre `context_window` plutôt que d'évincer tôt.
+- **Préférez `scope = "project"`** quand les entrées de mémoire fuiteraient autrement entre des bases de code non liées.
+- **Une entrée fausse bat une entrée perdue** en récupération aujourd'hui — la récupération score le chevauchement de mots, donc écrivez les faits stockés de la façon dont vous les rechercheriez plus tard.
+- **La réinitialisation est sûre** : supprimer le fichier `redb` (ou `kod memory clear`) ne perd rien d'autre que la mémoire — la config, les sessions et les points de contrôle sont séparés.
+
+<Aside type="caution">
+  La recherche sémantique nécessite un embedder en cours d'exécution à l'endpoint configuré. Si vous l'activez et que l'endpoint est en panne, la récupération retombe sur la correspondance par mots-clés — vérifiez <code>kod doctor</code> si les entrées arrêtent de refaire surface.
+</Aside>
+
+<LinkCard title="Référence : Référence de configuration" href="/reference/config/" description="Chaque clé de mémoire, son type et son défaut." />

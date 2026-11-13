@@ -1,0 +1,98 @@
+---
+title: Format de fichier de compétence
+description: L'anatomie exacte d'une compétence KOD — champs de front matter, les trois sections du corps, la priorité des répertoires et les règles de validation.
+sidebar:
+  order: 5
+type: reference
+---
+
+import { Aside, Code, FileTree } from '@astrojs/starlight/components';
+
+Une compétence est un fichier Markdown avec front matter YAML. KOD analyse le front matter, divise le corps en trois sections, met le résultat en cache et met les compétences en correspondance avec les prompts — avec un watcher de fichiers permettant le rechargement à chaud lors de l'édition. Cette page est le contrat exact.
+
+## Anatomie
+
+<Code lang="markdown" code={`---
+name: rust-refactoring
+description: Rust refactoring with idiomatic patterns
+version: 1.0.0
+category: coding
+tags: [rust, refactoring, idioms]
+capabilities: [code-refactoring, ownership-analysis]
+triggers:
+  - "refactor rust"
+  - "make more idiomatic"
+---
+
+## Instructions
+
+You are an expert Rust refactoring assistant...
+
+## Examples
+
+<example input="Refactor this loop">
+...
+</example>
+
+## Constraints
+
+- Never change public API without explicit request
+- Preserve existing tests`} />
+
+## Champs de front matter
+
+| Champ | Requis | Objectif |
+| --- | --- | --- |
+| `name` | oui | Identifiant en kebab-case ; utilisé comme nom de fichier par `kod skills new` et réécrit par `rename`/`copy` afin qu'il ne dérive jamais du nom de fichier. |
+| `description` | oui | Résumé en une ligne ; recherché par `kod skills search` et affiché par `kod skills`. |
+| `version` | non | Version libre pour la compétence elle-même. (`validate-skills-strict` l'exige.) |
+| `category` | non | Regroupement grossier (`coding`, `testing`, …). |
+| `tags` | liste | Signaux de correspondance — plus grossiers que les déclencheurs, plus fins que la catégorie. |
+| `capabilities` | liste | Ce que la compétence permet ; aussi un signal de correspondance. |
+| `triggers` | liste | Phrases qui devraient activer la compétence ; mises en correspondance avec le prompt de l'utilisateur. |
+
+## Les trois sections du corps
+
+Le parseur divise le corps en :
+
+1. **Instructions** — les conseils opératoires injectés dans le prompt du modèle quand la compétence correspond. C'est la charge utile principale de la compétence.
+2. **Exemples** — des démonstrations concrètes. Ils coûtent des tokens mais affûtent sensiblement le comportement ; gardez-les petits et réalistes.
+3. **Contraintes** — des règles dures que le modèle est invité à respecter. Mettez les non-négociables ici ("préserver les tests existants", "ne jamais changer l'API publique").
+
+Les trois sections atteignent le modèle quand la compétence est mise en correspondance — aucune n'est décorative.
+
+## Priorité des répertoires
+
+KOD découvre les compétences dans quatre répertoires standard, dans l'ordre. Les répertoires ultérieurs **masquent** les précédents pour les compétences partageant un nom :
+
+1. `~/.kod/skills` — emplacement KOD canonique
+2. `~/.agents/skills` — compatibilité de style Claude
+3. `<project>/.kod/skills` — KOD local au projet
+4. `<project>/.agents/skills` — style Claude local au projet
+
+Définir `skills.skills_dir` dans la config remplace les quatre avec un seul répertoire personnalisé. `kod skills --json` montre l'inventaire fusionné exactement comme le moteur le voit.
+
+## Correspondance
+
+Le matcher score les compétences contre le prompt en utilisant les déclencheurs, les tags, les capacités et le nom. Une compétence accompagne quand son score franchit `skills.match_threshold` (0.7 par défaut), et au plus `skills.max_skills_per_query` (3 par défaut) sont sélectionnées par prompt par le [Routeur de tâches](/concepts/router/). Parce que le rechargement à chaud est activé par défaut, le prochain prompt après une édition voit le nouveau contenu — pas de redémarrage, pas de rebuild.
+
+<Aside type="tip">
+  Une compétence qui ne se déclenche jamais est généralement une inadéquation de vocabulaire : le matcher score le chevauchement de mots, donc les déclencheurs devraient utiliser les mots que vous tapez réellement. <code>kod skills search "&lt;vos mots&gt;"</code> montre ce que le matcher voit.
+</Aside>
+
+## Validation et CI
+
+Deux outils gardent un répertoire de compétences honnête :
+
+- `kod validate-skills` — valide chaque fichier de compétence ; sort avec un code non nul sur du front matter ou une structure mal formés. Câblez-le dans la CI afin qu'une compétence cassée fasse échouer le pipeline au lieu de ne jamais correspondre silencieusement.
+- `kod validate-skills-strict` — le même, plus un champ `version` manquant est aussi un échec.
+- `kod skills show <name>` — imprime le fichier complet tel qu'analysé ; si ce que vous avez écrit n'est pas ce que vous voyez, le parseur vous dit où vous avez divergé.
+
+<FileTree>
+- ~/.kod/skills/
+  - rust-refactoring.md
+  - python-testing.md
+  - code-review.md
+- my-project/.kod/skills/
+  - house-style.md
+</FileTree>

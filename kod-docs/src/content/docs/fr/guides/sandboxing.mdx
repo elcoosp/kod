@@ -1,0 +1,52 @@
+---
+title: Bac à sable
+description: Exécuter les commandes shell de KOD sous confinement au niveau de l'OS — bwrap sous Linux, sandbox-exec sous macOS — et pourquoi ça échoue bruyamment plutôt que silencieusement.
+sidebar:
+  order: 9
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Le bac à sable est la couche de confinement dur de KOD pour `execute_command`. Là où le [moteur de politique](/guides/policy/) est un décideur, le bac à sable est un mur : quand `--sandbox` est actif, les commandes shell s'exécutent via la primitive de confinement de la plateforme — **`bwrap`** (bubblewrap) sous Linux ou **`sandbox-exec`** sous macOS — au lieu de directement dans votre session.
+
+La règle de conception qui rend cela fiable : **KOD échoue bruyamment si la primitive est indisponible plutôt que de s'exécuter silencieusement sans bac à sable.** Si vous avez demandé un bac à sable et que la plateforme ne peut pas en fournir un, la commande ne s'exécute pas et vous obtenez une erreur. Il n'y a pas de repli silencieux, parce qu'un bac à sable qui disparaît tranquillement est pire que pas de bac à sable du tout. La TUI le confirme aussi sur stderr au démarrage (`Sandbox: required (bwrap on Linux, sandbox-exec on macOS)`) donc vous savez que le drapeau a pris effet avant le premier appel shell, pas après.
+
+## Quand l'utiliser
+
+- **Exécutions non surveillées.** Toute invocation de `kod agent` dans un script, une tâche cron ou un pipeline devrait porter `--sandbox`. Combiné à `--preset read-only`, il vous donne une exécution qui ne peut ni écrire de fichiers ni s'échapper de sa boîte de processus.
+- **Exécutions d'essaim.** Plusieurs agents s'exécutant simultanément multiplient à la fois la puissance et le risque ; `kod swarm` plus le bac à sable gardent la concurrence contenue.
+- **Premières sessions dans une base de code inconnue.** Laissez l'agent exécuter des tests et des builds pendant que le rayon d'action est borné.
+
+## L'activer et le vérifier
+
+<Code lang="bash" code={`# per-invocation (chat, tui, prompt, agent, swarm)
+kod chat --sandbox
+kod agent -g "run the test suite and fix failures" --sandbox
+
+# confirm the primitive exists before a long unattended run
+kod sandbox check`} />
+
+`kod sandbox check` rapporte quelle primitive est disponible sur votre plateforme — et, quand elle est manquante, la commande d'installation — afin que vous puissiez confirmer le support d'emblée plutôt que de découvrir son absence en cours d'exécution.
+
+## Ce que le bac à sable borne
+
+Les primitives de la plateforme donnent aux commandes shell de l'agent une vue restreinte du système de fichiers et un accès réseau/périphérique limité. En plus de cela, KOD monte `.git` en lecture seule par défaut (`git.history_protected`) — l'agent peut lire l'historique via les outils git mais ne peut pas le réécrire depuis une commande en bac à sable.
+
+Ce que le bac à sable ne remplace **pas** :
+
+- Le moteur de politique filtre toujours chaque appel d'outil (allow/deny/ask, globs de chemins, listes blanches de commandes).
+- Les points de contrôle prennent toujours un instantané des fichiers avant les écritures, donc l'annulation au niveau des fichiers existe dans les deux cas.
+- Les listes blanches de commandes (`binaries`) restent de l'ergonomie, pas des garanties — une liste blanche `bash` n'est pas du confinement.
+
+<Aside type="caution">
+  Le bac à sable est une ceinture et des bretelles avec le moteur de politique, pas un substitut. La posture non surveillée la plus forte est les trois couches : <code>--preset read-only</code>, <code>--sandbox</code>, et un <code>.kod/policy.toml</code> commité avec des globs <code>forbidden</code> pour les secrets.
+</Aside>
+
+## Notes de plateforme
+
+- **Linux** — bubblewrap (`bwrap`) est un petit utilitaire largement packagé. S'il n'est pas installé, `--sandbox` erre avec un message clair ; installez-le avec le gestionnaire de paquets de votre distribution. `kod sandbox check` imprime le conseil exact.
+- **macOS** — `sandbox-exec` est livré avec l'OS (il alimente les profils App Sandbox). Notez qu'Apple le marque comme obsolète ; il reste la primitive disponible aujourd'hui, et KOD l'utilise tel quel.
+- **Windows** — le support du bac à sable est limité ; KOD rapporte la primitive comme indisponible et échoue bruyamment plutôt que de faire semblant.
+
+<LinkCard title="Référence : Référence des outils" href="/reference/tools/" description="Ce que execute_command et tous les autres outils peuvent faire." />

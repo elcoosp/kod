@@ -1,0 +1,52 @@
+---
+title: URL internes
+description: Les quatre schémas sur lesquels read_file et write_file se répartissent — artifact, memory, xd, conflict — et ce que chacun donne au modèle.
+sidebar:
+  order: 5
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`read_file` et `write_file` ne touchent pas seulement le système de fichiers. Un chemin dont le composant de tête est un schéma enregistré est remis à un gestionnaire de protocole à la place, qui répond avec une ressource, un schéma ou un effet de bord. C'est ainsi que le moteur permet au modèle d'atteindre des choses qui ne sont pas des fichiers sans dépenser un schéma d'outil sur chacune.
+
+| Schéma | Ce qu'il atteint | Écrit par |
+| --- | --- | --- |
+| `artifact://<id>` | sortie d'outil brute que le minimiseur a remplacée | le moteur, après une minimisation |
+| `memory://<path>` | entrées de mémoire à long terme | les outils de mémoire |
+| `xd://` | schémas d'outils montés paresseusement | `tool_search` / `batch` |
+| `conflict://<id>` | un bloc d'un conflit de fusion | le moteur, quand un fichier a des marqueurs |
+
+## `artifact://`
+
+Quand le [minimiseur](/concepts/output-minimization/) réécrit un grand résultat d'outil en quelque chose de plus court, l'original est stocké et référencé par une URL `artifact://<id>` dans le JSON du résultat. Lire cette URL renvoie la capture intacte — le modèle peut la demander délibérément, et un humain peut la récupérer depuis le journal de session.
+
+C'est la différence entre *tronquer* et *minimiser* : un plafond de 16 Ko jette la queue, tandis qu'un artefact la garde atteignable au coût d'une lecture.
+
+## `memory://`
+
+`memory://` délègue au stockage à long terme. Le lire renvoie les entrées qui correspondent au chemin ; quand la mémoire est désactivée, le gestionnaire répond avec une erreur claire "la mémoire est désactivée" plutôt qu'une erreur de schéma inconnu, ce qui est plus utile au modèle que le silence.
+
+## `xd://`
+
+Montage paresseux d'outils. Un outil marqué `Discoverable` est retiré du tableau d'outils du fournisseur, donc son schéma ne coûte aucun budget de prompt à chaque requête. Il reste atteignable via ce schéma :
+
+- `read xd://` — lister chaque outil découvrable par nom
+- `read xd://<tool>` — le schéma complet et la description de cet outil
+- `write xd://<tool>` — l'exécuter, avec le corps JSON comme arguments
+
+Une erreur de non-concordance de schéma renvoie à nouveau le schéma, donc un appel mal formé s'auto-corrige en un tour sans second aller-retour. `tool_search` et `batch` sont enregistrés de cette façon.
+
+<Aside type="note">
+  Le schéma existe au lieu d'un outil de recherche sur mesure parce que `read` et `write` sont déjà dans le tableau d'outils. Un outil dédié coûterait son propre schéma et apprendrait au modèle un second vocabulaire pour la même opération.
+</Aside>
+
+## `conflict://`
+
+Résoudre un conflit de fusion en lisant le fichier et en réécrivant le tout est inutile et facile à rater. Quand un fichier porte des marqueurs de conflit, le moteur les scanne et donne à chaque bloc un **id stable**.
+
+- `read conflict://<path>` — scanner ce fichier et lister ses blocs
+- `read conflict://<id>` — un bloc, avec les deux côtés et les étiquettes
+- `write conflict://<id>` — épisser le texte final dans ce bloc ; les marqueurs sont supprimés
+
+Le modèle édite le bloc qui l'intéresse et rien d'autre.

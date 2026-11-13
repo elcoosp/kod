@@ -1,0 +1,159 @@
+---
+title: Configuration
+description: Comment KOD lit config.toml — emplacements, chaque section ([llm] endpoints, [memory], [skills], [swarm], [tools], [hooks], [mcp], [commands]), comportement de contrainte, et les sous-commandes de config.
+sidebar:
+  order: 3
+type: how-to
+---
+
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+
+KOD lit sa configuration depuis un seul fichier TOML, auto-généré à la première exécution, avec des défauts sains pour chaque clé. Vous pouvez passer de zéro config à une session fonctionnelle sans toucher à rien — la config existe pour que vous puissiez *arrêter* d'accepter les défauts, pas pour que vous deviez les définir.
+
+## Où vit le fichier
+
+- **Linux:** `~/.config/kod/config.toml`
+- **macOS:** `~/Library/Application Support/kod/config.toml`
+
+`kod config path` imprime l'emplacement exact ; `kod config edit` l'ouvre dans `$EDITOR` ; `kod config validate` l'analyse et sort avec un code non nul quand il est invalide — utile en CI ou après une édition manuelle. Les fichiers corrompus ne sont pas fatals : KOD avertit et retombe sur les défauts au lieu de quitter, donc une mauvaise édition ne brique jamais votre session.
+
+## La forme du fichier
+
+Une config n'a besoin que des blocs qui vous intéressent — chaque section omise est remplie à partir des défauts. L'exemple ci-dessous est un fichier *complet* réaliste :
+
+<Code lang="toml" code={`# ── Models ─────────────────────────────────────────────────────
+[llm]
+network_access = false          # opt-in network access for web_fetch
+
+[[llm.endpoints]]               # one block per model server
+name         = "local"
+provider     = "openai-compatible"   # or "anthropic" (declared, not implemented yet)
+base_url     = "http://localhost:11434/v1"
+model        = "qwen2.5-coder:7b"
+context_window = 32768
+# api_key_env = "MY_API_KEY"    # env var NAME holding the key — never the key itself
+# temperature = 0.7
+# max_tokens  = 4096
+# timeout_secs = 300
+# [llm.endpoints.pricing]       # USD per million tokens, for TUI cost display
+# input_per_mtok_usd = 0.15
+# output_per_mtok_usd = 0.60
+
+# ── Memory ─────────────────────────────────────────────────────
+[memory]
+short_term_capacity = 100
+scope               = "global"  # or "project" → <cwd>/.kod/memory.redb
+# extract_on_shutdown = false   # one LLM pass to save durable facts at exit
+
+# ── Skills ─────────────────────────────────────────────────────
+[skills]
+enable_hot_reload     = true
+max_skills_per_query  = 3
+match_threshold       = 0.7
+# skills_dir = "/custom/skills" # overrides the standard search paths
+
+# ── Swarms ─────────────────────────────────────────────────────
+[swarm]
+max_agents         = 5          # clamped to 2–8 by the runner
+merge_results      = true
+agent_timeout_secs = 300        # per-agent wall clock; 0 disables
+agent_retries      = 1
+
+# ── Write follow-ups ───────────────────────────────────────────
+[tools]
+auto_check = false              # run compiler/linter after writes (cargo, tsc, ruff, go vet)
+auto_lsp   = true               # run language-server diagnostics after writes
+
+# ── Hooks ──────────────────────────────────────────────────────
+[hooks]
+enabled = false
+# pre_tool_use  = { write_file = "rustfmt {path}" }
+# post_tool_use = { write_file = "cargo check" }
+
+# ── MCP servers (optional) ─────────────────────────────────────
+# [mcp.servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+# enabled = true
+# call_timeout_secs = 60
+# [mcp.servers.filesystem.env]
+# LOG_LEVEL = "info"
+
+# ── Custom slash commands (optional) ───────────────────────────
+# [commands]
+# review = "Review the last change in {cwd} and point out risks."
+# explain = "Explain what this code does:\\n\\n{args}"`} />
+
+## Endpoints au lieu d'un seul modèle
+
+La section `[llm]` contient une **liste d'endpoints nommés**, pas un modèle plat. Le premier endpoint est le défaut ; tout ce qui affecte le fil — `base_url`, `model`, `temperature`, `max_tokens` — vit sur l'endpoint. C'est ce qui vous permet de pointer différents travaux vers différents serveurs :
+
+<Code lang="toml" code={`[llm.routing]
+by_task  = { Debugging = "cloud", Simple = "local" }
+fallback = ["local", "cloud"]     # try in order when the primary fails
+swarm    = { Planning = "cloud", Coding = "local" }`} />
+
+- `by_task` associe un [type de tâche](/concepts/router/) (`Simple`, `Debugging`, …) à un nom d'endpoint.
+- `fallback` est la chaîne de nouvelles tentatives ordonnée pour les erreurs réessayables.
+- `swarm` associe les capacités d'essaim (`Planning`, `Coding`, …) aux endpoints, afin qu'un essaim puisse réfléchir avec un modèle et coder avec un autre.
+
+Les noms qui ne correspondent à aucun endpoint défini sont supprimés avec un avertissement au chargement — une faute de frappe ne peut pas désactiver silencieusement une route.
+
+## Les clés API vivent dans l'environnement
+
+Les blocs d'endpoint ne contiennent jamais de matière de clé — seulement le *nom* de la variable d'environnement qui la détient :
+
+<Code lang="toml" code={`[[llm.endpoints]]
+name        = "openai"
+provider    = "openai-compatible"
+base_url    = "https://api.openai.com/v1"
+model       = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"`} />
+
+Une config partagée ou commitée ne peut donc pas fuiter de secret. La section mémoire a le même modèle pour l'API d'embedding optionnelle (`memory.embedding_api_key_env`).
+
+## Les valeurs hors limites sont contraintes, pas fatales
+
+Au chargement, chaque endpoint est validé : la température est contrainte à 0,0–2,0, `context_window` a un plancher cohérent (2000), `max_tokens = 0` retombe sur le défaut, les timeouts sont plancher à 1s, et les valeurs vides de `base_url`/`model` sont remplacées. Chaque ajustement journalise un avertissement nommant l'endpoint et la valeur corrigée. La philosophie : être indulgent au chargement, bruyant à ce sujet, et précis une fois en cours d'exécution.
+
+## Surcharges par projet : `.kod/`
+
+Trois choses peuvent être limitées à un répertoire de projet au lieu de votre répertoire personnel :
+
+1. **Politique** — `.kod/policy.toml` dans la racine du projet est commité dans le dépôt comme un `.editorconfig` et se superpose à votre config globale. Voir [Politique & Permissions](/guides/policy/).
+2. **Mémoire** — `memory.scope = "project"` place la base de données à long terme sous `<cwd>/.kod/memory.redb` au lieu de `~/.kod/data/kod.redb`, donnant à chaque projet sa propre mémoire.
+3. **Raccourcis clavier** — un `.kod-keys.toml` dans le projet remappe les touches de la TUI pour ce dépôt uniquement. Voir [TUI Keybindings](/reference/tui-keys/#rebinding-keys).
+
+## Commandes slash personnalisées
+
+Le bloc `[commands]` enregistre vos propres commandes slash de la TUI. Chaque clé devient `/key`, et sa valeur est le prompt qui est envoyé :
+
+<Code lang="toml" code={`[commands]
+review  = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\\n\\n{args}"`} />
+
+`{args}` est remplacé par tout ce qui est tapé après le nom de la commande ; `{cwd}` par le répertoire de travail courant. `/review` n'a pas besoin d'arguments ; `/explain foo.bar` envoie le modèle avec `foo.bar` substitué.
+
+## Inspecter ce qui s'applique réellement
+
+Parce que la configuration vient des défauts plus vos éditions, la question utile est souvent « qu'est-ce qui est *effectif* ? » plutôt que « qu'ai-je écrit ? » :
+
+<Tabs>
+<TabItem label="Effective config">
+  <Code lang="bash" code={`kod config show-merged   # defaults merged with user config, reproducible`} />
+</TabItem>
+<TabItem label="Raw file">
+  <Code lang="bash" code={`kod config show-raw      # verbatim file contents, comments included`} />
+</TabItem>
+<TabItem label="Just the LLM block">
+  <Code lang="bash" code={`kod profile show         # the effective [llm] section`} />
+</TabItem>
+</Tabs>
+
+`kod config export [path]` vide la config effective dans un fichier (ou stdout avec `-` ; refuse d'écraser sans `--force`), ce qui vous donne un point de départ entièrement auto-documenté.
+
+<Aside type="tip">
+  Piper <code>kod config show-merged</code> dans un fichier et le commiter est une façon propre de versionner votre base de référence et de diffuser les changements futurs par rapport à elle.
+</Aside>
+
+<LinkCard title="Référence : Référence de configuration" href="/reference/config/" description="Chaque clé, type, défaut et plage valide sous forme de tableau." />

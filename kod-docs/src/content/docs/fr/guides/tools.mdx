@@ -1,0 +1,69 @@
+---
+title: Outils
+description: Ce que les outils intégrés de KOD peuvent faire — système de fichiers, git, shell, vérifications de projet, mémoire, LSP et web — et comment chaque appel est filtré par permission, verrouillé par chemin et mis en bac à sable.
+sidebar:
+  order: 7
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Les outils sont la façon dont l'agent touche votre système. KOD embarque 24 outils intégrés, et chaque appel passe par le même parcours du combattant : le [moteur de politique](/guides/policy/) décide allow/deny/ask, l'exécuteur applique un timeout, une table de verrous consultatifs par chemin empêche les écritures concurrentes sur le même fichier, et `--sandbox` peut router les commandes shell via le bac à sable de la plateforme. `kod tools list` imprime le registre exactement comme le modèle le voit ; `kod tools show <name>` imprime le schéma d'un outil.
+
+## Les familles d'outils
+
+**Système de fichiers** — `read_file`, `write_file`, `patch_file`, `list_files`, `grep`, `file_info`, `search_files`. Les chemins d'écriture sont prudents : les résultats de `write_file` attachent un diff unifié de ce qui a changé, et `write_file` et `patch_file` prennent un instantané du fichier cible d'abord afin que les [points de contrôle](/guides/sessions/#checkpoints-file-level-undo) puissent le restaurer. `search_files` trouve des fichiers par motif de nom quand la recherche de contenu de `grep` n'est pas la bonne forme.
+
+**Git** — `git_status`, `git_diff`, `git_commit`, `git_branch`. Status et diff sont en lecture seule ; commit et branch-create sont filtrés en écriture comme tout autre outil mutant. Ensemble, ils permettent à l'agent de raisonner sur votre arbre de travail et — quand la politique l'autorise — de commiter son propre travail sur une branche sans passer par le shell.
+
+**Shell** — `execute_command`, l'outil le plus puissant et le plus filtré. C'est celui le plus affecté par les préréglages de politique (refusé d'emblée sous `read-only`), les listes blanches de commandes (`binaries` / `forbidden_binaries` dans `.kod/policy.toml`) et le bac à sable.
+
+**Vérifications de projet** — `check` exécute le compilateur ou linter qui correspond à votre projet — Cargo, `tsc`, `ruff` ou `go vet` — et renvoie des diagnostics structurés. L'agent l'utilise pour demander "cette édition a-t-elle cassé le build ?" sans grepper la sortie du compilateur.
+
+**Planification et interaction** — `todo` maintient une liste de tâches visible pour le travail multi-étapes, et `ask_user` permet à l'agent de s'arrêter et de vous poser une question au lieu de deviner.
+
+**Mémoire** — `memory_save` et `memory_search` donnent au modèle un accès direct au stockage à long terme. Enregistrés uniquement quand la mémoire est activée ; voir [Mémoire](/guides/memory/).
+
+**Essaim** — `swarm_note` et `swarm_read`, un tableau noir partagé que les agents concurrents utilisent pour publier et lire les découvertes des autres ; voir [Essaims d'agents](/guides/swarm/).
+
+**Web** — `web_fetch`, une récupération HTTP/HTTPS avec protection SSRF : les endpoints loopback, privés, link-local et metadata sont refusés. C'est le seul outil qui peut atteindre le réseau, et seulement quand `llm.network_access` (ou la politique `network` de l'outil) l'active.
+
+**LSP** — `lsp_diagnostics`, `lsp_definition`, `lsp_references`, `lsp_hover`. Quand un serveur de langage pour le langage du fichier est sur votre `PATH`, ces outils donnent à l'agent des réponses de qualité compilateur — sinon ils échouent avec un message nommant le serveur manquant. Voir ci-dessous.
+
+## Filtrage des permissions en un paragraphe
+
+Il n'y a pas de chemin non filtré. Le contexte d'exécution du trait `Tool` (`ToolContext`) porte les permissions et ancre les chemins relatifs à un répertoire de travail ; le moteur de politique consulte la politique effective — préréglage, config globale, `.kod/policy.toml` du projet, override CLI — avant chaque appel, et la décision (y compris quelle règle et quelle couche a décidé) est journalisée dans la session. Un `deny` l'emporte toujours sur un `allow` en cas de conflit de glob, et les globs de chemins suivent la sémantique gitignore : `*` ne traverse pas `/`, `**` le fait.
+
+## Sécurité de concurrence
+
+Une table de verrous consultatifs par chemin signifie que deux agents (par exemple, dans un [essaim](/guides/swarm/)) ne peuvent pas entrelacer silencieusement des écritures sur le même fichier. Les conflits sont détectés et font surface plutôt que last-write-wins. C'est ce qui rend le mode espace de travail partagé de l'essaim utilisable au lieu de terrifiant.
+
+## Quel outil quand
+
+| Vous voulez que l'agent… | Outil qui s'exécute | Politique typique |
+| --- | --- | --- |
+| Inspecte le code, trouve des motifs | `read_file`, `list_files`, `grep`, `file_info`, `search_files` | autorisé partout |
+| Édite un fichier | `write_file` / `patch_file` | `ask` sous `standard` |
+| Comprende les changements récents | `git_status`, `git_diff` | autorisé |
+| Commite le travail / crée une branche | `git_commit`, `git_branch` | `ask` sous `standard` |
+| Exécute des tests, build, format | `execute_command` | `ask` sous `standard` |
+| Vérifie le build après une édition | `check` | autorisé (lecture seule par nature) |
+| Cherche quelque chose en ligne | `web_fetch` | nécessite l'accès réseau activé |
+| Sauvegarde un fait pour plus tard | `memory_save` / `memory_search` | autorisé quand la mémoire est on |
+
+## Suites d'écriture : LSP et check
+
+Deux interrupteurs de config ajoutent une vérification automatique après chaque écriture réussie :
+
+<Code lang="toml" code={`[tools]
+auto_lsp   = true    # default — cheap, sub-second per file
+auto_check = false   # opt-in — runs the compiler, which is not free`} />
+
+- **`auto_lsp`** exécute la passe de diagnostics du serveur de langage sur les fichiers touchés et ajoute un bloc `## LSP diagnostics` au prompt du prochain tour. Il ne s'exécute que pour les langages qui ont un serveur sur `PATH` ; une session qui n'en a aucun installé ne voit simplement aucun bloc. La même capacité est disponible pour l'agent à la demande via `lsp_diagnostics`, `lsp_definition`, `lsp_references` et `lsp_hover`.
+- **`auto_check`** exécute la vérification du projet (`cargo`, `tsc`, `ruff`, `go vet`) et ajoute ses diagnostics de la même manière. Une base de référence est capturée au démarrage, donc le modèle voit *ses* erreurs, pas celles préexistantes. Sur un grand espace de travail, cela ajoute une exécution du compilateur par écriture — c'est pourquoi c'est désactivé par défaut. Le `/check` de la TUI exécute la même vérification à la demande.
+
+<Aside type="note">
+  Là où un serveur de langage est manquant, les outils LSP ne renvoient pas silencieusement rien — ils échouent avec un message nommant le binaire manquant, et le modèle peut vous dire quoi installer.
+</Aside>
+
+<LinkCard title="Référence : Référence des outils" href="/reference/tools/" description="Les arguments, la forme du résultat et le filtrage de chaque outil en une table." />

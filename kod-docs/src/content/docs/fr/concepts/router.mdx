@@ -1,0 +1,57 @@
+---
+title: Routeur de tâches
+description: Comment KOD classe votre prompt — les types de tâches, comment la classification façonne l'ancrage et la correspondance des compétences, et comment le piloter.
+sidebar:
+  order: 3
+type: explanation
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Le Routeur de tâches est la première chose que votre prompt rencontre. Le routeur lit l'entrée et lui attribue un `TaskType`, et cette classification façonne discrètement tout le tour : quelles compétences sont mises en correspondance, comment le prompt ancré est encadré, et comment le moteur traite le résultat. Il est basé sur des mots-clés et des motifs — déterministe, rapide et inspectable — pas un appel au modèle, ce qui signifie que la classification ne coûte rien et ne varie jamais entre les exécutions du même prompt.
+
+## Les types de tâches
+
+| `TaskType` | Ce qu'il couvre |
+| --- | --- |
+| `Simple` | Questions, explications, recherches — aucune modification de code implicite |
+| `CodeModification` | Éditions de code existant — refactorisations, commentaires de doc, ajustements |
+| `Debugging` | Défaillances, erreurs, comportements à diagnostiquer |
+| `Research` | Exploration et compréhension à travers de nombreux fichiers |
+| `Testing` | Écrire ou corriger des tests |
+| `Documentation` | Docs et commentaires comme sortie principale |
+| `Complex` | Tâches qui combinent plusieurs des ci-dessus |
+| `MultiStep` | Tâches à long horizon nécessitant des opérations ordonnées |
+
+## Comment la classification affecte le tour
+
+Deux effets concrets à connaître :
+
+1. **Correspondance des compétences.** Le routeur décide quelles compétences accompagnent chaque prompt, jusqu'à `max_skills_per_query` (défaut 3) avec un seuil de correspondance de `0.7`. Un prompt `Debugging` et un prompt `Documentation` peuvent faire surface à des ensembles de compétences différents depuis le même répertoire.
+2. **Encadrement du prompt.** Le prompt ancré reflète le type de tâche, donc le modèle part d'un encadrement qui correspond à la demande au lieu d'en inférer un à partir de zéro.
+
+La classification alimente aussi le [routage multi-modèle](/guides/configuration/#endpoints-instead-of-a-single-model) : avec `[llm.routing].by_task`, vous pouvez envoyer le travail `Debugging` à un endpoint plus fort tandis que les questions `Simple` restent sur le modèle local rapide.
+
+## Ce que le routeur considère
+
+La config du routeur porte les boutons qui façonnent un tour :
+
+- `enable_memory` — si la mémoire participe à l'ancrage.
+- `max_skills_per_query` — le plafond de compétences par prompt.
+- `working_dir` — l'ancre pour tous les chemins relatifs dans les appels d'outils et les globs.
+- `context_window` — lu depuis l'endpoint ; dimensionne le budget par prompt du gestionnaire de mémoire afin que les longues sessions ne laissent pas tomber des entrées qu'un grand modèle aurait pu garder.
+- `short_term_capacity` — lu depuis `memory.short_term_capacity`.
+
+## Quand le routage vous surprend
+
+Parce que la classification est une correspondance déterministe de chaînes, un résultat surprenant est toujours traçable :
+
+- `kod chat --verbose` (ou les lignes d'outils étendues de la TUI) montre la classification de chaque tour.
+- L'en-tête de la TUI montre le type de tâche au début du tour — `CodeModification`, `Debugging`, et ainsi de suite.
+- Si un prompt est classé différemment de ce que vous voulez, reformulez avec les verbes sur lesquels le routeur se base ("refactor", "debug", "explain", "write tests", "document") — ou laissez `/goal` définir un encadrement permanent pour toute la session.
+
+<Aside type="caution">
+  Un choix de conception délibéré : le routeur renvoyait autrefois du texte d'espace réservé fabriqué quand aucun fournisseur n'était configuré. Il ne le fait plus — un fournisseur manquant produit une erreur explicite au lieu d'une réponse inventée. Échouer bruyamment bat faire semblant poliment.
+</Aside>
+
+<LinkCard title="Concepts : La boucle de l'agent" href="/concepts/agent-loop/" description="Où se situe la classification à l'intérieur du tour complet." />

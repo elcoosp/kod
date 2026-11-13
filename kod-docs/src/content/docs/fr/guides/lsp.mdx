@@ -1,0 +1,61 @@
+---
+title: Intégration du serveur de langage
+description: Quels serveurs KOD cherche, comment les diagnostics atteignent le modèle, et ce qui se passe quand aucun n'est installé.
+sidebar:
+  order: 13
+type: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD utilise les serveurs de langage pour deux choses : les outils `lsp_*` que le modèle appelle explicitement, et une passe de diagnostics qui s'exécute après une écriture réussie afin que le modèle voie les erreurs à son prochain tour sans demander.
+
+Rien ici n'est requis. Sans serveur sur `PATH`, les outils signalent une capacité manquante et le chemin d'écriture saute simplement la passe.
+
+## Quel serveur, pour quel fichier
+
+La détection se fait par extension, puis une vérification que le binaire est sur `PATH` :
+
+| Extension | Serveur, dans l'ordre essayé |
+| --- | --- |
+| `.rs` | `rust-analyzer` |
+| `.py` | `pyright-langserver`, puis `pylsp` |
+| `.ts` `.tsx` `.js` `.jsx` | `typescript-language-server` |
+| `.go` | `gopls` |
+
+Tout le reste n'a pas de serveur. Ce n'est pas une erreur — l'outil signale quelle capacité est manquante plutôt que de renvoyer un résultat vide, donc le modèle apprend à retomber sur le `check` basé sur le compilateur au lieu de conclure que le fichier est propre.
+
+## Les quatre outils
+
+| Outil | Répond |
+| --- | --- |
+| `lsp_diagnostics` | diagnostics courants pour un fichier |
+| `lsp_definition` | où un symbole est défini |
+| `lsp_references` | où un symbole est référencé |
+| `lsp_hover` | le type et la documentation à une position |
+
+## Diagnostics après une écriture
+
+Avec `[lsp] auto_diagnostics` activé (le défaut), une écriture réussie déclenche une passe de diagnostics sur le fichier touché. Elle attend `settle_ms` (500 ms) que le serveur publie, puis ajoute un bloc `## LSP diagnostics` au prompt du prochain tour.
+
+Un serveur lent sur un grand espace de travail peut prendre des secondes. Faire attendre l'écriture tout ce temps est le mauvais compromis, donc une seconde passe en arrière-plan continue de surveiller avec un budget plus long — `deferred_settle_ms` (12 s). Ce qu'elle trouve est mis en file d'attente et vidé dans le prompt du *prochain* tour sous `## LSP diagnostics (late)`, ce qui est là où les erreurs comptent de toute façon.
+
+Deux détails gardent la file tardive honnête :
+
+- **Déduplication.** Un serveur republie sa liste entière à chaque changement, donc une entrée égale à une déjà en file d'attente pour cette transcription est supprimée. Sans cela, un rust-analyzer occupé mettrait en file les mêmes trente erreurs à chaque frappe.
+- **Garde de version.** La tâche d'arrière-plan enregistre le mtime du fichier au moment du spawn et ne pousse un résultat que si le fichier a toujours ce mtime. Une écriture pendant l'attente rend la réponse obsolète, et elle est écartée plutôt que rapportée contre un contenu qui n'existe plus.
+
+<Aside type="note">
+  KOD n'a pas de version de document LSP côté moteur, donc le mtime en tient lieu. C'est plus grossier — deux écritures dans le même tick d'horodatage du système de fichiers sembleraient identiques — mais ça ne nécessite aucune coordination avec le serveur.
+</Aside>
+
+## Réglage
+
+| Clé | Défaut | Effet |
+| --- | --- | --- |
+| `auto_diagnostics` | `true` | Exécuter la passe post-écriture du tout |
+| `settle_ms` | `500` | Combien de temps la passe inline attend |
+| `deferred_enabled` | `true` | Exécuter la passe tardive en arrière-plan |
+| `deferred_settle_ms` | `12000` | Combien de temps cette passe attend |
+
+Deux interrupteurs conditionnent la passe, et **les deux** doivent être activés : `[tools] auto_lsp` (vrai par défaut, l'interrupteur grossier utilisé par `kod doctor` et le toggle de la TUI) et `[lsp] auto_diagnostics` (vrai par défaut, le choix de config persistant). Désactiver l'un ou l'autre la désactive. `kod doctor` nomme lequel l'a désactivée plutôt que de signaler un "diagnostics désactivés" générique.

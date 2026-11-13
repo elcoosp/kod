@@ -1,0 +1,81 @@
+---
+title: Fournisseurs LLM
+description: La couche fournisseur de KOD — endpoints, le chemin de code unique compatible OpenAI, normalisation de l'URL de base, et streaming avec assemblage d'appels d'outils en direct.
+sidebar:
+  order: 4
+type: explanation
+---
+
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+
+KOD parle aux modèles à travers une seule abstraction : le trait `LlmProvider` dans `kod-provider`, implémenté aujourd'hui par `kod-provider-openai` (soutenu par `adk-model`). Le pari de conception est que presque chaque serveur de modèle que vous pourriez exécuter localement — et OpenAI lui-même — parle le même protocole filaire OpenAI chat-completions, donc une implémentation les couvre tous.
+
+## Un seul chemin de code, de nombreux serveurs
+
+Tous ceux-ci fonctionnent sans modification, sur le même chemin de code :
+
+<Tabs>
+<TabItem label="Ollama (défaut)">
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "local"
+provider = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+model    = "qwen2.5-coder:7b"
+context_window = 32768`} />
+</TabItem>
+<TabItem label="LM Studio">
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "lmstudio"
+provider = "openai-compatible"
+base_url = "http://localhost:1234/v1"
+model    = "your-model"
+context_window = 16384`} />
+</TabItem>
+<TabItem label="vLLM">
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "vllm"
+provider = "openai-compatible"
+base_url = "http://localhost:8000/v1"
+model    = "your-model"
+context_window = 32768`} />
+</TabItem>
+<TabItem label="OpenAI (cloud)">
+  <Code lang="toml" code={`[[llm.endpoints]]
+name     = "openai"
+provider = "openai-compatible"   # "OpenAI" works too — same thing
+base_url = "https://api.openai.com/v1"
+model    = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"   # the key lives in the environment
+context_window = 128000`} />
+</TabItem>
+</Tabs>
+
+Le champ `provider` accepte `openai-compatible` (alias `Ollama` et `OpenAI`). Le fournisseur Anthropic est implémenté et construit par `build_provider` ; voir `crates/kod-provider-anthropic` pour le format filaire et `crates/kod-provider-anthropic/tests/contracts.rs` pour le contrat comportemental.
+
+## Endpoints, pas un seul modèle
+
+Les endpoints sont une liste, et le premier est le défaut. Tout ce qui affecte le fil — `base_url`, `model`, `temperature`, `max_tokens`, `timeout_secs` — vit sur l'endpoint, ce qui permet au [routage](/guides/configuration/#endpoints-instead-of-a-single-model) d'envoyer la planification d'un essaim à un serveur et son codage à un autre. Les clés API sont référencées par *nom* de variable d'environnement (`api_key_env`), donc une config commitée ne peut pas fuiter de secret, et le `[llm.endpoints.pricing]` optionnel (USD par million de tokens) alimente l'affichage du coût de la TUI.
+
+## Normalisation de l'URL de base
+
+Les URL de base sont normalisées automatiquement : une racine de serveur (`http://localhost:11434`) ou une racine `.../v1` (`http://localhost:11434/v1`) fonctionnent toutes les deux. KOD compose le bon endpoint chat-completions dans les deux cas, ce qui supprime le piège le plus courant de "la connexion fonctionne mais les requêtes renvoient 404" lors du changement de serveur.
+
+## Streaming et appels d'outils
+
+La génération est streaming-first. Le fournisseur consomme SSE et émet des chunks que l'UI rend en direct ; les appels d'outils reçoivent un traitement spécial avec le cadrage `ToolCallStart` / `ToolCallDelta`, donc un appel d'outil est **assemblé en direct au fur et à mesure que le modèle l'émet** plutôt que mis en mémoire tampon jusqu'à ce que la réponse soit terminée. Au moment où le modèle termine son tour, KOD a déjà l'appel prêt à filtrer et à exécuter — l'une des raisons pour lesquelles les lignes d'outils de la TUI semblent immédiates.
+
+La génération non-streaming existe aussi, mais la boucle du moteur utilise le streaming partout, y compris à l'intérieur des agents [swarm](/guides/swarm/).
+
+## Découverte de modèles
+
+`kod models` appelle le `list_models()` du fournisseur (`GET /v1/models` en amont) avec `--filter` pour restreindre la liste. Les erreurs font surface plutôt que d'être réduites à une liste vide — un mauvais endpoint se montre comme une erreur ici au lieu de montrer mystérieusement "aucun modèle". La complétion `/model` de la TUI utilise la même source, donc les noms qu'elle offre sont ceux que votre serveur sert réellement.
+
+## Ce qu'un fournisseur doit fournir
+
+La surface du trait est délibérément petite : génération (streaming et non) avec appel d'outils, plus le listage des modèles. `GenerationOptions` porte la température, les plafonds de tokens et compagnie. Cette petitesse est pourquoi le chemin compatible OpenAI couvre tant de serveurs — et pourquoi une future seconde implémentation (le protocole natif d'Anthropic, par exemple) a une forme claire dans laquelle s'insérer.
+
+<Aside type="note">
+  Détail du moteur qui vaut la peine d'être connu : la boucle agentique ne détient pas le verrou de lecture du fournisseur pendant un tour de streaming, donc <code>/model</code> en milieu de prompt bascule instantanément — le flux d'un endpoint peut s'arrêter pendant que le suivant démarre.
+</Aside>
+
+<LinkCard title="Guides : Profils de modèle" href="/guides/profiles/" description="Les quatre préréglages qui font du changement de modèle une ligne unique." />

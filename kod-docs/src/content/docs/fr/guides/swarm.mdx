@@ -1,0 +1,66 @@
+---
+title: Essaims d'agents
+description: kod swarm — décomposer un objectif en sous-tâches, exécuter jusqu'à 8 agents simultanément, détecter les conflits de fichiers et fusionner les résultats.
+sidebar:
+  order: 10
+type: how-to
+---
+
+import { Aside, Code, LinkCard, Steps } from '@astrojs/starlight/components';
+
+Un essaim est la réponse de KOD à « cette tâche est trop grosse pour une seule passe. » `kod swarm` décompose un objectif en N sous-tâches, lance N agents, les exécute **simultanément** contre un espace de travail partagé, détecte les conflits de fichiers entre eux, et demande au modèle de fusionner les résultats par agent en une seule réponse.
+
+## Le cycle de vie
+
+<Steps>
+1. **Décomposer** — l'exécuteur demande au modèle de diviser votre objectif en sous-tâches, ciblant `swarm.max_agents` morceaux.
+2. **Lancer** — jusqu'à N agents démarrent avec leur propre sous-tâche. L'exécuteur contraint N à la plage **2–8** : un essaim à un agent n'est pas un essaim, et huit boucles agentiques simultanées satureront la plupart des serveurs de modèles locaux.
+3. **Exécuter** — les agents bouclent indépendamment (classer → ancrer → diffuser → outils), coordonnés via un hub de communication avec un espace de travail partagé et des verrous par chemin. Ils partagent les découvertes via les outils de tableau noir `swarm_note` / `swarm_read`.
+4. **Détecter les conflits** — les verrous au niveau des fichiers et un résolveur de conflits font surface aux agents qui ont touché les mêmes chemins.
+5. **Fusionner** — quand `swarm.merge_results` est vrai (le défaut), le modèle synthétise une réponse finale à partir des résultats par agent. Quand c'est faux — ou quand la synthèse échoue — les résultats sont concaténés sous leurs étiquettes.
+</Steps>
+
+## En lancer un
+
+<Code lang="bash" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
+
+Drapeaux qui comptent : `-n, --agents` remplace le nombre d'agents configuré (toujours contraint à 2–8) et `--model` change le modèle pour toute l'exécution. Dans la TUI, `/swarm <goal>` démarre le même flux de manière interactive. Désactiver la fusion de résultats est une décision de config, pas un drapeau : définissez `swarm.merge_results = false` dans `config.toml` pour toujours obtenir une sortie par agent étiquetée.
+
+<Aside type="tip">
+  Les essaims brillent quand les sous-tâches sont <em>disjointes par fichier</em> — « module A », « module B », « tests ». Vous obtenez un vrai parallélisme et aucun conflit de fusion. Quand les sous-tâches doivent toucher les mêmes fichiers, préférez une seule exécution <code>kod agent</code> ou gardez <code>-n</code> petit.
+</Aside>
+
+## Configuration
+
+<Code lang="toml" code={`[swarm]
+max_agents         = 5     # the decompose step targets this; runner clamps to 2–8
+merge_results      = true  # false = concatenate per-agent results under labels
+agent_timeout_secs = 300   # per-agent wall clock; a stuck agent is cancelled; 0 disables
+agent_retries      = 1     # extra attempts after a timeout or provider error`} />
+
+La section de config est minimale à dessein — elle ne porte que les valeurs que l'exécuteur d'essaim consomme réellement. La stratégie de coordination et les timeouts de verrou ne sont pas réglables parce que ce ne sont pas des paramètres qui valent la peine d'être exposés ; les défauts encodent un pipeline à opinion unique.
+
+## Router les rôles d'essaim vers différents modèles
+
+Si votre config définit plusieurs endpoints, `[llm.routing].swarm` associe les capacités d'essaim aux endpoints — le même routage multi-modèle que `by_task` fournit pour les prompts ordinaires :
+
+<Code lang="toml" code={`[llm.routing.swarm]
+Planning = "cloud"   # the decompose/merge step thinks with the bigger model
+Coding   = "local"   # the per-agent implementation work stays local`} />
+
+Voir [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) pour les blocs d'endpoint auxquels ces noms se réfèrent.
+
+## Espace de travail partagé et sécurité
+
+Le coordinateur d'espace de travail empêche les agents de se marcher sur les pieds via deux mécanismes :
+
+1. **Verrous consultatifs par chemin** — la même table que la couche d'outils utilise pour les écritures concurrentes ; deux agents ne peuvent pas entrelacer silencieusement des écritures sur le même fichier.
+2. **Détection et résolution de conflits** — quand les agents se disputent réellement les mêmes chemins, les conflits sont détectés et rapportés plutôt que résolus par last-write-wins.
+
+La politique s'applique par agent : chaque appel d'outil d'un agent passe par le même [moteur de politique](/guides/policy/) que les exécutions à agent unique. `--sandbox` (sur `kod swarm` comme `kod agent`) confine chaque commande shell d'agent, et `--preset read-only` transforme un essaim en équipage d'analyse en lecture seule.
+
+<Aside type="caution">
+  Un essaim avec <code>yolo</code> et sans bac à sable multiplie l'accès en écriture non surveillé par N. Pour les exécutions non surveillées, la posture sûre est <code>--preset read-only</code> plus <code>--sandbox</code>, ou un <code>.kod/policy.toml</code> strict.
+</Aside>
+
+<LinkCard title="Concepts : La boucle de l'agent" href="/concepts/agent-loop/" description="Ce que fait chaque agent d'essaim par tour." />

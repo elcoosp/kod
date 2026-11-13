@@ -1,0 +1,68 @@
+---
+title: Dépannage
+description: Problèmes courants de KOD et correctifs — problèmes d'endpoint, problèmes de config, erreurs de mémoire, confusion de permissions, et ce que kod doctor vous dit.
+sidebar:
+  order: 13
+type: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+La plupart des problèmes de KOD ont des causes courtes : un serveur de modèle qui ne tourne pas, une faute de frappe dans la config, une règle de politique qui fait exactement ce que vous lui avez demandé. Cette page rassemble les fréquents, dans l'ordre où vous êtes susceptible de les rencontrer. Pour les problèmes en forme de question ("où sont mes sessions ?", "comment réinitialiser X ?"), voir la [FAQ](/guides/faq/).
+
+## Commencez par `kod doctor`
+
+`kod doctor` est l'outil de triage. Il vérifie le fichier de config, l'endpoint du modèle, les compétences découvertes, la base de données de mémoire, la primitive de bac à sable et la disponibilité de git, et imprime un verdict pour chacun. Exécutez-le avant tout le reste ; la moitié des entrées ci-dessous sont "doctor vous l'aurait dit." `kod doctor --fix` crée les répertoires manquants et écrit une config par défaut si aucune n'existe — il ne touche jamais à une config existante.
+
+## L'endpoint n'est pas joignable
+
+**Symptôme :** le premier prompt se bloque puis échoue ; `kod doctor` marque la vérification de l'endpoint comme échouée.
+
+**Correctifs, par ordre de probabilité :**
+
+1. Le serveur de modèle ne tourne pas. Démarrez-le — `ollama serve` — ou démarrez le serveur de LM Studio / MLX Omni Serve / vLLM.
+2. Mauvaise URL de base. La racine compatible OpenAI d'Ollama est `http://localhost:11434/v1` ; la config par défaut pointe là. `kod profile show` imprime le bloc `[llm]` effectif pour que vous puissiez voir ce que KOD utilise réellement.
+3. Le nom du modèle n'existe pas sur le serveur. `kod models` liste ce que le fournisseur offre (`--filter` restreint). Notez que le nom du modèle du serveur est ce qui compte (`qwen2.5-coder:7b`), pas le nom du profil.
+4. Un endpoint cloud renvoie 401. `api_key_env` nomme la variable d'environnement qui doit contenir la clé — vérifiez que la variable est définie *dans le shell depuis lequel vous avez lancé KOD*.
+
+## Problèmes de config
+
+**Symptôme :** avertissements au démarrage, ou valeurs qui ne se comportent pas comme prévu.
+
+- Les valeurs hors limites (température, fenêtre de contexte, max tokens, timeout) sont **contraintes avec un avertissement au chargement** — lisez l'avertissement ; il nomme l'endpoint et la valeur corrigée.
+- Un fichier de config corrompu ne brique rien : KOD avertit et retombe sur les défauts. `kod config validate` sort avec un code non nul sur du TOML invalide, ce qui facilite la vérification d'une édition manuelle avant de démarrer une session.
+- Pour voir la configuration *effective* plutôt que le fichier brut, `kod config show-merged` imprime les défauts fusionnés avec vos paramètres — auto-documenté et reproductible.
+- Les anciennes clés sont silencieusement ignorées plutôt que d'erreur — si un bloc `[llm]` d'un ancien exemple semble ne rien faire, réécrivez-le comme un bloc `[[llm.endpoints]]` (voir [Configuration](/guides/configuration/)).
+
+## "L'agent a refusé d'écrire / d'exécuter quoi que ce soit"
+
+C'est le [moteur de politique](/guides/policy/) qui fonctionne comme configuré :
+
+- **Préréglage `read-only`** refuse `write_file`, `patch_file` et `execute_command` sans demander. Si vous avez lancé avec `--preset read-only`, c'est pourquoi. Retirez-le ou utilisez `standard`.
+- **`.kod/policy.toml`** à la racine du projet peut refuser un chemin (globs `forbidden`) ou un binaire (`forbidden_binaries`). La décision est journalisée avec sa règle et sa couche source — vérifiez l'entrée du journal de session, ou exécutez `kod policy explain <tool> <args>` pour voir le verdict sans session.
+- **Préréglage `standard` avec personne pour approuver** : `kod agent` et `kod prompt` ne peuvent pas répondre aux invites d'approbation, donc les appels nécessitant une approbation sont refusés immédiatement avec un message. Pour les scripts, préférez une conception d'exécution `--preset read-only` explicite.
+
+## Erreurs de mémoire
+
+**Symptôme :** le stockage à long terme erre à l'ouverture.
+
+- Un fichier `redb` périmé ou corrompu est corrigé en le supprimant — il vit à `~/.kod/data/kod.redb` (portée globale) ou `<cwd>/.kod/memory.redb` (portée projet), et il sera recréé à la prochaine utilisation. Vos sessions et points de contrôle sont stockés ailleurs et survivent.
+- `kod memory clear` vide les entrées sans toucher au fichier lui-même.
+
+## Problèmes d'état de la TUI
+
+**Symptôme :** la TUI rouvre une conversation que vous vouliez disparue, ou un fichier d'état corrompu casse le démarrage.
+
+- La TUI reprend depuis `~/.kod/tui_session.json` (répertoire remplaçable avec `KOD_TUI_STATE_DIR`). `kod sessions clear` le supprime délibérément.
+- Si le fichier d'état est corrompu, supprimez-le — l'historique et les sessions sur disque ne sont pas affectés. Notez que `kod tui --no-resume` imprime actuellement un indice plutôt que de sauter le fichier ; déplacer le fichier de côté est le nouveau départ fiable.
+
+## Où regarder ensuite
+
+- `kod sessions latest` + le journal JSONL — ce qui s'est réellement passé, y compris chaque décision de politique avec sa source.
+- `kod tools list` — ce que le modèle peut réellement appeler en ce moment (les outils MCP et LSP apparaissent ici quand disponibles).
+- `kod skills` — si les compétences que vous attendez sont réellement chargées et mises en correspondance (`--json` pour les scripts).
+- `kod map` — ce que le moteur peut voir de votre référentiel ; les réponses surprenantes se tracent souvent à une carte de référentiel surprenante.
+
+<Aside type="note">
+  Si un correctif ici ne le couvre pas, le [guide CONTRIBUTING](/developers/contributing/) explique quoi inclure dans un rapport de bogue — les extraits de journal de session rendent les rapports nettement plus faciles à traiter.
+</Aside>

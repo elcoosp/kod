@@ -1,0 +1,62 @@
+---
+title: Aperçu
+description: Ce qu'est KOD, pourquoi il existe et en quoi il diffère des agents de codage hébergés dans le cloud. Philosophie local-first, carte des fonctionnalités et où aller ensuite.
+sidebar:
+  order: 1
+type: explanation
+---
+
+import { Aside, CardGrid, Card } from '@astrojs/starlight/components';
+
+KOD est un **harnais d'agent de codage IA local-first pour le terminal**, écrit en Rust. Il vous offre une boucle agentique complète — classification des tâches, ancrage des prompts, appels LLM en streaming, exécution d'outils et retour d'information — sous forme d'un seul binaire que vous compilez vous-même et pointez vers un serveur de modèle que vous contrôlez. Ollama, LM Studio, MLX Omni Serve, vLLM, ou tout autre endpoint compatible OpenAI fonctionnent tous sur le même chemin de code.
+
+KOD est délibérément étroit dans sa portée : c'est un *harnais*, pas un IDE. Il est utilisable aujourd'hui pour le chat, les exécutions ponctuelles d'agents, les essaims et le scripting, tandis que l'API publique est encore en cours de stabilisation. Ce site documente le système tel qu'il existe — là où la documentation décrit une limitation, elle le dit.
+
+## Pourquoi local-first
+
+Votre code ne quitte pas votre machine. C'est toute la thèse.
+
+Les agents de codage hébergés dans le cloud sont construits autour d'un modèle que vous ne contrôlez pas, selon un calendrier que vous ne fixez pas, dans des conditions qui peuvent changer sans votre consentement. Quand un fournisseur déprécie un modèle, modifie une limite de débit ou a simplement un mauvais jour, votre flux de travail s'arrête. KOD est construit autour de l'ensemble d'hypothèses opposé :
+
+- **Le binaire est un seul programme Rust.** `cargo build --release` produit un seul exécutable qui exécute l'agent, les outils, le stockage en mémoire et l'interface du terminal. Pas de runtime Node, pas d'interpréteur Python, pas de Docker.
+- **Le modèle est celui que vous avez choisi.** La configuration par défaut pointe vers `http://localhost:11434/v1` (Ollama). Tout endpoint compatible OpenAI fonctionne — LM Studio, MLX Omni Serve, vLLM, OpenAI lui-même — mais seulement si vous voulez le cloud.
+- **La mémoire est sur disque, dans un fichier que vous pouvez inspecter.** La mémoire à long terme vit dans une base de données `redb` sous `~/.kod/`, ou par projet sous `<cwd>/.kod/` quand `memory.scope = "project"`. Les commandes `kod memory` vous permettent de lister, rechercher, exporter et supprimer des entrées sans ouvrir un outil de base de données.
+- **La boucle d'outils est auditable.** `kod replay <session.jsonl>` ré-exécute les appels d'outils qu'une session a effectués, sans le modèle. Chaque `read_file`, `write_file` et `execute_command` est vérifiable par rapport à la base de code à n'importe quel commit ultérieur.
+
+Si « où va mon code quand je lance ça ? » est une question à laquelle vous voulez une réponse en une ligne, KOD est fait pour vous.
+
+## Ce qu'il y a dans la boîte
+
+Le harnais embarque un ensemble complet de fonctionnalités réparties sur cinq domaines :
+
+**Harnais d'agent.** Un système de compétences basé sur des fichiers Markdown avec front matter YAML, mis en correspondance par déclencheurs, tags, capacités et nom, avec rechargement à chaud lors de l'édition. Mémoire multi-couches avec stockage à court terme (en mémoire, FIFO) et à long terme (`redb`, persistant), global ou limité au projet. Une boucle agentique en streaming qui classe les tâches, construit un prompt ancré, diffuse des tokens en direct, exécute des appels d'outils et renvoie les résultats pour un maximum de 40 tours d'outils. Un essaim d'agents qui décompose un objectif en sous-tâches, les exécute simultanément, détecte les conflits de fichiers et fusionne les résultats.
+
+**Sécurité.** Chaque appel d'outil passe par un moteur de politique à quatre couches (préréglage → config globale → `.kod/policy.toml` du projet → override CLI) avant de s'exécuter. Les écritures peuvent nécessiter une approbation explicite, les commandes shell peuvent être mises en bac à sable via `bwrap` ou `sandbox-exec`, et chaque appel mutant prend un instantané du fichier cible pour qu'il puisse être restauré avec `kod checkpoint restore`.
+
+**Interfaces.** Une TUI ratatui complète avec chat, lignes d'outils en direct, panneau d'agent, recherche, thèmes et 49 commandes slash — plus une CLI scriptable avec chat interactif (`chat`, `tui`), exécutions ponctuelles (`agent`, `prompt`, `run`), un démon de longue durée (`serve`) et une boîte à outils complète pour les compétences, la config, les modèles, les profils, les sessions, la mémoire, les points de contrôle, la relecture, l'inspection des politiques et les diagnostics (`doctor`, `init`, `test`, `map`).
+
+**Extensibilité.** Les serveurs MCP configurés en tant que blocs `[mcp.servers.<name>]` enregistrent leurs outils sous `mcp:<server>.<tool>`. Les outils de serveur de langage font surface aux diagnostics, définitions, références et informations de survol lorsqu'un serveur pour votre langage est sur `PATH`. Les commandes slash définies par l'utilisateur proviennent d'un bloc `[commands]` dans votre config.
+
+**Fournisseurs.** Un seul chemin de code compatible OpenAI avec normalisation automatique de l'URL de base, streaming de tokens SSE et assemblage d'appels d'outils en direct (cadrage `ToolCallStart` / `ToolCallDelta`), de sorte que les appels d'outils affluent au fur et à mesure qu'ils sont générés plutôt que d'arriver en mémoire tampon.
+
+## Statut du projet
+
+KOD est en début de phase. Le [README](https://github.com/elcoosp/kod) suit ce qui est câblé de bout en bout par rapport à ce qui est encore sur la feuille de route. Notamment :
+
+- Seul le protocole compatible OpenAI est implémenté. Une variante d'endpoint `anthropic` est reconnue dans la config mais échouera au premier prompt.
+- La recherche sémantique en mémoire (basée sur les embeddings) est **opt-in et désactivée par défaut** — la récupération à long terme utilise la correspondance par mots-clés et la récence, sauf si vous configurez `memory.embedding_endpoint`.
+- Le bac à sable n'est pas disponible sous Windows ; KOD signale la primitive comme manquante et échoue bruyamment au lieu de faire semblant.
+- `docs/SPEC.md` dans le dépôt décrit un système aspirationnel plus large que ce que l'espace de travail implémente ; il est conservé comme référence de conception.
+
+<Aside type="caution">
+  KOD n'est pas un remplacement direct pour un agent IDE complet. C'est un harnais fonctionnel dont l'objectif est l'auditabilité et le contrôle local-first. Attendez-vous à des aspérités.
+</Aside>
+
+## Où aller ensuite
+
+<CardGrid>
+  <Card title="Installation" icon="download">Compilez le binaire et vérifiez votre chaîne d'outils.</Card>
+  <Card title="Démarrage rapide" icon="rocket">Premier chat en environ cinq minutes.</Card>
+  <Card title="Votre première session" icon="laptop">Une visite guidée de la TUI.</Card>
+  <Card title="Configuration" icon="setting">Chaque clé de <code>config.toml</code>, expliquée.</Card>
+</CardGrid>

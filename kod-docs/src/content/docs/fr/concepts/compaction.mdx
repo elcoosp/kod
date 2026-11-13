@@ -1,0 +1,65 @@
+---
+title: Compactage
+description: Quand une session manque de fenêtre de contexte, et ce qui est réellement supprimé.
+sidebar:
+  order: 10
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Le compactage réduit une transcription pour que le prochain tour tienne dans la fenêtre de contexte du modèle. `/compact` le déclenche ; le moteur l'exécute aussi après un tour quand la fenêtre est presque pleine.
+
+## Quand ça se déclenche
+
+`used_tokens + reserve > window_tokens`, où `reserve = max(15% de la fenêtre, 16_384)`.
+
+Une fenêtre de 200k réserve 30k, donc le compactage commence vers 170k utilisés. Une fenêtre nulle ne compacte jamais — refuser est la lecture sûre quand la fenêtre est inconnue, et l'appelant apprend le vrai nombre au prochain appel au fournisseur.
+
+`/context` montre la répartition en direct ; le compteur de contexte de la ligne d'état est le même nombre.
+
+## Ce qui s'exécute réellement
+
+Le compactage est une liste de préférences avec basculement, pas une échelle codée en dur. Le répartiteur détient un ensemble ordonné de méthodes et demande à chacune si elle peut réduire le contexte ; la première qui produit un plan non vide gagne.
+
+Le moteur installe **trois** méthodes, dans cet ordre :
+
+| Ordre | Méthode | Ce qu'elle fait |
+| --- | --- | --- |
+| 1 | `shake` (agressif) | remplace de grandes plages d'octets à l'intérieur des résultats d'outils par un espace réservé |
+| 2 | `prune` | supprime des messages entiers qu'un message ultérieur remplace |
+| 3 | `handoff` | un document de passation écrit par le LLM, quand aucune échelle mécanique ne réduit assez |
+
+L'ordre est délibéré. Le répartiteur du moteur ne se déclenche qu'*après* la décision de seuil — la transcription est déjà trop grande, donc le choix est "réduire maintenant, ou payer un appel de résumé". Sous cette pression, une élision mécanique bon marché qui franchit le seuil bat un appel LLM coûteux. Donc les échelles mécaniques passent en premier et `handoff` attrape ce qu'elles ne peuvent pas.
+
+`shake` s'exécute dans sa configuration **agressive** ici (protéger 4 000 tokens, porte d'économies 0) plutôt que celle par défaut. La config par défaut suppose un appel opportuniste sur une session par ailleurs propre, où "aucune réduction" est un résultat correct ; sous le régime de seuil du moteur, aucune réduction signifie un aller-retour vers le résumeur.
+
+Le `default_ladder()` du répartiteur — `remote`, `snapcompact`, `handoff`, `shake`, `soft` — est l'ordre de conception pour un compactage délibéré, pas ce que le moteur installe. Deux de ses cinq méthodes sont des stubs renvoyant "indisponible" : `remote` (compactage natif du fournisseur) et `soft` (résumé par LLM local). `shake`, `snapcompact` et `handoff` sont tous implémentés — `snapcompact` rastérise la moitié la plus ancienne de la transcription en frames PNG pour un fournisseur de vision.
+
+## Ce que fait `/compact`
+
+`/compact` est un **chemin séparé** du compactage automatique par seuil ci-dessus. Il n'exécute pas du tout l'échelle du répartiteur.
+
+Il garde les 20 derniers tours et remplace tout ce qui précède par un message de résumé, épinglé afin que le chemin de rendu ne puisse pas le laisser tomber pour des raisons de budget. Le résumé est le même `emergency_summary` factuel que le chemin de seuil dur utilise en dernier recours — nombre de messages, outils utilisés, chemins de fichiers — sans tentative d'expliquer l'intention.
+
+<Aside type="note">
+  Avant que ce ne soit corrigé, `/compact` tronquait silencieusement : les tours supprimés ne laissaient rien derrière, donc les chemins de fichiers, les décisions et les faits disparaissaient entièrement de la vue du modèle. Le chemin automatique avait toujours résumé, donc les deux chemins faisant le même travail avaient des conséquences différentes.
+</Aside>
+
+Un résumé est délibérément factuel plutôt qu'un récapitulatif écrit par un LLM : il s'exécute de manière synchrone, et un appel au modèle ici ferait attendre une commande interactive sur le réseau. Si vous voulez que la transcription soit résumée par le modèle, laissez le chemin automatique s'exécuter — son échelon `handoff` fait exactement ça.
+
+## Shake en pratique
+
+Shake remplace de grandes plages d'octets à l'intérieur des résultats d'outils par un espace réservé, en gardant le message et ses métadonnées. Un résultat `read_file` de 40 Ko devient une courte ligne disant combien d'octets ont été élidés.
+
+Deux gardes l'empêchent de détruire des choses qu'il ne devrait pas toucher :
+
+- **`protect_tokens`** (16 000 par défaut) — le contexte récent est laissé tranquille même lorsqu'il est grand, car le modèle travaille probablement encore avec. Le défaut de shake est plus bas que celui de prune, puisque les mutations de shake sont plus petites et plus dispersées.
+- **`cache_warm_suffix_tokens`** (8 000 par défaut) — un suffixe dans le cache chaud du fournisseur n'est pas touché. L'invalider coûterait plus que les tokens économisés.
+- **Une porte d'économies sur l'ensemble du plan** — une passe qui libère moins qu'un nombre seuil de tokens est purement et simplement sautée, car le churn de cache ne vaut pas le coup.
+
+Les chemins protégés par tour (les fichiers que le tour touche activement) sont fusionnés dans la propre config de la méthode, donc un fichier en cours d'édition n'est pas secoué en milieu de tour.
+
+## Des plans, pas des mutations
+
+Chaque méthode retourne un *plan* — une description des mutations — pas une transcription mutée. L'appelant l'applique. Cela garde les méthodes pures et testables sans moteur, et cela signifie qu'un plan peut être rejeté avant que quoi que ce soit ne change : un plan qui ne réduit pas réellement la transcription est refusé.

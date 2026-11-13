@@ -1,0 +1,213 @@
+---
+title: Référence de configuration
+description: Chaque clé de configuration que KOD lit — section, type, défaut et notes — en une table.
+sidebar:
+  order: 4
+type: reference
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+Le fichier de config vit à `~/.config/kod/config.toml` (Linux) ou `~/Library/Application Support/kod/config.toml` (macOS), est auto-généré au premier lancement, et chaque clé ci-dessous est optionnelle — les valeurs hors limites sont contraintes dans des plages valides au chargement avec un avertissement. Un fichier manquant ou corrompu retombe sur les défauts plutôt que de faire échouer la session.
+
+## `[llm]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `network_access` | bool | `false` | Opt-in réseau ; conditionne `web_fetch`. Le `network` par outil dans `.kod/policy.toml` remplace. |
+
+## `[[llm.endpoints]]`
+
+Un tableau de serveurs de modèles nommés ; le premier est le défaut. Tout ce qui affecte le fil vit sur l'endpoint.
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `name` | string | `"default"` | Clé de routage référencée par `[llm.routing]` ; les noms en double avertissent. |
+| `provider` | string | `"openai-compatible"` | `"Ollama"` et `"OpenAI"` sont des alias de `openai-compatible`. `"anthropic"` est reconnu mais échoue au premier prompt. |
+| `base_url` | URL | `http://localhost:11434/v1` | Normalisé automatiquement — racine de serveur ou racine `.../v1` fonctionnent. |
+| `model` | string | `"codellama:13b"` | Doit exister sur le serveur ; ce que `kod models` liste. |
+| `api_key_env` | string (optionnel) | — | Nom de la variable d'env contenant la clé API. La clé elle-même n'apparaît jamais dans le fichier. |
+| `temperature` | float (optionnel) | `0.7` | Contraint à 0.0–2.0 au chargement. |
+| `max_tokens` | integer (optionnel) | `2048` | Plafond de génération ; `0` retombe sur le défaut. |
+| `context_window` | integer | `8192` | Dimensionne le budget de mémoire et le compteur de contexte ; contraint à ≥ 2000. |
+| `timeout_secs` | integer | `300` | Timeout par requête ; plancher à 1. |
+| `pricing.input_per_mtok_usd` | float (optionnel) | — | USD par million de tokens d'entrée, pour l'affichage du coût de la TUI. |
+| `pricing.output_per_mtok_usd` | float (optionnel) | — | USD par million de tokens de sortie. |
+
+## `[llm.routing]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `by_task` | map : type de tâche → nom d'endpoint | — | `"Simple"`, `"Debugging"`, … routent vers l'endpoint nommé. Les noms inconnus sont supprimés avec un avertissement. |
+| `fallback` | liste de noms d'endpoints | — | Chaîne de nouvelle tentative ordonnée quand le primaire échoue avec une erreur réessayable. |
+| `swarm` | map : capacité → nom d'endpoint | — | `Planning`, `Coding`, … routent les rôles d'essaim vers différents modèles. |
+
+## `[memory]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `short_term_capacity` | integer | `100` | Entrées FIFO conservées pour la session. |
+| `scope` | `"global"` \| `"project"` | `"global"` | `project` place la DB à long terme à `<cwd>/.kod/memory.redb` ; `global` utilise `~/.kod/data/kod.redb`. |
+| `long_term_db_path` | string (optionnel) | — | Remplace les deux portées avec un chemin `redb` explicite. |
+| `enable_semantic_search` | bool | `true` | S'applique quand un endpoint d'embedding est configuré ; la récupération est mots-clés + récence sinon. |
+| `embedding_endpoint` | `"none"` \| `"ollama"` \| `"openai"` | `"none"` | `ollama` dérive l'URL de `llm.base_url` ; `openai` parle `/v1/embeddings`. |
+| `embedding_url` | string (optionnel) | — | URL d'embedder explicite, remplaçant celle dérivée. |
+| `embedding_api_key_env` | string (optionnel) | — | Variable d'env contenant la clé API de l'embedder (endpoint openai). |
+| `embedding_model` | string | `"nomic-embed-text"` | Nom du modèle envoyé à l'embedder. |
+| `context_window` | integer | `4096` | Budget de secours du gestionnaire de mémoire. |
+| `compaction_interval_secs` | integer | `3600` | Cadence de compactage du stockage à long terme. |
+| `extract_on_shutdown` | bool | `false` | Un appel LLM à la fin de la session extrait les faits durables de la transcription. |
+| `extract_max_entries` | integer | `12` | Plafond des faits extraits par session. |
+
+## `[skills]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `enable_hot_reload` | bool | `true` | Les éditions des fichiers de compétence s'appliquent au prochain prompt. |
+| `max_skills_per_query` | integer | `3` | Compétences mises en correspondance par prompt, plafonnées. |
+| `skills_dir` | string (optionnel) | — | Remplace les quatre répertoires de recherche standard par un chemin personnalisé. |
+| `match_threshold` | float | `0.3` | Score de correspondance minimum pour qu'une compétence accompagne. Calibré sur l'échelle du matcher (tag 0.4, capacité 0.3, déclencheur 0.8, nom 0.9) — un seuil plus élevé rend les correspondances tag-seul et capacité-seule inatteignables. |
+
+## `[swarm]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `max_agents` | integer | `5` | L'étape de décomposition cible ceci ; l'exécuteur contraint à 2–8. |
+| `merge_results` | bool | `true` | `false` (ou une synthèse échouée) concatène les résultats par agent sous leurs étiquettes. |
+| `agent_timeout_secs` | integer | `300` | Horloge murale par agent ; un agent bloqué est annulé et réessayé. `0` désactive. |
+| `agent_retries` | integer | `1` | Tentatives supplémentaires après un timeout ou une erreur de fournisseur. |
+
+## `[tools]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `auto_check` | bool | `false` | Après une écriture réussie, exécuter la vérification du projet (Cargo, tsc, ruff, go vet) et ajouter les diagnostics au prochain prompt. |
+| `auto_lsp` | bool | `true` | Après une écriture réussie, exécuter les diagnostics du serveur de langage sur les fichiers touchés et les ajouter au prochain prompt. Bon marché ; no-op sans serveur sur `PATH`. |
+
+Le comportement d'approbation d'écriture vient des [préréglages de politique](/guides/policy/), pas d'un drapeau de config.
+
+## `[lsp]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `auto_diagnostics` | bool | `true` | Exécuter les diagnostics de serveur de langage après une écriture et les ajouter au prochain prompt. Bon marché ; un no-op quand aucun serveur n'est sur `PATH`. |
+| `settle_ms` | u64 | `500` | Combien de temps attendre que le serveur se stabilise avant de lire les diagnostics. |
+| `deferred_enabled` | bool | `true` | Mettre en file d'attente les diagnostics qui arrivent tard et les attacher au prochain tour au lieu de les laisser tomber. |
+| `deferred_settle_ms` | u64 | `12000` | Combien de temps une passe différée attend avant d'abandonner sur un serveur lent. |
+
+`[tools] auto_lsp` est l'interrupteur grossier ; `[lsp]` règle le comportement une fois qu'il est activé.
+
+## `[security.redact]`
+
+Contrôle le rédacteur de chemin de prompt. La rédaction de journal est toujours active et non configurable.
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `in_prompt` | bool | `false` | Exécuter le rédacteur sur chaque message et résultat d'outil avant qu'il n'atteigne le modèle. Désactivé par défaut : une session normale d'édition de code a besoin de contenus de fichiers non rédigés. |
+| `redact_argument_paths` | tableau de globs | `[]` | Vider les `arguments` de tout appel d'outil dont le chemin correspond, indépendamment de `in_prompt`. Plus fort que la rédaction de résultat — le modèle ne voit jamais les arguments du tout. |
+
+Les deux paramètres remplacent un secret par `[REDACTED:<rule>]`, que le modèle ne peut pas faire d'aller-retour.
+
+`kod` installe aussi un coffre de placeholders de secrets au démarrage, par défaut : il charge (ou crée) `~/.kod/secret-placeholder.key` et enregistre chaque variable d'environnement en forme de secret, puis la couche filaire échange un secret enregistré contre un placeholder réversible sur lequel le modèle peut raisonner. C'est un mécanisme séparé du rédacteur ci-dessus et il s'exécute que `in_prompt` soit défini ou non. Un échec de création du fichier de clé est journalisé et laisse les placeholders désactivés pour la session — le comportement pré-coffre — plutôt que d'avorter le démarrage.
+
+## `[limits]`
+
+Plafonds de session et par tour. `0` désactive toute limite individuelle.
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `max_cost_usd_per_session` | f64 | `0` | Plafond de dépenses total pour la session, en USD. |
+| `max_cost_usd_per_turn` | f64 | `0` | Plafond de dépenses par tour. |
+| `max_input_tokens_per_turn` | integer | `0` | Plafond sur le côté prompt d'un tour. |
+| `max_output_tokens_per_turn` | integer | `0` | Plafond sur le côté completion d'un tour. |
+| `on_exhausted` | `ask` \| `stop` \| `continue` | `ask` | Que faire quand un plafond est atteint. `ask` pause pour un prompt (TUI uniquement ; un appelant non interactif le traite comme `stop`), `stop` termine le tour en gardant la réponse partielle, `continue` journalise un avertissement et continue. |
+| `soft_warn_at` | f64 | `0.5` | Avertir quand les dépenses franchissent cette fraction d'un plafond. |
+| `tools` | table | `{}` | Quotas par outil, indexés par nom d'outil ; `"default"` s'applique à tout outil non listé autrement. |
+
+Un quota par outil a `per_turn`, `per_session` et — pour `execute_command` — `per_command`, qui limite combien de fois la même chaîne de commande peut s'exécuter en un tour.
+
+## `[jev]`
+
+L'intégration [TypeSafe AI](https://typesafe.ai). Opt-in ; désactivé par défaut.
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Interrupteur maître. Quand faux, chaque site d'appel retombe sur l'heuristique pré-Jev sans appel réseau. |
+| `api_key` | string | non défini | Clé explicite. Retombe sur `TYPESAFE_API_KEY`. Jamais écrit en clair — `kod config show-merged` et `kod config export` émettent `[redacted]`. |
+| `base_url` | string | non défini | Racine d'API. Retombe sur `TYPESAFE_BASE_URL`, puis sur l'endpoint public. Définissez ceci pour une passerelle auto-hébergée. |
+
+## `[hooks]`
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Interrupteur maître pour les deux maps de hooks. |
+| `pre_tool_use` | map : outil → modèle de commande | — | S'exécute avant les appels d'outils correspondants ; espaces réservés de style `{path}` substitués depuis les arguments de l'appel. |
+| `post_tool_use` | map : outil → modèle de commande | — | S'exécute après les appels d'outils correspondants. |
+
+<Code lang="toml" code={`[hooks]
+enabled = true
+pre_tool_use  = { write_file = "rustfmt {path}" }
+post_tool_use = { write_file = "cargo check" }`} />
+
+## `[mcp.servers.<name>]`
+
+Un bloc par serveur MCP ; un `[mcp]` absent signifie aucun plugin. Un serveur défaillant est journalisé et sauté — un plugin cassé ne bloque jamais les intégrés.
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `command` | string | — | Programme à lancer, résolu contre `$PATH`. Les commandes vides sont sautées. |
+| `args` | string[] | `[]` | Arguments du programme. |
+| `env` | map : string → string | — | Ajouté à l'environnement de l'enfant (l'env parent est hérité). |
+| `enabled` | bool | `true` | `false` garde le bloc comme un enregistrement sans lancer. |
+| `call_timeout_secs` | integer | `60` | Timeout par appel pour `tools/call`. |
+
+Les outils sont exposés au modèle comme `mcp:<server>.<tool>`.
+
+## `[commands]`
+
+Commandes slash de TUI définies par l'utilisateur. Chaque clé enregistre `/key` ; `{args}` dans la valeur est remplacé par tout ce qui est tapé après le nom de la commande, `{cwd}` par le répertoire de travail.
+
+<Code lang="toml" code={`[commands]
+review  = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\\n\\n{args}"`} />
+
+## Politique du projet : `.kod/policy.toml`
+
+Commité dans le dépôt, en couche au-dessus de la config globale (voir [Politique & Permissions](/guides/policy/)) :
+
+| Clé | Type | Défaut | Notes |
+| --- | --- | --- | --- |
+| `preset` | `"read-only"` \| `"standard"` \| `"yolo"` | `"standard"` | Base grossière pour le projet. |
+| `tools.<name>.mode` | `"allow"` \| `"deny"` \| `"ask"` | — | Remplace le préréglage pour un outil. |
+| `tools.<name>.paths` | string[] | — | Liste blanche de globs de chemins ; les chemins non appariés sont refusés. |
+| `tools.<name>.forbidden` | string[] | — | Globs de refus ; le refus l'emporte toujours sur l'autorisation. |
+| `tools.<name>.binaries` | string[] | — | Liste blanche de commandes (premier token) pour `execute_command`. |
+| `tools.<name>.forbidden_binaries` | string[] | — | Liste de refus de commandes ; l'emporte sur `binaries`. |
+| `tools.<name>.network` | bool | — | Remplacement par outil de `llm.network_access`. |
+| `tools.<name>.domains` | string[] | — | Liste blanche de domaines pour `web_fetch`. |
+| `git.history_protected` | bool | `true` | Monte `.git` en lecture seule au bac à sable. |
+
+## Variables d'environnement
+
+| Variable | Objectif |
+| --- | --- |
+| `KOD_SESSION_LOG` | Chemin de journal de session explicite ; défaut `~/.kod/sessions/<unix-ms>.jsonl`. |
+| `KOD_TUI_STATE_DIR` | Répertoire pour la session TUI et les fichiers d'historique de prompts. |
+| `OPENAI_API_KEY` | Utilisé par le profil `cloud-openai` (via l'`api_key_env` de l'endpoint). |
+| `KOD_TEST_MODEL`, `KOD_TEST_DB` | Opt-in de test avec modèle réel pour les contributeurs ; voir [Tests](/developers/testing/). |
+
+## Thème : `theme.toml`
+
+Un `theme.toml` à côté de la config sélectionne la palette de la TUI :
+
+<Code lang="toml" code={`theme = "light"        # or "dark", or a full [theme] table below`} />
+
+Une ligne `theme = "light"` nue est acceptée, tout comme une table `[theme]` complète remplaçant des couleurs ratatui individuelles (`black`, `red`, `green`, …). Le chargement est best-effort : un fichier de thème invalide retombe sur le thème sombre par défaut avec un avertissement plutôt que de faire échouer la session. `kod theme show <name>` imprime une palette intégrée en JSON.
+
+## Raccourcis : `tui_keys.toml` / `.kod-keys.toml`
+
+Voir [TUI Keybindings](/reference/tui-keys/#rebinding-keys).
+
+<Aside type="tip">
+  <code>kod config export -</code> imprime la config effective (défauts fusionnés avec vos éditions) sur stdout — le moyen le plus rapide de voir chaque valeur résolue, y compris celles contraintes.
+</Aside>

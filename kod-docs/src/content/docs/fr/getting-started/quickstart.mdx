@@ -1,0 +1,73 @@
+---
+title: Démarrage rapide
+description: De zéro à votre premier chat KOD, exécution d'agent ponctuelle et relecture de session en cinq minutes environ.
+sidebar:
+  order: 3
+type: tutorial
+---
+
+import { Aside, Code, Steps } from '@astrojs/starlight/components';
+
+Ce guide vous emmène d'un binaire compilé à une session d'agent fonctionnelle en cinq minutes environ. À la fin, vous aurez discuté avec un modèle local, exécuté un agent ponctuel contre un objectif, et rejoué les appels d'outils qu'il a effectués — les trois interactions qui couvrent la plupart de l'utilisation quotidienne de KOD.
+
+Si vous n'avez pas encore compilé le binaire, commencez par [Installation](/getting-started/installation/).
+
+## 1. Assurez-vous qu'un modèle est en cours d'exécution
+
+<Steps>
+1. Démarrez le serveur de modèle et téléchargez un petit modèle de codage :
+
+   <Code lang="bash" code={`ollama serve &                       # start the server
+ollama pull qwen2.5-coder:7b        # small coding model, quick to pull`} />
+
+2. Notez l'endpoint : la configuration par défaut pointe vers `http://localhost:11434/v1`, qui est la racine compatible OpenAI d'Ollama. Les URL de base sont normalisées automatiquement, donc une racine de serveur ou une racine `.../v1` fonctionnent toutes les deux — c'est également vrai pour LM Studio, MLX Omni Serve et vLLM.
+</Steps>
+
+<Aside type="tip">
+  Vous ne voulez pas télécharger un modèle tout de suite ? <code>kod profile use cloud-openai</code> cible OpenAI à la place (nécessite <code>OPENAI_API_KEY</code> dans l'environnement).
+</Aside>
+
+## 2. Vérifiez la configuration
+
+<Code lang="bash" code={`kod doctor`} />
+
+`doctor` vérifie le fichier de configuration, l'endpoint du modèle, les compétences découvertes, la base de données de mémoire, la primitive de bac à sable et git — et imprime un verdict d'une ligne pour chacun. Si quelque chose ne va pas, corrigez-le ici avant de continuer.
+
+## 3. Basculez vers le profil local rapide
+
+<Code lang="bash" code={`kod profile use local-fast`} />
+
+Cela écrit le préréglage `local-fast` (Qwen 2.5 Coder 7B sur `localhost:11434/v1`, 32k de contexte) dans votre `config.toml`. Vous pouvez voir le bloc `[llm]` effectif à tout moment avec `kod profile show`.
+
+## 4. Discutez
+
+<Code lang="bash" code={`kod chat`} />
+
+Cela démarre un REPL simple avec sortie en streaming. Tapez une question, regardez les tokens arriver et quittez avec `Ctrl-C`. Pour l'interface complète — lignes d'outils, panneau d'agent, commandes slash, recherche — lancez `kod tui` à la place.
+
+Pour une seule question sans entrer dans un REPL du tout, utilisez `kod prompt` :
+
+<Code lang="bash" code={`kod prompt "what does the retry function in src/net.rs do?"`} />
+
+## 5. Exécutez un agent contre un objectif
+
+<Code lang="bash" code={`kod agent -g "add a doc comment to every public function in src/lib.rs"`} />
+
+`kod agent` est une exécution ponctuelle : classer la tâche, construire un prompt ancré, appeler des outils, renvoyer les résultats et terminer par un résumé. C'est le moyen le plus simple de voir la boucle d'outils fonctionner de bout en bout. Ajoutez `--preset read-only` pour le regarder travailler sans le laisser écrire quoi que ce soit.
+
+## 6. Rejouez ce qu'il a fait
+
+Chaque session enregistre ses appels d'outils en JSONL sous `~/.kod/sessions/`. `kod replay` ré-exécute ces appels d'outils *sans le modèle*, ce qui transforme toute session passée en test de régression :
+
+<Code lang="bash" code={`kod sessions latest                      # path of the newest session log
+kod replay ~/.kod/sessions/<session>.jsonl --execute`} />
+
+<Aside type="caution">
+  <code>--execute</code> exécute réellement les appels d'outils enregistrés contre votre arbre de travail. Omettez le drapeau pour imprimer ce qui <em>s'exécuterait</em> — utile pour examiner une session avant de lui faire confiance.
+</Aside>
+
+## Où aller ensuite
+
+- [Votre première session](/getting-started/first-session/) — une visite guidée de la TUI, y compris le pilotage et les commandes slash.
+- [Profils de modèle](/guides/profiles/) — les quatre préréglages intégrés et comment créer les vôtres.
+- [Outils](/guides/tools/) — ce que l'agent peut faire en votre nom, et comment chaque appel est conditionné.

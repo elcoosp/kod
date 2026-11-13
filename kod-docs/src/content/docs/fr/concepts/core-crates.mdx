@@ -1,0 +1,39 @@
+---
+title: Crates principaux
+description: Comment les sous-crates internes du moteur (kod-core-*) s'assemblent.
+sidebar:
+  order: 11
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Le moteur n'est pas un seul crate. C'est une famille de six sous `crates/kod-core*`, organisée pour que chaque sous-système puisse être testé sans démarrer le moteur entier :
+
+| Crate | Possède |
+|---|---|
+| `kod-core` | Le moteur lui-même : `KodEngine`, boucle de l'agent, transcription, répartition du compactage, câblage télémétrie, conseiller Jev, exécuteur d'essaim. |
+| `kod-core-routing` | Classification des tâches, assemblage du contexte, et sélection du modèle. Étant donné un prompt et l'état de la session, il décide quel fournisseur/modèle appeler et quel contexte envoyer. |
+| `kod-core-state` | Persistance de session (`kod-state.redb`), points de contrôle au niveau des fichiers, suivi des coûts, classification de sensibilité. |
+| `kod-core-serve` | Serveur JSON-RPC ACP (Agent Client Protocol) pour l'intégration éditeur. Utilise des canaux `tokio::sync::mpsc` pour relier le moteur et les clients connectés. |
+| `kod-core-quality` | `snapcompact` (compression de contexte via PNG inline), `shake` (compactage mécanique — une passe de réduction déterministe en dernier recours), `repomap` (génération d'index de symboles tree-sitter). |
+| `kod-core-tools` | Les internes de la boucle d'outils : gardes de répartition, refus de hook, fixtures, orchestration `execute_tool`. |
+
+## Direction des dépendances
+
+`kod-core` dépend des cinq sous-crates. L'inverse n'est pas vrai — les sous-crates ne voient que les traits dont ils ont besoin. Cela garde la compilation incrémentale du compilateur rapide (un changement dans `kod-core-routing` ne recompile pas `kod-core-serve`) et permet à chaque sous-système de livrer ses propres tests sans instancier le moteur complet.
+
+## Quand recourir à quoi
+
+- Ajouter un **nouveau fournisseur** → `kod-provider` (trait) + un nouveau crate `kod-provider-*`. Le routeur décide quand l'utiliser.
+- Ajouter un **nouvel outil** → `kod-tools`, puis l'enregistrer dans `kod-core-tools::register_default_tools`.
+- Ajouter une **nouvelle stratégie de compactage** → `kod-core-quality`, puis la câbler dans le `compaction_dispatcher` de `kod-core`.
+- Ajouter un **nouveau backend de stockage** → `kod-core-state`.
+- Ajouter un **nouveau transport éditeur** → `kod-core-serve` ou un nouveau frère.
+
+## Voir aussi
+
+- [Référence des crates](/reference/crates/) — index complet des 26 crates de l'espace de travail
+- [Architecture](/concepts/architecture/) — diagramme système de haut niveau
+- [Boucle de l'agent](/concepts/agent-loop/) — le cycle de vie du tour
+- [Compactage](/concepts/compaction/) — comment le contexte rétrécit entre les tours

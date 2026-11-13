@@ -1,0 +1,49 @@
+---
+title: Sortie d'outil minimisée
+description: Comment une grande sortie de commande est réécrite en quelque chose que le modèle peut utiliser, et comment la forme brute reste atteignable.
+sidebar:
+  order: 6
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+> **Crate :** [`kod-minimize`](/reference/crates/#capability) — troncature tête/queue, résumé structuré, minimisation de `git diff`.
+
+Un grand résultat d'outil est **minimisé**, pas tronqué.
+
+La différence compte. Un plafond coupe à une frontière d'octet, et la partie dont le modèle avait besoin est très souvent la partie qui a été coupée : une exécution `pytest` verbeuse, un `cargo check` avec cinquante avertissements, un `git status` sur un grand arbre. Un minimiseur réécrit la sortie en une forme plus courte qui garde le contenu informatif — un `git status` devient branche plus liste de fichiers, un `git log` devient short hash plus sujets, un `cargo check` en échec devient la tranche d'erreur.
+
+## À quoi ça s'applique
+
+Chaque définition nomme un programme et les sous-commandes qu'il gère :
+
+| Programme | Formes |
+| --- | --- |
+| `git` | `status`, `log` |
+| `cargo` | `check` (texte et JSON), `test` |
+| `pytest` | sortie d'exécution |
+
+Tout le reste — un programme sans définition, une forme non analysée — renvoie la capture brute inchangée. Le minimiseur ne devine jamais.
+
+## Les pipes sont opaques
+
+`git status | grep modified` produit une sortie qui dépend de la *prochaine* étape du pipeline. La réécrire représenterait mal ce que le shell a réellement produit, donc une commande contenant un `|` de niveau supérieur est laissée entièrement tranquille.
+
+La même chose s'applique aux chaînes `&&` et `;` : elles sont classées comme une chaîne et renvoyées brutes, pas minimisées segment par segment.
+
+## La sortie brute est conservée
+
+Un résultat minimisé porte une URL [`artifact://<id>`](/concepts/internal-urls/) pour la capture originale. Rien n'est perdu — le modèle peut lire la forme brute délibérément quand le résumé ne suffit pas, et un humain peut la récupérer depuis le journal de session.
+
+<Aside type="tip">
+  Si un résultat minimisé est déroutant, lisez l'artefact. Le résumé est choisi par un pipeline fixe, pas par le modèle, donc il garde occasionnellement la mauvaise moitié.
+</Aside>
+
+## Quand une définition ne s'applique pas
+
+Une définition peut être restreinte à un code de sortie particulier — une définition `cargo check` qui ne se déclenche qu'en cas d'échec, par exemple — donc une exécution réussie garde sa sortie complète. Si une étape du pipeline échoue pendant la minimisation, la capture brute est renvoyée et l'échec est journalisé ; une définition cassée se dégrade en "aucune minimisation" plutôt qu'en un résultat mutilé.
+
+## Suppression ANSI
+
+Les séquences d'échappement ANSI sont supprimées de la sortie de commande avant qu'elle n'atteigne le modèle, qu'une définition ait correspondu ou non — une exécution `cargo test` avec des codes de couleur est nettoyée même quand sa forme est non reconnue. C'est activé par défaut et non exposé comme clé de config ; les définitions intégrées déclarent aussi leur propre étape de suppression pour qu'un pipeline voie du texte propre tout au long.

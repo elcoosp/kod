@@ -1,0 +1,104 @@
+---
+title: FAQ
+description: Réponses rapides aux questions que les utilisateurs de KOD posent le plus — où vivent les données, comment réinitialiser les choses, pourquoi des appels sont bloqués, et quelle commande utiliser quand.
+sidebar:
+  order: 14
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+Des réponses courtes aux questions qui reviennent le plus en pratique. Chacune renvoie à la page qui a l'histoire complète.
+
+## Où KOD met-il ses données ?
+
+Tout vit sous votre répertoire personnel — rien n'est téléchargé :
+
+| Quoi | Où |
+| --- | --- |
+| Config | `~/.config/kod/config.toml` (Linux) · `~/Library/Application Support/kod/config.toml` (macOS) |
+| Thème & raccourcis | `theme.toml`, `tui_keys.toml` — même répertoire que la config |
+| Compétences | `~/.kod/skills/` et `~/.agents/skills/` (global) · `<project>/.kod/skills/` et `<project>/.agents/skills/` (projet) |
+| Mémoire à long terme | `~/.kod/data/kod.redb` (portée globale) · `<project>/.kod/memory.redb` (portée projet) |
+| Journaux de session (JSONL) | `~/.kod/sessions/<unix-ms>.jsonl` |
+| État de conversation de la TUI | `~/.kod/tui_session.json` |
+| Historique des prompts | `~/.kod/tui_history.json` |
+| Points de contrôle | `~/.kod/checkpoints/<project-hash>/` |
+| Socket du démon | `$XDG_RUNTIME_DIR/kod.sock` · `~/.kod/run/kod.sock` (macOS) |
+
+`kod config path`, `kod sessions show` et `kod doctor` impriment chacun les emplacements pertinents pour votre machine.
+
+## Comment réinitialiser tout ?
+
+Par zone, du plus sûr au plus destructeur :
+
+<Code lang="bash" code={`kod sessions clear          # forget the TUI conversation
+kod memory clear            # empty long-term memory (prompts; add --yes)
+kod checkpoint clear        # drop this project's file snapshots
+rm ~/.kod/tui_history.json  # clear prompt history
+kod init --force            # rewrite config from defaults (backs up the old file)`} />
+
+Supprimer le fichier mémoire `redb` à la main fonctionne aussi — il est recréé vide à la prochaine utilisation. `/clearall` dans la TUI efface le chat, la mémoire *et* les points de contrôle derrière une seule confirmation.
+
+## Quelle commande utiliser — `chat`, `prompt`, `run` ou `agent` ?
+
+- `kod chat` — REPL interactif dans votre terminal.
+- `kod tui` — la même chose, plus les lignes d'outils, le panneau, la recherche, les thèmes.
+- `kod prompt "<text>"` — une question, une réponse, stdout propre. Idéal pour les pipes et les scripts. `-` lit le prompt depuis stdin.
+- `kod run "<text>"` — pareil, mais la réponse est diffusée sur stdout au fur et à mesure qu'elle est générée.
+- `kod agent -g "<goal>"` — la boucle complète avec outils : l'agent peut lire, écrire et exécuter des choses jusqu'à ce que l'objectif soit atteint.
+- `kod swarm -g "<goal>" -n 4` — plusieurs agents sur des sous-tâches d'un objectif, fusionnés à la fin.
+
+## Puis-je empêcher l'agent de modifier quoi que ce soit ?
+
+Oui — trois façons croissantes :
+
+1. `--preset read-only` sur n'importe quelle exécution : `write_file`, `patch_file` et `execute_command` sont refusés d'emblée.
+2. Un `.kod/policy.toml` commité avec des globs `forbidden` et `forbidden_binaries` — voir [Politique](/guides/policy/).
+3. Mettez le shell en bac à sable : `--sandbox` confine `execute_command` avec bwrap/sandbox-exec.
+
+Vérifiez ce qui se passerait avant d'exécuter quoi que ce soit avec `kod policy explain write_file path=src/main.rs`.
+
+## Pourquoi rien ne s'est passé quand l'agent a essayé d'écrire ?
+
+Sous le préréglage `standard`, les écritures et commandes shell nécessitent une approbation. La TUI montre une boîte de dialogue (`y`/`n`/Esc) et `kod chat` demande sur stdin. Si personne ne répond dans les 120 secondes — ou si la commande n'a aucun moyen de demander, comme `kod agent` — l'appel est refusé. C'est délibéré : une approbation sans réponse ne doit pas suspendre la boucle, et les exécutions non surveillées ne devraient demander à personne. Relancez avec `--preset yolo` uniquement là où vous acceptez les écritures sans invite.
+
+## Pourquoi ma compétence n'est-elle jamais mise en correspondance ?
+
+Trois suspects habituels :
+
+1. **Mauvais répertoire.** `kod skills list` montre l'ensemble fusionné ; si votre fichier est manquant, il n'est pas dans l'un des quatre chemins de recherche (ou `skills_dir` les remplace).
+2. **Chevauchement de déclencheurs.** La correspondance score les déclencheurs, tags, capacités et le nom contre votre prompt avec un seuil (`match_threshold`, défaut 0.7). Exécutez `kod skills search "<mots de votre prompt>"` — si votre compétence n'apparaît pas, ses déclencheurs ne partagent aucun mot avec la façon dont vous demandez réellement.
+3. **Front matter cassé.** `kod validate-skills` analyse chaque fichier et rapporte ce qui échoue ; `kod skills show <name>` imprime ce que KOD a analysé (qui peut différer de ce que vous avez écrit).
+
+## Comment changer de modèle en cours de session ?
+
+`/model <name>` dans la TUI — la complétion liste ce que votre serveur offre réellement. Le basculement est instantané, même en cours de génération. Depuis le shell, `kod profile use <profile>` écrit un préréglage dans votre config, ou `--model` remplace par exécution. Voir [Profils de modèle](/guides/profiles/).
+
+## Puis-je utiliser OpenAI ? Anthropic ? Gemini ?
+
+Tout serveur qui parle le protocole chat-completions OpenAI fonctionne aujourd'hui : Ollama, LM Studio, MLX Omni Serve, vLLM, OpenAI lui-même. Pointez un bloc `[[llm.endpoints]]` dessus et mettez la clé API dans une variable d'environnement nommée par `api_key_env` — jamais dans le fichier. Un type de fournisseur `anthropic` est reconnu dans la config mais pas encore implémenté ; il échoue au premier prompt, avec un avertissement au démarrage pour que la lacune soit visible tôt.
+
+## Combien de contexte me reste-t-il ?
+
+Le compteur de contexte de la ligne d'état dans la TUI montre l'utilisation en direct ; `/context` le décompose, `/compact` résume la conversation pour récupérer de la marge, et `/pin <n>` protège un message du compactage. La taille de la fenêtre vient de `context_window` sur votre endpoint — réglez-la pour correspondre à votre modèle (les profils intégrés le font).
+
+## Qu'a réellement changé l'agent ?
+
+- Les lignes d'outils de la TUI montrent un diff unifié en ligne pour chaque `write_file`/`patch_file` (`t` pour développer).
+- `/diff` montre le changement de fichier le plus récent ; `/checkpoints` liste les instantanés et `/rollback <id>` en restaure un.
+- `git_status` / `git_diff` sont la vue propre de l'agent — exécutez-les vous-même avant de committer.
+
+## KOD fonctionne-t-il sous Windows ?
+
+L'espace de travail compile sous Windows et l'agent s'exécute, mais le bac à sable shell y est indisponible — `--sandbox` signale la primitive comme manquante et échoue bruyamment. Les flux de travail en bac à sable sont une fonctionnalité Linux/macOS aujourd'hui.
+
+## Où sont les compétences d'exemple ?
+
+Le dépôt livre `code-review`, `python-testing` et `rust-refactoring` sous `skills/examples/` — copiez-en une dans `~/.kod/skills/` et éditez. Voir [Compétences](/guides/skills/).
+
+<Aside type="tip">
+  Toujours bloqué ? La sortie de <code>kod doctor --json</code> plus le journal de session le plus récent répondent à la plupart des questions qu'un mainteneur poserait — voir [Dépannage](/guides/troubleshooting/) pour le flux de triage complet.
+</Aside>
+
+<LinkCard title="Guides : Dépannage" href="/guides/troubleshooting/" description="Correctifs par symptôme pour les défaillances courantes." />

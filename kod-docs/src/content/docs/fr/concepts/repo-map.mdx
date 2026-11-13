@@ -1,0 +1,48 @@
+---
+title: La carte du référentiel
+description: Comment la carte des symboles est construite, ce qu'elle ignore, et pourquoi une carte mince est généralement un plafond de taille plutôt qu'un bogue.
+sidebar:
+  order: 9
+type: explanation
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+> **Crate :** [`kod-ast`](/reference/crates/#capability) — parsing tree-sitter pour Rust, Python, TypeScript, JavaScript, Go, Ruby, Java, C.
+
+La carte du référentiel est une liste compacte de symboles de haut niveau par fichier source, construite une fois et utilisée pour ancrer les prompts. `kod map` l'imprime ; le moteur la lit en décidant ce qu'un changement pourrait toucher.
+
+## La construire
+
+La marche honore `.gitignore` et saute les arbres de compilation habituels, puis extrait les symboles de haut niveau de chaque fichier reconnu. L'extraction passe d'abord par tree-sitter et retombe sur un scan regex quand la grammaire ne peut pas produire d'arbre — les deux chemins émettent les mêmes tuples `(kind, name, line)`, donc le code en aval ne peut pas les distinguer.
+
+Neuf langages sont reconnus : Rust, Python, TypeScript/TSX, JavaScript/JSX, Go, Ruby, Java, C et les en-têtes C++. Un fichier avec toute autre extension n'est pas scanné.
+
+## Trois choses qui l'arrêtent
+
+Une carte qui omet discrètement la moitié de votre code est pire qu'aucune carte, donc chaque borne est délibérée et journalisée :
+
+| Borne | Valeur | Pourquoi |
+| --- | --- | --- |
+| Fichiers par construction | 100 000 | La marche est bornée par l'espace de travail, et un espace de travail n'est borné par rien en particulier. Un monorepo avec un `vendor/` commité, un dépôt ML avec un répertoire de dataset, ou une exécution depuis `$HOME` scannerait autrement jusqu'à ce que le disque soit plein. |
+| Octets par fichier | 2 Mio | Un fichier plus grand est généré ou vendored, pas du code source écrit à la main. Le sauter ne coûte rien que le modèle utiliserait. |
+| Symboles par fichier | 200 | Un fichier avec plus de 200 éléments de haut niveau n'est pas un module sur lequel un prompt peut raisonner. |
+
+Atteindre le plafond de fichiers n'est **pas une erreur**. La carte est construite à partir de ce qui tient et la troncature est journalisée, donc un utilisateur surpris par une carte mince peut voir pourquoi plutôt que de deviner.
+
+## Pourquoi une carte mince n'est généralement pas un bogue
+
+Par ordre de probabilité :
+
+1. **L'espace de travail n'est pas détecté comme une racine de code.** Avant de scanner, la marche requiert l'un de ces éléments dans le répertoire : un marqueur VCS (`.git`, `.hg`, `.svn`, `.jj`) ou un manifeste de projet (`Cargo.toml`, `package.json`, `pyproject.toml`, `setup.py`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `Gemfile`, `composer.json`, `CMakeLists.txt`, `Makefile`). Un répertoire de scripts épars n'en a aucun, et obtient une carte vide plutôt qu'une marche surprise de `$HOME`.
+2. **Les fichiers sont en dehors des extensions reconnues.** Un fichier `.vue` ou `.svelte` n'est pas scanné — les fichiers de composant de ces frameworks ne sont pas dans l'ensemble des extracteurs.
+3. **Les fichiers dépassent 2 Mio.** Les bundles vendored et les sources générées atterrissent ici.
+4. **Le plafond de 100k a été atteint.** Le journal le dit explicitement.
+
+<Aside type="tip">
+  `kod map` imprime ce que le moteur voit réellement. Si ça semble mince, vérifiez cela d'abord — ce sont les mêmes données que le prompt reçoit, pas un résumé.
+</Aside>
+
+## Rust est filtré
+
+L'extracteur Rust supprime les fonctions marquées `#[test]` ou `#[tokio::test]`, correspondant au comportement du fallback regex. Un module de test avec cinquante cas contribue un symbole de module, pas cinquante — la surface de production est ce à quoi la carte sert.

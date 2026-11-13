@@ -1,0 +1,165 @@
+---
+title: Journal des modifications
+description: Changements notables dans KOD — fonctionnalités, correctifs et changements de comportement, les plus récents en premier.
+sidebar:
+  order: 6
+type: reference
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## [0.1.28] - 2026-11-05
+*(Les messages de commit bruts sont conservés en anglais, comme c'est la norme pour les journaux de modifications techniques.)*
+
+### Dépendances
+- **deps:** Add num-traits; f64→f32 via to_f32 for cast sites (6ccab97)
+
+### Documentation
+- Main-loop split proposal (b267df8)
+- Record shared-helper extraction blocker (990af8e)
+- Correct the shared-helper note — landed, not blocked (9ac53b7)
+- **links:** Green -D warnings across the workspace (e034301)
+- Real READMEs, embedded crate docs, docs.rs config, keywords (7a5256c)
+- **kod-risk:** Complete missing-docs + first doctest (pilot) (4957b24)
+- **kod-core-serve:** Complete missing-docs for unix branch + serve_io (2f2e5f9)
+- **kod-provider-anthropic:** Complete missing-docs (2be3502)
+- **kod-minimize:** Complete missing-docs + first doctest (835079e)
+- **kod-core-serve:** Resolve workspace-only intra-doc link (f613f95)
+- **kod-ast:** Complete missing-docs + first doctest (614157d)
+- **kod-lsp:** Complete missing-docs + first doctest (8b67615)
+- **kod-core-tools:** Complete missing-docs (35a046d)
+- **kod-mcp:** Complete missing-docs (5e95b8c)
+- **kod-core-quality:** Complete missing-docs (d9eee14)
+- **kod-core-routing:** Complete missing-docs (e9c3102)
+- Complete missing-docs for telemetry, skills, schema-dialect (9e71f5b)
+- **kod-stats:** Complete missing-docs (49102e3)
+- **kod-error:** Complete missing-docs (42c613b)
+- **kod-memory:** Complete missing-docs (966f820)
+- **kod-cli:** Complete missing-docs (4d8bd69)
+- **kod-config:** Complete missing-docs (895a7fb)
+- **kod-provider:** Complete missing-docs (326d8ad)
+- **kod-swarm:** Complete missing-docs (c97c763)
+- **kod-tools:** Complete missing-docs (8364fc3)
+- **kod-types:** Complete missing-docs (e9b82be)
+- **kod-core-state:** Complete missing-docs (a0eae30)
+- **kod-core:** Complete missing-docs (ea7f79e)
+- **kod-tui:** Complete missing-docs (23fcab0)
+- Session handoff for 2026-11-01 (5e06eee)
+- **clippy:** Add backticks per clippy::doc_markdown (d5ea572)
+- **clippy:** # Errors / # Panics sections (31237b1)
+- **clippy:** Fix unbalanced backticks + overindented list items (2437fed)
+- Session handoff for clippy pedantic campaign (169c7c0)
+- Handoff update — 116-commit clippy campaign, 372 warnings (e93a8b1)
+- **clippy:** Campaign completion handoff — Path A endpoint reached (4052293)
+- Recover CHANGELOG v0.1.3 → v0.1.27 + fix README counts (c394650)
+- **site:** Add reference/crates.mdx + concepts/core-crates.mdx (e1cb9a9)
+- **site:** Fix D2 gaps — real descriptions, banner placement, sidebar, count (1d24c49)
+- **site:** Homepage version v0.1.0→v0.1.27, install MSRV 1.85→1.98.1 (85165b7)
+- **site:** Correct homepage tool count via proper enumeration (67448d7)
+- **site:** Fix 3 broken anchors + add citation-checks to sidebar (bf670f3)
+- **site:** Fix 3 broken anchors, commit D14's staged fixes (a1b6fd7)
+- Tighten cliff.toml body + fix profiles claim + campaign handoff (250c759)
+- Apply auto-fixes from recon v2 (b4e86df)
+- Revert D26's false-positive "40 tool rounds" → "29 tool rounds" (cd581ec)
+- **installation:** Correct rust-toolchain.toml description (7763b34)
+
+### Corrections
+- Hash-fold truncation, git stderr EOF, veracity + llm regressions (420fea4)
+- **clippy:** Undo 0b0e58ca (fmt-breaking multi-arg comma removals + merged doc blocks), re-apply sort_unstable, cargo fmt (97b3900)
+- **docs:** Restore truncated architecture.mdx + fix sidebar formatting (7839708)
+- **docs:** Restore architecture.mdx from D1 (c3946504) — 100-line body (1dfb052)
+- **docs:** Reapply homepage version + install MSRV cleanly (D7 corruption) (fa8b203)
+
+### Autres
+- **manifest:** Add version to every internal path dep (4dd89c7)
+- **manifest:** Per-crate description, readme, repository (928fc36)
+- Add docs gate and publish dry-run gate (cb5cf76)
+- Match existing style -- pin actions, reuse cache block, --locked (2f28148)
+- Untrack publish helpers, add to .gitignore (f6d0d69)
+- Clippy cleanups, fmt, and ARCHITECTURE verified line (efbec79)
+- **clippy:** Activate pedantic baseline (ad7f182)
+- **clippy:** Uninlined_format_args (4ab265c)
+- **clippy:** Mechanical auto-fixes (5b15b36)
+- **clippy:** #[must_use] on candidate functions (1a034f7)
+- **clippy:** Mechanical auto-fix batch 2 (d573760)
+- **clippy:** Mechanical auto-fix batch 3 (fbb6d38)
+- *(Et des centaines d'autres commits techniques...)*
+
+## [0.1.0] - 2026-10-12
+
+### Passe de préparation à la production
+
+Correctifs d'une revue complète de préparation à la production de tout l'espace de travail. Chaque élément ci-dessous est couvert par un test ; les suites ciblées sont au vert.
+
+### Limites de débit
+- **Nouvelle tentative automatique sur limite de débit (H-RL1).** Un 429 du fournisseur avec une fenêtre `Retry-After` inférieure ou égale au budget configuré est désormais attendu et la requête échouée est relancée automatiquement, au lieu de faire surface à l'erreur et de forcer une nouvelle tentative manuelle. Le bouton `rate_limit_wait_secs` par endpoint est désormais par défaut à 1800 s (30 minutes, couvrant la fenêtre de 1200 s de tab-bridge) ; `0` restaure l'échec rapide hérité. Les boucles de streaming et de collecte du moteur attendent la fenêtre entre les requêtes (annulable avec `Esc`, annoncé via un marqueur `\0kod-rate-limit:` que la TUI rend comme une ligne système et la CLI imprime comme une ligne), et le fournisseur Anthropic — auparavant codé en dur pour refuser toute fenêtre supérieure à 60 s — honore le même budget sur ses chemins de collecte, `complete` natif et streaming. La boucle de tentative de streaming OpenAI ne martèle plus un fournisseur limité en débit avec des tentatives instantanées et plafonne désormais les attentes côté fournisseur à 90 s (`STREAM_RATE_LIMIT_WAIT_CAP`) afin que le timeout d'inactivité de flux de 120 s du moteur ne se déclenche jamais pendant une attente.
+
+### Sécurité
+- **PolicyEngine installé sur chaque commande qui construit un moteur.** `kod prompt`, `kod run`, `kod swarm` et `kod replay --execute` construisaient des moteurs *sans* installer de politique ; le repli du moteur est allow-all, donc les règles d'approbation d'écriture et de refus du préréglage `standard` ne faisaient silencieusement rien sur ces chemins.
+- **Les tours en lecture seule parallèles honorent les refus.** Une décision `Deny` (politique ou hook) n'était vérifiée que dans la branche mutante série ; un tour en lecture seule mappait chaque appel directement à `execute_tool`, donc un `read_file` / `grep` / `web_fetch` refusé s'exécutait quand même.
+- **`kod replay --execute` nécessite `--yes`.** Un journal de session enregistré est effectivement un script exécutable d'appels d'outils ; sans le drapeau explicite, la commande refuse maintenant, avec un résumé des appels destructeurs qu'elle aurait exécutés.
+- **Le `.kod/policy.toml` du projet ne peut que réduire.** Un dépôt livrant `preset = "yolo"` ou `[tools.write_file] mode = "allow"` pouvait escalader au-delà de la politique globale de l'utilisateur sans porte de consentement ; le préréglage effectif est désormais `min(global, project)` et le mode par outil est `max(global, project)`.
+- **La résolution de chemin normalise `..` avant la correspondance de glob.** `src/../secrets/x` correspondait lexicalement à une liste blanche `src/**` pendant que l'outil écrivait `<wd>/secrets/x`.
+- **Les hooks n'injectent plus les arguments du modèle dans `sh -c`.** Le modèle référence des variables d'env de style `$KOD_PATH`, et l'exécuteur plafonne la sortie à 8 Kio et applique un timeout de 30 s.
+- **`.git/` est refusé pour `write_file` / `patch_file`.** Le contrat "les mutations git passent par l'outil git" n'était auparavant appliqué que sur le chemin shell.
+- **Le fichier temporaire du profil de bac à sable est `O_EXCL` + 0600.** Le pré-correctif `/tmp/kod-sandbox-<pid>.json` était devinable et lisible par tous.
+- **`execute_command` s'exécute dans le répertoire de travail du contexte et avec les variables d'env en forme de secret supprimées.** L'enfant n'hérite plus de `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / tokens.
+
+### Intégrité des données
+- **La mémoire sémantique fonctionne.** Le cache de dimension de l'embedder n'était réchauffé qu'à l'intérieur de `embed()`, et chaque appel `embed()` était conditionné à `dims() > 0` — une porte circulaire qui rendait le scoring sémantique définitivement mort. `store_with_metadata` intègre désormais à l'écriture ; `rebuild_index` intègre les entrées manquantes et persiste.
+- **Les ids de point de contrôle survivent à > 10 000 instantanés.** Le compteur à zéros de remplissage rendait 5 chiffres au-delà de 9 999 et triait avant 9999, donc la rétention commençait à supprimer les instantanés les plus récents.
+- **La restauration de point de contrôle prend d'abord un instantané du fichier courant.** Une restauration erronée ne détruit plus définitivement la version de travail. Les vérifications de taille passent désormais par `metadata()`, pas une lecture complète.
+- **Les clés de répartition d'essaim sont par sous-tâche.** Deux sous-tâches sur le même agent de pool partageaient une clé de transcription ; le chemin d'échec d'un agent annulait et effaçait l'historique de son pair en plein vol.
+- **Le nettoyage d'essaim préserve les branches non fusionnées.** `Drop` faisait `git branch -D` sur les commits d'agents non fusionnés après un conflit.
+- **Les écritures du journal de session sont des appels `write_all` atomiques uniques, et une dernière ligne tronquée est tolérée** plutôt que de faire échouer la lecture.
+- **Le stockage de mémoire plafonne le contenu à 4 Kio et déduplique par hash de contenu ; la réécriture de récupération relit chaque entrée par id** afin qu'il ne ressuscite plus les entrées que la consolidation vient de supprimer.
+- **La mémoire à court terme utilise un seul verrou** (la forme à deux verrous pré-correctif avait une inversion qui pouvait se bloquer) et `store` remplace sur place quand l'id existe déjà.
+- **Le plafond d'historique est conscient des épingles.** Un tour épinglé par l'utilisateur n'est plus détruit silencieusement par la persistance des tours d'outils.
+
+### Couche filaire du fournisseur
+- **Le décodeur SSE Anthropic est sûr au niveau des octets.** Les caractères multi-octets divisés entre les chunks TCP étaient auparavant décodés par chunk avec `from_utf8_lossy`, corrompant le texte diffusé et les arguments d'outils.
+- **Les deux fournisseurs utilisent le `RetryPolicy` partagé.** Le module de nouvelle tentative dans `kod-provider` était du code mort ; le chemin OpenAI utilisait un classificateur de sous-chaîne et Anthropic n'avait aucune nouvelle tentative du tout.
+- **`StopReason` est une variante de `StreamChunk`** donc une réponse tronquée est distinguable d'une fin propre.
+- **Le `stream` hérité se termine sur `Err`** au lieu d'émettre `Err` suivi de `Usage` + `Done`.
+
+### Outils
+- **`patch_file` détient son verrou de chemin à travers lecture + diff + écriture.** Deux patchs concurrents différaient auparavant contre le même original ; le second annulait silencieusement le premier.
+- **Les enfants `git` et `check` sont `kill_on_drop`** donc un outil expiré ne laisse plus de processus zombie détenant le verrou du répertoire cible.
+- **Les écritures sont atomiques** (temp + fsync + rename).
+- **Le parseur de diff n'honore les en-têtes de fichier qu'avant le premier hunk** (donc une ligne `--- ` à l'intérieur d'un hunk survit), supprime/ré-émet CRLF, et plafonne l'en-tête `@@ -0,0` de nouveau fichier.
+- **Les globs invalides dans une liste interdite échouent en fermé**, pas en ouvert.
+
+### Moteur
+- **Les chemins auto-check portent la transcription structurée du tour** — le modèle apprend désormais l'issue de l'écriture sous les drapeaux par défaut.
+- **Les messages de résultat d'outil structurés sont plafonnés** (16 Kio) donc un `read_file` de 256 Ko répété sur 40 tours ne peut pas faire croître la transcription au-delà de la fenêtre de l'endpoint.
+- **L'utilisation de tokens s'accumule** à travers les tours ; la forme pré-corrective ne gardait que le rapport du dernier tour.
+- **Le flux du fournisseur a une échéance de chunk d'inactivité** (120 s) et préserve les partiels en cas d'erreur.
+- **`cancels` est un `parking_lot::RwLock`**, pas de `block_on` sur le chemin chaud asynchrone.
+- **Le filtre mémoire Jev garde l'original en cas de sur-filtrage** (le commentaire de doc disait qu'il le faisait ; le code retournait `Vec::new()`).
+- **Le triage de diagnostic est fail-open** quand Jev ne répond qu'à une partie d'un lot au lieu de cacher les non-répondus.
+
+### TUI
+- **Esc avec les complétions ouvertes garde le brouillon tapé.**
+- **La vérification de changement de phase est asynchrone** au lieu de `block_in_place(block_on(...))` dans le gestionnaire d'événements.
+- **`/regenerate` et `/delete` rembobinent la transcription du moteur**, pas seulement l'affichage.
+- **Le collage avec crochets est activé**, donc le collage d'un bloc de code ne soumet plus sa première ligne comme un prompt.
+
+### CLI / CI
+- **`kod run` retourne le résultat du moteur** (le `let _ =` pré-correctif faisait sortir chaque échec avec 0).
+- **`kod swarm -n N` honore le nombre d'agents demandé.**
+- **`kod skills new` génère un frontmatter analysable** (le modèle portait des retraits de continuation à 9 espaces depuis la source).
+- **La signature de release est conditionnée à une sortie d'étape**, pas à un `env` de niveau workflow qui ne pouvait pas voir `secrets`.
+- **`live-anthropic` s'exécute quand le secret est présent** — le `if:` de niveau tâche pré-correctif sur `secrets.*` était toujours évalué à faux.
+- **`RUSTFLAGS: -D warnings` est limité à la tâche de lint**, et `--locked` est défini sur chaque invocation cargo CI.
+- **La MSRV est déclarée (1.85).**
+
+### Structurel
+- **`engine_from_config`.** Les sept commandes CLI qui construisaient un `KodEngine` (chat, swarm, agent, prompt, streaming-prompt, acp, serve) portaient chacune un bootstrap écrit à la main de 80 lignes. `run_agent` ne définissait jamais `network_access`, `run_swarm` ne définissait jamais hooks ou limites, et le bug P0-1 de politique manquante existait parce que trois des sept oubliaient l'installation de politique. Les sept routent maintenant à travers un helper unique avec un `EngineBootstrapOptions` explicite ; la forme partagée est la seule forme.
+- **`install_session_recorder` / `install_jev`.** Les deux installations par commande restantes qui étaient sûres à factoriser — les deux étaient dupliquées textuellement entre chat, prompt, agent et swarm.
+
+### Documentation
+- CONTRIBUTING.md MSRV corrigé.
+- Les docs de fonction qui promettaient un comportement que le code n'avait pas (le fallback d'approbation ACP, le contenu `ensure_open` de LSP, le teardown du hub d'essaim, le fail-open du filtre mémoire) correspondent maintenant au code.
+
+---
+*(Note : Ce journal a été abrégé pour la traduction. Les notes de version complètes de la v0.1.0 à la v0.1.27 sont disponibles dans le fichier original en anglais.)*

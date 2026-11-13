@@ -1,0 +1,57 @@
+---
+title: La boucle de l'agent
+description: À l'intérieur d'un tour du moteur KOD — classification, ancrage, streaming, tours d'outils, pilotage, annulation et plafond de tours.
+sidebar:
+  order: 2
+type: explanation
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Tout ce que fait KOD passe par une seule boucle : le moteur prend une entrée, construit un prompt ancré, diffuse une réponse en streaming, exécute les appels d'outils éventuels, renvoie les résultats, et répète. Comprendre cette boucle rend le reste du système lisible : les décisions de politique, les écritures en mémoire, la correspondance des compétences et la journalisation des sessions pendent tous à des étapes spécifiques de celle-ci.
+
+## Un tour, étape par étape
+
+1. **Classer.** Le [Routeur de tâches](/concepts/router/) lit le prompt et attribue un type de tâche (`Simple`, `CodeModification`, `Debugging`, `Research`, …). La classification façonne le prompt et le nombre de compétences qui l'accompagnent.
+
+2. **Ancrer.** Le moteur construit le prompt ancré à partir de cinq ingrédients, dans un ordre déterministe :
+   - identité (qui est l'agent et comment il se comporte),
+   - environnement (plateforme, répertoire de travail),
+   - la [carte du référentiel](#the-repository-map),
+   - les [compétences](/guides/skills/) correspondantes,
+   - l'historique plus la [mémoire](/guides/memory/).
+
+3. **Diffuser.** Le fournisseur diffuse des tokens via SSE. Les morceaux atteignent l'UI en direct — la TUI rend au fur et à mesure que le modèle parle, pas après. Les appels d'outils sont assemblés à partir du cadrage `ToolCallStart` / `ToolCallDelta` au fur et à mesure qu'ils arrivent.
+
+4. **Filtrer et exécuter les outils.** Chaque appel d'outil passe d'abord par le [moteur de politique](/guides/policy/) (allow/deny/ask, avec la décision journalisée). Les appels autorisés s'exécutent sous un timeout avec des verrous par chemin ; les appels mutants prennent d'abord un point de contrôle. Une décision `ask` ouvre la boîte de dialogue d'approbation — et si personne ne répond dans les 120 secondes, l'appel est refusé plutôt que laissé en suspens.
+
+5. **Renvoyer.** Les résultats des outils deviennent un nouveau contexte pour le prochain appel au modèle. La boucle revient à l'étape 3 — diffuser à nouveau avec les résultats des outils en vue — jusqu'à ce que le modèle réponde sans appeler d'outils ou que le plafond de tours soit atteint.
+
+## Le plafond de tours
+
+La boucle s'exécute au maximum à **40 tours d'outils** par prompt avant que le moteur ne force une conclusion : un appel final demande au modèle de résumer ce qui a été fait et ce qui reste. Une tâche non triviale typique utilise 3 à 15 tours, donc 40 est une marge généreuse qui attrape encore une boucle emballée (un petit modèle relisant sans fin le même fichier) avant que vous n'ayez attendu des minutes pour rien. Le plafond est fixe, non configurable — c'est l'un des rares endroits où KOD choisit une limite dure plutôt qu'une adaptabilité non bornée, et c'est la raison pour laquelle une exécution de `kod agent` sort toujours.
+
+La boucle `/goal` est séparément plafonnée à **6 tours** avant de s'arrêter et de rapporter les progrès, ce que vous pouvez affiner avec `/goal` ou `/steer`.
+
+## Pilotage et annulation
+
+Deux contrôles rendent la boucle interruptible en plein vol :
+
+- **Pilotage** — taper un prompt simple pendant qu'une génération s'exécute met en file d'attente des conseils pour le modèle sans jeter le travail terminé. Dans la TUI, c'est identique à `/steer` ; dans `kod chat`, cela fonctionne de la même manière. Les notes de pilotage sont appliquées entre les tours, à une frontière sûre.
+- **Annulation** — `Esc` (TUI, mode normal) ou `/cancel` arrête le tour. Les résultats d'outils terminés restent dans la session, et la transcription enregistre que le tour a été écourté.
+
+Un détail fixe de concurrence compte ici : le moteur ne détient pas le verrou de lecture du fournisseur pendant le tour de streaming, c'est pourquoi les bascules de `/model` sont instantanées même au milieu d'un prompt.
+
+## La carte du référentiel
+
+L'ancrage inclut une carte compacte du référentiel — la même carte que `kod map` imprime. C'est ainsi que le modèle sait ce qui existe dans votre projet sans lire chaque fichier : répertoires, fichiers clés et symboles de haut niveau. Quand le routage ou l'ancrage vous surprennent, imprimer la carte est la première étape de diagnostic ; une carte qui manque un répertoire explique beaucoup de choses.
+
+## Ce que la boucle ne fait *pas*
+
+La boucle n'est délibérément pas un planificateur. Elle ne décompose pas les objectifs (c'est le travail de l'[exécuteur d'essaim](/guides/swarm/)), ne persiste pas la mémoire sémantique (c'est celle du gestionnaire de mémoire), et n'invente pas de résultats d'outils — un appel d'outil refusé revient au modèle comme un refus, ce qui fait partie des raisons pour lesquelles les refus de politique changent le comportement du modèle plutôt que de simplement échouer silencieusement.
+
+<Aside type="tip">
+  Regarder la boucle respirer : <code>kod chat --verbose</code> ou les lignes d'outils étendues de la TUI (<code>t</code>) montrent la classification de chaque tour, les compétences correspondantes et les appels d'outils dans l'ordre. C'est le moyen le plus rapide de construire une intuition pour l'ancrage.
+</Aside>
+
+<LinkCard title="Référence : Référence des outils" href="/reference/tools/" description="Ce que la boucle peut appeler, et ce que chaque appel retourne." />

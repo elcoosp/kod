@@ -1,0 +1,130 @@
+---
+title: Référence des outils
+description: Les 31 outils intégrés — arguments, résultats, et la machinerie de sécurité autour de chacun.
+sidebar:
+  order: 3
+type: reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD embarque 31 outils intégrés. Chaque appel passe par le [moteur de politique](/guides/policy/) avant de s'exécuter, est exécuté sous un timeout, passe par une table de verrous consultatifs par chemin, et est enregistré (arguments, résultat et la décision de politique) dans le journal de session. `kod tools list` imprime le registre comme le modèle le voit ; `kod tools show <name>` imprime le schéma complet d'un outil.
+
+## Outils de système de fichiers
+
+### `read_file`
+Lit un fichier relatif au répertoire de travail du moteur. La bête de somme pour l'inspection de code ; autorisé sous chaque préréglage, y compris `read-only`.
+
+### `list_files`
+Liste le contenu d'un répertoire. Utilisé pour l'orientation avant les lectures — et les mêmes données que `kod map` résume.
+
+### `grep`
+Recherche le contenu des fichiers. Préférez-le quand l'agent doit trouver des sites d'appel, des définitions ou des motifs à travers de nombreux fichiers.
+
+### `search_files`
+Trouve des fichiers par motif de nom — la bonne forme quand l'agent sait à peu près comment un fichier s'appelle mais pas où il vit.
+
+### `file_info`
+Renvoie les métadonnées (taille, type) d'un chemin. Bon marché et en lecture seule.
+
+### `write_file`
+Crée ou écrase un fichier. Le résultat attache un **diff unifié** de ce qui a changé, et le fichier cible est **instantané dans un point de contrôle** avant que l'appel ne s'exécute, donc `kod checkpoint restore` peut l'annuler. Filtré : `ask` sous `standard`, refusé sous `read-only`.
+
+### `patch_file`
+Applique un patch d'édition à un fichier existant — l'alternative chirurgicale aux réécritures complètes. Partage la machinerie de sécurité de `write_file` : diff unifié sur le résultat, point de contrôle avant l'appel, `ask` sous `standard`, refusé sous `read-only`.
+
+### `edit`
+Applique des éditions adressées par ligne à un fichier lu plus tôt dans la session. L'entrée est un bloc hashline : un en-tête `[path#tag]` dont le tag vient de la sortie de `read_file`, suivi d'opérations `PUT N.=M:` / `CUT N.=M` / `PUT >$:` avec des lignes de payload préfixées par `+`. Un tag qui ne correspond plus au fichier refuse l'édition plutôt que de l'appliquer à un contenu périmé, donc une édition ne peut pas atterrir silencieusement sur un fichier qui a changé sous elle. Partage la machinerie de sécurité de `write_file` : diff unifié, point de contrôle avant l'appel, `ask` sous `standard`, refusé sous `read-only`.
+
+### `jfind`
+Recherche de code sémantique : décrivez ce que vous cherchez en langage naturel et récupérez des fichiers et des plages de lignes plutôt que des correspondances de chaînes exactes. Le bon outil quand `grep` ne peut pas exprimer la requête ("où est calculé le backoff de nouvelle tentative"). Sans endpoint de juge, il se dégrade en classement lexical.
+
+### `tool_search`
+Trouve les outils qui peuvent faire une tâche. Étant donné une description en langage naturel, renvoie les schémas complets des outils les plus pertinents. Plus utile quand des serveurs MCP sont connectés et que leurs outils ne sont pas dans l'ensemble visible.
+
+## Outils Git
+
+### `git_status` / `git_diff`
+Statut et vue de diff en lecture seule de l'arbre de travail. Combinés, c'est ainsi que l'agent révise les changements récents avant de suggérer ou de faire des éditions.
+
+### `git_commit` / `git_branch`
+Opérations git filtrées en écriture : commiter les changements courants, créer une branche. Elles passent par le même moteur de politique que les écritures de fichiers — `ask` sous `standard`, refusé sous `read-only` — et à l'intérieur d'un contexte de commande en bac à sable `.git` reste en lecture seule (`git.history_protected`).
+
+## Outil shell
+
+### `execute_command`
+Exécute une commande shell. L'outil le plus puissant et le plus filtré :
+
+- **Politique** : refusé d'emblée sous `read-only` ; `ask` sous `standard` ; `.kod/policy.toml` peut mettre en liste blanche des `binaries` (par premier token) et interdire des `forbidden_binaries`.
+- **Bac à sable** : avec `--sandbox`, les commandes s'exécutent via `bwrap` (Linux) ou `sandbox-exec` (macOS), échouant bruyamment quand indisponibles ; `.git` est monté en lecture seule par défaut (`git.history_protected`).
+- **Hooks** : les modèles `pre_tool_use` / `post_tool_use` peuvent envelopper chaque exécution.
+
+<Aside type="caution">
+  Les listes blanches de commandes sont de l'ergonomie, pas du confinement — <code>binaries = ["bash"]</code> autorise tout ce que bash peut faire. Le vrai confinement vient de la primitive de bac à sable.
+</Aside>
+
+## Outil de lot
+
+### `batch`
+Exécute plusieurs appels d'outils en une étape. Chaque invocation nomme un outil et ses paramètres ; les résultats reviennent dans le même ordre. Utilisez-le pour lire plusieurs fichiers, ou exécuter plusieurs recherches indépendantes, sans payer un aller-retour par appel.
+
+## Outil de vérification de projet
+
+### `check`
+Exécute le compilateur ou linter qui correspond au projet — Cargo, `tsc`, `ruff` ou `go vet` — et renvoie des diagnostics structurés. En lecture seule par nature. L'agent l'appelle après les éditions pour demander "est-ce que ça a cassé le build ?" ; le `/check` de la TUI l'exécute à la demande, et `tools.auto_check = true` l'exécute automatiquement après chaque écriture (désactivé par défaut — c'est une invocation de compilateur par écriture).
+
+## Outils de planification et d'interaction
+
+### `todo`
+Maintient une liste de tâches visible pour le travail multi-étapes, afin que les progrès survivent à la pression du contexte et que vous puissiez voir le plan à côté de la transcription.
+
+### `plan_update`
+Met à jour le plan de la session : marquer l'étape courante comme terminée, ajouter une note, insérer une étape ou en supprimer une. Garder le plan synchronisé avec ce qui se passe réellement est ce qui rend les progrès visibles pour l'utilisateur.
+
+### `ask_user`
+Permet à l'agent de s'arrêter et de vous poser une question au lieu de deviner — une raison de plus pour que les exécutions non surveillées utilisent `read-only` (il n'y a personne pour répondre là non plus).
+
+## Outils de mémoire
+
+### `memory_save` / `memory_search`
+Accès direct au stockage à long terme : persister un fait durable, rechercher des entrées existantes. Enregistrés uniquement quand la mémoire est activée ; voir [Mémoire](/guides/memory/) pour les emplacements de stockage et les commandes de gestion `kod memory`.
+
+## Outils d'essaim
+
+### `swarm_note` / `swarm_read` / `hub` / `advise`
+Un tableau noir partagé pour les agents concurrents : un agent publie des découvertes (`note`), les autres lisent (`read`). Toujours enregistrés ; en dehors d'un essaim, ce n'est simplement qu'un tableau noir vide.
+
+`hub` est l'interface du coordinateur — `list`, `send`, `inbox`, `jobs` — pour diriger un essaim en cours plutôt que d'échanger des notes. `advise` soulève une observation pour l'agent primaire ; le bruit (`stop`, `lgtm`) et les doublons sont supprimés, donc un conseiller peut être bavard sans inonder la transcription.
+
+## Outils LSP
+
+### `lsp_diagnostics` / `lsp_definition` / `lsp_references` / `lsp_hover`
+Réponses soutenues par le serveur de langage : diagnostics courants pour un fichier, où un symbole est défini, où il est référencé, et documentation de survol. Chaque outil trouve le bon serveur pour le langage du fichier sur votre `PATH` (rust-analyzer, typescript-language-server, …) et **échoue en nommant le binaire manquant** quand il n'y en a pas — jamais un résultat vide silencieux. Les mêmes diagnostics sont ajoutés automatiquement après les écritures quand `tools.auto_lsp` est vrai (le défaut).
+
+## Outil Web
+
+### `web_fetch`
+Récupère une URL HTTP/HTTPS et renvoie son contenu. Gardes :
+
+- **Protection SSRF** : les endpoints loopback, privés, link-local et metadata sont refusés d'emblée.
+- **Opt-in réseau** : désactivé sauf si `llm.network_access` est vrai — ou si l'entrée de politique propre à l'outil définit `network = true`.
+- **Liste blanche de domaines** : `.kod/policy.toml` peut restreindre `web_fetch` à des `domains` nommés (par exemple `["docs.rs", "crates.io"]`).
+
+## Outils MCP
+
+Les outils fournis par les [serveurs MCP](/guides/configuration/) configurés sont enregistrés sous la politique de nommage `mcp:<server>.<tool>` — par exemple `mcp:filesystem.read_file` — et apparaissent dans `kod tools list` aux côtés des outils intégrés. Les entrées de politique les adressent par ce nom complet.
+
+## Priorité des décisions, en une table
+
+| Couche | Source | Exemple |
+| --- | --- | --- |
+| 1. Préréglage | `read-only` / `standard` / `yolo` | `standard` (défaut) |
+| 2. Config globale | `[tools]` / `[llm]` dans `config.toml` | `network_access = false` |
+| 3. Politique du projet | `.kod/policy.toml` | `[tools.write_file] mode = "ask"` |
+| 4. Override CLI | drapeau `--preset` | `--preset yolo` |
+
+À l'intérieur d'une couche, les entrées par outil affinent le préréglage ; en cas de conflit de glob, **le refus l'emporte toujours sur l'autorisation**. `kod policy explain <tool> <args>` imprime le verdict pour un appel spécifique sans l'exécuter.
+
+<Aside type="note">
+  Le timeout, le verrouillage de chemin, le point de contrôle et l'évaluation de politique s'appliquent à *chaque* outil — il n'y a pas de chemin non filtré vers vos fichiers. Le [guide Outils](/guides/tools/) explique les familles et les suites d'écriture (LSP, check) en termes orientés tâches.
+</Aside>

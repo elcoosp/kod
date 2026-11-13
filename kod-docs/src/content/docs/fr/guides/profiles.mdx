@@ -1,0 +1,60 @@
+---
+title: Profils de modèle
+description: Les profils de modèle intégrés — local-fast, local-capable, local-reasoning, cloud-openai — et comment basculer, inspecter et amorcer la config à partir d'eux.
+sidebar:
+  order: 4
+type: how-to
+---
+
+import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
+
+La friction du premier lancement est le problème d'adoption le plus facile à corriger, et KOD le corrige avec des **profils de modèle** : des préréglages nommés qui regroupent un nom de modèle, une URL de base, une fenêtre de contexte et des paramètres de génération. Au lieu d'apprendre ce qu'est un `context_window`, vous exécutez `kod profile use local-fast` et obtenez une session fonctionnelle.
+
+## Les préréglages intégrés
+
+| Profil | Modèle | Contexte | Endpoint | Notes |
+| --- | --- | --- | --- | --- |
+| `local-fast` | `qwen2.5-coder:7b` | 32k | `http://localhost:11434/v1` | Petit modèle local pour les éditions et questions rapides. Le point de départ recommandé. |
+| `local-capable` | `qwen2.5-coder:32b` | 32k | `http://localhost:11434/v1` | Modèle local plus grand pour les tâches difficiles — nécessite environ 20 Go de VRAM. |
+| `local-reasoning` | `deepseek-r1:14b` | 64k | `http://localhost:11434/v1` | Modèle local axé sur le raisonnement (DeepSeek-R1 14B). |
+| `cloud-openai` | `gpt-4o-mini` | 128k | `https://api.openai.com/v1` | Cloud OpenAI ; nécessite `OPENAI_API_KEY` dans l'environnement. |
+
+Chaque profil local porte une commande d'installation en une ligne (`ollama pull qwen2.5-coder:7b`, et ainsi de suite) donc le téléchargement du modèle est un copier-coller depuis `kod profile list`.
+
+## Les commandes `kod profile`
+
+<Code lang="bash" code={`kod profile list             # show the built-in presets (add --json for scripts)
+kod profile show             # print the effective [llm] config
+kod profile use local-fast   # write the preset's values into config.toml
+kod profile use local-capable --dry-run   # print what would be written`} />
+
+`use` modifie le premier bloc `[llm.endpoints]` de votre fichier de config en place. Avec `--dry-run`, il imprime les changements sans rien toucher, ce qui est utile quand vous voulez copier les valeurs dans une config personnalisée plutôt que les appliquer.
+
+<Aside type="tip">
+  Vous préférez une sauvegarde à une édition ? <code>kod config init-from local-fast</code> sauvegarde votre config actuelle dans <code>config.toml.bak-&lt;unix-ts&gt;</code> et en écrit une fraîche amorcée depuis le profil — une réinitialisation en une commande qui garde votre ancien fichier.
+</Aside>
+
+## Ce qu'un profil définit et ne définit pas
+
+`profile use` n'écrit que l'endpoint du modèle — fournisseur, modèle, URL de base, fenêtre de contexte, max tokens et paramètres de génération. Il ne touche pas à `[memory]`, `[skills]`, `[swarm]`, `[hooks]`, `[tools]` ou `[mcp]`, et il ne crée pas d'overrides par projet. Tout le reste reste exactement tel que vous l'avez configuré.
+
+## Choisir entre eux
+
+Un guide de décision pratique :
+
+- **`local-fast`** quand vous éditez, posez des questions ou exécutez de longues sessions interactives où la latence domine. Les modèles 7B sur une machine moderne diffusent confortablement.
+- **`local-capable`** quand les tâches sont vraiment difficiles — refactorisations multi-fichiers, chasses de bogues subtiles — et que votre matériel peut porter le coût en VRAM.
+- **`local-reasoning`** quand vous voulez de la délibération plutôt que de la vitesse : DeepSeek-R1 dépense plus de tokens à réfléchir et moins de temps à se tromper.
+- **`cloud-openai`** quand la qualité compte plus que la localité et que vous avez accepté le compromis en définissant `OPENAI_API_KEY`.
+
+Vous pouvez changer de modèle en cours de session depuis la TUI avec `/model <name>` — la complétion liste les modèles que votre serveur offre réellement — et le basculement est instantané car le moteur ne détient pas le verrou de lecture du fournisseur pendant un tour de streaming.
+
+## Au-delà des préréglages
+
+Un profil n'est qu'un point de départ. Tout serveur compatible OpenAI est atteignable en éditant directement le bloc d'endpoint — voir [Fournisseurs LLM](/concepts/providers/) pour le fonctionnement de la normalisation de l'URL de base, et [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) pour la forme multi-endpoint, y compris le routage des tâches de débogage vers un modèle cloud tandis que le chat reste local. La table `[llm.endpoints.pricing]` (USD par million de tokens) alimente l'affichage du coût de la TUI pour les endpoints à paiement par token.
+
+<Aside type="note">
+  Les profils ciblent des modèles spécifiques, pas des fournisseurs spécifiques. Pointer KOD vers tout autre serveur compatible OpenAI est une question de définir <code>base_url</code> (et <code>model</code>) sur un endpoint.
+</Aside>
+
+<LinkCard title="Suivant : Compétences" href="/guides/skills/" description="Enseignez à l'agent des connaissances réutilisables avec des fichiers Markdown." />

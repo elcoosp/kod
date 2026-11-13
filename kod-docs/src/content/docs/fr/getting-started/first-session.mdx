@@ -1,0 +1,92 @@
+---
+title: Votre première session
+description: Une visite guidée de la TUI de KOD — modes, raccourcis clavier, commandes slash, pilotage d'une génération en cours, et le compteur de contexte.
+sidebar:
+  order: 4
+type: tutorial
+---
+
+import { Aside, Code, LinkCard, Steps } from '@astrojs/starlight/components';
+
+La TUI est l'endroit où KOD est le plus lui-même : un en-tête, une zone de chat avec des lignes d'outils en direct, une ligne d'état, une boîte de saisie et un ensemble de raccourcis clavier empruntés à la mémoire musculaire que vous avez déjà de Vim. Cette page parcourt une session réaliste du lancement à la sortie et souligne les parties qui rendent l'interface agréable à vivre.
+
+## Lancer et regarder autour
+
+<Code lang="bash" code={`kod tui`} />
+
+La ligne d'état vous accueille avec `Connected · <model> · N skill(s)` et vous rappelle que `/help` existe. Si vous avez déjà exécuté KOD auparavant, votre conversation précédente est automatiquement restaurée depuis `~/.kod/tui_session.json` — quittez et rouvrez à tout moment, il garde votre place.
+
+L'interface a quatre régions. L'**en-tête** montre l'état de la session et le modèle. La **zone de chat** rend vos prompts, les réponses en streaming de l'assistant et une ligne par appel d'outil. La **ligne d'état** porte le compteur de contexte et l'indicateur de mode. La **boîte de saisie** est l'endroit où vont les prompts, avec support de l'historique et de la complétion.
+
+## Votre premier prompt
+
+<Steps>
+1. Appuyez sur `i` pour entrer en mode insertion.
+2. Tapez un objectif qui poussera l'agent à utiliser des outils, par exemple :
+
+   <Code lang="text" code={`explain the retry logic in src/net.rs and add a doc comment to the retry function`} />
+
+3. Appuyez sur <kbd>Enter</kbd> pour envoyer. Les tokens affluent en direct ; les lignes d'outils apparaissent au fur et à mesure que l'agent travaille.
+</Steps>
+
+Les lignes d'outils commencent réduites : vous voyez le nom de l'outil et la cible (par exemple `read_file src/net.rs ✓`). Appuyez sur `t` pour basculer la visibilité de la sortie des outils globalement, `o` pour développer la ligne réduite la plus récente, ou `Enter` avec le chat focalisé pour développer la ligne sous votre curseur. Cela garde la transcription lisible tout en rendant chaque appel inspectable.
+
+<Aside type="tip">
+  Le compteur de contexte dans la ligne d'état montre combien de la fenêtre de contexte du modèle la session utilise. Quand il monte au-delà de ce avec quoi vous êtes à l'aise, <code>/compact</code> résume la conversation pour récupérer de la marge, et <code>/context</code> montre une répartition détaillée de l'endroit où va la fenêtre.
+</Aside>
+
+## Piloter une génération en cours
+
+La chose la plus utile à savoir : **taper un prompt simple pendant qu'une génération est en cours la pilote** — la même chose que d'émettre `/steer`. L'entrée est mise en file d'attente, le modèle la voit comme des conseils supplémentaires, et le travail déjà effectué est conservé.
+
+Utilisez ceci quand une exécution prend la mauvaise direction et que vous préférez rediriger plutôt qu'annuler. Si vous voulez vraiment arrêter, `Esc` (ou `Ctrl-C`) annule le prompt en cours.
+
+## Commandes slash à essayer en premier
+
+Tapez `/` en mode insertion pour ouvrir la complétion — elle complète aussi les noms de modèles après `/model` et les chemins de fichiers. Il y a une cinquantaine de commandes (la liste complète vit dans [TUI Keybindings](/reference/tui-keys/)) ; quelques-unes à essayer lors d'une première session :
+
+- `/model <name>` — changez de modèle en cours de session. Le basculement est instantané car le moteur ne détient pas le verrou du fournisseur pendant un tour de streaming.
+- `/goal <text>` — définissez un objectif permanent vers lequel l'agent travaille au fil des tours (`/goal clear` le supprime).
+- `/attach <path>` — attachez un fichier à votre prochain prompt sans attendre que l'agent le trouve.
+- `/theme` — basculez entre les thèmes intégrés `dark` et `light`.
+- `/undo` — annulez un `/clear`, au cas où vous auriez effacé plus que vous ne le vouliez.
+- `/whoami` — résumé de session en une ligne : modèle, compétences, utilisation du contexte, chemins.
+- `/swarm` — lancez une exécution multi-agents depuis la TUI.
+
+Vos propres commandes viennent gratuitement : un bloc `[commands]` dans `config.toml` enregistre des commandes slash personnalisées — voir [Configuration](/guides/configuration/#custom-slash-commands).
+
+## Raccourcis clavier en un coup d'œil
+
+Mode normal (`Esc` quitte le mode insertion) :
+
+| Touche | Action |
+| --- | --- |
+| `i` | entrer en mode insertion |
+| `Esc` / `Ctrl-C` | annuler le prompt en cours |
+| `j` / `k` | défiler vers le bas / le haut (les flèches et la molette de la souris fonctionnent aussi) |
+| `g` / `G`, `Home` / `End` | sauter au plus ancien / plus récent |
+| `PgUp` / `PgDn` | défiler par page |
+| `t` | basculer la visibilité de la sortie des outils |
+| `o` | développer la ligne d'outil réduite la plus récente |
+| `f` | démarrer une recherche au fil de la frappe (`n` / `N` sautent entre les correspondances) |
+| `y` | copier la dernière réponse de l'assistant |
+| `a` (ou `Tab`) | ouvrir le panneau d'agent |
+| `e` | éditer votre dernier message |
+| `u` | annuler un `/clear` |
+| `?` (ou `h`) | superposition d'aide |
+| `q` | quitter (demande confirmation quand une génération est en cours) |
+
+Le mode insertion ajoute l'édition de ligne : `Enter` envoie, `Ctrl+J` (ou `Shift+Enter`) insère un saut de ligne, `Tab` cycle les complétions, `Up`/`Down` parcourent l'historique des prompts (votre brouillon non envoyé est conservé), `Ctrl+W` / `Ctrl+U` / `Ctrl+K` éditent la ligne, et `Ctrl+Left` / `Ctrl+Right` sautent par mot. Chaque touche du mode normal peut être remappée — voir [TUI Keybindings](/reference/tui-keys/#rebinding-keys).
+
+## Quitter proprement
+
+Appuyez sur `q` en mode normal. Si une génération est en cours, la TUI demande confirmation plutôt que de laisser tomber le flux silencieusement. Votre session est sauvegardée sous `~/.kod/` et peut être inspectée plus tard avec `kod sessions` :
+
+<Code lang="bash" code={`kod sessions show                          # where the session lives, message count
+kod sessions export session.md             # write it out as Markdown (or --format json)`} />
+
+<Aside type="note">
+  Tout ce que fait la TUI est enregistré : prompts, réponses et chaque appel d'outil avec ses arguments et son résultat. C'est ce qui rend <code>kod replay</code> possible — voir [Sessions, Replay & Checkpoints](/guides/sessions/).
+</Aside>
+
+<LinkCard title="Suivant : CLI Scriptable" href="/guides/cli/" description="La même boucle d'agent, pilotée depuis des scripts et des commandes ponctuelles." />

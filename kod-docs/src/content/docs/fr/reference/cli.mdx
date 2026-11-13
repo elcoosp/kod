@@ -1,0 +1,234 @@
+---
+title: Commandes CLI
+description: Référence complète du binaire kod — chaque sous-commande, ses drapeaux et son objectif.
+sidebar:
+  order: 1
+type: reference
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+<Code lang="bash" code={`kod [--verbose] [<COMMAND>]`} />
+
+La CLI de KOD est un seul binaire avec des sous-commandes regroupées par objectif : sessions, modèles, inspection et audit. La plupart des commandes opèrent sur la configuration effective (défauts fusionnés avec `~/.config/kod/config.toml` et toute politique de projet) et parlent au serveur de modèle configuré sous `[llm]`. `kod` seul — aucune sous-commande — imprime un résumé d'accueil : points d'entrée, chemin de config et répertoires de compétences découverts.
+
+Drapeau global : `--verbose` augmente la journalisation sur toute l'exécution — plus utile avec `agent` et `swarm` quand vous voulez voir la boucle respirer.
+
+Drapeau de politique : là où indiqué, `--preset` accepte `read-only` (alias `readonly`), `standard` (alias `default`) ou `yolo` (alias `unrestricted`) et remplace la config globale et tout `.kod/policy.toml` de projet pour cette exécution.
+
+## Commandes en un coup d'œil
+
+| Commande | Objectif |
+| --- | --- |
+| `chat` | Démarrer une session de chat (REPL simple) avec sortie en streaming |
+| `tui` | Lancer l'interface terminal interactive |
+| `agent` | Exécuter un seul agent contre un objectif, puis quitter |
+| `prompt` | Exécuter un prompt de manière non interactive et imprimer la réponse |
+| `run` | Exécuter un prompt et diffuser la réponse sur stdout |
+| `swarm` | Décomposer un objectif, exécuter N agents simultanément, fusionner les résultats |
+| `serve` | Démarrer (ou arrêter) le démon moteur de longue durée |
+| `skills` | Travailler avec les compétences : lister, échafauder, éditer, rechercher, renommer, copier, exporter |
+| `validate-skills` | Valider chaque fichier de compétence ; sort avec un code non nul sur les mal formés |
+| `config` | Afficher, valider, exporter, éditer ou amorcer la configuration |
+| `models` | Lister les modèles que le fournisseur configuré offre |
+| `profile` | Lister, afficher ou changer les profils de modèle |
+| `theme` | Lister ou imprimer les thèmes de la TUI |
+| `sessions` | Afficher, exporter, importer ou effacer la session TUI sauvegardée |
+| `memory` | Inspecter, exporter, importer ou effacer la mémoire à long terme |
+| `map` | Imprimer la carte du référentiel utilisée pour l'ancrage des prompts |
+| `replay` | Ré-exécuter les appels d'outils depuis un journal de session |
+| `checkpoint` | Lister, diffuser, restaurer ou effacer les instantanés d'annulation au niveau des fichiers |
+| `policy` | Afficher la politique effective, ou expliquer un appel hypothétique |
+| `tools` | Lister le registre d'outils, ou afficher le schéma d'un outil |
+| `sandbox` | Vérifier que la primitive de bac à sable de la plateforme est disponible |
+| `doctor` | Imprimer un rapport de diagnostic ; sort avec un code non nul en cas d'échec |
+| `init` | Assistant de premier lancement ; écrit une config par défaut si aucune n'existe |
+| `test` | Exécuter les autotests intégrés |
+| `completions` | Imprimer un script de complétion shell |
+| `update` | Vérifier GitHub pour une version plus récente (lecture seule) |
+| `validate-skills-strict` | Comme `validate-skills`, mais une compétence sans `version` échoue aussi |
+| `acp` | Exécuter le pont Agent Client Protocol sur stdin/stdout (lancé par un éditeur) |
+| `commit-check` | Valider un message de commit conventionnel proposé contre les changements indexés |
+| `if-bench` | Exécuter l'éval de mémoire de travail + suivi d'instructions contre l'endpoint par défaut |
+| `fixture` | Capturer ou rejouer une fixture de streaming déterministe |
+| `jev` | Statut, statistiques et réglage des seuils de Jev (TypeSafe AI) |
+| `budget` | Coût et limites de la session |
+| `limits` | Quotas et compteurs par outil |
+| `plan` | Imprimer l'artefact de plan pour la session courante |
+| `decisions` | Imprimer les décisions durables enregistrées pour la session courante |
+| `trace` | Inspecter les traces de tour structurées dans `turns.jsonl` |
+| `__sandbox-exec` | Caché : appliquer un bac à sable Landlock au processus courant et exécuter une commande |
+
+## `kod chat`
+
+<Code lang="bash" code={`kod chat [--model <name>] [--temperature <f>] [-i, --interactive]
+         [--system-prompt <text>] [--sandbox] [--preset <preset>]`} />
+
+Démarre un REPL simple avec sortie en streaming. `--model` remplace le modèle configuré pour cette session. `--temperature` (défaut `0.7`) est accepté pour compatibilité ; la température réellement appliquée vient de la config de l'endpoint. `--system-prompt` remplace le prompt système intégré. `--sandbox` route les commandes shell via `bwrap`/`sandbox-exec` et échoue bruyamment quand la primitive est indisponible. `--preset` remplace la politique pour cette session.
+
+## `kod tui`
+
+<Code lang="bash" code={`kod tui [--model <name>] [--sandbox] [--preset <preset>] [--no-resume]`} />
+
+Lance l'interface terminal interactive. `--no-resume` est destiné à sauter la session sauvegardée ; aujourd'hui, il imprime un indice à la place — pour démarrer à zéro, déplacez `~/.kod/tui_session.json` de côté.
+
+## `kod agent`
+
+<Code lang="bash" code={`kod agent [-n <name>] -g "<goal>" [--model <name>] [--preset <preset>]`} />
+
+Exécution d'agent ponctuelle : classer la tâche, ancrer le prompt, appeler des outils, terminer par un résumé. `-n, --name` (défaut `kod-agent`) étiquette l'agent dans les journaux ; `-g, --goal` est requis. Les écritures nécessitant une approbation sont refusées (rien d'interactif pour approuver) — voir [Politique](/guides/policy/).
+
+## `kod prompt`
+
+<Code lang="bash" code={`kod prompt <prompt> [--model <name>] [--no-log] [--sandbox]
+           [--remote] [--socket <path>]`} />
+
+Un prompt, une réponse, code de sortie 0 en cas de succès et 1 en cas d'erreur. Seule la réponse est imprimée sur stdout ; les diagnostics vont sur stderr, donc ça se pipe proprement. `-` lit le texte du prompt depuis stdin. `--no-log` saute l'entrée du journal de session. `--remote` envoie le prompt à un démon `kod serve` en cours d'exécution au lieu de construire un moteur en processus (`--socket` remplace le chemin de la socket).
+
+## `kod run`
+
+<Code lang="bash" code={`kod run <prompt> [--model <name>]`} />
+
+Comme `prompt`, mais diffuse la réponse sur stdout au fur et à mesure qu'elle est générée. `-` lit le prompt depuis stdin.
+
+## `kod swarm`
+
+<Code lang="bash" code={`kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--merge]`} />
+
+Exécute le pipeline complet d'essaim. `-n, --agents` a pour défaut `swarm.max_agents` de la config et est contraint à 2–8 par l'exécuteur. La fusion est contrôlée par `swarm.merge_results` dans la config ; il n'y a pas de drapeau `--no-merge`.
+
+## `kod serve`
+
+<Code lang="bash" code={`kod serve [--stop] [--socket <path>]`} />
+
+Démarre un moteur de longue durée derrière une socket Unix (défaut `$XDG_RUNTIME_DIR/kod.sock`, ou `~/.kod/run/kod.sock` sous macOS ; jamais TCP) auquel `kod prompt --remote` s'attache. `--stop` demande à un démon en cours d'exécution de quitter et attend que le fichier de socket disparaisse.
+
+## `kod skills`
+
+`kod skills` sans sous-commande liste les compétences fusionnées de chaque répertoire standard ; `--json` émet l'inventaire lisible par machine. Sous-commandes :
+
+| Sous-commande | Objectif |
+| --- | --- |
+| `list` | Identique à `kod skills` nu |
+| `new <name>` | Échafauder une nouvelle compétence dans le premier répertoire inscriptible ; refuse d'écraser |
+| `remove <name>` | Supprimer une compétence ; refuse sans `--yes` sauf dans le répertoire courant |
+| `edit <name>` | Ouvrir le fichier dans `$EDITOR` |
+| `show <name>` | Imprimer le markdown complet (front matter + corps) |
+| `search <query>` | Rechercher par nom, description, tags ou capacités |
+| `source <name>` | Imprimer le chemin absolu du fichier — utile pour les scripts |
+| `rename <from> <to>` | Renommer ; réécrit le champ `name:` ; refuse si la destination existe |
+| `copy <from> <to>` | Copier dans le même répertoire ; réécrit `name:` ; refuse d'écraser |
+| `export <name> <dest>` | Copier vers un chemin ou `-` pour stdout ; `--force` écrase |
+
+Deux validateurs autonomes complètent l'arbre : `kod validate-skills` (sort avec un code non nul sur les fichiers de compétence mal formés) et `kod validate-skills-strict` (échoue en plus sur les compétences manquant d'une `version`).
+
+## `kod config`
+
+| Sous-commande | Objectif |
+| --- | --- |
+| *(aucune)* | Imprimer la config effective |
+| `export [path]` | Écrire la config effective (défauts + utilisateur) dans un fichier ou `-` ; `--force` écrase |
+| `path` | Imprimer l'emplacement du fichier de config |
+| `edit` | Ouvrir la config dans `$EDITOR` (ou `$VISUAL`, ou `vi`) |
+| `validate` | Analyser et valider ; sort avec un code non nul en cas d'erreur — compatible CI |
+| `show-merged` | Imprimer la config effective en TOML (reproductible) |
+| `show-raw` | Imprimer le contenu brut du fichier textuellement, commentaires inclus |
+| `init-from <profile>` | Sauvegarder la config actuelle (`config.toml.bak-<unix-ts>`) et en écrire une amorcée depuis un profil |
+
+## `kod profile`
+
+<Code lang="bash" code={`kod profile list [--json]              # show the built-in presets
+kod profile show                       # print the effective [llm] config
+kod profile use <profile> [--dry-run]  # write preset values into config.toml`} />
+
+Préréglages : `local-fast`, `local-capable`, `local-reasoning`, `cloud-openai`. Voir [Profils de modèle](/guides/profiles/).
+
+## `kod models`
+
+<Code lang="bash" code={`kod models [--filter <text>]`} />
+
+Liste les modèles que le fournisseur configuré offre (`--filter` est une correspondance de sous-chaîne insensible à la casse). Les erreurs du fournisseur font surface plutôt que d'être réduites à une liste vide, donc un mauvais endpoint est visible ici.
+
+## `kod theme`
+
+<Code lang="bash" code={`kod theme list          # built-in theme names
+kod theme show <name>   # one theme's palette as JSON (dark | light)`} />
+
+## `kod sessions`
+
+<Code lang="bash" code={`kod sessions show                        # where the TUI session lives, message count
+kod sessions export [path] [--format markdown|json]   # default stdout, Markdown
+kod sessions import <path>               # replace saved session from JSON
+kod sessions latest                      # path of the newest session log
+kod sessions count                       # number of logs and combined size
+kod sessions clear                       # delete the saved session file`} />
+
+`export`/`import` font un aller-retour : seule la sortie `--format json` peut être réimportée.
+
+## `kod memory`
+
+<Code lang="bash" code={`kod memory list                  # every long-term entry, newest first
+kod memory search <query>        # case-insensitive substring search
+kod memory delete <short-id>     # remove one entry (id from list/search)
+kod memory export [path]         # dump entries to a JSON file or \`-\`
+kod memory import [path]         # append entries from a JSON file or \`-\`
+kod memory clear [--yes]         # delete every entry; prompts without --yes`} />
+
+## `kod map`
+
+<Code lang="bash" code={`kod map [--max-chars <n>]`} />
+
+Imprime la carte du référentiel (symboles de haut niveau par fichier source reconnu) utilisée pour l'ancrage des prompts. Le plafond est de 16000 caractères par défaut (~4k tokens).
+
+## `kod replay`
+
+<Code lang="bash" code={`kod replay <session.jsonl> [--execute]`} />
+
+Ré-exécute les appels d'outils enregistrés dans un journal de session, sans le modèle. Sans `--execute`, il imprime ce qui s'exécuterait ; avec `--execute`, il effectue les appels pour de vrai.
+
+## `kod checkpoint`
+
+<Code lang="bash" code={`kod checkpoint list [--limit <n>]   # snapshots for this project (default 20)
+kod checkpoint diff <id>            # unified diff: snapshot vs current file
+kod checkpoint restore <id>         # restore the file; the snapshot is kept
+kod checkpoint clear                # delete every checkpoint for this directory`} />
+
+## `kod policy`
+
+<Code lang="bash" code={`kod policy show
+kod policy explain <tool> [key=value …]`} />
+
+`show` imprime la politique effective avec la provenance de chaque règle. `explain` répond à "qu'est-ce que le moteur déciderait pour cet appel ?" sans rien exécuter — par exemple `kod policy explain write_file path=src/main.rs`. Les valeurs qui s'analysent comme JSON sont utilisées comme JSON ; tout le reste est traité comme une chaîne. Les overrides CLI `--preset` ne sont délibérément pas appliqués.
+
+## `kod tools`
+
+<Code lang="bash" code={`kod tools list        # every registered tool
+kod tools show <name> # one tool's name, description, schema, permissions`} />
+
+## `kod sandbox`
+
+<Code lang="bash" code={`kod sandbox check`} />
+
+Rapporte si la primitive de bac à sable de la plateforme est disponible — et la commande d'installation quand elle ne l'est pas.
+
+## `kod doctor`
+
+<Code lang="bash" code={`kod doctor [--json] [--fix]`} />
+
+Diagnostics pour la config, l'endpoint, les compétences, la mémoire, le bac à sable et git. Sort avec un code non nul si une vérification échoue, donc il peut bloquer un script ou la CI. `--fix` crée les répertoires manquants et écrit une config par défaut si aucune n'existe ; il ne modifie jamais un fichier de config existant.
+
+## `kod init`
+
+<Code lang="bash" code={`kod init [--force]`} />
+
+S'assure qu'un fichier de config existe (en sauvegardant l'ancien avec `--force`), imprime où il vit et imprime les trois prochaines commandes qu'un nouvel utilisateur devrait exécuter. Idempotent.
+
+## `kod completions` / `kod test` / `kod update`
+
+<Code lang="bash" code={`kod completions <bash|zsh|fish|elvish|powershell>   # completion script on stdout
+kod test                                            # built-in self-tests
+kod update                                          # check GitHub for a newer release`} />
+
+<Aside type="tip">
+  Vous scriptez avec KOD ? <code>kod prompt</code> (stdout propre, codes de sortie) et <code>kod doctor --json</code> / <code>kod skills --json</code> (lisibles par machine) sont les surfaces stables sur lesquelles construire.
+</Aside>

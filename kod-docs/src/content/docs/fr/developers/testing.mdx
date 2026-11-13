@@ -1,0 +1,70 @@
+---
+title: Tests
+description: Comment KOD est testé — la disposition de la suite, la conception offline-par-défaut, les tests avec modèle réel, les benchmarks, et la liste de vérification avant release.
+sidebar:
+  order: 1
+type: how-to
+---
+
+import { Aside, Code, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+
+La suite de tests de l'espace de travail exécute des tests unitaires, des tests d'intégration et des doctests **sans services externes** — elle est conçue pour être rapide et hors ligne, avec les tests avec modèle réel en opt-in derrière `#[ignore]`. `cargo test --workspace` est le point d'entrée unique ; la CI exécute la même suite à chaque push.
+
+## Démarrage rapide
+
+<Code lang="bash" code={`just test                        # or:
+cargo test --workspace           # all crates, all tests
+cargo test --workspace -- --test-threads=8     # faster, parallel
+cargo test --workspace --lib     # unit tests only
+cargo test --workspace --tests   # integration tests only
+cargo test --workspace -- --list | tail -1     # exact current total`} />
+
+Par crate, les suites denses sont `kod-tui` (état de l'app, événements, raccourcis, complétion, recherche, streaming, boucle principale), `kod-core` (cycle de vie du moteur, classification, câblage mémoire, ancrage, tours d'outils, journal de session, exécuteur d'essaim), `kod-tools` (outils intégrés, résolution de chemin, invocation de bac à sable, application des permissions), `kod-skills` (parseur, chargeur, matcher, watcher, pipeline complet), et `kod-memory` (éviction FIFO, allers-retours `redb`, récupération, compactage). `kod-provider` est trait-only et n'a pas de tests par conception.
+
+## Tests avec modèle réel
+
+Les tests qui exercent le vrai fournisseur sont `#[ignore]`-gatés afin que `cargo test` reste rapide et hors ligne. Optez-y avec un serveur en cours d'exécution et des variables d'environnement :
+
+<Tabs>
+<TabItem label="Tests du fournisseur">
+  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
+  cargo test -p kod-provider-openai -- --ignored --nocapture`} />
+</TabItem>
+<TabItem label="Test de la boucle principale de la TUI">
+  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
+  cargo test -p kod-tui --test main_loop -- --ignored --nocapture`} />
+</TabItem>
+</Tabs>
+
+`KOD_TEST_MODEL` nomme un modèle que le serveur a déjà téléchargé ; `KOD_TEST_DB` pointe le test de la TUI vers une base de données de mémoire jetable. Les erreurs de connexion ici signifient que le serveur est en panne ou que le modèle est manquant — pas que le code est faux.
+
+Les tests en processus construisent le routeur avec `enable_memory=false` pour éviter la contention de base de données — reflétant comment le moteur câble la mémoire en production mais gardant les tests hermétiques.
+
+## Benchmarks
+
+<Code lang="bash" code={`cargo bench --workspace          # or: just bench`} />
+
+Les benchmarks vivent sous `kod-core/benches/` et couvrent les chemins chauds du moteur.
+
+## Déboguer un test en échec
+
+<Code lang="bash" code={`cargo test --workspace -- --nocapture              # full output
+cargo test <name> -- --nocapture --test-threads=1  # serial, for races
+cargo test <name> -- --backtrace                   # backtrace
+cargo test -- --ignored                            # include live tests`} />
+
+Causes courantes : Ollama non joignable (n'affecte que les tests `#[ignore]`-gatés), erreurs de permission dans les tests d'outils (hypothèses de résolution de chemin), et tests de la TUI en CI (exécuter en série là où le timing compte).
+
+## Liste de vérification avant release
+
+La suite complète de vérifications — format + lint + test + build release — est scriptée :
+
+<Code lang="bash" code={`./scripts/test.sh`} />
+
+Ce qui reflète l'ordre manuel : `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, puis un build release. Un `justfile` fournit les raccourcis (`just build`, `just test`, `just lint`, `just check`, `just bench`).
+
+<Aside type="note">
+  La CI (GitHub Actions) exécute la même suite à chaque push et produit des artéfacts de release via `release.yml`. Les avertissements sont des erreurs : l'espace de travail compile propre avec `-D warnings`.
+</Aside>
+
+<LinkCard title="Guides : Dépannage" href="/guides/troubleshooting/" description="Que faire quand la suite ou une session se comporte mal." />
