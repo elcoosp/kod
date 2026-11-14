@@ -76,23 +76,23 @@ export default await defineDocsConfig({
             {
           label: 'Concepts',
           items: [
-            { label: 'Core crates', translations: { fr: "Crates de base" }, slug: 'concepts/core-crates' },
-            { label: 'Architecture', slug: 'concepts/architecture' },
-            { label: 'The Agent Loop', translations: { fr: "La boucle de l'agent" }, slug: 'concepts/agent-loop' },
-            { label: 'Internal URLs', translations: { fr: "URL internes" }, slug: 'concepts/internal-urls' },
-            { label: 'Minimized Output', translations: { fr: "Sortie minimisée" }, slug: 'concepts/output-minimization' },
-            { label: 'Goals & Decisions', translations: { fr: "Objectifs et décisions" }, slug: 'concepts/session-state' },
-            { label: 'The Repository Map', translations: { fr: "La carte du référentiel" }, slug: 'concepts/repo-map' },
-            { label: 'Compaction', translations: { fr: "Compactage" }, slug: 'concepts/compaction' },
-            { label: 'Task Router', translations: { fr: "Routeur de tâches" }, slug: 'concepts/router' },
-            { label: 'LLM Providers', translations: { fr: "Fournisseurs de LLM" }, slug: 'concepts/providers' },
+            { label: 'Core crates', translations: { fr: "Crates de base" }, slug: 'explanation/core-crates' },
+            { label: 'Architecture', slug: 'explanation/architecture' },
+            { label: 'The Agent Loop', translations: { fr: "La boucle de l'agent" }, slug: 'explanation/agent-loop' },
+            { label: 'Internal URLs', translations: { fr: "URL internes" }, slug: 'explanation/internal-urls' },
+            { label: 'Minimized Output', translations: { fr: "Sortie minimisée" }, slug: 'explanation/output-minimization' },
+            { label: 'Goals & Decisions', translations: { fr: "Objectifs et décisions" }, slug: 'explanation/session-state' },
+            { label: 'The Repository Map', translations: { fr: "La carte du référentiel" }, slug: 'explanation/repo-map' },
+            { label: 'Compaction', translations: { fr: "Compactage" }, slug: 'explanation/compaction' },
+            { label: 'Task Router', translations: { fr: "Routeur de tâches" }, slug: 'explanation/router' },
+            { label: 'LLM Providers', translations: { fr: "Fournisseurs de LLM" }, slug: 'explanation/providers' },
           ]
         },
             {
           label: 'Developers', translations: { fr: "Développeurs" },
           items: [
-            { label: 'Testing', translations: { fr: "Tests" }, slug: 'developers/testing' },
-            { label: 'Contributing', translations: { fr: "Contribution" }, slug: 'developers/contributing' },
+            { label: 'Testing', translations: { fr: "Tests" }, slug: 'guides/testing' },
+            { label: 'Contributing', translations: { fr: "Contribution" }, slug: 'guides/contributing' },
           ]
         },
         {
