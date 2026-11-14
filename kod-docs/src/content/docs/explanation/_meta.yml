@@ -1,0 +1,13 @@
+collapsed: true
+order:
+  - architecture
+  - agent-loop
+  - router
+  - providers
+  - internal-urls
+  - output-minimization
+  - citation-checks
+  - session-state
+  - repo-map
+  - compaction
+  - core-crates
