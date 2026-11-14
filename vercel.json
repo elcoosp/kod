@@ -1,35 +1,3 @@
 {
-  "installCommand": "npm i -g pnpm@11.24.0 && pnpm install",
-  "redirects": [
-    {
-      "source": "/concepts/:path*",
-      "destination": "/explanation/:path*",
-      "permanent": true
-    },
-    {
-      "source": "/developers/:path*",
-      "destination": "/guides/:path*",
-      "permanent": true
-    },
-    {
-      "source": "/getting-started/overview",
-      "destination": "/explanation/overview",
-      "permanent": true
-    },
-    {
-      "source": "/getting-started/installation",
-      "destination": "/guides/installation",
-      "permanent": true
-    },
-    {
-      "source": "/getting-started/quickstart",
-      "destination": "/tutorials/quickstart",
-      "permanent": true
-    },
-    {
-      "source": "/getting-started/first-session",
-      "destination": "/tutorials/first-session",
-      "permanent": true
-    }
-  ]
+  "installCommand": "npm i -g pnpm@11.24.0 && pnpm install"
 }
