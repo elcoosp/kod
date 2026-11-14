@@ -4,6 +4,7 @@ import { docsLoader, i18nLoader } from '@astrojs/starlight/loaders';
 import { changelogsLoader } from 'starlight-changelogs/loader';
 import { blogSchema } from 'starlight-blog/schema';
 import { docsSchema, i18nSchema } from '@astrojs/starlight/schema';
+import { makeDocsCollection } from '@elcoosp/docs-toolkit';
 
 
 const docsMetadataCollection = defineCollection({
@@ -20,6 +21,7 @@ const docsMetadataCollection = defineCollection({
 });
 
 export const collections = {
+  docs: makeDocsCollection(),
   docsMetadata: docsMetadataCollection,
   changelogs: defineCollection({
     loader: changelogsLoader([
