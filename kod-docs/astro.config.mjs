@@ -33,9 +33,9 @@ export default await defineDocsConfig({
           label: 'Get Started', translations: { fr: "Démarrage" },
           items: [
             { label: 'Overview', slug: 'overview' },
-            { label: 'Installation', slug: 'getting-started/installation' },
-            { label: 'Quickstart', translations: { fr: "Démarrage rapide" }, slug: 'getting-started/quickstart' },
-            { label: 'Your First Session', translations: { fr: "Votre première session" }, slug: 'getting-started/first-session' },
+            { label: 'Installation', slug: 'guides/installation' },
+            { label: 'Quickstart', translations: { fr: "Démarrage rapide" }, slug: 'tutorials/quickstart' },
+            { label: 'Your First Session', translations: { fr: "Votre première session" }, slug: 'tutorials/first-session' },
           ]
         },
             {
