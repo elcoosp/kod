@@ -2,14 +2,15 @@
   "name": "kod-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for KOD \u2014 the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
+  "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
     "dev": "tsx ./node_modules/astro/bin/astro.mjs dev",
     "build": "tsx ./node_modules/astro/bin/astro.mjs build",
     "preview": "tsx ./node_modules/astro/bin/astro.mjs preview",
     "astro": "astro",
     "predev": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true",
-    "prebuild": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true"
+    "prebuild": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true",
+    "typecheck": "tsx ./node_modules/astro/bin/astro.mjs check"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
@@ -37,11 +38,13 @@
     "node": ">=22.12.0"
   },
   "devDependencies": {
-    "@elcoosp/docs-toolkit": "^0.9.0",
+    "@elcoosp/docs-toolkit": "^0.9.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "@astrojs/check": "^0.9.12",
+    "typescript": "~6.0.3"
   }
 }

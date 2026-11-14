@@ -1,7 +1,7 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - "@elcoosp/docs-toolkit@0.8.1 || 0.8.2 || 0.8.3 || 0.8.4 || 0.8.5 || 0.8.6 || 0.8.7 || 0.9.0"
+  - "@elcoosp/docs-toolkit@0.8.1 || 0.8.2 || 0.8.3 || 0.8.4 || 0.8.5 || 0.8.6 || 0.8.7 || 0.9.0 || 0.9.1"
   - "@astrojs/starlight@0.42.11"
   - "@elcoosp/astro-takumi@2.1.1"
   - starlight-view-modes@0.16.0

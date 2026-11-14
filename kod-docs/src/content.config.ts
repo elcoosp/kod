@@ -16,7 +16,7 @@ const docsMetadataCollection = defineCollection({
     collapsed: z.boolean().optional(),
     hidden: z.boolean().optional(),
     depth: z.number().optional(),
-    cascade: z.record(z.unknown()).optional(),
+    cascade: z.record(z.string(), z.unknown()).optional(),
   }).passthrough(),
 });
 
