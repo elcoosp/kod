@@ -2,7 +2,7 @@
   "name": "kod-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for KOD \u2014 the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
+  "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
     "dev": "tsx ./node_modules/astro/bin/astro.mjs dev",
     "build": "tsx ./node_modules/astro/bin/astro.mjs build",
@@ -13,34 +13,35 @@
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.11",
+    "@d2lang/d2": "^0.1.34",
+    "@elcoosp/docs-toolkit": "^0.5.47",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "astro": "7.4.11",
-    "sharp": "^0.35.5",
+    "astro-d2": "^0.14.1",
     "linkedom": "^0.18.0",
     "mermaid": "^11.0.0",
-    "@elcoosp/docs-toolkit": "^0.5.46",
-    "starlight-changelogs": "^0.7.1",
-    "starlight-blog": "^0.30.2",
+    "sharp": "^0.35.5",
     "starlight-announcement": "^2.0.0",
-    "starlight-seo": "^1.0.0",
-    "starlight-view-modes": "^0.15.4",
-    "starlight-scroll-to-top": "^2.0.0",
-    "astro-d2": "^0.14.1",
-    "@d2lang/d2": "^0.1.34",
-    "starlight-telescope": "^1.0.0",
+    "starlight-auto-sidebar": "^0.4.1",
+    "starlight-blog": "^0.30.2",
+    "starlight-changelogs": "^0.7.1",
+    "starlight-heading-badges": "^0.8.0",
     "starlight-image-zoom": "^0.16.2",
-    "starlight-heading-badges": "^0.8.0"
+    "starlight-scroll-to-top": "^2.0.0",
+    "starlight-seo": "^1.0.0",
+    "starlight-telescope": "^1.0.0",
+    "starlight-view-modes": "^0.15.4"
   },
   "engines": {
     "node": ">=22.12.0"
   },
   "devDependencies": {
+    "@elcoosp/docs-toolkit": "^0.5.47",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@elcoosp/docs-toolkit": "^0.5.46",
     "tsx": "^4.19.2"
   }
 }

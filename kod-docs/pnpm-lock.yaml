@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@elcoosp/docs-toolkit': link:../../docs-toolkit
+
 importers:
 
   .:
@@ -15,8 +18,8 @@ importers:
         specifier: ^0.1.34
         version: 0.1.34
       '@elcoosp/docs-toolkit':
-        specifier: ^0.5.46
-        version: 0.5.46(@astrojs/markdown-satteri@0.4.9)(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(@types/node@24.19.2)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@11.17.2)(react@19.3.1)
+        specifier: link:../../docs-toolkit
+        version: link:../../docs-toolkit
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -41,6 +44,9 @@ importers:
       starlight-announcement:
         specifier: ^2.0.0
         version: 2.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
+      starlight-auto-sidebar:
+        specifier: ^0.4.1
+        version: 0.4.1(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
       starlight-blog:
         specifier: ^0.30.2
         version: 0.30.2(@astrojs/markdown-satteri@0.4.9)(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
@@ -422,35 +428,6 @@ packages:
 
   '@d2lang/d2@0.1.34':
     resolution: {integrity: sha512-35m2DaRUgeBy1cFbF9XEGIuaN/pMWrqkJtGj/tsq7OrU4N8degbY80Js7Mw7UeuE+fwGpxdZaGckEUVOPAj7CA==}
-
-  '@elcoosp/astro-takumi@2.1.1':
-    resolution: {integrity: sha512-kjKTzuzBs3iT8Q9/ROkWm49T86f3MhDlyyFXXag1y3/Q8SUc2FjdeEPhTNqwZ0Wf7fQAw35S/RQu9L44iBg4QA==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      happy-dom: ^21.0.4
-      jsdom: '>=26.0.0'
-      linkedom: ^0.18.15
-    peerDependenciesMeta:
-      happy-dom:
-        optional: true
-      jsdom:
-        optional: true
-      linkedom:
-        optional: true
-
-  '@elcoosp/docs-toolkit@0.5.46':
-    resolution: {integrity: sha512-pphloCrqNIiJEr2q13U7qvuDTHP+HD0JKKRA9MV+lp8ixjH266OZLs31JmtlGmYVbb7X5Bl41D6iDGxt97I+qg==}
-    engines: {node: '>=22.18.0'}
-    hasBin: true
-    peerDependencies:
-      '@astrojs/starlight': ^0.42.0
-      astro: ^7.0.0
-      mermaid: ^11.0.0
-      playwright: ^1.65.0
-      react: ^19.3.1
-    peerDependenciesMeta:
-      playwright:
-        optional: true
 
   '@emnapi/core@1.11.1':
     resolution: {integrity: sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==}
@@ -1026,79 +1003,6 @@ packages:
   '@shikijs/vscode-textmate@10.1.0':
     resolution: {integrity: sha512-cVBuhDQjBZaNMTwBquYfPydrUP+E3hE6oYGasx8h6ZrODIM7/r+gxLDXdd66oszbrggZHEntdE6j+5gYIVyMWQ==}
 
-  '@takumi-rs/core-darwin-arm64@2.20.0':
-    resolution: {integrity: sha512-wescbJ8pm0fBN8uXxjiZUDqN7JkdDDmxt8Gq1pSrpRCuGxvAnoj3agMMhHtJ5Ty+BufkIwSvV2cBXRLM4wyYZw==}
-    engines: {node: '>=18'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@takumi-rs/core-darwin-x64@2.20.0':
-    resolution: {integrity: sha512-idCQC8PLuuDFQ4c2YEx142Q1WM+GbrR3RqNxuJay5MxfCXcZ42dv+96xGcgs0U2AWOk1GkY/vTY4y/Om7O/QHA==}
-    engines: {node: '>=18'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@takumi-rs/core-linux-arm64-gnu@2.20.0':
-    resolution: {integrity: sha512-TeqwOXlVdjAoSoOVQVoJOER4upQnh7nX6QJnYqVDlbByiSkMhqYULXc7I83NqzkL3U/fbT7/oASNeGWAI2axBA==}
-    engines: {node: '>=18'}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@takumi-rs/core-linux-arm64-musl@2.20.0':
-    resolution: {integrity: sha512-gOcZxdGq7ebhqRN1Ue3FYJV7jKFG8yG99Opiky13viXXH8hkOde+OKUMe2kqWRH42j7p5EhBPj2qmdUBXXQBCQ==}
-    engines: {node: '>=18'}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  '@takumi-rs/core-linux-x64-gnu@2.20.0':
-    resolution: {integrity: sha512-MwIdLqyMUUz+6wuxkGJZyEO9alZODuDqe826HAG2+RErwpSUwfqtD2pHPWG9bnWkr7qpVeziFut6Ng68lYzcvQ==}
-    engines: {node: '>=18'}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@takumi-rs/core-linux-x64-musl@2.20.0':
-    resolution: {integrity: sha512-bM9QEwOuKg0+im1M+XjownCCdN+zHKQXGblDttpKuoa2QEd4F9t0JJcQMBSjLFucC2sf+rGicAmayMsQRxwgfg==}
-    engines: {node: '>=18'}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  '@takumi-rs/core-win32-arm64-msvc@2.20.0':
-    resolution: {integrity: sha512-VwGj5dsODmHYV09P3AFhvcHL3hk8cS3Y0PYYHxFQtopwcWTsDN522+siotYL1lXZaEag9FoMJOuqiuZsVGgR3w==}
-    engines: {node: '>=18'}
-    cpu: [arm64]
-    os: [win32]
-
-  '@takumi-rs/core-win32-x64-msvc@2.20.0':
-    resolution: {integrity: sha512-3am5JIowXAETxUHwQh8MONCagATpN4jFiXISKT2djvceJxrriPZKwWNjB7zTUzZmVLYTbslMrG7x2+U1wPndYg==}
-    engines: {node: '>=18'}
-    cpu: [x64]
-    os: [win32]
-
-  '@takumi-rs/core@2.20.0':
-    resolution: {integrity: sha512-28uryNYSyuXZWv5uBfJiWDrRXVdAunkU0sZiB7KG2WgLej64pUNL6jZSTQa+gBXfVu+3DdCz58OnpONBO6EUqQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      csstype: '*'
-    peerDependenciesMeta:
-      csstype:
-        optional: true
-
-  '@takumi-rs/helpers@2.20.0':
-    resolution: {integrity: sha512-efdeG4Ujsw0IEYXhq3lUN1UiKhK6f3tak7VSMrCEWSvumFs0q5moBHSLdsR6aJhPNsYei21Ea6Rjtv94/qdyjg==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      preact: ^10.0.0 || ^11.0.0
-      react: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      preact:
-        optional: true
-      react:
-        optional: true
-
   '@tybys/wasm-util@0.10.4':
     resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==}
 
@@ -1299,16 +1203,6 @@ packages:
     resolution: {integrity: sha512-LUpQmmvzr90JXP5QIAopgdjlOKLuT3x0wlPAUpc4OZtPtFS8sbflPcGPpL/lG3pQuUCQV2CXUFgYNBYNu9tphA==}
     peerDependencies:
       astro: ^4.0.0-beta || ^5.0.0-beta || ^3.3.0 || ^6.0.0-beta || ^7.0.0
-
-  astro-mermaid@2.2.0:
-    resolution: {integrity: sha512-EqkDnv7BaSIW3dQicT4u8zJDfaeoIpyeRVYL0YosJU109TGlxKAUR5xF2qf0LlhJEoG+new41mHNIW7LwPuVwA==}
-    peerDependencies:
-      '@mermaid-js/layout-elk': ^0.2.0 || ^1.0.0
-      astro: '>=4'
-      mermaid: ^10.0.0 || ^11.0.0 || ^12.0.0
-    peerDependenciesMeta:
-      '@mermaid-js/layout-elk':
-        optional: true
 
   astro@7.4.11:
     resolution: {integrity: sha512-c8gibLFCnzuXCXqsvTiMXbjCnuIjxGhWw6TO5n11cXzNrw36P3ZgBzsOoRUR4raG1r6cKWeE5oXQu4F3GCBofg==}
@@ -2069,11 +1963,6 @@ packages:
   markdown-table@3.1.0:
     resolution: {integrity: sha512-xpeSCdM+B+6P3ncfgaB7FoDbtJ30xAe6Z18TGT7AgXJsHqCElCICZovQqdRMm7kHgpTyYv36EupqewoFFSB8vw==}
 
-  marked@15.0.12:
-    resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
-    engines: {node: '>= 18'}
-    hasBin: true
-
   marked@16.4.2:
     resolution: {integrity: sha512-TI3V8YYWvkVf3KJe1dRkpnjs68JUPyEa5vjKrp1XEEJUAOaQc+Qj+L1qWbPd0SJuAdQkFU0h73sXXqwDYxsiDA==}
     engines: {node: '>= 20'}
@@ -2565,6 +2454,12 @@ packages:
     peerDependencies:
       '@astrojs/starlight': '>=0.41.0'
 
+  starlight-auto-sidebar@0.4.1:
+    resolution: {integrity: sha512-dq/3NjJXxR19ke7LPZjC8PlDqPkEzg0G6QqE4pRMH3eI2EZFQiuafARWpP81ZIAY7tdr6lxscNWTvOu5WhaZwQ==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@astrojs/starlight': '>=0.39.0'
+
   starlight-blog@0.30.2:
     resolution: {integrity: sha512-nQHOhWF8mP3UsdPbJEf1WWm2efVWTISKUIffjUKSak4xmcF24sa71NQpXiLSH490qC8tKgHd4i0ZQIRHvmy80g==}
     peerDependencies:
@@ -2574,12 +2469,6 @@ packages:
     resolution: {integrity: sha512-JKuNEzq9HbiM+Uhu5vQmFuyM3LA6ZlrWRQn2DJ8ubFRvbbeexL9G8sAA7DZcjXxCrDwn6V/oK042uCD0PnNhJw==}
     peerDependencies:
       '@astrojs/starlight': '>=0.38.0'
-
-  starlight-giscus@1.2.0:
-    resolution: {integrity: sha512-OdT93Hv2UBtvbSVHN23Wfvor3HiAdXnG6wRRrGvPzA8m1dUp95TRognb39bx9/a8MTWSb4zXAVd2LvRvhhnagg==}
-    engines: {node: '>=22.12.0'}
-    peerDependencies:
-      '@astrojs/starlight': '>=0.41.0'
 
   starlight-heading-badges@0.8.0:
     resolution: {integrity: sha512-iX7YwXqzJrVYqVxqHXW4BPL+SPIzsfTPmiWI6dbZD2qfaJ34zn7TiymUuAIyfSRpHz7jmlIw29dRz0cpjqhUAA==}
@@ -2611,12 +2500,6 @@ packages:
     engines: {node: '>=22.12.0'}
     peerDependencies:
       '@astrojs/starlight': '>=0.38.0'
-
-  starlight-telescope@2.0.0:
-    resolution: {integrity: sha512-MicVvJAyhO2D5UPoUvwppNPaY3sPID/LE3jier9KUE1d5dfAYNwzyLZcKMjSFpou8Y7sR3f7Xx0Ta69OJHPlsA==}
-    engines: {node: '>=22.12.0'}
-    peerDependencies:
-      '@astrojs/starlight': '>=0.41.0'
 
   starlight-view-modes@0.15.4:
     resolution: {integrity: sha512-nHVKIOlukt18uHBWGwaNkjUUwTSTIWhBb1AXdGuSSD7Oi1nrGOlXRb2pTaGeFYy/mFCORK/2XI0o1yxTEYdTZg==}
@@ -3257,55 +3140,6 @@ snapshots:
 
   '@d2lang/d2@0.1.34': {}
 
-  '@elcoosp/astro-takumi@2.1.1(csstype@3.2.3)(linkedom@0.18.15)':
-    dependencies:
-      '@takumi-rs/core': 2.20.0(csstype@3.2.3)(react@19.3.1)
-      '@takumi-rs/helpers': 2.20.0(react@19.3.1)
-      react: 19.3.1
-    optionalDependencies:
-      linkedom: 0.18.15
-    transitivePeerDependencies:
-      - csstype
-      - preact
-
-  '@elcoosp/docs-toolkit@0.5.46(@astrojs/markdown-satteri@0.4.9)(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(@types/node@24.19.2)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@11.17.2)(react@19.3.1)':
-    dependencies:
-      '@astrojs/rss': 4.0.19
-      '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      '@d2lang/d2': 0.1.34
-      '@elcoosp/astro-takumi': 2.1.1(csstype@3.2.3)(linkedom@0.18.15)
-      astro: 7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
-      astro-d2: 0.14.1(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      astro-mermaid: 2.2.0(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(mermaid@11.17.2)
-      github-slugger: 2.0.0
-      linkedom: 0.18.15
-      marked: 15.0.12
-      mermaid: 11.17.2
-      react: 19.3.1
-      sharp: 0.35.5(@types/node@24.19.2)
-      starlight-announcement: 2.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      starlight-blog: 0.30.2(@astrojs/markdown-satteri@0.4.9)(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      starlight-changelogs: 0.7.1(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      starlight-giscus: 1.2.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      starlight-heading-badges: 0.8.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      starlight-image-zoom: 0.16.2(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      starlight-scroll-to-top: 2.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      starlight-seo: 1.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      starlight-telescope: 2.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      starlight-view-modes: 0.15.4(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      tsx: 4.23.15
-      zod: 4.6.7
-    transitivePeerDependencies:
-      - '@astrojs/markdown-satteri'
-      - '@mermaid-js/layout-elk'
-      - '@types/node'
-      - canvas
-      - csstype
-      - happy-dom
-      - jsdom
-      - preact
-      - supports-color
-
   '@emnapi/core@1.11.1':
     dependencies:
       '@emnapi/wasi-threads': 1.2.2
@@ -3755,51 +3589,6 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.1.0': {}
 
-  '@takumi-rs/core-darwin-arm64@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-darwin-x64@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-linux-arm64-gnu@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-linux-arm64-musl@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-linux-x64-gnu@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-linux-x64-musl@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-win32-arm64-msvc@2.20.0':
-    optional: true
-
-  '@takumi-rs/core-win32-x64-msvc@2.20.0':
-    optional: true
-
-  '@takumi-rs/core@2.20.0(csstype@3.2.3)(react@19.3.1)':
-    dependencies:
-      '@takumi-rs/helpers': 2.20.0(react@19.3.1)
-    optionalDependencies:
-      '@takumi-rs/core-darwin-arm64': 2.20.0
-      '@takumi-rs/core-darwin-x64': 2.20.0
-      '@takumi-rs/core-linux-arm64-gnu': 2.20.0
-      '@takumi-rs/core-linux-arm64-musl': 2.20.0
-      '@takumi-rs/core-linux-x64-gnu': 2.20.0
-      '@takumi-rs/core-linux-x64-musl': 2.20.0
-      '@takumi-rs/core-win32-arm64-msvc': 2.20.0
-      '@takumi-rs/core-win32-x64-msvc': 2.20.0
-      csstype: 3.2.3
-    transitivePeerDependencies:
-      - preact
-      - react
-
-  '@takumi-rs/helpers@2.20.0(react@19.3.1)':
-    optionalDependencies:
-      react: 19.3.1
-
   '@tybys/wasm-util@0.10.4':
     dependencies:
       tslib: 2.9.1
@@ -4021,14 +3810,6 @@ snapshots:
       astro: 7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
       rehype-expressive-code: 0.44.3
       url-extras: 0.1.0
-
-  astro-mermaid@2.2.0(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(mermaid@11.17.2):
-    dependencies:
-      astro: 7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
-      import-meta-resolve: 4.2.0
-      mdast-util-to-string: 4.0.0
-      mermaid: 11.17.2
-      unist-util-visit: 5.2.0
 
   astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1):
     dependencies:
@@ -4979,8 +4760,6 @@ snapshots:
   markdown-extensions@2.0.0: {}
 
   markdown-table@3.1.0: {}
-
-  marked@15.0.12: {}
 
   marked@16.4.2: {}
 
@@ -5933,6 +5712,11 @@ snapshots:
       '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
       picomatch: 4.0.7
 
+  starlight-auto-sidebar@0.4.1(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))):
+    dependencies:
+      '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+      github-slugger: 2.0.0
+
   starlight-blog@0.30.2(@astrojs/markdown-satteri@0.4.9)(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)):
     dependencies:
       '@astrojs/markdown-remark': 7.3.8
@@ -5966,10 +5750,6 @@ snapshots:
     transitivePeerDependencies:
       - astro
       - supports-color
-
-  starlight-giscus@1.2.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))):
-    dependencies:
-      '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
   starlight-heading-badges@0.8.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))):
     dependencies:
@@ -6005,12 +5785,6 @@ snapshots:
       astro: 7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
 
   starlight-telescope@1.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))):
-    dependencies:
-      '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-      fuse.js: 7.5.0
-      zod: 4.6.7
-
-  starlight-telescope@2.0.0(@astrojs/starlight@0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))):
     dependencies:
       '@astrojs/starlight': 0.42.11(@astrojs/markdown-remark@7.3.8)(astro@7.4.11(@astrojs/markdown-remark@7.3.8)(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
       fuse.js: 7.5.0
