@@ -81,6 +81,7 @@ export default await defineDocsConfig({
             { label: 'The Agent Loop', translations: { fr: "La boucle de l'agent" }, slug: 'explanation/agent-loop' },
             { label: 'Internal URLs', translations: { fr: "URL internes" }, slug: 'explanation/internal-urls' },
             { label: 'Minimized Output', translations: { fr: "Sortie minimisée" }, slug: 'explanation/output-minimization' },
+            { label: 'Citation Checks', translations: { fr: "Vérifications de citation" }, slug: 'explanation/citation-checks' },
             { label: 'Goals & Decisions', translations: { fr: "Objectifs et décisions" }, slug: 'explanation/session-state' },
             { label: 'The Repository Map', translations: { fr: "La carte du référentiel" }, slug: 'explanation/repo-map' },
             { label: 'Compaction', translations: { fr: "Compactage" }, slug: 'explanation/compaction' },
