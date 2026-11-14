@@ -74,7 +74,7 @@ Définir `skills.skills_dir` dans la config remplace les quatre avec un seul ré
 
 ## Correspondance
 
-Le matcher score les compétences contre le prompt en utilisant les déclencheurs, les tags, les capacités et le nom. Une compétence accompagne quand son score franchit `skills.match_threshold` (0.7 par défaut), et au plus `skills.max_skills_per_query` (3 par défaut) sont sélectionnées par prompt par le [Routeur de tâches](/concepts/router/). Parce que le rechargement à chaud est activé par défaut, le prochain prompt après une édition voit le nouveau contenu — pas de redémarrage, pas de rebuild.
+Le matcher score les compétences contre le prompt en utilisant les déclencheurs, les tags, les capacités et le nom. Une compétence accompagne quand son score franchit `skills.match_threshold` (0.7 par défaut), et au plus `skills.max_skills_per_query` (3 par défaut) sont sélectionnées par prompt par le [Routeur de tâches](/explanation/router/). Parce que le rechargement à chaud est activé par défaut, le prochain prompt après une édition voit le nouveau contenu — pas de redémarrage, pas de rebuild.
 
 <Aside type="tip">
   Une compétence qui ne se déclenche jamais est généralement une inadéquation de vocabulaire : le matcher score le chevauchement de mots, donc les déclencheurs devraient utiliser les mots que vous tapez réellement. <code>kod skills search "&lt;vos mots&gt;"</code> montre ce que le matcher voit.

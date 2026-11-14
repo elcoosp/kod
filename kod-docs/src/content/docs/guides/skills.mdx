@@ -56,7 +56,7 @@ You are an expert Rust refactoring assistant...
 
 What each part does:
 
-- **`triggers`** — phrases that should activate the skill. Matching considers triggers, tags, capabilities, and the name, scored against a threshold (`skills.match_threshold`, default 0.7); the [Task Router](/concepts/router/) decides which skills ride along with a prompt.
+- **`triggers`** — phrases that should activate the skill. Matching considers triggers, tags, capabilities, and the name, scored against a threshold (`skills.match_threshold`, default 0.7); the [Task Router](/explanation/router/) decides which skills ride along with a prompt.
 - **`tags` and `capabilities`** — coarser activation signals, useful when a skill should attach to a *kind* of task rather than a phrase.
 - **Instructions** — the operating guidance injected into the prompt.
 - **Examples** — concrete input/output demonstrations; they cost tokens but sharpen behaviour.

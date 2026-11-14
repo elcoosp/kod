@@ -37,7 +37,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/test.sh      # the whole suite in one shot`} />
 
-Clippy warnings are errors (`-D warnings`), and the `clippy.toml` encodes the project's lint preferences — run the linter before pushing, not in CI. Tests must pass offline; if you added a live-model test, gate it with `#[ignore]` and honour the `KOD_TEST_MODEL` / `KOD_TEST_DB` conventions (see [Testing](/developers/testing/)).
+Clippy warnings are errors (`-D warnings`), and the `clippy.toml` encodes the project's lint preferences — run the linter before pushing, not in CI. Tests must pass offline; if you added a live-model test, gate it with `#[ignore]` and honour the `KOD_TEST_MODEL` / `KOD_TEST_DB` conventions (see [Testing](/guides/testing/)).
 
 ## Conventions that matter
 
@@ -63,4 +63,4 @@ Big changes start as issues, not PRs. The repository keeps `docs/SPEC.md` as the
   The fastest credible first contribution is often a test: the suites are dense but small-grained, and a new case for an edge in <code>classify_task</code>, glob matching, or keybinding handling is both genuinely useful and a great way to learn the codebase.
 </Aside>
 
-<LinkCard title="Developers: Testing" href="/developers/testing/" description="The suite layout and the exact commands CI runs." />
+<LinkCard title="Developers: Testing" href="/guides/testing/" description="The suite layout and the exact commands CI runs." />

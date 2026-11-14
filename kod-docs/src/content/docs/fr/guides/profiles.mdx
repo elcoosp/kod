@@ -51,7 +51,7 @@ Vous pouvez changer de modèle en cours de session depuis la TUI avec `/model <n
 
 ## Au-delà des préréglages
 
-Un profil n'est qu'un point de départ. Tout serveur compatible OpenAI est atteignable en éditant directement le bloc d'endpoint — voir [Fournisseurs LLM](/concepts/providers/) pour le fonctionnement de la normalisation de l'URL de base, et [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) pour la forme multi-endpoint, y compris le routage des tâches de débogage vers un modèle cloud tandis que le chat reste local. La table `[llm.endpoints.pricing]` (USD par million de tokens) alimente l'affichage du coût de la TUI pour les endpoints à paiement par token.
+Un profil n'est qu'un point de départ. Tout serveur compatible OpenAI est atteignable en éditant directement le bloc d'endpoint — voir [Fournisseurs LLM](/explanation/providers/) pour le fonctionnement de la normalisation de l'URL de base, et [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) pour la forme multi-endpoint, y compris le routage des tâches de débogage vers un modèle cloud tandis que le chat reste local. La table `[llm.endpoints.pricing]` (USD par million de tokens) alimente l'affichage du coût de la TUI pour les endpoints à paiement par token.
 
 <Aside type="note">
   Les profils ciblent des modèles spécifiques, pas des fournisseurs spécifiques. Pointer KOD vers tout autre serveur compatible OpenAI est une question de définir <code>base_url</code> (et <code>model</code>) sur un endpoint.

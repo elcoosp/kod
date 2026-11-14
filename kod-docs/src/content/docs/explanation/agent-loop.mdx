@@ -12,7 +12,7 @@ Everything KOD does funnels through one loop: the engine takes an input, builds 
 
 ## One round, step by step
 
-1. **Classify.** The [Task Router](/concepts/router/) reads the prompt and assigns a task type (`Simple`, `CodeModification`, `Debugging`, `Research`, …). The classification shapes the prompt and how many skills ride along.
+1. **Classify.** The [Task Router](/explanation/router/) reads the prompt and assigns a task type (`Simple`, `CodeModification`, `Debugging`, `Research`, …). The classification shapes the prompt and how many skills ride along.
 
 2. **Ground.** The engine builds the grounded prompt from five ingredients, in a deterministic order:
    - identity (who the agent is and how it behaves),

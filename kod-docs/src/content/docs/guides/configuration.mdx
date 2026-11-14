@@ -93,7 +93,7 @@ by_task  = { Debugging = "cloud", Simple = "local" }
 fallback = ["local", "cloud"]     # try in order when the primary fails
 swarm    = { Planning = "cloud", Coding = "local" }`} />
 
-- `by_task` maps a [task type](/concepts/router/) (`Simple`, `Debugging`, …) to an endpoint name.
+- `by_task` maps a [task type](/explanation/router/) (`Simple`, `Debugging`, …) to an endpoint name.
 - `fallback` is the ordered retry chain for retryable errors.
 - `swarm` maps swarm capabilities (`Planning`, `Coding`, …) to endpoints, so a swarm can think with one model and code with another.
 

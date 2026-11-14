@@ -56,7 +56,7 @@ You are an expert Rust refactoring assistant...
 
 Ce que fait chaque partie :
 
-- **`triggers`** — des phrases qui devraient activer la compétence. La correspondance considère les déclencheurs, les tags, les capacités et le nom, scorés contre un seuil (`skills.match_threshold`, 0.7 par défaut) ; le [Routeur de tâches](/concepts/router/) décide quelles compétences accompagnent un prompt.
+- **`triggers`** — des phrases qui devraient activer la compétence. La correspondance considère les déclencheurs, les tags, les capacités et le nom, scorés contre un seuil (`skills.match_threshold`, 0.7 par défaut) ; le [Routeur de tâches](/explanation/router/) décide quelles compétences accompagnent un prompt.
 - **`tags` et `capabilities`** — des signaux d'activation plus grossiers, utiles quand une compétence devrait s'attacher à un *type* de tâche plutôt qu'à une phrase.
 - **Instructions** — les conseils opératoires injectés dans le prompt.
 - **Exemples** — des démonstrations concrètes entrée/sortie ; ils coûtent des tokens mais affûtent sensiblement le comportement.

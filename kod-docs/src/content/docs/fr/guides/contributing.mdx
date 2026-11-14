@@ -37,7 +37,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/test.sh      # the whole suite in one shot`} />
 
-Les avertissements Clippy sont des erreurs (`-D warnings`), et le `clippy.toml` encode les préférences de lint du projet — exécutez le linter avant de pousser, pas en CI. Les tests doivent passer hors ligne ; si vous avez ajouté un test avec un modèle réel, bloquez-le avec `#[ignore]` et respectez les conventions `KOD_TEST_MODEL` / `KOD_TEST_DB` (voir [Tests](/developers/testing/)).
+Les avertissements Clippy sont des erreurs (`-D warnings`), et le `clippy.toml` encode les préférences de lint du projet — exécutez le linter avant de pousser, pas en CI. Les tests doivent passer hors ligne ; si vous avez ajouté un test avec un modèle réel, bloquez-le avec `#[ignore]` et respectez les conventions `KOD_TEST_MODEL` / `KOD_TEST_DB` (voir [Tests](/guides/testing/)).
 
 ## Conventions qui comptent
 
@@ -63,4 +63,4 @@ Les grands changements commencent comme des issues, pas des PR. Le dépôt garde
   La première contribution crédible la plus rapide est souvent un test : les suites sont denses mais à grain fin, et un nouveau cas pour un bord dans <code>classify_task</code>, la correspondance de globs ou la gestion des raccourcis est à la fois réellement utile et un excellent moyen d'apprendre la base de code.
 </Aside>
 
-<LinkCard title="Développeurs : Tests" href="/developers/testing/" description="La disposition de la suite et les commandes exactes que la CI exécute." />
+<LinkCard title="Développeurs : Tests" href="/guides/testing/" description="La disposition de la suite et les commandes exactes que la CI exécute." />

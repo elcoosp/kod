@@ -8,7 +8,7 @@ type: explanation
 
 import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
-> **Crate principal :** [`kod-core`](/reference/crates/#engine). Sous-crates : [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). Voir [Crates principaux](/concepts/core-crates/).
+> **Crate principal :** [`kod-core`](/reference/crates/#engine). Sous-crates : [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). Voir [Crates principaux](/explanation/core-crates/).
 
 KOD est un espace de travail Rust multi-crates où chaque crate a une responsabilité unique et une API publique étroite, afin que chaque partie puisse être construite et raisonnée en isolation. Vingt-six crates s'empilent en quatre couches :
 
@@ -96,11 +96,11 @@ Le `docs/SPEC.md` du dépôt décrit un système aspirationnel plus large — un
   La section [Project Status du README](https://github.com/elcoosp/kod#project-status) est la liste faisant autorité de ce qui fonctionne de bout en bout par rapport à ce qui est sur la feuille de route ; ce site la suit.
 </Aside>
 
-<LinkCard title="Concepts : La boucle de l'agent" href="/concepts/agent-loop/" description="Ce qui se passe à l'intérieur d'un tour du moteur, étape par étape." />
+<LinkCard title="Concepts : La boucle de l'agent" href="/explanation/agent-loop/" description="Ce qui se passe à l'intérieur d'un tour du moteur, étape par étape." />
 
 ## Voir aussi
 
 - [Référence des crates](/reference/crates/) — index complet des 26 crates de l'espace de travail
-- [Crates principaux](/concepts/core-crates/) — comment les sous-crates internes du moteur s'assemblent
-- [Boucle de l'agent](/concepts/agent-loop/) — le cycle de vie du tour
-- [Compactage](/concepts/compaction/) — la réduction de contexte entre les tours
+- [Crates principaux](/explanation/core-crates/) — comment les sous-crates internes du moteur s'assemblent
+- [Boucle de l'agent](/explanation/agent-loop/) — le cycle de vie du tour
+- [Compactage](/explanation/compaction/) — la réduction de contexte entre les tours

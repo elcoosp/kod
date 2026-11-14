@@ -19,7 +19,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 ## `artifact://`
 
-Quand le [minimiseur](/concepts/output-minimization/) réécrit un grand résultat d'outil en quelque chose de plus court, l'original est stocké et référencé par une URL `artifact://<id>` dans le JSON du résultat. Lire cette URL renvoie la capture intacte — le modèle peut la demander délibérément, et un humain peut la récupérer depuis le journal de session.
+Quand le [minimiseur](/explanation/output-minimization/) réécrit un grand résultat d'outil en quelque chose de plus court, l'original est stocké et référencé par une URL `artifact://<id>` dans le JSON du résultat. Lire cette URL renvoie la capture intacte — le modèle peut la demander délibérément, et un humain peut la récupérer depuis le journal de session.
 
 C'est la différence entre *tronquer* et *minimiser* : un plafond de 16 Ko jette la queue, tandis qu'un artefact la garde atteignable au coût d'une lecture.
 

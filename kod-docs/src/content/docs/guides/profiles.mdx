@@ -51,7 +51,7 @@ You can switch mid-session from the TUI with `/model <name>` — completion list
 
 ## Beyond the presets
 
-A profile is just a starting point. Any OpenAI-compatible server is reachable by editing the endpoint block directly — see [LLM Providers](/concepts/providers/) for how base-URL normalisation works, and [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) for the multi-endpoint shape, including routing debug tasks to a cloud model while chat stays local. The `[llm.endpoints.pricing]` table (USD per million tokens) feeds the TUI's cost display for pay-per-token endpoints.
+A profile is just a starting point. Any OpenAI-compatible server is reachable by editing the endpoint block directly — see [LLM Providers](/explanation/providers/) for how base-URL normalisation works, and [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) for the multi-endpoint shape, including routing debug tasks to a cloud model while chat stays local. The `[llm.endpoints.pricing]` table (USD per million tokens) feeds the TUI's cost display for pay-per-token endpoints.
 
 <Aside type="note">
   Profiles target specific models, not specific providers. Pointing KOD at any other OpenAI-compatible server is a matter of setting <code>base_url</code> (and <code>model</code>) on an endpoint.

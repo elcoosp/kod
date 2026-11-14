@@ -93,7 +93,7 @@ by_task  = { Debugging = "cloud", Simple = "local" }
 fallback = ["local", "cloud"]     # try in order when the primary fails
 swarm    = { Planning = "cloud", Coding = "local" }`} />
 
-- `by_task` associe un [type de tâche](/concepts/router/) (`Simple`, `Debugging`, …) à un nom d'endpoint.
+- `by_task` associe un [type de tâche](/explanation/router/) (`Simple`, `Debugging`, …) à un nom d'endpoint.
 - `fallback` est la chaîne de nouvelles tentatives ordonnée pour les erreurs réessayables.
 - `swarm` associe les capacités d'essaim (`Planning`, `Coding`, …) aux endpoints, afin qu'un essaim puisse réfléchir avec un modèle et coder avec un autre.
 

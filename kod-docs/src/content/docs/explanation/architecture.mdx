@@ -9,7 +9,7 @@ type: explanation
 import { Aside, Code, LinkCard } from '@astrojs/starlight/components';
 
 
-> **Primary crate:** [`kod-core`](/reference/crates/#engine). Sub-crates: [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). See [Core crates](/concepts/core-crates/).
+> **Primary crate:** [`kod-core`](/reference/crates/#engine). Sub-crates: [`kod-core-routing`](/reference/crates/#engine), [`kod-core-state`](/reference/crates/#engine), [`kod-core-serve`](/reference/crates/#engine), [`kod-core-quality`](/reference/crates/#engine), [`kod-core-tools`](/reference/crates/#engine). See [Core crates](/explanation/core-crates/).
 
 KOD is a multi-crate Rust workspace where each crate has a single responsibility and a narrow public API, so each part can be built and reasoned about in isolation. Twenty-six crates stack into four layers:
 
@@ -97,11 +97,11 @@ The in-repo `docs/SPEC.md` describes a larger aspirational system — a debugger
   The [README's Project Status](https://github.com/elcoosp/kod#project-status) section is the authoritative list of what works end-to-end versus what is on the roadmap; this site follows it.
 </Aside>
 
-<LinkCard title="Concepts: The Agent Loop" href="/concepts/agent-loop/" description="What happens inside one engine round, step by step." />
+<LinkCard title="Concepts: The Agent Loop" href="/explanation/agent-loop/" description="What happens inside one engine round, step by step." />
 
 ## See also
 
 - [Crates reference](/reference/crates/) — full index of all 26 workspace crates
-- [Core crates](/concepts/core-crates/) — how the engine's internal sub-crates fit together
-- [Agent loop](/concepts/agent-loop/) — the turn lifecycle
-- [Compaction](/concepts/compaction/) — context reduction across turns
+- [Core crates](/explanation/core-crates/) — how the engine's internal sub-crates fit together
+- [Agent loop](/explanation/agent-loop/) — the turn lifecycle
+- [Compaction](/explanation/compaction/) — context reduction across turns
