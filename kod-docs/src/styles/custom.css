@@ -389,7 +389,7 @@ main kbd,
   display: block;
   white-space: pre-wrap;
   word-break: break-word;
-  opacity: 0;
+  opacity: 1; /* WCAG: was 0, broke contrast during animation */
   animation: kod-line-in 0.25s ease forwards;
   animation-delay: var(--d, 0s);
 }
@@ -434,11 +434,9 @@ main kbd,
 }
 @keyframes kod-line-in {
   from {
-    opacity: 0;
     transform: translateY(4px);
   }
   to {
-    opacity: 1;
     transform: none;
   }
 }
