@@ -4,25 +4,14 @@ import { docsLoader, i18nLoader } from '@astrojs/starlight/loaders';
 import { changelogsLoader } from 'starlight-changelogs/loader';
 import { blogSchema } from 'starlight-blog/schema';
 import { docsSchema, i18nSchema } from '@astrojs/starlight/schema';
+import { autoSidebarLoader } from 'starlight-auto-sidebar/loader';
+import { autoSidebarSchema } from 'starlight-auto-sidebar/schema';
 import { makeDocsCollection } from '@elcoosp/docs-toolkit';
 
 
-const docsMetadataCollection = defineCollection({
-  loader: glob({ base: './src/content/docs', pattern: '**/_meta.{yml,yaml}' }),
-  schema: z.object({
-    label: z.string().optional(),
-    order: z.array(z.string()).optional(),
-    sort: z.enum(['label','filename']).optional(),
-    collapsed: z.boolean().optional(),
-    hidden: z.boolean().optional(),
-    depth: z.number().optional(),
-    cascade: z.record(z.string(), z.unknown()).optional(),
-  }).passthrough(),
-});
-
 export const collections = {
   docs: makeDocsCollection({ blogSchema }),
-  docsMetadata: docsMetadataCollection,
+  autoSidebar: defineCollection({ loader: autoSidebarLoader(), schema: autoSidebarSchema() }),
   changelogs: defineCollection({
     loader: changelogsLoader([
       {

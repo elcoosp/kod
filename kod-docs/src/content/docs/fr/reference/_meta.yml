@@ -1,9 +1,1 @@
 collapsed: true
-order:
-  - cli
-  - tui-keys
-  - tools
-  - config
-  - skill-format
-  - changelog
-  - crates
