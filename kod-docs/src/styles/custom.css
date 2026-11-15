@@ -24,7 +24,7 @@
   --kod-purple-500: #6e5af8;  /* rgb(110, 90, 248) */
   --kod-purple-600: #5a4ad6;
   --kod-purple-700: #4539ae;
-  --kod-lavender: #c8b6ff;
+  --kod-lavender: #6a55c4;
 
   /* Dark theme (default) — warm charcoal surfaces */
   --sl-color-black: #0e0c0a;
@@ -383,7 +383,7 @@ main kbd,
 .kod-terminal-body {
   padding: 1em 1.1em 1.3em;
   min-height: 15.5em;
-  color: #cfc6be;
+  color: #5a554f;
 }
 .kod-terminal-body .ln {
   display: block;
@@ -415,7 +415,7 @@ main kbd,
   color: var(--kod-lavender);
 }
 .kod-terminal-body .tool-path {
-  color: #cfc6be;
+  color: #5a554f;
 }
 .kod-terminal-body .diff-add {
   color: #7dd88f;
