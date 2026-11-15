@@ -5,4 +5,5 @@ minimumReleaseAgeExclude:
   - "@astrojs/starlight@0.42.11"
   - "@elcoosp/astro-takumi@2.1.1"
   - starlight-view-modes@0.16.0
+  - "@elcoosp/docs-toolkit@0.9.2"
 overrides:
