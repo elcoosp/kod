@@ -73,8 +73,8 @@ importers:
         specifier: ^0.9.12
         version: 0.9.12(prettier@3.10.1)(typescript@6.0.3)
       '@elcoosp/docs-toolkit':
-        specifier: ^0.9.11
-        version: 0.9.11(5b21ee9116795c398c4093883a805f58)
+        specifier: ^0.9.12
+        version: 0.9.12(5b21ee9116795c398c4093883a805f58)
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -487,8 +487,8 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@0.9.11':
-    resolution: {integrity: sha512-PGvGTUtEvpoa6RoiaHsFA0w4iGG2YEQteMPEDYSo1OUJT+djdz6nJPVK8cCO0IE/hyHm3X6XnmO9sIU707ZzAA==}
+  '@elcoosp/docs-toolkit@0.9.12':
+    resolution: {integrity: sha512-5RikcdQqcyy8XVpzjZq6AC0l6j9kLl8KbKxJ3ZP8B/3FrTDp78t1CqIpXOYhPjplsdAxOW7PM/hCERQoPaNEXQ==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -3726,7 +3726,7 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@0.9.11(5b21ee9116795c398c4093883a805f58)':
+  '@elcoosp/docs-toolkit@0.9.12(5b21ee9116795c398c4093883a805f58)':
     dependencies:
       '@astrojs/rss': 4.0.19
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)

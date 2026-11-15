@@ -2,7 +2,7 @@
   "name": "kod-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for KOD \u2014 the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
+  "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
     "dev": "tsx ./node_modules/astro/bin/astro.mjs dev",
     "build": "tsx ./node_modules/astro/bin/astro.mjs build",
@@ -28,23 +28,23 @@
     "starlight-changelogs": "^0.7.1",
     "starlight-heading-badges": "^0.8.0",
     "starlight-image-zoom": "^0.16.2",
+    "starlight-links-validator": "^0.27.0",
     "starlight-scroll-to-top": "^2.0.0",
     "starlight-seo": "^1.0.0",
     "starlight-telescope": "^2.0.0",
-    "starlight-view-modes": "^0.16.0",
-    "starlight-links-validator": "^0.27.0"
+    "starlight-view-modes": "^0.16.0"
   },
   "engines": {
     "node": ">=22.12.0"
   },
   "devDependencies": {
-    "@elcoosp/docs-toolkit": "^0.9.11",
+    "@astrojs/check": "^0.9.12",
+    "@elcoosp/docs-toolkit": "^0.9.12",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsx": "^4.23.15",
-    "@astrojs/check": "^0.9.12",
     "typescript": "~6.0.3"
   }
 }

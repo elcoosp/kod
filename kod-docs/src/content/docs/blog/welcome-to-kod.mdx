@@ -1,0 +1,54 @@
+---
+title: How we built a local-first coding agent in a single Rust binary
+date: 2026-11-15
+cover:
+  alt: KOD Terminal Session
+  image: ./welcome-cover.jpg
+image: ./welcome-cover.jpg
+---
+
+import { Card, CardGrid, Aside } from '@astrojs/starlight/components';
+
+Most terminal coding agents assume two things: that you are comfortable streaming your repository to a hosted API, and that you don't mind installing a Node or Python runtime just to execute shell and file tools.
+
+KOD (`v0.1.28`) ships as a single Rust executable built specifically for local inference servers.
+
+## The Goal
+
+We wanted a terminal UI agent that talks to Ollama, LM Studio, MLX, or vLLM over OpenAI-compatible HTTP endpoints while keeping every line of source code on the local machine. It needed real workspace tools, bounded context memory, and explicit file permissions rather than unrestricted shell execution.
+
+## The Architecture
+
+`cargo build --release` produces one binary containing the TUI, the streaming tool-calling loop, the memory store, and 27 built-in tools.
+
+<CardGrid stagger>
+  <Card title="Single Binary" icon="rocket">
+    No Node runtime, no Python environment, and no Docker daemon between the terminal and your local model server.
+  </Card>
+  <Card title="Permission-Gated Tools" icon="approve-check">
+    27 built-in tools for file reads, edits, searches, and `cargo check` runs, gated by configurable filesystem permissions.
+  </Card>
+  <Card title="Layered Memory" icon="puzzle">
+    Splits session history, matched task skills, and persistent project notes so prompts stay within tight local context windows.
+  </Card>
+  <Card title="Pre-Tuned Model Profiles" icon="setting">
+    Ships with 4 model profiles to keep tool schemas compact for smaller quantized weights like `qwen2.5-coder:7b`.
+  </Card>
+</CardGrid>
+
+## What it cost
+
+Designing around local 7B and 14B models exposed failure modes that rarely happen with large cloud APIs. Smaller models frequently emit slightly malformed JSON in tool arguments or lose track of file state if the system prompt is too verbose. We spent significant time trimming tool definitions, surfacing real-time context percentage in the TUI, and building retry parsers for near-valid tool calls.
+
+<Aside type="caution" title="Limitations">
+KOD is bound by your local hardware's token generation speed and context window. On machines without enough unified memory or VRAM to run at least a quantized 7B–14B coding model, multi-step edits will be noticeably slower than cloud-hosted agents.
+</Aside>
+
+## Getting started
+
+```bash
+cargo build --release
+kod tui
+```
+
+See the [5-minute quickstart](/tutorials/quickstart/) to point KOD at an Ollama instance and run your first local edit.
