@@ -2,8 +2,8 @@
 title: Welcome to the Kod Blog
 date: 2026-11-12T00:00:00Z
 cover:
-  alt: Kod Logo
-  image: ./logo.png
+  alt: Welcome Cover
+  image: ./welcome-cover.jpg
 image: ./welcome-cover.jpg
 ---
 
