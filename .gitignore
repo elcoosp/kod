@@ -61,3 +61,7 @@ publish-tier0.sh
 node_modules/
 .vercel
 .env*
+
+# Build-time backups
+*.bak
+*.orig
