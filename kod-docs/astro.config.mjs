@@ -3,7 +3,7 @@ import starlightChangelogs, { makeChangelogsSidebarLinks } from 'starlight-chang
 export default await defineDocsConfig({
   plugins: [starlightChangelogs()],
   llmsTxt: {},
-  site: 'https://kod.vercel.app',
+  site: 'https://kod-docs.vercel.app',
   domain: 'kod.vercel.app',
   title: "KOD",
   description: "Documentation for KOD — the local-first AI coding agent harness for the terminal. Your code never leaves your machine.",
