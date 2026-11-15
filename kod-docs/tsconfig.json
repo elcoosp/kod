@@ -16,6 +16,7 @@
       "starlight-telescope": [
         "node_modules/@elcoosp/docs-toolkit/src/stubs/starlight-telescope.d.ts"
       ]
-    }
+    },
+    "baseUrl": "."
   }
 }
