@@ -1,7 +1,5 @@
 import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
-import starlightChangelogs from 'starlight-changelogs';
 export default await defineDocsConfig({
-  plugins: [starlightChangelogs()],
   llmsTxt: {},
   site: 'https://kod-docs.vercel.app',
   domain: 'kod.vercel.app',

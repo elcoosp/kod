@@ -1,0 +1,54 @@
+---
+title: Comment nous avons conçu un agent de code local-first dans un seul binaire Rust
+date: 2026-11-15
+cover:
+  alt: Session terminal KOD
+  image: ../../blog/welcome-cover.jpg
+image: ../../blog/welcome-cover.jpg
+---
+
+import { Card, CardGrid, Aside } from '@astrojs/starlight/components';
+
+La plupart des agents de code en terminal partent de deux postulats : que vous acceptez d'envoyer votre dépôt vers une API hébergée dans le cloud, et que vous êtes prêt à installer un environnement d'exécution Node ou Python rien que pour manipuler des fichiers et exécuter des commandes shell.
+
+KOD (`v0.1.28`) est distribué sous la forme d'un exécutable Rust unique, conçu spécifiquement pour les serveurs d'inférence locaux.
+
+## L'objectif
+
+Nous voulions un agent TUI capable de dialoguer avec Ollama, LM Studio, MLX ou vLLM via des points de terminaison HTTP compatibles OpenAI, tout en gardant chaque ligne de code source sur la machine locale. Il lui fallait de véritables outils d'espace de travail, une mémoire contextuelle bornée et des permissions explicites sur les fichiers plutôt qu'une exécution shell sans restriction.
+
+## L'architecture
+
+`cargo build --release` produit un binaire unique regroupant la TUI, la boucle d'appel d'outils en streaming, le magasin de mémoire et 27 outils intégrés.
+
+<CardGrid stagger>
+  <Card title="Binaire unique" icon="rocket">
+    Aucun runtime Node, aucun environnement Python et aucun démon Docker entre le terminal et votre serveur de modèles local.
+  </Card>
+  <Card title="Outils soumis à permissions" icon="approve-check">
+    27 outils intégrés pour la lecture, l'édition et la recherche de fichiers ainsi que l'exécution de `cargo check`, encadrés par des permissions configurables sur le système de fichiers.
+  </Card>
+  <Card title="Mémoire en couches" icon="puzzle">
+    Sépare l'historique de session, les compétences adaptées à la tâche et les notes persistantes du projet afin que les prompts tiennent dans les fenêtres de contexte locales réduites.
+  </Card>
+  <Card title="Profils de modèles pré-réglés" icon="setting">
+    Livré avec 4 profils de modèles pour garder des schémas d'outils compacts adaptés aux poids quantifiés plus légers comme `qwen2.5-coder:7b`.
+  </Card>
+</CardGrid>
+
+## Ce que cela a coûté
+
+Concevoir l'agent autour de modèles locaux 7B et 14B a mis en évidence des modes de défaillance qui surviennent rarement avec les grandes API cloud. Les modèles plus compacts produisent fréquemment du JSON légèrement malformé dans les arguments d'outils ou perdent le fil de l'état des fichiers si le prompt système est trop verbeux. Nous avons consacré un temps important à alléger les définitions d'outils, afficher en temps réel le pourcentage de contexte utilisé dans la TUI et développer des analyseurs avec nouvelle tentative pour les appels d'outils presque valides.
+
+<Aside type="caution" title="Limites">
+KOD dépend de la vitesse de génération de jetons et de la fenêtre de contexte de votre matériel local. Sur les machines ne disposant pas d'assez de mémoire unifiée ou de VRAM pour exécuter au moins un modèle de code quantifié 7B–14B, les modifications multi-étapes seront sensiblement plus lentes qu'avec des agents hébergés dans le cloud.
+</Aside>
+
+## Démarrer
+
+```bash
+cargo build --release
+kod tui
+```
+
+Consultez le [démarrage rapide en 5 minutes](/fr/tutorials/quickstart/) pour connecter KOD à une instance Ollama et effectuer votre première modification locale.
