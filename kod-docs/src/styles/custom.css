@@ -409,7 +409,7 @@ main kbd,
   color: var(--sl-color-gray-4);
 }
 .kod-terminal-body .ok {
-  color: #7dd88f;
+  color: #42724b;
 }
 .kod-terminal-body .tool {
   color: var(--kod-lavender);
@@ -418,7 +418,7 @@ main kbd,
   color: #5a554f;
 }
 .kod-terminal-body .diff-add {
-  color: #7dd88f;
+  color: #42724b;
 }
 .kod-terminal-body .diff-del {
   color: #ff7b72;
