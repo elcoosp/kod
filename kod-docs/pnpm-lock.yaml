@@ -73,8 +73,8 @@ importers:
         specifier: ^0.9.12
         version: 0.9.12(prettier@3.10.1)(typescript@6.0.3)
       '@elcoosp/docs-toolkit':
-        specifier: ^0.9.7
-        version: 0.9.7(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(starlight-image-zoom@0.16.2(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2))(supports-color@10.2.2)
+        specifier: ^0.9.9
+        version: 0.9.9(5b21ee9116795c398c4093883a805f58)
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -487,8 +487,8 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@0.9.7':
-    resolution: {integrity: sha512-dN0hurDohd+gnKiMX0TEnH+B4d1R/oj0sOspw6t+H9rg1b2nsc9pT3CYH0hREjeHUQSrlx1+U/DOwsi9vewT1g==}
+  '@elcoosp/docs-toolkit@0.9.9':
+    resolution: {integrity: sha512-ERF6K6q4Rp/ycVHGyk7vOfV1KA1VDjM3g0o+oxh+e/sST9tmqRxsQkuwAuyimQeW3fSY5X4+whfy6UVyBHbKjg==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -497,7 +497,18 @@ packages:
       mermaid: ^11.0.0 || ^12.0.0
       playwright: ^1.65.0
       react: ^19.3.1
-      starlight-image-zoom: ^0.16.0
+      starlight-announcement: ^2.0.0
+      starlight-auto-sidebar: ^0.4.1
+      starlight-blog: ^0.30.2
+      starlight-changelogs: ^0.7.1
+      starlight-giscus: ^1.2.0
+      starlight-heading-badges: ^0.8.0
+      starlight-image-zoom: ^0.16.2
+      starlight-links-validator: ^0.27.0
+      starlight-scroll-to-top: ^2.0.0
+      starlight-seo: ^1.0.0
+      starlight-telescope: ^2.0.0
+      starlight-view-modes: ^0.16.0
     peerDependenciesMeta:
       playwright:
         optional: true
@@ -3715,7 +3726,7 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@0.9.7(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(starlight-image-zoom@0.16.2(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2))(supports-color@10.2.2)':
+  '@elcoosp/docs-toolkit@0.9.9(5b21ee9116795c398c4093883a805f58)':
     dependencies:
       '@astrojs/rss': 4.0.19
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
@@ -3745,7 +3756,6 @@ snapshots:
       tsx: 4.23.15
       zod: 4.6.7
     transitivePeerDependencies:
-      - '@astrojs/markdown-satteri'
       - '@mermaid-js/layout-elk'
       - '@types/node'
       - canvas
@@ -3753,7 +3763,6 @@ snapshots:
       - happy-dom
       - jsdom
       - preact
-      - supports-color
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:

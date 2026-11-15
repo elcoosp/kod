@@ -1,6 +1,7 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
+  - "@elcoosp/docs-toolkit@0.9.9"
   - "@elcoosp/docs-toolkit@0.9.7"
   - "@elcoosp/docs-toolkit@0.9.5"
   - "@elcoosp/docs-toolkit@0.9.4"
