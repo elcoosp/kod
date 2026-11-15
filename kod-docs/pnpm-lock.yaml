@@ -73,8 +73,8 @@ importers:
         specifier: ^0.9.12
         version: 0.9.12(prettier@3.10.1)(typescript@6.0.3)
       '@elcoosp/docs-toolkit':
-        specifier: ^0.9.2
-        version: 0.9.2(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(supports-color@10.2.2)
+        specifier: ^0.9.7
+        version: 0.9.7(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(starlight-image-zoom@0.16.2(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2))(supports-color@10.2.2)
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -487,16 +487,17 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@0.9.2':
-    resolution: {integrity: sha512-2CcT9iD8SZx+Psq1+DE4W/2TuTp6cQjUPHF8OIc32nBFjrKn8e1vs/K0xyfgDchxlCxhxEJ3riospITflj3U0w==}
+  '@elcoosp/docs-toolkit@0.9.7':
+    resolution: {integrity: sha512-dN0hurDohd+gnKiMX0TEnH+B4d1R/oj0sOspw6t+H9rg1b2nsc9pT3CYH0hREjeHUQSrlx1+U/DOwsi9vewT1g==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
-      '@astrojs/starlight': ^0.43.0
+      '@astrojs/starlight': ^0.43.1
       astro: ^7.0.0
       mermaid: ^11.0.0 || ^12.0.0
       playwright: ^1.65.0
       react: ^19.3.1
+      starlight-image-zoom: ^0.16.0
     peerDependenciesMeta:
       playwright:
         optional: true
@@ -3714,7 +3715,7 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@0.9.2(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(supports-color@10.2.2)':
+  '@elcoosp/docs-toolkit@0.9.7(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@types/node@26.6.6)(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.3)(mermaid@12.3.0)(react@19.3.1)(starlight-image-zoom@0.16.2(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2))(supports-color@10.2.2)':
     dependencies:
       '@astrojs/rss': 4.0.19
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
