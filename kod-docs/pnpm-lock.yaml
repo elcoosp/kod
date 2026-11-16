@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.34
         version: 0.1.34
       '@elcoosp/docs-toolkit':
-        specifier: ^1.2.0
-        version: 1.2.0(c996d7868d99dfb7cb6304a2c3313041)
+        specifier: ^1.2.1
+        version: 1.2.1(c996d7868d99dfb7cb6304a2c3313041)
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -499,8 +499,8 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@1.2.0':
-    resolution: {integrity: sha512-YkP3CUmVhwqRkb1yLH4AJPpALqPQGhe8vA2686N8cd/pXrel9KS+JIu41tOQ+oTsYcfzlCAIM6ATDDYekBme3w==}
+  '@elcoosp/docs-toolkit@1.2.1':
+    resolution: {integrity: sha512-RN6YsIw5AwEaCCAs2/vsF2yKOTlmz99PY244bwDrL5Dfutg3llwPcjlAwURykqz0ZaqbQcw9doerGjYrP7yngA==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -739,6 +739,9 @@ packages:
 
   '@expressive-code/plugin-frames@0.44.3':
     resolution: {integrity: sha512-ysW4VXk9vXEliA99Ur6ApUepVtx74sPolp6o/j45BRjZQoL5O6kXKMhSP4koQLih8HbC5B3ImIvO+HKKhkv/oA==}
+
+  '@expressive-code/plugin-line-numbers@0.44.3':
+    resolution: {integrity: sha512-cmaYH/ciJsC9MqNRuqWPjdjMAX9F9TxlJPqRN42tSYQ0Is15xBuaAYS88n1UPrlenk902PCYVHB152jfd6dxTA==}
 
   '@expressive-code/plugin-shiki@0.44.3':
     resolution: {integrity: sha512-jAibAZPG7lDmi61EFJADZjoSZzjHiwZZdbbgR/mTlWXM4ON/Pyo/9tB2vrqQNKylsci6jqtCi6idrwqQXF53xA==}
@@ -3815,11 +3818,12 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@1.2.0(c996d7868d99dfb7cb6304a2c3313041)':
+  '@elcoosp/docs-toolkit@1.2.1(c996d7868d99dfb7cb6304a2c3313041)':
     dependencies:
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@d2lang/d2': 0.1.34
       '@elcoosp/astro-takumi': 2.1.2(csstype@3.2.3)(linkedom@0.18.15)
+      '@expressive-code/plugin-line-numbers': 0.44.3
       astro: 7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
       astro-d2: 0.14.1(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
       astro-mermaid: 2.2.0(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(mermaid@12.3.0)
@@ -4014,6 +4018,10 @@ snapshots:
       unist-util-visit-parents: 6.1.0
 
   '@expressive-code/plugin-frames@0.44.3':
+    dependencies:
+      '@expressive-code/core': 0.44.3
+
+  '@expressive-code/plugin-line-numbers@0.44.3':
     dependencies:
       '@expressive-code/core': 0.44.3
 
