@@ -14,7 +14,7 @@ KOD can export structured records to an OpenTelemetry collector. It is **off by 
 
 Set the standard OTLP environment variable before starting `kod`:
 
-<Code lang="bash" code={`export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+<Code lang="bash" title="Terminal" code={`export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 kod tui`} />
 
 Startup prints one line confirming the export, including the service name:

@@ -200,7 +200,7 @@ Commité dans le dépôt, en couche au-dessus de la config globale (voir [Politi
 
 Un `theme.toml` à côté de la config sélectionne la palette de la TUI :
 
-<Code lang="toml" code={`theme = "light"        # or "dark", or a full [theme] table below`} />
+<Code lang="toml" title="theme.toml" code={`theme = "light"        # or "dark", or a full [theme] table below`} />
 
 Une ligne `theme = "light"` nue est acceptée, tout comme une table `[theme]` complète remplaçant des couleurs ratatui individuelles (`black`, `red`, `green`, …). Le chargement est best-effort : un fichier de thème invalide retombe sur le thème sombre par défaut avec un avertissement plutôt que de faire échouer la session. `kod theme show <name>` imprime une palette intégrée en JSON.
 

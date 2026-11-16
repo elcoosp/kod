@@ -66,7 +66,7 @@ Ce que fait chaque partie :
 
 L'arbre de sous-commandes `kod skills` est un petit gestionnaire de paquets de compétences :
 
-<Code lang="bash" code={`kod skills                       # list (same as \`kod skills list\`)
+<Code lang="bash" title="Terminal" code={`kod skills                       # list (same as \`kod skills list\`)
 kod skills new my-skill          # scaffold in the first writable dir
 kod skills show my-skill         # full markdown content
 kod skills source my-skill       # absolute path of the file
@@ -88,13 +88,13 @@ kod skills remove my-skill       # refuses without --yes outside cwd`} />
 <Steps>
 1. Échafaudez-la :
 
-   <Code lang="bash" code={`kod skills new python-testing`} />
+   <Code lang="bash" title="Terminal" code={`kod skills new python-testing`} />
 
 2. Éditez le front matter — donnez-lui deux ou trois déclencheurs qui correspondent à la façon dont vous demandez réellement la tâche.
 3. Écrivez d'abord les **contraintes** (les règles qui ne doivent jamais être enfreintes), puis les instructions, puis un petit exemple.
 4. Vérifiez qu'elle correspond :
 
-   <Code lang="bash" code={`kod skills search "testing"`} />
+   <Code lang="bash" title="Terminal" code={`kod skills search "testing"`} />
 </Steps>
 
 Des exemples du format — y compris `python-testing` et `code-review` — sont livrés dans le dépôt sous `skills/examples/`.

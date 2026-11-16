@@ -8,7 +8,7 @@ type: reference
 
 import { Aside, Code } from '@astrojs/starlight/components';
 
-<Code lang="bash" code={`kod [--verbose] [<COMMAND>]`} />
+<Code lang="bash" title="Terminal" code={`kod [--verbose] [<COMMAND>]`} />
 
 KOD's CLI is a single binary with subcommands grouped by purpose: sessions, models, inspection, and audit. Most commands operate on the effective configuration (defaults merged with `~/.config/kod/config.toml` and any project policy) and talk to the model server configured under `[llm]`. Bare `kod` — no subcommand — prints an onboarding summary: entry points, config path, and discovered skill directories.
 
@@ -61,45 +61,45 @@ Policy flag: where shown, `--preset` accepts `read-only` (alias `readonly`), `st
 
 ## `kod chat`
 
-<Code lang="bash" code={`kod chat [--model <name>] [--temperature <f>] [-i, --interactive]
+<Code lang="bash" title="Terminal" code={`kod chat [--model <name>] [--temperature <f>] [-i, --interactive]
          [--system-prompt <text>] [--sandbox] [--preset <preset>]`} />
 
 Starts a plain REPL with streaming output. `--model` overrides the configured model for this session. `--temperature` (default `0.7`) is accepted for compatibility; the temperature actually applied comes from the endpoint config. `--system-prompt` replaces the built-in system prompt. `--sandbox` routes shell commands through `bwrap`/`sandbox-exec` and fails loudly when the primitive is unavailable. `--preset` overrides the policy for this session.
 
 ## `kod tui`
 
-<Code lang="bash" code={`kod tui [--model <name>] [--sandbox] [--preset <preset>] [--no-resume]`} />
+<Code lang="bash" title="Terminal" code={`kod tui [--model <name>] [--sandbox] [--preset <preset>] [--no-resume]`} />
 
 Launches the interactive terminal UI. `--no-resume` is intended to skip the saved session; today it prints a hint instead — to start fresh, move `~/.kod/tui_session.json` aside.
 
 ## `kod agent`
 
-<Code lang="bash" code={`kod agent [-n <name>] -g "<goal>" [--model <name>] [--preset <preset>]`} />
+<Code lang="bash" title="Terminal" code={`kod agent [-n <name>] -g "<goal>" [--model <name>] [--preset <preset>]`} />
 
 One-shot agent run: classify the task, ground the prompt, call tools, finish with a summary. `-n, --name` (default `kod-agent`) labels the agent in logs; `-g, --goal` is required. Writes that need approval are refused (nothing interactive to approve) — see [Policy](/guides/policy/).
 
 ## `kod prompt`
 
-<Code lang="bash" code={`kod prompt <prompt> [--model <name>] [--no-log] [--sandbox]
+<Code lang="bash" title="Terminal" code={`kod prompt <prompt> [--model <name>] [--no-log] [--sandbox]
            [--remote] [--socket <path>]`} />
 
 One prompt, one reply, exit code 0 on success and 1 on error. Only the reply is printed to stdout; diagnostics go to stderr, so it pipes cleanly. `-` reads the prompt text from stdin. `--no-log` skips the session log entry. `--remote` sends the prompt to a running `kod serve` daemon instead of building an in-process engine (`--socket` overrides the socket path).
 
 ## `kod run`
 
-<Code lang="bash" code={`kod run <prompt> [--model <name>]`} />
+<Code lang="bash" title="Terminal" code={`kod run <prompt> [--model <name>]`} />
 
 Like `prompt`, but streams the reply to stdout as it is generated. `-` reads the prompt from stdin.
 
 ## `kod swarm`
 
-<Code lang="bash" code={`kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--merge]`} />
+<Code lang="bash" title="Terminal" code={`kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--merge]`} />
 
 Runs the full swarm pipeline. `-n, --agents` defaults to `swarm.max_agents` from config and is clamped to 2–8 by the runner. Merging is controlled by `swarm.merge_results` in the config; there is no `--no-merge` flag.
 
 ## `kod serve`
 
-<Code lang="bash" code={`kod serve [--stop] [--socket <path>]`} />
+<Code lang="bash" title="Terminal" code={`kod serve [--stop] [--socket <path>]`} />
 
 Starts a long-lived engine behind a Unix socket (default `$XDG_RUNTIME_DIR/kod.sock`, or `~/.kod/run/kod.sock` on macOS; never TCP) that `kod prompt --remote` attaches to. `--stop` asks a running daemon to exit and waits for the socket file to disappear.
 
@@ -137,7 +137,7 @@ Two standalone validators complement the tree: `kod validate-skills` (exits non-
 
 ## `kod profile`
 
-<Code lang="bash" code={`kod profile list [--json]              # show the built-in presets
+<Code lang="bash" title="Terminal" code={`kod profile list [--json]              # show the built-in presets
 kod profile show                       # print the effective [llm] config
 kod profile use <profile> [--dry-run]  # write preset values into config.toml`} />
 
@@ -145,18 +145,18 @@ Presets: `local-fast`, `local-capable`, `local-reasoning`, `cloud-openai`. See [
 
 ## `kod models`
 
-<Code lang="bash" code={`kod models [--filter <text>]`} />
+<Code lang="bash" title="Terminal" code={`kod models [--filter <text>]`} />
 
 Lists models the configured provider offers (`--filter` is a case-insensitive substring match). Errors from the provider are surfaced rather than collapsed into an empty list, so a bad endpoint is visible here.
 
 ## `kod theme`
 
-<Code lang="bash" code={`kod theme list          # built-in theme names
+<Code lang="bash" title="Terminal" code={`kod theme list          # built-in theme names
 kod theme show <name>   # one theme's palette as JSON (dark | light)`} />
 
 ## `kod sessions`
 
-<Code lang="bash" code={`kod sessions show                        # where the TUI session lives, message count
+<Code lang="bash" title="Terminal" code={`kod sessions show                        # where the TUI session lives, message count
 kod sessions export [path] [--format markdown|json]   # default stdout, Markdown
 kod sessions import <path>               # replace saved session from JSON
 kod sessions latest                      # path of the newest session log
@@ -167,7 +167,7 @@ kod sessions clear                       # delete the saved session file`} />
 
 ## `kod memory`
 
-<Code lang="bash" code={`kod memory list                  # every long-term entry, newest first
+<Code lang="bash" title="Terminal" code={`kod memory list                  # every long-term entry, newest first
 kod memory search <query>        # case-insensitive substring search
 kod memory delete <short-id>     # remove one entry (id from list/search)
 kod memory export [path]         # dump entries to a JSON file or \`-\`
@@ -176,56 +176,56 @@ kod memory clear [--yes]         # delete every entry; prompts without --yes`} /
 
 ## `kod map`
 
-<Code lang="bash" code={`kod map [--max-chars <n>]`} />
+<Code lang="bash" title="Terminal" code={`kod map [--max-chars <n>]`} />
 
 Prints the repository map (top-level symbols per recognised source file) used for prompt grounding. The cap defaults to 16000 characters (~4k tokens).
 
 ## `kod replay`
 
-<Code lang="bash" code={`kod replay <session.jsonl> [--execute]`} />
+<Code lang="bash" title="Terminal" code={`kod replay <session.jsonl> [--execute]`} />
 
 Re-runs the tool calls recorded in a session log, without the model. Without `--execute` it prints what would run; with `--execute` it performs the calls for real.
 
 ## `kod checkpoint`
 
-<Code lang="bash" code={`kod checkpoint list [--limit <n>]   # snapshots for this project (default 20)
+<Code lang="bash" title="Terminal" code={`kod checkpoint list [--limit <n>]   # snapshots for this project (default 20)
 kod checkpoint diff <id>            # unified diff: snapshot vs current file
 kod checkpoint restore <id>         # restore the file; the snapshot is kept
 kod checkpoint clear                # delete every checkpoint for this directory`} />
 
 ## `kod policy`
 
-<Code lang="bash" code={`kod policy show
+<Code lang="bash" title="Terminal" code={`kod policy show
 kod policy explain <tool> [key=value …]`} />
 
 `show` prints the effective policy with each rule's provenance. `explain` answers “what would the engine decide for this call?” without running anything — for example `kod policy explain write_file path=src/main.rs`. Values that parse as JSON are used as JSON; anything else is treated as a string. CLI `--preset` overrides are deliberately not applied.
 
 ## `kod tools`
 
-<Code lang="bash" code={`kod tools list        # every registered tool
+<Code lang="bash" title="Terminal" code={`kod tools list        # every registered tool
 kod tools show <name> # one tool's name, description, schema, permissions`} />
 
 ## `kod sandbox`
 
-<Code lang="bash" code={`kod sandbox check`} />
+<Code lang="bash" title="Terminal" code={`kod sandbox check`} />
 
 Reports whether the platform sandbox primitive is available — and the install command when it is not.
 
 ## `kod doctor`
 
-<Code lang="bash" code={`kod doctor [--json] [--fix]`} />
+<Code lang="bash" title="Terminal" code={`kod doctor [--json] [--fix]`} />
 
 Diagnostics for config, endpoint, skills, memory, sandbox, and git. Exits non-zero if any check fails, so it can gate a script or CI. `--fix` creates missing directories and writes a default config if none exists; it never modifies an existing config file.
 
 ## `kod init`
 
-<Code lang="bash" code={`kod init [--force]`} />
+<Code lang="bash" title="Terminal" code={`kod init [--force]`} />
 
 Ensures a config file exists (backing up the old one with `--force`), prints where it lives, and prints the next three commands a new user should run. Idempotent.
 
 ## `kod completions` / `kod test` / `kod update`
 
-<Code lang="bash" code={`kod completions <bash|zsh|fish|elvish|powershell>   # completion script on stdout
+<Code lang="bash" title="Terminal" code={`kod completions <bash|zsh|fish|elvish|powershell>   # completion script on stdout
 kod test                                            # built-in self-tests
 kod update                                          # check GitHub for a newer release`} />
 

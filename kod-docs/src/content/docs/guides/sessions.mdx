@@ -18,7 +18,7 @@ Because the format is line-delimited JSON, the log is inspectable with ordinary 
 
 Inspecting sessions from the CLI:
 
-<Code lang="bash" code={`kod sessions latest                  # path of the newest session log
+<Code lang="bash" title="Terminal" code={`kod sessions latest                  # path of the newest session log
 kod sessions count                   # how many logs exist, combined size
 kod sessions show                    # where the TUI session lives, message count
 kod sessions export session.md       # TUI session as Markdown (default)
@@ -32,7 +32,7 @@ The TUI conversation (prompts, replies, layout state) is saved separately at `~/
 
 `kod replay <session.jsonl>` re-runs the tool calls a session made, **without the model**. Every `read_file`, `write_file`, and `execute_command` is checkable against the codebase at any later commit. This turns a historical session into a regression test: did the fix the agent made last week still hold? Does the refactoring it performed still pass?
 
-<Code lang="bash" code={`# print what would run — always do this first
+<Code lang="bash" title="Terminal" code={`# print what would run — always do this first
 kod replay ~/.kod/sessions/1730000000000.jsonl
 
 # actually re-execute the tool calls
@@ -46,7 +46,7 @@ kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
 
 KOD snapshots the target file **before every mutating call** — `write_file` and `patch_file` — so the damage any single tool call can do is bounded and reversible:
 
-<Code lang="bash" code={`kod checkpoint list             # snapshots for this project, newest first (--limit 20)
+<Code lang="bash" title="Terminal" code={`kod checkpoint list             # snapshots for this project, newest first (--limit 20)
 kod checkpoint diff <id>        # unified diff between snapshot and current file
 kod checkpoint restore <id>     # put a file back
 kod checkpoint clear            # drop the checkpoint store for this project`} />

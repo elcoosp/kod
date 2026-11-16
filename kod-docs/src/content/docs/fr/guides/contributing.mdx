@@ -32,7 +32,7 @@ Chaque crate a une responsabilité unique et une API publique étroite — garde
 
 ## Les portes que votre PR doit passer
 
-<Code lang="bash" code={`cargo fmt --all -- --check
+<Code lang="bash" title="Terminal" code={`cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/test.sh      # the whole suite in one shot`} />

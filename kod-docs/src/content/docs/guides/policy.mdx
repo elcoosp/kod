@@ -37,7 +37,7 @@ Within a layer, `[tools.<name>]` entries give a per-tool decision (`allow` / `de
 
 ## Writing a `.kod/policy.toml`
 
-<Code lang="toml" code={`# .kod/policy.toml — committed to the repo
+<Code lang="toml" title=".kod/policy.toml" code={`# .kod/policy.toml — committed to the repo
 preset = "standard"
 
 [tools.write_file]
@@ -78,10 +78,10 @@ Path globs follow gitignore intuition, implemented with `globset` and `literal_s
 
 <Tabs>
 <TabItem label="Show the policy">
-  <Code lang="bash" code={`kod policy show`} />
+  <Code lang="bash" title="Terminal" code={`kod policy show`} />
 </TabItem>
 <TabItem label="Explain one call">
-  <Code lang="bash" code={`kod policy explain write_file path=src/main.rs
+  <Code lang="bash" title="Terminal" code={`kod policy explain write_file path=src/main.rs
 kod policy explain execute_command command="cargo test"
 kod policy explain web_fetch url=https://docs.rs/`} />
 </TabItem>

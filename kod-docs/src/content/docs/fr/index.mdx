@@ -105,7 +105,7 @@ KOD est conçu autour d'une question : *où va mon code quand je lance ça ?* Ch
 
 <Tabs>
 <TabItem label="Compiler depuis les sources">
-  <Code lang="bash" code={`git clone https://github.com/elcoosp/kod.git
+  <Code lang="bash" title="Terminal" code={`git clone https://github.com/elcoosp/kod.git
 cd kod && cargo build --release
 
 ollama serve &                 # or LM Studio, MLX, vLLM, …
@@ -116,7 +116,7 @@ ollama pull qwen2.5-coder:7b
 ./target/release/kod tui`} />
 </TabItem>
 <TabItem label="Essayer la CLI d'abord">
-  <Code lang="bash" code={`# one-shot agent run against a goal
+  <Code lang="bash" title="Terminal" code={`# one-shot agent run against a goal
 kod agent -g "add a doc comment to every public function in src/lib.rs"
 
 # a single non-interactive prompt, ideal for scripts

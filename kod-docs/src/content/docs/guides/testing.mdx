@@ -12,7 +12,7 @@ The workspace's test suite runs unit tests, integration tests, and doc tests **w
 
 ## Quick start
 
-<Code lang="bash" code={`just test                        # or:
+<Code lang="bash" title="Terminal" code={`just test                        # or:
 cargo test --workspace           # all crates, all tests
 cargo test --workspace -- --test-threads=8     # faster, parallel
 cargo test --workspace --lib     # unit tests only
@@ -27,11 +27,11 @@ Tests that exercise the real provider are `#[ignore]`-gated so `cargo test` stay
 
 <Tabs>
 <TabItem label="Provider tests">
-  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
+  <Code lang="bash" title="Terminal" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
   cargo test -p kod-provider-openai -- --ignored --nocapture`} />
 </TabItem>
 <TabItem label="TUI main-loop test">
-  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
+  <Code lang="bash" title="Terminal" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
   cargo test -p kod-tui --test main_loop -- --ignored --nocapture`} />
 </TabItem>
 </Tabs>
@@ -42,13 +42,13 @@ In-process tests build the router with `enable_memory=false` to avoid database c
 
 ## Benchmarks
 
-<Code lang="bash" code={`cargo bench --workspace          # or: just bench`} />
+<Code lang="bash" title="Terminal" code={`cargo bench --workspace          # or: just bench`} />
 
 Benchmarks live under `kod-core/benches/` and cover the engine's hot paths.
 
 ## Debugging a failing test
 
-<Code lang="bash" code={`cargo test --workspace -- --nocapture              # full output
+<Code lang="bash" title="Terminal" code={`cargo test --workspace -- --nocapture              # full output
 cargo test <name> -- --nocapture --test-threads=1  # serial, for races
 cargo test <name> -- --backtrace                   # backtrace
 cargo test -- --ignored                            # include live tests`} />
@@ -59,7 +59,7 @@ Common causes: Ollama not reachable (only affects `#[ignore]`-gated tests), perm
 
 The full check suite — format + lint + test + release build — is scripted:
 
-<Code lang="bash" code={`./scripts/test.sh`} />
+<Code lang="bash" title="Terminal" code={`./scripts/test.sh`} />
 
 Which mirrors the manual order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, then a release build. A `justfile` provides the shortcuts (`just build`, `just test`, `just lint`, `just check`, `just bench`).
 

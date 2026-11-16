@@ -12,7 +12,7 @@ La suite de tests de l'espace de travail exécute des tests unitaires, des tests
 
 ## Démarrage rapide
 
-<Code lang="bash" code={`just test                        # or:
+<Code lang="bash" title="Terminal" code={`just test                        # or:
 cargo test --workspace           # all crates, all tests
 cargo test --workspace -- --test-threads=8     # faster, parallel
 cargo test --workspace --lib     # unit tests only
@@ -27,11 +27,11 @@ Les tests qui exercent le vrai fournisseur sont `#[ignore]`-gatés afin que `car
 
 <Tabs>
 <TabItem label="Tests du fournisseur">
-  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
+  <Code lang="bash" title="Terminal" code={`KOD_TEST_MODEL=qwen2.5:0.5b \\
   cargo test -p kod-provider-openai -- --ignored --nocapture`} />
 </TabItem>
 <TabItem label="Test de la boucle principale de la TUI">
-  <Code lang="bash" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
+  <Code lang="bash" title="Terminal" code={`KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \\
   cargo test -p kod-tui --test main_loop -- --ignored --nocapture`} />
 </TabItem>
 </Tabs>
@@ -42,13 +42,13 @@ Les tests en processus construisent le routeur avec `enable_memory=false` pour �
 
 ## Benchmarks
 
-<Code lang="bash" code={`cargo bench --workspace          # or: just bench`} />
+<Code lang="bash" title="Terminal" code={`cargo bench --workspace          # or: just bench`} />
 
 Les benchmarks vivent sous `kod-core/benches/` et couvrent les chemins chauds du moteur.
 
 ## Déboguer un test en échec
 
-<Code lang="bash" code={`cargo test --workspace -- --nocapture              # full output
+<Code lang="bash" title="Terminal" code={`cargo test --workspace -- --nocapture              # full output
 cargo test <name> -- --nocapture --test-threads=1  # serial, for races
 cargo test <name> -- --backtrace                   # backtrace
 cargo test -- --ignored                            # include live tests`} />
@@ -59,7 +59,7 @@ Causes courantes : Ollama non joignable (n'affecte que les tests `#[ignore]`-gat
 
 La suite complète de vérifications — format + lint + test + build release — est scriptée :
 
-<Code lang="bash" code={`./scripts/test.sh`} />
+<Code lang="bash" title="Terminal" code={`./scripts/test.sh`} />
 
 Ce qui reflète l'ordre manuel : `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, puis un build release. Un `justfile` fournit les raccourcis (`just build`, `just test`, `just lint`, `just check`, `just bench`).
 

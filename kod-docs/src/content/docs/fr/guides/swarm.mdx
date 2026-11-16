@@ -22,7 +22,7 @@ Un essaim est la réponse de KOD à « cette tâche est trop grosse pour une seu
 
 ## En lancer un
 
-<Code lang="bash" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
+<Code lang="bash" title="Terminal" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
 
 Drapeaux qui comptent : `-n, --agents` remplace le nombre d'agents configuré (toujours contraint à 2–8) et `--model` change le modèle pour toute l'exécution. Dans la TUI, `/swarm <goal>` démarre le même flux de manière interactive. Désactiver la fusion de résultats est une décision de config, pas un drapeau : définissez `swarm.merge_results = false` dans `config.toml` pour toujours obtenir une sortie par agent étiquetée.
 

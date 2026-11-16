@@ -35,7 +35,7 @@ Setting `memory.long_term_db_path` overrides both with an explicit location.
 
 Memory is a first-class citizen of the command surface, not a black box:
 
-<Code lang="bash" code={`kod memory list                     # every long-term entry, newest first
+<Code lang="bash" title="Terminal" code={`kod memory list                     # every long-term entry, newest first
 kod memory search "rate limiter"    # case-insensitive substring search
 kod memory delete <short-id>        # remove one entry (id from list/search)
 kod memory export memories.json     # dump everything (or \`-\` for stdout)

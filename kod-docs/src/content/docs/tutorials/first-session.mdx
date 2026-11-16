@@ -12,7 +12,7 @@ The TUI is where KOD is most itself: a header, a chat area with live tool rows, 
 
 ## Launch and look around
 
-<Code lang="bash" code={`kod tui`} />
+<Code lang="bash" title="Terminal" code={`kod tui`} />
 
 The status line greets you with `Connected · <model> · N skill(s)` and reminds you that `/help` exists. If you have run KOD before, your previous conversation is restored automatically from `~/.kod/tui_session.json` — quit and reopen anytime, it keeps your place.
 
@@ -82,7 +82,7 @@ Insert mode adds line editing: `Enter` sends, `Ctrl+J` (or `Shift+Enter`) insert
 
 Press `q` in normal mode. If a generation is running, the TUI asks for confirmation rather than silently dropping the stream. Your session is saved under `~/.kod/` and can be inspected later with `kod sessions`:
 
-<Code lang="bash" code={`kod sessions show                          # where the session lives, message count
+<Code lang="bash" title="Terminal" code={`kod sessions show                          # where the session lives, message count
 kod sessions export session.md             # write it out as Markdown (or --format json)`} />
 
 <Aside type="note">

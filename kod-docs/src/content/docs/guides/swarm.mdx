@@ -22,7 +22,7 @@ A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` 
 
 ## Running one
 
-<Code lang="bash" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
+<Code lang="bash" title="Terminal" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
 
 Flags that matter: `-n, --agents` overrides the configured agent count (still clamped to 2–8) and `--model` switches the model for the whole run. Inside the TUI, `/swarm <goal>` starts the same flow interactively. Disabling result merging is a config decision, not a flag: set `swarm.merge_results = false` in `config.toml` to always get labeled per-agent output.
 
