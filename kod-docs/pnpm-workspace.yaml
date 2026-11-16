@@ -1,7 +1,7 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@elcoosp/docs-toolkit@0.11.0'
+  - '@elcoosp/docs-toolkit@0.11.0 || 0.11.1'
   - '@elcoosp/astro-takumi@2.1.2'
 overrides:
 peerDependencyRules:

@@ -15,8 +15,8 @@ importers:
         specifier: ^0.1.34
         version: 0.1.34
       '@elcoosp/docs-toolkit':
-        specifier: ^0.11.0
-        version: 0.11.0(c44d924b3180c3263826249dde65d7b3)
+        specifier: ^0.11.1
+        version: 0.11.1(c44d924b3180c3263826249dde65d7b3)
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -487,8 +487,8 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@0.11.0':
-    resolution: {integrity: sha512-HM0LMhVeQWydYhYp+n1zdQxvUxa3ZjY1dhBo5uJBn/vwuoll82+5/rAWvYm6o1GxUWJBhusSEGSjhG6cNZqaQA==}
+  '@elcoosp/docs-toolkit@0.11.1':
+    resolution: {integrity: sha512-lOVrDC2JSWsUQ+4RM42ROVLZ6YD1CNDrXY+7j9lap0KrC42opuUhxtB1laRyImxkHqB0UOHj7auB3xP+hEM7sA==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -3734,7 +3734,7 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@0.11.0(c44d924b3180c3263826249dde65d7b3)':
+  '@elcoosp/docs-toolkit@0.11.1(c44d924b3180c3263826249dde65d7b3)':
     dependencies:
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.12(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@d2lang/d2': 0.1.34
