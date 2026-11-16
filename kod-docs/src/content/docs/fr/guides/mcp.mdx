@@ -14,14 +14,7 @@ Les serveurs MCP étendent l'agent avec des outils qu'il n'embarque pas lui-mêm
 
 Un bloc `[mcp.servers.<name>]` par serveur. Le nom est la clé de routage.
 
-<Code lang="toml" code={`[mcp.servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-enabled = true
-call_timeout_secs = 60
-
-[mcp.servers.filesystem.env]
-LOG_LEVEL = "info"`} />
+<Code lang="toml" code={"[mcp.servers.filesystem]\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"]\nenabled = true\ncall_timeout_secs = 60\n\n[mcp.servers.filesystem.env]\nLOG_LEVEL = \"info\""} />
 
 | Clé | Défaut | Notes |
 | --- | --- | --- |
@@ -43,8 +36,7 @@ Le point est le séparateur, et la division se fait sur le *premier* point aprè
 
 Chaque adaptateur MCP déclare un masque de bits de permission entièrement faux. C'est délibéré : **le moteur de politique est la frontière de sécurité, pas le masque de bits.** Sous le préréglage `standard` par défaut, les outils MCP demandent avant de s'exécuter. Pour en autoriser un :
 
-<Code lang="toml" code={`[tools."mcp:filesystem.read_file"]
-mode = "allow"`} />
+<Code lang="toml" code={"[tools.\"mcp:filesystem.read_file\"]\nmode = \"allow\""} />
 
 Les entrées de politique adressent le nom complet, y compris le préfixe `mcp:`.
 

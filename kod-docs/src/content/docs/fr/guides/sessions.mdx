@@ -18,13 +18,7 @@ Parce que le format est du JSON délimité par des lignes, le journal est inspec
 
 Inspecter les sessions depuis la CLI :
 
-<Code lang="bash" title="Terminal" code={`kod sessions latest                  # path of the newest session log
-kod sessions count                   # how many logs exist, combined size
-kod sessions show                    # where the TUI session lives, message count
-kod sessions export session.md       # TUI session as Markdown (default)
-kod sessions export session.json --format json   # or JSON, for round-tripping
-kod sessions import session.json     # replace the saved session (refuses malformed files)
-kod sessions clear                   # delete the saved session state`} />
+<Code lang="bash" title="Terminal" code={"kod sessions latest                  # path of the newest session log\nkod sessions count                   # how many logs exist, combined size\nkod sessions show                    # where the TUI session lives, message count\nkod sessions export session.md       # TUI session as Markdown (default)\nkod sessions export session.json --format json   # or JSON, for round-tripping\nkod sessions import session.json     # replace the saved session (refuses malformed files)\nkod sessions clear                   # delete the saved session state"} />
 
 La conversation de la TUI (prompts, réponses, état de disposition) est sauvegardée séparément dans `~/.kod/tui_session.json` et est ce sur quoi `sessions export`/`import`/`clear` opèrent ; les journaux JSONL dans `~/.kod/sessions/` sont la piste d'audit des appels d'outils.
 
@@ -32,11 +26,7 @@ La conversation de la TUI (prompts, réponses, état de disposition) est sauvega
 
 `kod replay <session.jsonl>` ré-exécute les appels d'outils qu'une session a effectués, **sans le modèle**. Chaque `read_file`, `write_file` et `execute_command` est vérifiable par rapport à la base de code à n'importe quel commit ultérieur. Cela transforme une session historique en test de régression : le correctif que l'agent a fait la semaine dernière tient-il toujours ? La refactorisation qu'il a effectuée passe-t-elle encore ?
 
-<Code lang="bash" title="Terminal" code={`# print what would run — always do this first
-kod replay ~/.kod/sessions/1730000000000.jsonl
-
-# actually re-execute the tool calls
-kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
+<Code lang="bash" title="Terminal" code={"# print what would run \u2014 always do this first\nkod replay ~/.kod/sessions/1730000000000.jsonl\n\n# actually re-execute the tool calls\nkod replay ~/.kod/sessions/1730000000000.jsonl --execute"} />
 
 <Aside type="caution">
   <code>--execute</code> effectue de vraies écritures et commandes contre votre arbre de travail. Révisez d'abord l'essai à blanc ; ne passez pas <code>--execute</code> tant que vous ne faites pas confiance à la session.
@@ -46,18 +36,13 @@ kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
 
 KOD prend un instantané du fichier cible **avant chaque appel mutant** — `write_file` et `patch_file` — donc les dommages qu'un seul appel d'outil peut faire sont bornés et réversibles :
 
-<Code lang="bash" title="Terminal" code={`kod checkpoint list             # snapshots for this project, newest first (--limit 20)
-kod checkpoint diff <id>        # unified diff between snapshot and current file
-kod checkpoint restore <id>     # put a file back
-kod checkpoint clear            # drop the checkpoint store for this project`} />
+<Code lang="bash" title="Terminal" code={"kod checkpoint list             # snapshots for this project, newest first (--limit 20)\nkod checkpoint diff <id>        # unified diff between snapshot and current file\nkod checkpoint restore <id>     # put a file back\nkod checkpoint clear            # drop the checkpoint store for this project"} />
 
 Les points de contrôle sont par fichier, pas par commit — ils annulent ce que *l'agent* a changé, ce qui est généralement exactement la granularité que vous voulez après une mauvaise exécution. Ils sont stockés sous `~/.kod/checkpoints/<project-hash>/`, indexés par votre répertoire de travail, donc deux projets ne voient jamais les points de contrôle de l'autre. `restore` ne supprime pas l'instantané — une restauration peut elle-même être restaurée. Dans la TUI, `/checkpoints` les liste, `/diff` montre le diff de fichier le plus récent, et `/rollback [id]` restaure.
 
 ## Comment ils se composent
 
-<Code lang="text" code={`tool call ──▶ policy decision (logged) ──▶ checkpoint snapshot ──▶ execute ──▶ result (logged)
-                                                                                     │
-             ◀────────────────── kod replay --execute ────────────────────────────────┘`} />
+<Code lang="text" code={"tool call \u2500\u2500\u25b6 policy decision (logged) \u2500\u2500\u25b6 checkpoint snapshot \u2500\u2500\u25b6 execute \u2500\u2500\u25b6 result (logged)\n                                                                                     \u2502\n             \u25c0\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 kod replay --execute \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518"} />
 
 Une boucle d'audit pratique : exécutez `kod sessions latest`, lisez le JSONL pour voir ce qui s'est passé, rejouez-le contre une autre branche ou commit pour voir si ça a encore du sens, et restaurez les points de contrôle si vous voulez les fichiers comme ils étaient.
 

@@ -20,12 +20,7 @@ La règle de conception qui rend cela fiable : **KOD échoue bruyamment si la pr
 
 ## L'activer et le vérifier
 
-<Code lang="bash" title="Terminal" code={`# per-invocation (chat, tui, prompt, agent, swarm)
-kod chat --sandbox
-kod agent -g "run the test suite and fix failures" --sandbox
-
-# confirm the primitive exists before a long unattended run
-kod sandbox check`} />
+<Code lang="bash" title="Terminal" code={"# per-invocation (chat, tui, prompt, agent, swarm)\nkod chat --sandbox\nkod agent -g \"run the test suite and fix failures\" --sandbox\n\n# confirm the primitive exists before a long unattended run\nkod sandbox check"} />
 
 `kod sandbox check` rapporte quelle primitive est disponible sur votre plateforme — et, quand elle est manquante, la commande d'installation — afin que vous puissiez confirmer le support d'emblée plutôt que de découvrir son absence en cours d'exécution.
 

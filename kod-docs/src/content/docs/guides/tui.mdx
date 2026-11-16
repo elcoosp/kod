@@ -72,9 +72,7 @@ Three deserve a call-out:
 
 Anything you put in a `[commands]` block in `config.toml` becomes a slash command:
 
-<Code lang="toml" title="config.toml" code={`[commands]
-review = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\\n\\n{args}"`} />
+<Code lang="toml" title="config.toml" code={"[commands]\nreview = \"Review the last change in {cwd} and point out risks.\"\nexplain = \"Explain what this code does:\\\\n\\\\n{args}\""} />
 
 `/review` sends the first template verbatim; `/explain <selection>` replaces `{args}` with everything you typed after the command name, and `{cwd}` with the working directory. Custom commands appear in the completion popup alongside the built-ins.
 

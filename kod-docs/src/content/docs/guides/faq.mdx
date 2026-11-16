@@ -32,11 +32,7 @@ Everything lives under your home directory — nothing is uploaded:
 
 Per area, from safest to most destructive:
 
-<Code lang="bash" title="Terminal" code={`kod sessions clear          # forget the TUI conversation
-kod memory clear            # empty long-term memory (prompts; add --yes)
-kod checkpoint clear        # drop this project's file snapshots
-rm ~/.kod/tui_history.json  # clear prompt history
-kod init --force            # rewrite config from defaults (backs up the old file)`} />
+<Code lang="bash" title="Terminal" code={"kod sessions clear          # forget the TUI conversation\nkod memory clear            # empty long-term memory (prompts; add --yes)\nkod checkpoint clear        # drop this project's file snapshots\nrm ~/.kod/tui_history.json  # clear prompt history\nkod init --force            # rewrite config from defaults (backs up the old file)"} />
 
 Deleting the memory `redb` file by hand works too — it is recreated empty on next use. `/clearall` in the TUI wipes chat, memory, *and* checkpoints behind one confirmation.
 

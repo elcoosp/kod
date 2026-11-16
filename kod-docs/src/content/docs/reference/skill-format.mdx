@@ -12,32 +12,7 @@ A skill is a Markdown file with YAML front matter. KOD parses the front matter, 
 
 ## Anatomy
 
-<Code lang="markdown" code={`---
-name: rust-refactoring
-description: Rust refactoring with idiomatic patterns
-version: 1.0.0
-category: coding
-tags: [rust, refactoring, idioms]
-capabilities: [code-refactoring, ownership-analysis]
-triggers:
-  - "refactor rust"
-  - "make more idiomatic"
----
-
-## Instructions
-
-You are an expert Rust refactoring assistant...
-
-## Examples
-
-<example input="Refactor this loop">
-...
-</example>
-
-## Constraints
-
-- Never change public API without explicit request
-- Preserve existing tests`} />
+<Code lang="markdown" code={"---\nname: rust-refactoring\ndescription: Rust refactoring with idiomatic patterns\nversion: 1.0.0\ncategory: coding\ntags: [rust, refactoring, idioms]\ncapabilities: [code-refactoring, ownership-analysis]\ntriggers:\n  - \"refactor rust\"\n  - \"make more idiomatic\"\n---\n\n## Instructions\n\nYou are an expert Rust refactoring assistant...\n\n## Examples\n\n<example input=\"Refactor this loop\">\n...\n</example>\n\n## Constraints\n\n- Never change public API without explicit request\n- Preserve existing tests"} />
 
 ## Front matter fields
 

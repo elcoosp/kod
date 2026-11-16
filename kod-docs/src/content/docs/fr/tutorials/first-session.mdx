@@ -12,7 +12,7 @@ La TUI est l'endroit où KOD est le plus lui-même : un en-tête, une zone de ch
 
 ## Lancer et regarder autour
 
-<Code lang="bash" title="Terminal" code={`kod tui`} />
+<Code lang="bash" title="Terminal" code={"kod tui"} />
 
 La ligne d'état vous accueille avec `Connected · <model> · N skill(s)` et vous rappelle que `/help` existe. Si vous avez déjà exécuté KOD auparavant, votre conversation précédente est automatiquement restaurée depuis `~/.kod/tui_session.json` — quittez et rouvrez à tout moment, il garde votre place.
 
@@ -24,7 +24,7 @@ L'interface a quatre régions. L'**en-tête** montre l'état de la session et le
 1. Appuyez sur `i` pour entrer en mode insertion.
 2. Tapez un objectif qui poussera l'agent à utiliser des outils, par exemple :
 
-   <Code lang="text" code={`explain the retry logic in src/net.rs and add a doc comment to the retry function`} />
+   <Code lang="text" code={"explain the retry logic in src/net.rs and add a doc comment to the retry function"} />
 
 3. Appuyez sur <kbd>Enter</kbd> pour envoyer. Les tokens affluent en direct ; les lignes d'outils apparaissent au fur et à mesure que l'agent travaille.
 </Steps>
@@ -82,8 +82,7 @@ Le mode insertion ajoute l'édition de ligne : `Enter` envoie, `Ctrl+J` (ou `Shi
 
 Appuyez sur `q` en mode normal. Si une génération est en cours, la TUI demande confirmation plutôt que de laisser tomber le flux silencieusement. Votre session est sauvegardée sous `~/.kod/` et peut être inspectée plus tard avec `kod sessions` :
 
-<Code lang="bash" title="Terminal" code={`kod sessions show                          # where the session lives, message count
-kod sessions export session.md             # write it out as Markdown (or --format json)`} />
+<Code lang="bash" title="Terminal" code={"kod sessions show                          # where the session lives, message count\nkod sessions export session.md             # write it out as Markdown (or --format json)"} />
 
 <Aside type="note">
   Tout ce que fait la TUI est enregistré : prompts, réponses et chaque appel d'outil avec ses arguments et son résultat. C'est ce qui rend <code>kod replay</code> possible — voir [Sessions, Replay & Checkpoints](/guides/sessions/).

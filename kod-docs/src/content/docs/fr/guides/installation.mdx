@@ -25,17 +25,15 @@ Deux extras optionnels débloquent plus de choses plus tard : [bubblewrap](https
 <Steps>
 1. Clonez le dépôt et compilez l'espace de travail en mode release :
 
-   <Code lang="bash" title="Terminal" code={`git clone https://github.com/elcoosp/kod.git
-cd kod
-cargo build --release`} />
+   <Code lang="bash" title="Terminal" code={"git clone https://github.com/elcoosp/kod.git\ncd kod\ncargo build --release"} />
 
 2. Confirmez que le binaire est là et s'exécute :
 
-   <Code lang="bash" title="Terminal" code={`./target/release/kod --version`} />
+   <Code lang="bash" title="Terminal" code={"./target/release/kod --version"} />
 
 3. Optionnellement, mettez-le sur votre `PATH` :
 
-   <Code lang="bash" title="Terminal" code={`cp ./target/release/kod ~/.local/bin/   # or another directory on PATH`} />
+   <Code lang="bash" title="Terminal" code={"cp ./target/release/kod ~/.local/bin/   # or another directory on PATH"} />
 </Steps>
 
 L'espace de travail compile sous Linux, macOS et Windows. Une compilation de débogage (`cargo build`) est suffisante pour essayer, mais la boucle d'outils en streaming est sensiblement plus rapide en mode release.
@@ -48,9 +46,7 @@ KOD n'a besoin d'aucune configuration pour démarrer — chaque paramètre a un 
 
 `kod doctor` imprime un rapport de diagnostic couvrant le fichier de configuration, l'endpoint du modèle, les compétences découvertes, la base de données de mémoire, la primitive de bac à sable et git. C'est le moyen le plus rapide de répondre à « est-ce que ma configuration fonctionne réellement ? » sans lancer une session, et il sort avec un code non nul si une vérification échoue — vous pouvez donc aussi l'utiliser pour bloquer un script :
 
-<Code lang="bash" title="Terminal" code={`kod doctor            # human-readable report
-kod doctor --json     # machine-readable, for scripts
-kod doctor --fix      # create missing directories, write a default config`} />
+<Code lang="bash" title="Terminal" code={"kod doctor            # human-readable report\nkod doctor --json     # machine-readable, for scripts\nkod doctor --fix      # create missing directories, write a default config"} />
 
 `--fix` ne modifie jamais un fichier de configuration existant ; il ne remplit que ce qui manque.
 
@@ -58,15 +54,13 @@ kod doctor --fix      # create missing directories, write a default config`} />
 
 `kod init` imprime où vit la configuration, les profils de modèle vers lesquels vous pouvez basculer, et les trois prochaines commandes qu'un nouvel utilisateur devrait exécuter. C'est idempotent — l'exécuter deux fois ne change rien. Avec `--force`, il réécrit la configuration à partir des défauts (en sauvegardant l'ancienne) :
 
-<Code lang="bash" title="Terminal" code={`kod init
-kod init --force      # reset to defaults, backing up the current file`} />
+<Code lang="bash" title="Terminal" code={"kod init\nkod init --force      # reset to defaults, backing up the current file"} />
 
 ### Pointer KOD vers un modèle
 
 Les profils de modèle regroupent un nom de modèle, une URL de base, une fenêtre de contexte et des paramètres de génération dans un préréglage afin qu'un utilisateur de première exécution n'ait pas à savoir ce qu'est un `context_window`. Les préréglages intégrés sont `local-fast` (Qwen 2.5 Coder 7B), `local-capable` (32B), `local-reasoning` (DeepSeek-R1 14B) et `cloud-openai` (GPT-4o mini) :
 
-<Code lang="bash" title="Terminal" code={`ollama pull qwen2.5-coder:7b    # one-time model download
-kod profile use local-fast      # writes the preset into config.toml`} />
+<Code lang="bash" title="Terminal" code={"ollama pull qwen2.5-coder:7b    # one-time model download\nkod profile use local-fast      # writes the preset into config.toml"} />
 
 <Aside type="tip">
   Les profils locaux listent leur commande d'installation en une ligne (`ollama pull …`) directement dans `kod profile list`, donc vous pouvez copier-coller sans quitter le terminal.
@@ -74,7 +68,7 @@ kod profile use local-fast      # writes the preset into config.toml`} />
 
 ### Démarrer une session
 
-<Code lang="bash" title="Terminal" code={`kod tui`} />
+<Code lang="bash" title="Terminal" code={"kod tui"} />
 
 La TUI s'ouvre, restaure votre session précédente si vous en avez une, et vous accueille avec le modèle chargé et le nombre de compétences. Si vous préférez un REPL simple, `kod chat` vous donne le même agent dans un shell scriptable.
 
@@ -84,17 +78,16 @@ KOD peut imprimer un script de complétion pour votre shell, prêt à être sour
 
 <Tabs>
   <TabItem label="Bash">
-    <Code lang="bash" title="Terminal" code={`kod completions bash > ~/.local/share/bash-completion/completions/kod`} />
+    <Code lang="bash" title="Terminal" code={"kod completions bash > ~/.local/share/bash-completion/completions/kod"} />
   </TabItem>
   <TabItem label="Zsh">
-    <Code lang="bash" title="Terminal" code={`kod completions zsh > ~/.zfunc/_kod`} />
+    <Code lang="bash" title="Terminal" code={"kod completions zsh > ~/.zfunc/_kod"} />
   </TabItem>
   <TabItem label="Fish">
-    <Code lang="bash" title="Terminal" code={`kod completions fish > ~/.config/fish/completions/kod.fish`} />
+    <Code lang="bash" title="Terminal" code={"kod completions fish > ~/.config/fish/completions/kod.fish"} />
   </TabItem>
   <TabItem label="Elvish / PowerShell">
-    <Code lang="bash" title="Terminal" code={`kod completions elvish
-kod completions powershell`} />
+    <Code lang="bash" title="Terminal" code={"kod completions elvish\nkod completions powershell"} />
   </TabItem>
 </Tabs>
 

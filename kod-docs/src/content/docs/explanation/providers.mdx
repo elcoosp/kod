@@ -16,37 +16,16 @@ All of these work unchanged, on the same code path:
 
 <Tabs>
 <TabItem label="Ollama (default)">
-  <Code lang="toml" code={`[[llm.endpoints]]
-name     = "local"
-provider = "openai-compatible"
-base_url = "http://localhost:11434/v1"
-model    = "qwen2.5-coder:7b"
-context_window = 32768`} />
+  <Code lang="toml" code={"[[llm.endpoints]]\nname     = \"local\"\nprovider = \"openai-compatible\"\nbase_url = \"http://localhost:11434/v1\"\nmodel    = \"qwen2.5-coder:7b\"\ncontext_window = 32768"} />
 </TabItem>
 <TabItem label="LM Studio">
-  <Code lang="toml" code={`[[llm.endpoints]]
-name     = "lmstudio"
-provider = "openai-compatible"
-base_url = "http://localhost:1234/v1"
-model    = "your-model"
-context_window = 16384`} />
+  <Code lang="toml" code={"[[llm.endpoints]]\nname     = \"lmstudio\"\nprovider = \"openai-compatible\"\nbase_url = \"http://localhost:1234/v1\"\nmodel    = \"your-model\"\ncontext_window = 16384"} />
 </TabItem>
 <TabItem label="vLLM">
-  <Code lang="toml" code={`[[llm.endpoints]]
-name     = "vllm"
-provider = "openai-compatible"
-base_url = "http://localhost:8000/v1"
-model    = "your-model"
-context_window = 32768`} />
+  <Code lang="toml" code={"[[llm.endpoints]]\nname     = \"vllm\"\nprovider = \"openai-compatible\"\nbase_url = \"http://localhost:8000/v1\"\nmodel    = \"your-model\"\ncontext_window = 32768"} />
 </TabItem>
 <TabItem label="OpenAI (cloud)">
-  <Code lang="toml" code={`[[llm.endpoints]]
-name     = "openai"
-provider = "openai-compatible"   # "OpenAI" works too — same thing
-base_url = "https://api.openai.com/v1"
-model    = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"   # the key lives in the environment
-context_window = 128000`} />
+  <Code lang="toml" code={"[[llm.endpoints]]\nname     = \"openai\"\nprovider = \"openai-compatible\"   # \"OpenAI\" works too \u2014 same thing\nbase_url = \"https://api.openai.com/v1\"\nmodel    = \"gpt-4o-mini\"\napi_key_env = \"OPENAI_API_KEY\"   # the key lives in the environment\ncontext_window = 128000"} />
 </TabItem>
 </Tabs>
 

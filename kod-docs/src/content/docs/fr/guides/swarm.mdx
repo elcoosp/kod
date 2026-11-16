@@ -22,7 +22,7 @@ Un essaim est la réponse de KOD à « cette tâche est trop grosse pour une seu
 
 ## En lancer un
 
-<Code lang="bash" title="Terminal" code={`kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4`} />
+<Code lang="bash" title="Terminal" code={"kod swarm -g \"implement and test a rate limiter for the HTTP client\" -n 4"} />
 
 Drapeaux qui comptent : `-n, --agents` remplace le nombre d'agents configuré (toujours contraint à 2–8) et `--model` change le modèle pour toute l'exécution. Dans la TUI, `/swarm <goal>` démarre le même flux de manière interactive. Désactiver la fusion de résultats est une décision de config, pas un drapeau : définissez `swarm.merge_results = false` dans `config.toml` pour toujours obtenir une sortie par agent étiquetée.
 
@@ -32,11 +32,7 @@ Drapeaux qui comptent : `-n, --agents` remplace le nombre d'agents configuré (t
 
 ## Configuration
 
-<Code lang="toml" title="config.toml" code={`[swarm]
-max_agents         = 5     # the decompose step targets this; runner clamps to 2–8
-merge_results      = true  # false = concatenate per-agent results under labels
-agent_timeout_secs = 300   # per-agent wall clock; a stuck agent is cancelled; 0 disables
-agent_retries      = 1     # extra attempts after a timeout or provider error`} />
+<Code lang="toml" title="config.toml" code={"[swarm]\nmax_agents         = 5     # the decompose step targets this; runner clamps to 2\u20138\nmerge_results      = true  # false = concatenate per-agent results under labels\nagent_timeout_secs = 300   # per-agent wall clock; a stuck agent is cancelled; 0 disables\nagent_retries      = 1     # extra attempts after a timeout or provider error"} />
 
 La section de config est minimale à dessein — elle ne porte que les valeurs que l'exécuteur d'essaim consomme réellement. La stratégie de coordination et les timeouts de verrou ne sont pas réglables parce que ce ne sont pas des paramètres qui valent la peine d'être exposés ; les défauts encodent un pipeline à opinion unique.
 
@@ -44,9 +40,7 @@ La section de config est minimale à dessein — elle ne porte que les valeurs q
 
 Si votre config définit plusieurs endpoints, `[llm.routing].swarm` associe les capacités d'essaim aux endpoints — le même routage multi-modèle que `by_task` fournit pour les prompts ordinaires :
 
-<Code lang="toml" code={`[llm.routing.swarm]
-Planning = "cloud"   # the decompose/merge step thinks with the bigger model
-Coding   = "local"   # the per-agent implementation work stays local`} />
+<Code lang="toml" code={"[llm.routing.swarm]\nPlanning = \"cloud\"   # the decompose/merge step thinks with the bigger model\nCoding   = \"local\"   # the per-agent implementation work stays local"} />
 
 Voir [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) pour les blocs d'endpoint auxquels ces noms se réfèrent.
 

@@ -32,10 +32,7 @@ Each crate has a single responsibility and a narrow public API — keep it that 
 
 ## The gates your PR must pass
 
-<Code lang="bash" title="Terminal" code={`cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-./scripts/test.sh      # the whole suite in one shot`} />
+<Code lang="bash" title="Terminal" code={"cargo fmt --all -- --check\ncargo clippy --workspace --all-targets -- -D warnings\ncargo test --workspace\n./scripts/test.sh      # the whole suite in one shot"} />
 
 Clippy warnings are errors (`-D warnings`), and the `clippy.toml` encodes the project's lint preferences — run the linter before pushing, not in CI. Tests must pass offline; if you added a live-model test, gate it with `#[ignore]` and honour the `KOD_TEST_MODEL` / `KOD_TEST_DB` conventions (see [Testing](/guides/testing/)).
 

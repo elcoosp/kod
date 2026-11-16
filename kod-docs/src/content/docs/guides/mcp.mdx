@@ -14,14 +14,7 @@ MCP servers extend the agent with tools it does not ship itself. Each server is 
 
 One `[mcp.servers.<name>]` block per server. The name is the routing key.
 
-<Code lang="toml" code={`[mcp.servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-enabled = true
-call_timeout_secs = 60
-
-[mcp.servers.filesystem.env]
-LOG_LEVEL = "info"`} />
+<Code lang="toml" code={"[mcp.servers.filesystem]\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"]\nenabled = true\ncall_timeout_secs = 60\n\n[mcp.servers.filesystem.env]\nLOG_LEVEL = \"info\""} />
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -43,8 +36,7 @@ The dot is the separator, and the split is on the *first* dot after the `mcp:` p
 
 Every MCP adapter declares an all-false permission bitmask. That is deliberate: **the policy engine is the security boundary, not the bitmask.** Under the default `standard` preset MCP tools ask before running. To allow one:
 
-<Code lang="toml" code={`[tools."mcp:filesystem.read_file"]
-mode = "allow"`} />
+<Code lang="toml" code={"[tools.\"mcp:filesystem.read_file\"]\nmode = \"allow\""} />
 
 Policy entries address the full name, including the `mcp:` prefix.
 

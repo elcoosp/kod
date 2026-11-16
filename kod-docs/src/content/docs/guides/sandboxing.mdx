@@ -20,12 +20,7 @@ The design rule that makes this trustworthy: **KOD fails loudly if the primitive
 
 ## Enabling and verifying it
 
-<Code lang="bash" title="Terminal" code={`# per-invocation (chat, tui, prompt, agent, swarm)
-kod chat --sandbox
-kod agent -g "run the test suite and fix failures" --sandbox
-
-# confirm the primitive exists before a long unattended run
-kod sandbox check`} />
+<Code lang="bash" title="Terminal" code={"# per-invocation (chat, tui, prompt, agent, swarm)\nkod chat --sandbox\nkod agent -g \"run the test suite and fix failures\" --sandbox\n\n# confirm the primitive exists before a long unattended run\nkod sandbox check"} />
 
 `kod sandbox check` reports which primitive is available on your platform — and, when it is missing, the install command — so you can confirm support up front rather than discovering its absence mid-run.
 

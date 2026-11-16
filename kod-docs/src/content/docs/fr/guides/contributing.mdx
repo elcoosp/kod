@@ -32,10 +32,7 @@ Chaque crate a une responsabilité unique et une API publique étroite — garde
 
 ## Les portes que votre PR doit passer
 
-<Code lang="bash" title="Terminal" code={`cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-./scripts/test.sh      # the whole suite in one shot`} />
+<Code lang="bash" title="Terminal" code={"cargo fmt --all -- --check\ncargo clippy --workspace --all-targets -- -D warnings\ncargo test --workspace\n./scripts/test.sh      # the whole suite in one shot"} />
 
 Les avertissements Clippy sont des erreurs (`-D warnings`), et le `clippy.toml` encode les préférences de lint du projet — exécutez le linter avant de pousser, pas en CI. Les tests doivent passer hors ligne ; si vous avez ajouté un test avec un modèle réel, bloquez-le avec `#[ignore]` et respectez les conventions `KOD_TEST_MODEL` / `KOD_TEST_DB` (voir [Tests](/guides/testing/)).
 

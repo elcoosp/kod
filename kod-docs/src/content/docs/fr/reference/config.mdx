@@ -144,10 +144,7 @@ L'intégration [TypeSafe AI](https://typesafe.ai). Opt-in ; désactivé par déf
 | `pre_tool_use` | map : outil → modèle de commande | — | S'exécute avant les appels d'outils correspondants ; espaces réservés de style `{path}` substitués depuis les arguments de l'appel. |
 | `post_tool_use` | map : outil → modèle de commande | — | S'exécute après les appels d'outils correspondants. |
 
-<Code lang="toml" code={`[hooks]
-enabled = true
-pre_tool_use  = { write_file = "rustfmt {path}" }
-post_tool_use = { write_file = "cargo check" }`} />
+<Code lang="toml" code={"[hooks]\nenabled = true\npre_tool_use  = { write_file = \"rustfmt {path}\" }\npost_tool_use = { write_file = \"cargo check\" }"} />
 
 ## `[mcp.servers.<name>]`
 
@@ -167,9 +164,7 @@ Les outils sont exposés au modèle comme `mcp:<server>.<tool>`.
 
 Commandes slash de TUI définies par l'utilisateur. Chaque clé enregistre `/key` ; `{args}` dans la valeur est remplacé par tout ce qui est tapé après le nom de la commande, `{cwd}` par le répertoire de travail.
 
-<Code lang="toml" code={`[commands]
-review  = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\\n\\n{args}"`} />
+<Code lang="toml" code={"[commands]\nreview  = \"Review the last change in {cwd} and point out risks.\"\nexplain = \"Explain what this code does:\\\\n\\\\n{args}\""} />
 
 ## Politique du projet : `.kod/policy.toml`
 
@@ -200,7 +195,7 @@ Commité dans le dépôt, en couche au-dessus de la config globale (voir [Politi
 
 Un `theme.toml` à côté de la config sélectionne la palette de la TUI :
 
-<Code lang="toml" title="theme.toml" code={`theme = "light"        # or "dark", or a full [theme] table below`} />
+<Code lang="toml" title="theme.toml" code={"theme = \"light\"        # or \"dark\", or a full [theme] table below"} />
 
 Une ligne `theme = "light"` nue est acceptée, tout comme une table `[theme]` complète remplaçant des couleurs ratatui individuelles (`black`, `red`, `green`, …). Le chargement est best-effort : un fichier de thème invalide retombe sur le thème sombre par défaut avec un avertissement plutôt que de faire échouer la session. `kod theme show <name>` imprime une palette intégrée en JSON.
 

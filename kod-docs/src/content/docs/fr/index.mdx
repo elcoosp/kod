@@ -105,28 +105,10 @@ KOD est conçu autour d'une question : *où va mon code quand je lance ça ?* Ch
 
 <Tabs>
 <TabItem label="Compiler depuis les sources">
-  <Code lang="bash" title="Terminal" code={`git clone https://github.com/elcoosp/kod.git
-cd kod && cargo build --release
-
-ollama serve &                 # or LM Studio, MLX, vLLM, …
-ollama pull qwen2.5-coder:7b
-
-./target/release/kod doctor
-./target/release/kod profile use local-fast
-./target/release/kod tui`} />
+  <Code lang="bash" title="Terminal" code={"git clone https://github.com/elcoosp/kod.git\ncd kod && cargo build --release\n\nollama serve &                 # or LM Studio, MLX, vLLM, \u2026\nollama pull qwen2.5-coder:7b\n\n./target/release/kod doctor\n./target/release/kod profile use local-fast\n./target/release/kod tui"} />
 </TabItem>
 <TabItem label="Essayer la CLI d'abord">
-  <Code lang="bash" title="Terminal" code={`# one-shot agent run against a goal
-kod agent -g "add a doc comment to every public function in src/lib.rs"
-
-# a single non-interactive prompt, ideal for scripts
-kod prompt "explain what src/net.rs does in three bullets"
-
-# a swarm of 4 agents on something bigger
-kod swarm -g "implement and test a rate limiter" -n 4
-
-# replay a recorded session as a regression check
-kod replay ~/.kod/sessions/1730000000000.jsonl --execute`} />
+  <Code lang="bash" title="Terminal" code={"# one-shot agent run against a goal\nkod agent -g \"add a doc comment to every public function in src/lib.rs\"\n\n# a single non-interactive prompt, ideal for scripts\nkod prompt \"explain what src/net.rs does in three bullets\"\n\n# a swarm of 4 agents on something bigger\nkod swarm -g \"implement and test a rate limiter\" -n 4\n\n# replay a recorded session as a regression check\nkod replay ~/.kod/sessions/1730000000000.jsonl --execute"} />
 </TabItem>
 </Tabs>
 

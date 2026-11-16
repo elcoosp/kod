@@ -27,32 +27,7 @@ Setting `skills.skills_dir` in the config replaces all of the above with a singl
 
 A skill is a Markdown file with YAML front matter. The parser splits the body into three sections — instructions, examples, and constraints — and all three reach the model when the skill is matched:
 
-<Code lang="markdown" code={`---
-name: rust-refactoring
-description: Rust refactoring with idiomatic patterns
-version: 1.0.0
-category: coding
-tags: [rust, refactoring, idioms]
-capabilities: [code-refactoring, ownership-analysis]
-triggers:
-  - "refactor rust"
-  - "make more idiomatic"
----
-
-## Instructions
-
-You are an expert Rust refactoring assistant...
-
-## Examples
-
-<example input="Refactor this loop">
-...
-</example>
-
-## Constraints
-
-- Never change public API without explicit request
-- Preserve existing tests`} />
+<Code lang="markdown" code={"---\nname: rust-refactoring\ndescription: Rust refactoring with idiomatic patterns\nversion: 1.0.0\ncategory: coding\ntags: [rust, refactoring, idioms]\ncapabilities: [code-refactoring, ownership-analysis]\ntriggers:\n  - \"refactor rust\"\n  - \"make more idiomatic\"\n---\n\n## Instructions\n\nYou are an expert Rust refactoring assistant...\n\n## Examples\n\n<example input=\"Refactor this loop\">\n...\n</example>\n\n## Constraints\n\n- Never change public API without explicit request\n- Preserve existing tests"} />
 
 What each part does:
 
@@ -66,16 +41,7 @@ What each part does:
 
 The `kod skills` subcommand tree is a small skill package manager:
 
-<Code lang="bash" title="Terminal" code={`kod skills                       # list (same as \`kod skills list\`)
-kod skills new my-skill          # scaffold in the first writable dir
-kod skills show my-skill         # full markdown content
-kod skills source my-skill       # absolute path of the file
-kod skills edit my-skill         # open in $EDITOR
-kod skills search "refactor"     # search names, descriptions, tags
-kod skills rename my-skill my-skill-v2
-kod skills copy my-skill other-name
-kod skills export my-skill -     # write to stdout / a path
-kod skills remove my-skill       # refuses without --yes outside cwd`} />
+<Code lang="bash" title="Terminal" code={"kod skills                       # list (same as `kod skills list`)\nkod skills new my-skill          # scaffold in the first writable dir\nkod skills show my-skill         # full markdown content\nkod skills source my-skill       # absolute path of the file\nkod skills edit my-skill         # open in $EDITOR\nkod skills search \"refactor\"     # search names, descriptions, tags\nkod skills rename my-skill my-skill-v2\nkod skills copy my-skill other-name\nkod skills export my-skill -     # write to stdout / a path\nkod skills remove my-skill       # refuses without --yes outside cwd"} />
 
 `new` refuses to overwrite an existing file, `rename`/`copy` rewrite the `name:` field inside the file so the front matter never drifts, and `remove` asks for `--yes` unless the target is inside the current directory. For CI, `kod validate-skills` exits non-zero on malformed skills — and `kod validate-skills-strict` also fails skills that omit a `version` — so broken front matter fails your pipeline instead of silently not matching.
 
@@ -88,13 +54,13 @@ kod skills remove my-skill       # refuses without --yes outside cwd`} />
 <Steps>
 1. Scaffold it:
 
-   <Code lang="bash" title="Terminal" code={`kod skills new python-testing`} />
+   <Code lang="bash" title="Terminal" code={"kod skills new python-testing"} />
 
 2. Edit the front matter — give it two or three triggers that match how you actually ask for the task.
 3. Write **constraints** first (the rules that must never be broken), then instructions, then one small example.
 4. Verify it matches:
 
-   <Code lang="bash" title="Terminal" code={`kod skills search "testing"`} />
+   <Code lang="bash" title="Terminal" code={"kod skills search \"testing\""} />
 </Steps>
 
 Examples of the format — including `python-testing` and `code-review` — ship in the repository under `skills/examples/`.

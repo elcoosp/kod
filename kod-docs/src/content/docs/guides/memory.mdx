@@ -35,12 +35,7 @@ Setting `memory.long_term_db_path` overrides both with an explicit location.
 
 Memory is a first-class citizen of the command surface, not a black box:
 
-<Code lang="bash" title="Terminal" code={`kod memory list                     # every long-term entry, newest first
-kod memory search "rate limiter"    # case-insensitive substring search
-kod memory delete <short-id>        # remove one entry (id from list/search)
-kod memory export memories.json     # dump everything (or \`-\` for stdout)
-kod memory import memories.json     # append entries; existing ones kept
-kod memory clear                    # delete everything — prompts unless --yes`} />
+<Code lang="bash" title="Terminal" code={"kod memory list                     # every long-term entry, newest first\nkod memory search \"rate limiter\"    # case-insensitive substring search\nkod memory delete <short-id>        # remove one entry (id from list/search)\nkod memory export memories.json     # dump everything (or `-` for stdout)\nkod memory import memories.json     # append entries; existing ones kept\nkod memory clear                    # delete everything \u2014 prompts unless --yes"} />
 
 Inside the TUI, `/memory` lists entries and supports the same operations: `/memory search <q>`, `/memory delete <id>`, `/memory clear`.
 
@@ -57,22 +52,13 @@ The engine stores facts it deems durable — decisions, preferences, corrections
 
 By default retrieval is keyword + recency — deterministic and free. KOD can additionally embed entries for semantic matching:
 
-<Code lang="toml" code={`[memory]
-enable_semantic_search = true
-embedding_endpoint     = "ollama"   # or "openai"; "none" (default) disables
-# embedding_url = "http://localhost:11434"   # derived from llm.base_url if unset
-# embedding_api_key_env = "OPENAI_API_KEY"   # for the openai endpoint
-# embedding_model = "all-MiniLM-L6-v2"`} />
+<Code lang="toml" code={"[memory]\nenable_semantic_search = true\nembedding_endpoint     = \"ollama\"   # or \"openai\"; \"none\" (default) disables\n# embedding_url = \"http://localhost:11434\"   # derived from llm.base_url if unset\n# embedding_api_key_env = \"OPENAI_API_KEY\"   # for the openai endpoint\n# embedding_model = \"all-MiniLM-L6-v2\""} />
 
 `embedding_endpoint = "ollama"` uses Ollama's `/api/embed`, deriving the URL from your LLM `base_url` unless `embedding_url` is set. `openai` speaks `/v1/embeddings` with the key read from the named environment variable.
 
 ## Tuning
 
-<Code lang="toml" code={`[memory]
-short_term_capacity = 100        # FIFO entries kept per session
-scope               = "global"   # or "project"
-# long_term_db_path      = "/data/kod/memory.redb"  # explicit path
-# compaction_interval_secs = 3600`} />
+<Code lang="toml" code={"[memory]\nshort_term_capacity = 100        # FIFO entries kept per session\nscope               = \"global\"   # or \"project\"\n# long_term_db_path      = \"/data/kod/memory.redb\"  # explicit path\n# compaction_interval_secs = 3600"} />
 
 Practical guidance:
 

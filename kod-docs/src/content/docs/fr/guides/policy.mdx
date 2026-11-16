@@ -37,26 +37,7 @@ Une `Policy` dit ce que l'agent est autorisé à faire, projet par projet. Elle 
 
 ## Écrire un `.kod/policy.toml`
 
-<Code lang="toml" title=".kod/policy.toml" code={`# .kod/policy.toml — committed to the repo
-preset = "standard"
-
-[tools.write_file]
-mode = "ask"
-paths    = ["src/**", "docs/**"]
-forbidden = ["**/.env", "**/*.pem"]
-
-[tools.execute_command]
-mode = "ask"
-binaries           = ["cargo", "rustfmt", "git"]
-forbidden_binaries = ["curl", "rm"]
-
-[tools.web_fetch]
-mode    = "allow"
-network = true
-domains = ["docs.rs", "crates.io"]
-
-[git]
-history_protected = true   # .git is mounted read-only at the sandbox`} />
+<Code lang="toml" title=".kod/policy.toml" code={"# .kod/policy.toml \u2014 committed to the repo\npreset = \"standard\"\n\n[tools.write_file]\nmode = \"ask\"\npaths    = [\"src/**\", \"docs/**\"]\nforbidden = [\"**/.env\", \"**/*.pem\"]\n\n[tools.execute_command]\nmode = \"ask\"\nbinaries           = [\"cargo\", \"rustfmt\", \"git\"]\nforbidden_binaries = [\"curl\", \"rm\"]\n\n[tools.web_fetch]\nmode    = \"allow\"\nnetwork = true\ndomains = [\"docs.rs\", \"crates.io\"]\n\n[git]\nhistory_protected = true   # .git is mounted read-only at the sandbox"} />
 
 Référence des champs :
 
@@ -78,12 +59,10 @@ Les globs de chemins suivent l'intuition de gitignore, implémentée avec `globs
 
 <Tabs>
 <TabItem label="Afficher la politique">
-  <Code lang="bash" title="Terminal" code={`kod policy show`} />
+  <Code lang="bash" title="Terminal" code={"kod policy show"} />
 </TabItem>
 <TabItem label="Expliquer un appel">
-  <Code lang="bash" title="Terminal" code={`kod policy explain write_file path=src/main.rs
-kod policy explain execute_command command="cargo test"
-kod policy explain web_fetch url=https://docs.rs/`} />
+  <Code lang="bash" title="Terminal" code={"kod policy explain write_file path=src/main.rs\nkod policy explain execute_command command=\"cargo test\"\nkod policy explain web_fetch url=https://docs.rs/"} />
 </TabItem>
 </Tabs>
 

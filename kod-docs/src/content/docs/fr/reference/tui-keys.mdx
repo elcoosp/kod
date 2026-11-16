@@ -48,9 +48,7 @@ La TUI est modale : le **mode normal** navigue et commande, le **mode insertion*
 
 Les touches à caractère unique du mode normal sont configurables. Mettez une table `[keys]` dans `.kod-keys.toml` (projet) ou `tui_keys.toml` à côté de votre config (global) — chaque entrée associe un **nom d'action** à une touche :
 
-<Code lang="toml" title="tui_keys.toml" code={`[keys]
-quit = "Q"
-scroll_down = "J"`} />
+<Code lang="toml" title="tui_keys.toml" code={"[keys]\nquit = \"Q\"\nscroll_down = \"J\""} />
 
 Noms d'action reconnus : `insert`, `quit`, `help`, `panel`, `scroll_up`, `scroll_down`, `top`, `bottom`, `edit_last`, `undo`, `toggle_tools`, `search_prefix`, `copy_last`. Les noms inconnus sont ignorés, et un fichier corrompu garde silencieusement les défauts — la config de touches ne doit jamais casser le démarrage.
 

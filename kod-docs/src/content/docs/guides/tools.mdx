@@ -55,9 +55,7 @@ A per-path advisory lock table means two agents (say, in a [swarm](/guides/swarm
 
 Two config switches add automatic verification after every successful write:
 
-<Code lang="toml" code={`[tools]
-auto_lsp   = true    # default — cheap, sub-second per file
-auto_check = false   # opt-in — runs the compiler, which is not free`} />
+<Code lang="toml" code={"[tools]\nauto_lsp   = true    # default \u2014 cheap, sub-second per file\nauto_check = false   # opt-in \u2014 runs the compiler, which is not free"} />
 
 - **`auto_lsp`** runs the language server's diagnostics pass on the touched files and appends a `## LSP diagnostics` block to the next turn's prompt. It only runs for languages that have a server on `PATH`; a session with none installed simply sees no block. The same capability is available to the agent on demand via `lsp_diagnostics`, `lsp_definition`, `lsp_references`, and `lsp_hover`.
 - **`auto_check`** runs the project check (`cargo`, `tsc`, `ruff`, `go vet`) and appends its diagnostics the same way. A baseline is captured at startup, so the model is shown *its* errors, not pre-existing ones. On a large workspace this adds a compiler run per write — that is why it defaults to off. The TUI's `/check` runs the same check on demand.

@@ -48,9 +48,7 @@ The TUI is modal: **normal mode** navigates and commands, **insert mode** edits 
 
 Normal-mode single-character keys are configurable. Put a `[keys]` table in `.kod-keys.toml` (project) or `tui_keys.toml` next to your config (global) — each entry maps an **action name** to a key:
 
-<Code lang="toml" title="tui_keys.toml" code={`[keys]
-quit = "Q"
-scroll_down = "J"`} />
+<Code lang="toml" title="tui_keys.toml" code={"[keys]\nquit = \"Q\"\nscroll_down = \"J\""} />
 
 Recognised action names: `insert`, `quit`, `help`, `panel`, `scroll_up`, `scroll_down`, `top`, `bottom`, `edit_last`, `undo`, `toggle_tools`, `search_prefix`, `copy_last`. Unknown names are ignored, and a corrupt file silently keeps the defaults — key config must never break startup.
 

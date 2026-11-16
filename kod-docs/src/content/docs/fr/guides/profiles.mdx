@@ -23,10 +23,7 @@ Chaque profil local porte une commande d'installation en une ligne (`ollama pull
 
 ## Les commandes `kod profile`
 
-<Code lang="bash" title="Terminal" code={`kod profile list             # show the built-in presets (add --json for scripts)
-kod profile show             # print the effective [llm] config
-kod profile use local-fast   # write the preset's values into config.toml
-kod profile use local-capable --dry-run   # print what would be written`} />
+<Code lang="bash" title="Terminal" code={"kod profile list             # show the built-in presets (add --json for scripts)\nkod profile show             # print the effective [llm] config\nkod profile use local-fast   # write the preset's values into config.toml\nkod profile use local-capable --dry-run   # print what would be written"} />
 
 `use` modifie le premier bloc `[llm.endpoints]` de votre fichier de config en place. Avec `--dry-run`, il imprime les changements sans rien toucher, ce qui est utile quand vous voulez copier les valeurs dans une config personnalisée plutôt que les appliquer.
 

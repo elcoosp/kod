@@ -55,9 +55,7 @@ Une table de verrous consultatifs par chemin signifie que deux agents (par exemp
 
 Deux interrupteurs de config ajoutent une vérification automatique après chaque écriture réussie :
 
-<Code lang="toml" code={`[tools]
-auto_lsp   = true    # default — cheap, sub-second per file
-auto_check = false   # opt-in — runs the compiler, which is not free`} />
+<Code lang="toml" code={"[tools]\nauto_lsp   = true    # default \u2014 cheap, sub-second per file\nauto_check = false   # opt-in \u2014 runs the compiler, which is not free"} />
 
 - **`auto_lsp`** exécute la passe de diagnostics du serveur de langage sur les fichiers touchés et ajoute un bloc `## LSP diagnostics` au prompt du prochain tour. Il ne s'exécute que pour les langages qui ont un serveur sur `PATH` ; une session qui n'en a aucun installé ne voit simplement aucun bloc. La même capacité est disponible pour l'agent à la demande via `lsp_diagnostics`, `lsp_definition`, `lsp_references` et `lsp_hover`.
 - **`auto_check`** exécute la vérification du projet (`cargo`, `tsc`, `ruff`, `go vet`) et ajoute ses diagnostics de la même manière. Une base de référence est capturée au démarrage, donc le modèle voit *ses* erreurs, pas celles préexistantes. Sur un grand espace de travail, cela ajoute une exécution du compilateur par écriture — c'est pourquoi c'est désactivé par défaut. Le `/check` de la TUI exécute la même vérification à la demande.

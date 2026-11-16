@@ -14,12 +14,11 @@ KOD peut exporter des enregistrements structurés vers un collecteur OpenTelemet
 
 Définissez la variable d'environnement OTLP standard avant de démarrer `kod` :
 
-<Code lang="bash" title="Terminal" code={`export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
-kod tui`} />
+<Code lang="bash" title="Terminal" code={"export OTEL_EXPORTER_OTLP_ENDPOINT=\"http://localhost:4317\"\nkod tui"} />
 
 Le démarrage imprime une ligne confirmant l'export, y compris le nom du service :
 
-<Code lang="ansi" code={`kod: OTLP telemetry enabled (service.name="kod")`} />
+<Code lang="ansi" code={"kod: OTLP telemetry enabled (service.name=\"kod\")"} />
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` est le seul interrupteur. Il n'y a pas de clé de fichier de config — la télémétrie est une infrastructure d'opérateur, pas un comportement d'agent, donc elle vit entièrement dans l'environnement où un déploiement peut la définir sans toucher au `.kod/` d'un projet.
 

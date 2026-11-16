@@ -21,77 +21,13 @@ KOD lit sa configuration depuis un seul fichier TOML, auto-généré à la premi
 
 Une config n'a besoin que des blocs qui vous intéressent — chaque section omise est remplie à partir des défauts. L'exemple ci-dessous est un fichier *complet* réaliste :
 
-<Code lang="toml" code={`# ── Models ─────────────────────────────────────────────────────
-[llm]
-network_access = false          # opt-in network access for web_fetch
-
-[[llm.endpoints]]               # one block per model server
-name         = "local"
-provider     = "openai-compatible"   # or "anthropic" (declared, not implemented yet)
-base_url     = "http://localhost:11434/v1"
-model        = "qwen2.5-coder:7b"
-context_window = 32768
-# api_key_env = "MY_API_KEY"    # env var NAME holding the key — never the key itself
-# temperature = 0.7
-# max_tokens  = 4096
-# timeout_secs = 300
-# [llm.endpoints.pricing]       # USD per million tokens, for TUI cost display
-# input_per_mtok_usd = 0.15
-# output_per_mtok_usd = 0.60
-
-# ── Memory ─────────────────────────────────────────────────────
-[memory]
-short_term_capacity = 100
-scope               = "global"  # or "project" → <cwd>/.kod/memory.redb
-# extract_on_shutdown = false   # one LLM pass to save durable facts at exit
-
-# ── Skills ─────────────────────────────────────────────────────
-[skills]
-enable_hot_reload     = true
-max_skills_per_query  = 3
-match_threshold       = 0.7
-# skills_dir = "/custom/skills" # overrides the standard search paths
-
-# ── Swarms ─────────────────────────────────────────────────────
-[swarm]
-max_agents         = 5          # clamped to 2–8 by the runner
-merge_results      = true
-agent_timeout_secs = 300        # per-agent wall clock; 0 disables
-agent_retries      = 1
-
-# ── Write follow-ups ───────────────────────────────────────────
-[tools]
-auto_check = false              # run compiler/linter after writes (cargo, tsc, ruff, go vet)
-auto_lsp   = true               # run language-server diagnostics after writes
-
-# ── Hooks ──────────────────────────────────────────────────────
-[hooks]
-enabled = false
-# pre_tool_use  = { write_file = "rustfmt {path}" }
-# post_tool_use = { write_file = "cargo check" }
-
-# ── MCP servers (optional) ─────────────────────────────────────
-# [mcp.servers.filesystem]
-# command = "npx"
-# args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-# enabled = true
-# call_timeout_secs = 60
-# [mcp.servers.filesystem.env]
-# LOG_LEVEL = "info"
-
-# ── Custom slash commands (optional) ───────────────────────────
-# [commands]
-# review = "Review the last change in {cwd} and point out risks."
-# explain = "Explain what this code does:\\n\\n{args}"`} />
+<Code lang="toml" code={"# \u2500\u2500 Models \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[llm]\nnetwork_access = false          # opt-in network access for web_fetch\n\n[[llm.endpoints]]               # one block per model server\nname         = \"local\"\nprovider     = \"openai-compatible\"   # or \"anthropic\" (declared, not implemented yet)\nbase_url     = \"http://localhost:11434/v1\"\nmodel        = \"qwen2.5-coder:7b\"\ncontext_window = 32768\n# api_key_env = \"MY_API_KEY\"    # env var NAME holding the key \u2014 never the key itself\n# temperature = 0.7\n# max_tokens  = 4096\n# timeout_secs = 300\n# [llm.endpoints.pricing]       # USD per million tokens, for TUI cost display\n# input_per_mtok_usd = 0.15\n# output_per_mtok_usd = 0.60\n\n# \u2500\u2500 Memory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[memory]\nshort_term_capacity = 100\nscope               = \"global\"  # or \"project\" \u2192 <cwd>/.kod/memory.redb\n# extract_on_shutdown = false   # one LLM pass to save durable facts at exit\n\n# \u2500\u2500 Skills \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[skills]\nenable_hot_reload     = true\nmax_skills_per_query  = 3\nmatch_threshold       = 0.7\n# skills_dir = \"/custom/skills\" # overrides the standard search paths\n\n# \u2500\u2500 Swarms \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[swarm]\nmax_agents         = 5          # clamped to 2\u20138 by the runner\nmerge_results      = true\nagent_timeout_secs = 300        # per-agent wall clock; 0 disables\nagent_retries      = 1\n\n# \u2500\u2500 Write follow-ups \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[tools]\nauto_check = false              # run compiler/linter after writes (cargo, tsc, ruff, go vet)\nauto_lsp   = true               # run language-server diagnostics after writes\n\n# \u2500\u2500 Hooks \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n[hooks]\nenabled = false\n# pre_tool_use  = { write_file = \"rustfmt {path}\" }\n# post_tool_use = { write_file = \"cargo check\" }\n\n# \u2500\u2500 MCP servers (optional) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# [mcp.servers.filesystem]\n# command = \"npx\"\n# args = [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"]\n# enabled = true\n# call_timeout_secs = 60\n# [mcp.servers.filesystem.env]\n# LOG_LEVEL = \"info\"\n\n# \u2500\u2500 Custom slash commands (optional) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# [commands]\n# review = \"Review the last change in {cwd} and point out risks.\"\n# explain = \"Explain what this code does:\\\\n\\\\n{args}\""} />
 
 ## Endpoints au lieu d'un seul modèle
 
 La section `[llm]` contient une **liste d'endpoints nommés**, pas un modèle plat. Le premier endpoint est le défaut ; tout ce qui affecte le fil — `base_url`, `model`, `temperature`, `max_tokens` — vit sur l'endpoint. C'est ce qui vous permet de pointer différents travaux vers différents serveurs :
 
-<Code lang="toml" code={`[llm.routing]
-by_task  = { Debugging = "cloud", Simple = "local" }
-fallback = ["local", "cloud"]     # try in order when the primary fails
-swarm    = { Planning = "cloud", Coding = "local" }`} />
+<Code lang="toml" code={"[llm.routing]\nby_task  = { Debugging = \"cloud\", Simple = \"local\" }\nfallback = [\"local\", \"cloud\"]     # try in order when the primary fails\nswarm    = { Planning = \"cloud\", Coding = \"local\" }"} />
 
 - `by_task` associe un [type de tâche](/explanation/router/) (`Simple`, `Debugging`, …) à un nom d'endpoint.
 - `fallback` est la chaîne de nouvelles tentatives ordonnée pour les erreurs réessayables.
@@ -103,12 +39,7 @@ Les noms qui ne correspondent à aucun endpoint défini sont supprimés avec un 
 
 Les blocs d'endpoint ne contiennent jamais de matière de clé — seulement le *nom* de la variable d'environnement qui la détient :
 
-<Code lang="toml" code={`[[llm.endpoints]]
-name        = "openai"
-provider    = "openai-compatible"
-base_url    = "https://api.openai.com/v1"
-model       = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"`} />
+<Code lang="toml" code={"[[llm.endpoints]]\nname        = \"openai\"\nprovider    = \"openai-compatible\"\nbase_url    = \"https://api.openai.com/v1\"\nmodel       = \"gpt-4o-mini\"\napi_key_env = \"OPENAI_API_KEY\""} />
 
 Une config partagée ou commitée ne peut donc pas fuiter de secret. La section mémoire a le même modèle pour l'API d'embedding optionnelle (`memory.embedding_api_key_env`).
 
@@ -128,9 +59,7 @@ Trois choses peuvent être limitées à un répertoire de projet au lieu de votr
 
 Le bloc `[commands]` enregistre vos propres commandes slash de la TUI. Chaque clé devient `/key`, et sa valeur est le prompt qui est envoyé :
 
-<Code lang="toml" title=".kod-keys.toml" code={`[commands]
-review  = "Review the last change in {cwd} and point out risks."
-explain = "Explain what this code does:\\n\\n{args}"`} />
+<Code lang="toml" title=".kod-keys.toml" code={"[commands]\nreview  = \"Review the last change in {cwd} and point out risks.\"\nexplain = \"Explain what this code does:\\\\n\\\\n{args}\""} />
 
 `{args}` est remplacé par tout ce qui est tapé après le nom de la commande ; `{cwd}` par le répertoire de travail courant. `/review` n'a pas besoin d'arguments ; `/explain foo.bar` envoie le modèle avec `foo.bar` substitué.
 
@@ -140,13 +69,13 @@ Parce que la configuration vient des défauts plus vos éditions, la question ut
 
 <Tabs>
 <TabItem label="Effective config">
-  <Code lang="bash" title="Terminal" code={`kod config show-merged   # defaults merged with user config, reproducible`} />
+  <Code lang="bash" title="Terminal" code={"kod config show-merged   # defaults merged with user config, reproducible"} />
 </TabItem>
 <TabItem label="Raw file">
-  <Code lang="bash" title="Terminal" code={`kod config show-raw      # verbatim file contents, comments included`} />
+  <Code lang="bash" title="Terminal" code={"kod config show-raw      # verbatim file contents, comments included"} />
 </TabItem>
 <TabItem label="Just the LLM block">
-  <Code lang="bash" title="Terminal" code={`kod profile show         # the effective [llm] section`} />
+  <Code lang="bash" title="Terminal" code={"kod profile show         # the effective [llm] section"} />
 </TabItem>
 </Tabs>
 

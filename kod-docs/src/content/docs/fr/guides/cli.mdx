@@ -14,7 +14,7 @@ La surface complète des commandes est documentée dans [Commandes CLI](/referen
 
 ## La forme du binaire
 
-<Code lang="bash" title="Terminal" code={`kod [--verbose] <COMMAND>`} />
+<Code lang="bash" title="Terminal" code={"kod [--verbose] <COMMAND>"} />
 
 Les commandes se répartissent en cinq groupes approximatifs :
 
@@ -32,15 +32,13 @@ Les commandes se répartissent en cinq groupes approximatifs :
 
 **`kod prompt "<text>"`** répond à un prompt et quitte — pas de bannière, pas de REPL. La réponse va sur stdout et les diagnostics sur stderr, donc ça se pipe proprement. `-` lit le prompt depuis stdin. C'est la commande que vous voulez dans les pipelines shell :
 
-<Code lang="bash" title="Terminal" code={`kod prompt "summarise the TODO comments in src/ in a bullet list"
-git diff main..feature | kod prompt -   # read the prompt from stdin`} />
+<Code lang="bash" title="Terminal" code={"kod prompt \"summarise the TODO comments in src/ in a bullet list\"\ngit diff main..feature | kod prompt -   # read the prompt from stdin"} />
 
 **`kod run "<text>"`** est `prompt` sous forme de streaming : la réponse s'imprime sur stdout au fur et à mesure qu'elle est générée plutôt qu'à la fin. Même convention `-` pour stdin, même sortie propre.
 
 **`kod agent -g "<goal>"`** exécute un seul agent contre un objectif — la boucle complète avec des appels d'outils — et quitte une fois terminé. C'est la bête de somme pour l'automatisation :
 
-<Code lang="bash" title="Terminal" code={`kod agent -g "add a doc comment to every public function in src/lib.rs"
-kod agent -n reviewer -g "summarise the changes in the last commit" --preset read-only`} />
+<Code lang="bash" title="Terminal" code={"kod agent -g \"add a doc comment to every public function in src/lib.rs\"\nkod agent -n reviewer -g \"summarise the changes in the last commit\" --preset read-only"} />
 
 <Aside type="caution">
   <code>kod agent</code> n'a pas de consommateur interactif. Quand la politique dit qu'une écriture nécessite une approbation, l'exécution refuse l'écriture avec un message explicatif au lieu d'attendre — un processus non surveillé ne peut pas cliquer sur <em>oui</em>. Pour les scripts, soit passez <code>--preset read-only</code>, acceptez les refus par conception, soit utilisez <code>--preset yolo</code> uniquement là où vous le voulez vraiment.
@@ -50,9 +48,7 @@ kod agent -n reviewer -g "summarise the changes in the last commit" --preset rea
 
 Démarrer un moteur par prompt ponctuel coûte le démarrage du processus et l'initialisation du moteur. `kod serve` démarre un moteur de longue durée derrière une socket Unix ; `kod prompt --remote` envoie des prompts à celui-ci au lieu de construire un moteur en processus :
 
-<Code lang="bash" title="Terminal" code={`kod serve &                        # daemon, listening on the default socket
-kod prompt --remote "lint-check my last commit message"
-kod serve --stop                   # ask the daemon to exit`} />
+<Code lang="bash" title="Terminal" code={"kod serve &                        # daemon, listening on the default socket\nkod prompt --remote \"lint-check my last commit message\"\nkod serve --stop                   # ask the daemon to exit"} />
 
 La socket vit à `$XDG_RUNTIME_DIR/kod.sock` (Linux) ou `~/.kod/run/kod.sock` (macOS) ; `--socket <path>` la remplace. C'est uniquement une socket Unix, jamais TCP — il n'y a pas de surface réseau.
 
@@ -64,17 +60,13 @@ La socket vit à `$XDG_RUNTIME_DIR/kod.sock` (Linux) ou `~/.kod/run/kod.sock` (m
 
 <Tabs>
 <TabItem label="Dump the effective config">
-  <Code lang="bash" title="Terminal" code={`# defaults merged with whatever you set — self-documenting
-kod config show-merged`} />
+  <Code lang="bash" title="Terminal" code={"# defaults merged with whatever you set \u2014 self-documenting\nkod config show-merged"} />
 </TabItem>
 <TabItem label="Validate before use">
-  <Code lang="bash" title="Terminal" code={`# exits non-zero on invalid TOML — CI-friendly
-kod config validate`} />
+  <Code lang="bash" title="Terminal" code={"# exits non-zero on invalid TOML \u2014 CI-friendly\nkod config validate"} />
 </TabItem>
 <TabItem label="Edit, export, reset">
-  <Code lang="bash" title="Terminal" code={`kod config edit                     # $EDITOR
-kod config export my-baseline.toml  # effective config to a file
-kod config init-from local-fast     # backup + write from a profile`} />
+  <Code lang="bash" title="Terminal" code={"kod config edit                     # $EDITOR\nkod config export my-baseline.toml  # effective config to a file\nkod config init-from local-fast     # backup + write from a profile"} />
 </TabItem>
 </Tabs>
 
@@ -82,13 +74,7 @@ kod config init-from local-fast     # backup + write from a profile`} />
 
 Deux commandes rendent concrète l'histoire de l'audit de KOD :
 
-<Code lang="bash" title="Terminal" code={`# re-run every tool call from a past session — without the model
-kod replay ~/.kod/sessions/1730000000000.jsonl --execute
-
-# list file-level checkpoints, inspect one, restore it
-kod checkpoint list
-kod checkpoint diff <id>
-kod checkpoint restore <id>`} />
+<Code lang="bash" title="Terminal" code={"# re-run every tool call from a past session \u2014 without the model\nkod replay ~/.kod/sessions/1730000000000.jsonl --execute\n\n# list file-level checkpoints, inspect one, restore it\nkod checkpoint list\nkod checkpoint diff <id>\nkod checkpoint restore <id>"} />
 
 `replay` est le test de régression : toute session enregistrée peut être ré-exécutée contre la base de code à n'importe quel commit ultérieur pour voir si les mêmes opérations ont encore du sens (ou passent encore). Sans `--execute`, il imprime ce qui s'exécuterait. `checkpoint` est l'annulation : KOD prend un instantané de chaque fichier avant qu'un appel d'outil mutant ne le touche, donc les dommages de `write_file` et `patch_file` sont toujours récupérables — et `checkpoint diff` vous montre exactement ce que la restauration changerait.
 
@@ -102,25 +88,16 @@ Quelques modèles qui fonctionnent bien en pratique :
 
 <Tabs>
 <TabItem label="Nightly audit">
-  <Code lang="bash" title="Terminal" code={`# classify recent changes, read-only, no writes possible
-kod agent --preset read-only \\
-  -g "review yesterday's commits and flag risky patterns" \\
-  | tee "$HOME/logs/kod-audit-$(date +%F).txt"`} />
+  <Code lang="bash" title="Terminal" code={"# classify recent changes, read-only, no writes possible\nkod agent --preset read-only \\\\\n  -g \"review yesterday's commits and flag risky patterns\" \\\\\n  | tee \"$HOME/logs/kod-audit-$(date +%F).txt\""} />
 </TabItem>
 <TabItem label="Explain a diff in CI">
-  <Code lang="bash" title="Terminal" code={`git diff origin/main..HEAD | kod prompt - > /tmp/pr-summary.txt`} />
+  <Code lang="bash" title="Terminal" code={"git diff origin/main..HEAD | kod prompt - > /tmp/pr-summary.txt"} />
 </TabItem>
 <TabItem label="Long-running daemon for scripts">
-  <Code lang="bash" title="Terminal" code={`kod serve &
-for f in $(git diff --name-only); do
-  kod prompt --remote "review $f for obvious bugs" >> review.md
-done
-kod serve --stop`} />
+  <Code lang="bash" title="Terminal" code={"kod serve &\nfor f in $(git diff --name-only); do\n  kod prompt --remote \"review $f for obvious bugs\" >> review.md\ndone\nkod serve --stop"} />
 </TabItem>
 <TabItem label="Skill CI gate">
-  <Code lang="bash" title="Terminal" code={`# machine-readable skill inventory + validation for CI
-kod skills --json
-kod validate-skills`} />
+  <Code lang="bash" title="Terminal" code={"# machine-readable skill inventory + validation for CI\nkod skills --json\nkod validate-skills"} />
 </TabItem>
 </Tabs>
 

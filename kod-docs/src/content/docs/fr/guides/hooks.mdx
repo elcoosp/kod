@@ -12,10 +12,7 @@ Les hooks vous permettent d'exécuter vos propres commandes shell à deux moment
 
 ## Activer les hooks
 
-<Code lang="toml" title="config.toml" code={`[hooks]
-enabled = false
-# pre_tool_use  = { write_file = "rustfmt {path}" }
-# post_tool_use = { write_file = "cargo check" }`} />
+<Code lang="toml" title="config.toml" code={"[hooks]\nenabled = false\n# pre_tool_use  = { write_file = \"rustfmt {path}\" }\n# post_tool_use = { write_file = \"cargo check\" }"} />
 
 Les hooks sont désactivés par défaut. Basculer `enabled = true` active les deux maps. Chaque entrée associe un **nom d'outil** (`write_file`, `patch_file`, `execute_command`, …) à un **modèle de commande shell**, et les espaces réservés de style `{path}` sont substitués par les arguments de l'appel d'outil avant l'exécution.
 
