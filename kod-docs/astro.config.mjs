@@ -1,6 +1,6 @@
 import { defineDocsConfig } from '@elcoosp/docs-toolkit/config';
 export default await defineDocsConfig({
-  topics: true,
+  topics: false,
   llmsTxt: {},
   site: 'https://kod-docs.vercel.app',
   domain: 'kod.vercel.app',
