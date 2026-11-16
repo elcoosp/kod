@@ -335,7 +335,7 @@ main kbd,
    -------------------------------------------------------------------------- */
 .kod-terminal {
   width: min(560px, 46vw);
-  min-width: 340px;
+  min-width: min(340px, 100%); width: min(560px, 100%);
   border: 1px solid var(--kod-panel-border);
   border-radius: 14px;
   background: var(--kod-panel);
@@ -742,3 +742,12 @@ footer .meta a:hover {
   color: var(--sl-color-text-accent);
 }
 
+
+/* Ensure hero terminal & landing containers never overflow mobile viewports */
+.kod-terminal, .kod-terminal-body, .kod-stats, .kod-features, .kod-rail {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.kod-terminal-body {
+  overflow-x: auto;
+}
