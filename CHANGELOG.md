@@ -2042,7 +2042,7 @@ changes, in the order they matter for a new user:
 - **Placebo config fields and dead CLI flags** (design §5.3
 - **`/export-html` + phantom-dep removal** (design H1, D6.5): the
 
-## Prior history
+### Prior history
 
 All notable changes to KOD will be documented in this file.
 

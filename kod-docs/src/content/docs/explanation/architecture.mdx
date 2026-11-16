@@ -27,6 +27,18 @@ KOD is a multi-crate Rust workspace where each crate has a single responsibility
 │        (kod-types, kod-error, kod-config)            │
 └─────────────────────────────────────────────────────┘`} />
 
+```mermaid
+flowchart TD
+    UI["CLI / TUI<br/><i>kod-cli · kod-tui</i>"]
+    CORE["Core Engine<br/><i>kod-core · routing · state · quality · tools</i>"]
+    PROV["LLM Providers<br/><i>kod-provider · kod-provider-openai</i>"]
+    BASE["Foundation<br/><i>kod-types · kod-error · kod-config</i>"]
+    UI --> CORE
+    CORE --> PROV
+    CORE --> BASE
+    PROV --> BASE
+```
+
 ## The twenty-six crates
 
 | Crate | Responsibility |
