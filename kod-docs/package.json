@@ -15,6 +15,7 @@
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
     "@d2lang/d2": "^0.1.34",
+    "@elcoosp/docs-toolkit": "^0.10.0",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "astro": "^7.4.12",
@@ -26,8 +27,10 @@
     "starlight-auto-sidebar": "^0.4.1",
     "starlight-blog": "^0.30.2",
     "starlight-changelogs": "^0.7.1",
+    "starlight-github-alerts": "^0.5.0",
     "starlight-heading-badges": "^0.8.0",
     "starlight-image-zoom": "^0.16.2",
+    "starlight-kbd": "^0.4.0",
     "starlight-links-validator": "^0.27.0",
     "starlight-scroll-to-top": "^2.0.0",
     "starlight-seo": "^1.0.0",
