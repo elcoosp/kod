@@ -17,12 +17,12 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
-    "@elcoosp/docs-toolkit": "^1.4.0",
+    "@elcoosp/docs-toolkit": "^1.5.0",
     "astro": "^7.4.12"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
-    "playwright": "^1.65.0",
+    "playwright": "^1.65.1",
     "typescript": "^6.0.3"
   },
   "engines": {
