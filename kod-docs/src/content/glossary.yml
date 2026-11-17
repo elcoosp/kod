@@ -1,0 +1,37 @@
+# Curated domain glossary for @elcoosp/docs-toolkit (starlight-term-glossary)
+- term: "agent loop"
+  locale: en
+  href: "/explanation/agent-loop/"
+  definition: "Core execution cycle that classifies input, builds a grounded prompt, streams model output, runs tools, and iterates."
+- term: "repository map"
+  locale: en
+  href: "/explanation/repo-map/"
+  definition: "Compact tree-sitter index of top-level symbols across workspace files used to ground prompts within token budgets."
+- term: "compaction"
+  locale: en
+  href: "/explanation/compaction/"
+  definition: "Context-window management pass that summarizes older transcript turns while preserving recent tool outputs and active goals."
+- term: "checkpoint"
+  locale: en
+  href: "/guides/sessions/"
+  definition: "File-level snapshot recorded before edits so workspace changes can be audited or rolled back cleanly."
+- term: "sandboxing"
+  locale: en
+  href: "/guides/sandboxing/"
+  definition: "OS-level isolation restricting filesystem and network access when the agent executes shell commands."
+- term: "boucle de l’agent"
+  locale: fr
+  href: "/fr/explanation/agent-loop/"
+  definition: "Cycle d’exécution central qui classe l’entrée, construit le prompt ancré, diffuse la réponse et exécute les outils."
+- term: "carte du référentiel"
+  locale: fr
+  href: "/fr/explanation/repo-map/"
+  definition: "Index compact des symboles de haut niveau extrait par tree-sitter pour ancrer les prompts dans la fenêtre de contexte."
+- term: "compactage"
+  locale: fr
+  href: "/fr/explanation/compaction/"
+  definition: "Réduction automatique de l’historique de conversation pour rester dans la limite de tokens sans perdre l’objectif actif."
+- term: "journal de session"
+  locale: fr
+  href: "/fr/explanation/architecture/"
+  definition: "Trace persistante de chaque tour, appel d’outil et décision permettant l’audit et le rejeu déterministe."
