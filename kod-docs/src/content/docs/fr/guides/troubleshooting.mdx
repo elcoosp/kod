@@ -6,11 +6,13 @@ sidebar:
 type: how-to
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Code } from '@astrojs/starlight/components';
 
 La plupart des problèmes de KOD ont des causes courtes : un serveur de modèle qui ne tourne pas, une faute de frappe dans la config, une règle de politique qui fait exactement ce que vous lui avez demandé. Cette page rassemble les fréquents, dans l'ordre où vous êtes susceptible de les rencontrer. Pour les problèmes en forme de question ("où sont mes sessions ?", "comment réinitialiser X ?"), voir la [FAQ](/guides/faq/).
 
 ## Commencez par `kod doctor`
+
+<Code lang="bash" title="Terminal" code={"kod doctor\nkod doctor --fix"} />
 
 `kod doctor` est l'outil de triage. Il vérifie le fichier de config, l'endpoint du modèle, les compétences découvertes, la base de données de mémoire, la primitive de bac à sable et la disponibilité de git, et imprime un verdict pour chacun. Exécutez-le avant tout le reste ; la moitié des entrées ci-dessous sont "doctor vous l'aurait dit." `kod doctor --fix` crée les répertoires manquants et écrit une config par défaut si aucune n'existe — il ne touche jamais à une config existante.
 
