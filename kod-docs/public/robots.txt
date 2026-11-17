@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://kod-docs.vercel.app/sitemap-index.xml

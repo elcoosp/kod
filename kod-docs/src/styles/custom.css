@@ -5,23 +5,18 @@
    ========================================================================== */
 
 /* ---- Fonts (bundled locally — no runtime network dependency) ---- */
-@import '@fontsource-variable/inter/index.css';
-@import '@fontsource-variable/jetbrains-mono/index.css';
-
 /* --------------------------------------------------------------------------
    1. Design tokens
    -------------------------------------------------------------------------- */
 :root {
   /* Typography */
-  --sl-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system,
-    'Segoe UI', Roboto, sans-serif;
-  --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo,
-    Consolas, monospace;
+  --sl-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* Brand ramp — purple accent (KOD violet) */
   --kod-purple-300: #b8aaff;
   --kod-purple-400: #9a85ff;
-  --kod-purple-500: #6e5af8;  /* rgb(110, 90, 248) */
+  --kod-purple-500: #6e5af8; /* rgb(110, 90, 248) */
   --kod-purple-600: #5a4ad6;
   --kod-purple-700: #4539ae;
   --kod-lavender: #6a55c4;
@@ -46,7 +41,6 @@
   --sl-color-bg-inline-code: var(--sl-color-gray-5);
   --sl-color-bg-accent: var(--kod-purple-300);
   --sl-color-bg-accent-dark: #1f1a16;
-
 
   --sl-color-text: var(--sl-color-white);
   --sl-color-text-accent: var(--sl-color-accent-high);
@@ -288,7 +282,9 @@ main kbd,
   color: transparent;
 }
 .hero .actions a {
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 .hero .actions a:hover {
   transform: translateY(-2px);
@@ -524,7 +520,10 @@ main kbd,
     color-mix(in srgb, var(--kod-panel) 92%, transparent),
     color-mix(in srgb, var(--kod-panel) 55%, transparent)
   );
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .kod-features .feat:hover {
   transform: translateY(-3px);
@@ -607,7 +606,9 @@ main kbd,
   font-family: var(--sl-font-mono);
   font-size: 0.8rem;
   color: var(--sl-color-text);
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
 }
 .kod-rail .chip:hover {
   border-color: var(--kod-purple-600);
@@ -622,7 +623,10 @@ main kbd,
    -------------------------------------------------------------------------- */
 /* Cards */
 .card {
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 .card:hover,
 .card-grid .card:hover {
@@ -742,9 +746,12 @@ footer .meta a:hover {
   color: var(--sl-color-text-accent);
 }
 
-
 /* Ensure hero terminal & landing containers never overflow mobile viewports */
-.kod-terminal, .kod-terminal-body, .kod-stats, .kod-features, .kod-rail {
+.kod-terminal,
+.kod-terminal-body,
+.kod-stats,
+.kod-features,
+.kod-rail {
   max-width: 100%;
   box-sizing: border-box;
 }

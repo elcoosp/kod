@@ -4,51 +4,28 @@
   "private": true,
   "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
-    "dev": "astro/bin/astro.mjs dev",
+    "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro/bin/astro.mjs preview",
-    "astro": "astro",
-    "predev": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true",
-    "prebuild": "mkdir -p src/content/i18n && cp -r node_modules/@elcoosp/docs-toolkit/i18n/* src/content/i18n/ 2>/dev/null || true",
-    "typecheck": "astro check"
+    "preview": "astro preview",
+    "typecheck": "astro check",
+    "lint": "docs-toolkit-lint",
+    "qa:components": "docs-toolkit-qa-components",
+    "qa": "docs-toolkit-qa-screenshots",
+    "lint:code": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxlint -c ./node_modules/@elcoosp/docs-toolkit/.oxlintrc.json",
+    "fmt": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'",
+    "fmt:check": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json --check '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
-    "@d2lang/d2": "^0.1.34",
-    "@elcoosp/docs-toolkit": "^1.3.4",
-    "@fontsource-variable/inter": "^5.3.0",
-    "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "astro": "^7.4.12",
-    "astro-d2": "^0.14.1",
-    "linkedom": "^0.18.15",
-    "mermaid": "^12.3.0",
-    "sharp": "^0.35.5",
-    "starlight-announcement": "^2.0.0",
-    "starlight-auto-drafts": "^0.3.1",
-    "starlight-auto-sidebar": "^0.4.1",
-    "starlight-blog": "^0.30.2",
-    "starlight-changelogs": "^0.7.1",
-    "starlight-codeblock-fullscreen": "^2.0.0",
-    "starlight-github-alerts": "^0.5.0",
-    "starlight-image-zoom": "^0.16.2",
-    "starlight-kbd": "^0.4.0",
-    "starlight-links-validator": "^0.27.0",
-    "starlight-package-managers": "^0.13.1",
-    "starlight-scroll-to-top": "^2.0.0",
-    "starlight-seo": "^1.0.0",
-    "starlight-telescope": "^2.0.0",
-    "starlight-view-modes": "^0.16.0"
-  },
-  "engines": {
-    "node": ">=22.12.0"
+    "@elcoosp/docs-toolkit": "^1.4.0",
+    "astro": "^7.4.12"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "starlight-sidebar-topics": "^0.9.0",
-    "typescript": "~6.0.3"
+    "playwright": "^1.65.0",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

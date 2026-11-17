@@ -26,3 +26,4 @@ pnpm-debug.log*
 # placeholder; CI installs with --frozen-lockfile and does not need it.
 pnpm-workspace.yaml
 .qa/
+ec.config.mjs
