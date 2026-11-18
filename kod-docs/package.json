@@ -2,7 +2,7 @@
   "name": "kod-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation site for KOD — the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
+  "description": "Documentation site for KOD \u2014 the local-first AI coding agent harness for the terminal, built with Astro 7 and Starlight.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
-    "@elcoosp/docs-toolkit": "^1.5.7",
+    "@elcoosp/docs-toolkit": "^1.5.8",
     "astro": "^7.4.12"
   },
   "devDependencies": {
