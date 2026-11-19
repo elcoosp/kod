@@ -12,12 +12,12 @@
     "qa:components": "docs-toolkit-qa-components",
     "qa": "docs-toolkit-qa-screenshots",
     "lint:code": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxlint -c ./node_modules/@elcoosp/docs-toolkit/.oxlintrc.json",
-    "fmt": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'",
-    "fmt:check": "./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json --check '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'"
+    "fmt": "mdsf format --config ./node_modules/@elcoosp/docs-toolkit/mdsf.json src/content/docs && ./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'",
+    "fmt:check": "mdsf verify --config ./node_modules/@elcoosp/docs-toolkit/mdsf.json src/content/docs && ./node_modules/@elcoosp/docs-toolkit/node_modules/.bin/oxfmt -c ./node_modules/@elcoosp/docs-toolkit/.oxfmtrc.json --check '**/*.{ts,tsx,js,jsx,mjs,cjs,json,css}'"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
-    "@elcoosp/docs-toolkit": "^1.6.12",
+    "@elcoosp/docs-toolkit": "^1.6.13",
     "astro": "^7.4.13"
   },
   "devDependencies": {
