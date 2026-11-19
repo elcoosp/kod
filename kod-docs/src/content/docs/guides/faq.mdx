@@ -49,7 +49,7 @@ Deleting the memory `redb` file by hand works too — it is recreated empty on n
 
 Yes — three escalating ways:
 
-1. `--preset read-only` on any run: `write_file`, `patch_file`, and `execute_command` are denied outright. 
+1. `--preset read-only` on any run: `write_file`, `patch_file`, and `execute_command` are denied outright.
 2. A committed `.kod/policy.toml` with `forbidden` globs and `forbidden_binaries` — see [Policy](/guides/policy/).
 3. Sandbox the shell: `--sandbox` confines `execute_command` with bwrap/sandbox-exec.
 

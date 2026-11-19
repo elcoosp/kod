@@ -11,9 +11,11 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 ## [0.1.28] - 2026-11-05
 
 ### Dependencies
+
 - **deps:** Add num-traits; f64→f32 via to_f32 for cast sites (6ccab97)
 
 ### Documentation
+
 - Main-loop split proposal (b267df8)
 - Record shared-helper extraction blocker (990af8e)
 - Correct the shared-helper note — landed, not blocked (9ac53b7)
@@ -63,6 +65,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 - **installation:** Correct rust-toolchain.toml description (7763b34)
 
 ### Fixes
+
 - Hash-fold truncation, git stderr EOF, veracity + llm regressions (420fea4)
 - **clippy:** Undo 0b0e58ca (fmt-breaking multi-arg comma removals + merged doc blocks), re-apply sort_unstable, cargo fmt (97b3900)
 - **docs:** Restore truncated architecture.mdx + fix sidebar formatting (7839708)
@@ -70,6 +73,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 - **docs:** Reapply homepage version + install MSRV cleanly (D7 corruption) (fa8b203)
 
 ### Other
+
 - **manifest:** Add version to every internal path dep (4dd89c7)
 - **manifest:** Per-crate description, readme, repository (928fc36)
 - Add docs gate and publish dry-run gate (cb5cf76)
@@ -91,6 +95,7 @@ style(clippy): mechanical auto-fix batch 4 (all applicable)
 
 cargo clippy --fix (default) with the pedantic baseline active,
 catching every remaining MachineApplicable fix. (b662f93)
+
 - **clippy:** U64→usize via try_from in kod-provider types.rs (0f60ec9)
 - **clippy:** Replace casts with try_from / From / saturating (5837a00)
 - **clippy:** Replace casts with try_from / From (per-crate) (dbdbb25)
@@ -133,6 +138,7 @@ catching every remaining MachineApplicable fix. (b662f93)
 - Revert "style(clippy): write! for push_str(format!) — corrected paren check"
 
 This reverts commit 818df284e344e5004a22d4cd6dcb400b4d21e2ec. (4856c46)
+
 - **clippy:** Push_str(format!) -> fully-qualified write_fmt (aa3c021)
 - **clippy:** From::from for cast_lossless u8->u64/u32 sites (3893d5e)
 - **clippy:** Duration from_mins/from_hours at known sites (67cc163)
@@ -144,6 +150,7 @@ This reverts commit 818df284e344e5004a22d4cd6dcb400b4d21e2ec. (4856c46)
 - Revert "style(clippy): underscore bindings, extension case, unused returns"
 
 This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
+
 - **clippy:** Remove #[must_use] from unit-returning fns (f4923a6)
 - **clippy:** LoadMode::default with import (f0bce1d)
 - **clippy:** Explicit variants for wildcard-single matches (2a5b335)
@@ -179,6 +186,7 @@ This reverts commit c04d09dcb4b151905277f1e1dc4e54b801703f76. (5852d12)
 - Wrap 4 must_use returns with let _ (final warnings) (8a53101)
 
 ### Refactor
+
 - **tools:** Extract shared helpers to shared.rs (be7bc9d)
 - **provider:** Fn name(&self) -> &'static str, matching trait (14aa0df)
 - **kod-skills:** Unused-self methods -> associated functions (bb6f7b3)
@@ -1145,7 +1153,7 @@ below is covered by a test; the targeted suites are green.
 
 - **PolicyEngine installed on every command that builds an engine.**
   `kod prompt`, `kod run`, `kod swarm`, and `kod replay --execute`
-  were building engines *without* installing a policy; the engine
+  were building engines _without_ installing a policy; the engine
   fallback is allow-all, so the `standard` preset's write-approval
   and deny rules silently did nothing on those paths.
 - **Parallel read-only rounds honour denials.** A `Deny` decision
@@ -1228,7 +1236,7 @@ below is covered by a test; the targeted suites are green.
   lock.
 - **Writes are atomic** (temp + fsync + rename).
 - **The diff parser honors file headers only before the first hunk**
-  (so a `--- ` line inside a hunk survives), strips/re-emits CRLF,
+  (so a `---` line inside a hunk survives), strips/re-emits CRLF,
   and clamps the `@@ -0,0` new-file header.
 - **Invalid globs in a forbidden list fail closed**, not open.
 
@@ -1314,7 +1322,7 @@ below is tested; the workspace suite is green.
 ### Redaction depth
 
 - **In-prompt redaction (opt-in).** `[security.redact] in_prompt =
-  true` runs the redactor over outgoing messages *and* every tool
+  true` runs the redactor over outgoing messages _and_ every tool
   result before the prompt is built. Off by default — the model
   needs the code it is editing.
 - **`/stats` reports redaction counts.** Each rule's hit count for
@@ -1572,8 +1580,6 @@ changes, in the order they matter for a new user:
   `heatmap_truncate` scores hits by term overlap and keeps the top
   N. `GrepTool` uses ripgrep when available and re-ranks its
   results.
-
-
 - **P6 — background jobs.** `BackgroundJobRunner` holds job state
   behind a `DashMap` and caps concurrent jobs with a semaphore.
   `READ_ONLY_TOOLS` is the whitelist, enforced two ways: a
@@ -1620,7 +1626,6 @@ changes, in the order they matter for a new user:
 - **`replay --execute` no longer demands `--yes` for a read-only
   log.**
 - **`/help` and the transcript cache breakpoint:** see Changed.
-
 - **Cache marker gate (P0).** The transcript cache breakpoint is now
   suppressed for the single request that follows a tool-filter
   change. `ToolFilterState` carries a one-shot flag, armed on a
@@ -1628,8 +1633,11 @@ changes, in the order they matter for a new user:
   `build_grounded_request`; that request skips Anthropic's 1.25x
   cache-write premium for a prefix that is about to churn. All other
   requests carry the marker.
+
 ### Added
+
 ### Fixed
+
 - **`deny.toml` now carries a real policy** (design §5.3 B4):
   the file existed but its `[licenses]` section carried no
   allow-list and its `[sources]` section was missing entirely, so
@@ -1645,7 +1653,6 @@ changes, in the order they matter for a new user:
   rustls) and `fastembed` (removed as a phantom dependency). A
   licence outside the allow-list is now a build failure at PR
   time, which is the whole point of the check.
-
 - **Live Anthropic API tests + skippable CI job** (design §4
   D1.5): `crates/kod-provider-anthropic/tests/live.rs` carries
   four `#[ignore]`d tests — a text completion, a streaming text
@@ -1762,6 +1769,7 @@ changes, in the order they matter for a new user:
 - `LlmConfig::validate()` clamps out-of-range values (temperature, context
 
 ### Fixed
+
 - **Episodic facts are now attributed to a session** (design D2.5):
 - **Collected loop also drains steers at the top of the round**:
 - **Routing table keys are now validated** (design §2 AD-06, §12):
@@ -1781,6 +1789,7 @@ changes, in the order they matter for a new user:
 - Session log (`KOD_SESSION_LOG`) and `kod replay` — every tool call recorded
 
 ### Removed
+
 - **Placebo config fields and dead CLI flags** (design §5.3
 - **`/export-html` + phantom-dep removal** (design H1, D6.5): the
 
@@ -1838,8 +1847,6 @@ changes, in the order they matter for a new user:
   `heatmap_truncate` scores hits by term overlap and keeps the top
   N. `GrepTool` uses ripgrep when available and re-ranks its
   results.
-
-
 - **P6 — background jobs.** `BackgroundJobRunner` holds job state
   behind a `DashMap` and caps concurrent jobs with a semaphore.
   `READ_ONLY_TOOLS` is the whitelist, enforced two ways: a
@@ -1886,7 +1893,6 @@ changes, in the order they matter for a new user:
 - **`replay --execute` no longer demands `--yes` for a read-only
   log.**
 - **`/help` and the transcript cache breakpoint:** see Changed.
-
 - **Cache marker gate (P0).** The transcript cache breakpoint is now
   suppressed for the single request that follows a tool-filter
   change. `ToolFilterState` carries a one-shot flag, armed on a
@@ -1894,8 +1900,11 @@ changes, in the order they matter for a new user:
   `build_grounded_request`; that request skips Anthropic's 1.25x
   cache-write premium for a prefix that is about to churn. All other
   requests carry the marker.
+
 ### Added
+
 ### Fixed
+
 - **`deny.toml` now carries a real policy** (design §5.3 B4):
   the file existed but its `[licenses]` section carried no
   allow-list and its `[sources]` section was missing entirely, so
@@ -1911,7 +1920,6 @@ changes, in the order they matter for a new user:
   rustls) and `fastembed` (removed as a phantom dependency). A
   licence outside the allow-list is now a build failure at PR
   time, which is the whole point of the check.
-
 - **Live Anthropic API tests + skippable CI job** (design §4
   D1.5): `crates/kod-provider-anthropic/tests/live.rs` carries
   four `#[ignore]`d tests — a text completion, a streaming text
@@ -2028,6 +2036,7 @@ changes, in the order they matter for a new user:
 - `LlmConfig::validate()` clamps out-of-range values (temperature, context
 
 ### Fixed
+
 - **Episodic facts are now attributed to a session** (design D2.5):
 - **Collected loop also drains steers at the top of the round**:
 - **Routing table keys are now validated** (design §2 AD-06, §12):
@@ -2047,6 +2056,7 @@ changes, in the order they matter for a new user:
 - Session log (`KOD_SESSION_LOG`) and `kod replay` — every tool call recorded
 
 ### Removed
+
 - **Placebo config fields and dead CLI flags** (design §5.3
 - **`/export-html` + phantom-dep removal** (design H1, D6.5): the
 
@@ -2056,6 +2066,7 @@ All notable changes to KOD will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## Related
 
 <CardGrid>

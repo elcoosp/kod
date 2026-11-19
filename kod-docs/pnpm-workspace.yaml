@@ -7,3 +7,5 @@ minimumReleaseAgeExclude:
   - "@elcoosp/*"
   - '@astrojs/runtime@0.1.2'
   - astro@7.4.13
+overrides:
+  '@elcoosp/docs-toolkit': link:../../docs-toolkit

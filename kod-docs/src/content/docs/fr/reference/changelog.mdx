@@ -9,12 +9,15 @@ type: reference
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ## [0.1.28] - 2026-11-05
+
 *(Les messages de commit bruts sont conservés en anglais, comme c'est la norme pour les journaux de modifications techniques.)*
 
 ### Dépendances
+
 - **deps:** Add num-traits; f64→f32 via to_f32 for cast sites (6ccab97)
 
 ### Documentation
+
 - Main-loop split proposal (b267df8)
 - Record shared-helper extraction blocker (990af8e)
 - Correct the shared-helper note — landed, not blocked (9ac53b7)
@@ -64,6 +67,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 - **installation:** Correct rust-toolchain.toml description (7763b34)
 
 ### Corrections
+
 - Hash-fold truncation, git stderr EOF, veracity + llm regressions (420fea4)
 - **clippy:** Undo 0b0e58ca (fmt-breaking multi-arg comma removals + merged doc blocks), re-apply sort_unstable, cargo fmt (97b3900)
 - **docs:** Restore truncated architecture.mdx + fix sidebar formatting (7839708)
@@ -71,6 +75,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 - **docs:** Reapply homepage version + install MSRV cleanly (D7 corruption) (fa8b203)
 
 ### Autres
+
 - **manifest:** Add version to every internal path dep (4dd89c7)
 - **manifest:** Per-crate description, readme, repository (928fc36)
 - Add docs gate and publish dry-run gate (cb5cf76)
@@ -92,9 +97,11 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 Correctifs d'une revue complète de préparation à la production de tout l'espace de travail. Chaque élément ci-dessous est couvert par un test ; les suites ciblées sont au vert.
 
 ### Limites de débit
+
 - **Nouvelle tentative automatique sur limite de débit (H-RL1).** Un 429 du fournisseur avec une fenêtre `Retry-After` inférieure ou égale au budget configuré est désormais attendu et la requête échouée est relancée automatiquement, au lieu de faire surface à l'erreur et de forcer une nouvelle tentative manuelle. Le bouton `rate_limit_wait_secs` par endpoint est désormais par défaut à 1800 s (30 minutes, couvrant la fenêtre de 1200 s de tab-bridge) ; `0` restaure l'échec rapide hérité. Les boucles de streaming et de collecte du moteur attendent la fenêtre entre les requêtes (annulable avec `Esc`, annoncé via un marqueur `\0kod-rate-limit:` que la TUI rend comme une ligne système et la CLI imprime comme une ligne), et le fournisseur Anthropic — auparavant codé en dur pour refuser toute fenêtre supérieure à 60 s — honore le même budget sur ses chemins de collecte, `complete` natif et streaming. La boucle de tentative de streaming OpenAI ne martèle plus un fournisseur limité en débit avec des tentatives instantanées et plafonne désormais les attentes côté fournisseur à 90 s (`STREAM_RATE_LIMIT_WAIT_CAP`) afin que le timeout d'inactivité de flux de 120 s du moteur ne se déclenche jamais pendant une attente.
 
 ### Sécurité
+
 - **PolicyEngine installé sur chaque commande qui construit un moteur.** `kod prompt`, `kod run`, `kod swarm` et `kod replay --execute` construisaient des moteurs *sans* installer de politique ; le repli du moteur est allow-all, donc les règles d'approbation d'écriture et de refus du préréglage `standard` ne faisaient silencieusement rien sur ces chemins.
 - **Les tours en lecture seule parallèles honorent les refus.** Une décision `Deny` (politique ou hook) n'était vérifiée que dans la branche mutante série ; un tour en lecture seule mappait chaque appel directement à `execute_tool`, donc un `read_file` / `grep` / `web_fetch` refusé s'exécutait quand même.
 - **`kod replay --execute` nécessite `--yes`.** Un journal de session enregistré est effectivement un script exécutable d'appels d'outils ; sans le drapeau explicite, la commande refuse maintenant, avec un résumé des appels destructeurs qu'elle aurait exécutés.
@@ -106,6 +113,7 @@ Correctifs d'une revue complète de préparation à la production de tout l'espa
 - **`execute_command` s'exécute dans le répertoire de travail du contexte et avec les variables d'env en forme de secret supprimées.** L'enfant n'hérite plus de `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / tokens.
 
 ### Intégrité des données
+
 - **La mémoire sémantique fonctionne.** Le cache de dimension de l'embedder n'était réchauffé qu'à l'intérieur de `embed()`, et chaque appel `embed()` était conditionné à `dims() > 0` — une porte circulaire qui rendait le scoring sémantique définitivement mort. `store_with_metadata` intègre désormais à l'écriture ; `rebuild_index` intègre les entrées manquantes et persiste.
 - **Les ids de point de contrôle survivent à > 10 000 instantanés.** Le compteur à zéros de remplissage rendait 5 chiffres au-delà de 9 999 et triait avant 9999, donc la rétention commençait à supprimer les instantanés les plus récents.
 - **La restauration de point de contrôle prend d'abord un instantané du fichier courant.** Une restauration erronée ne détruit plus définitivement la version de travail. Les vérifications de taille passent désormais par `metadata()`, pas une lecture complète.
@@ -117,19 +125,22 @@ Correctifs d'une revue complète de préparation à la production de tout l'espa
 - **Le plafond d'historique est conscient des épingles.** Un tour épinglé par l'utilisateur n'est plus détruit silencieusement par la persistance des tours d'outils.
 
 ### Couche filaire du fournisseur
+
 - **Le décodeur SSE Anthropic est sûr au niveau des octets.** Les caractères multi-octets divisés entre les chunks TCP étaient auparavant décodés par chunk avec `from_utf8_lossy`, corrompant le texte diffusé et les arguments d'outils.
 - **Les deux fournisseurs utilisent le `RetryPolicy` partagé.** Le module de nouvelle tentative dans `kod-provider` était du code mort ; le chemin OpenAI utilisait un classificateur de sous-chaîne et Anthropic n'avait aucune nouvelle tentative du tout.
 - **`StopReason` est une variante de `StreamChunk`** donc une réponse tronquée est distinguable d'une fin propre.
 - **Le `stream` hérité se termine sur `Err`** au lieu d'émettre `Err` suivi de `Usage` + `Done`.
 
 ### Outils
+
 - **`patch_file` détient son verrou de chemin à travers lecture + diff + écriture.** Deux patchs concurrents différaient auparavant contre le même original ; le second annulait silencieusement le premier.
 - **Les enfants `git` et `check` sont `kill_on_drop`** donc un outil expiré ne laisse plus de processus zombie détenant le verrou du répertoire cible.
 - **Les écritures sont atomiques** (temp + fsync + rename).
-- **Le parseur de diff n'honore les en-têtes de fichier qu'avant le premier hunk** (donc une ligne `--- ` à l'intérieur d'un hunk survit), supprime/ré-émet CRLF, et plafonne l'en-tête `@@ -0,0` de nouveau fichier.
+- **Le parseur de diff n'honore les en-têtes de fichier qu'avant le premier hunk** (donc une ligne `---` à l'intérieur d'un hunk survit), supprime/ré-émet CRLF, et plafonne l'en-tête `@@ -0,0` de nouveau fichier.
 - **Les globs invalides dans une liste interdite échouent en fermé**, pas en ouvert.
 
 ### Moteur
+
 - **Les chemins auto-check portent la transcription structurée du tour** — le modèle apprend désormais l'issue de l'écriture sous les drapeaux par défaut.
 - **Les messages de résultat d'outil structurés sont plafonnés** (16 Kio) donc un `read_file` de 256 Ko répété sur 40 tours ne peut pas faire croître la transcription au-delà de la fenêtre de l'endpoint.
 - **L'utilisation de tokens s'accumule** à travers les tours ; la forme pré-corrective ne gardait que le rapport du dernier tour.
@@ -139,12 +150,14 @@ Correctifs d'une revue complète de préparation à la production de tout l'espa
 - **Le triage de diagnostic est fail-open** quand Jev ne répond qu'à une partie d'un lot au lieu de cacher les non-répondus.
 
 ### TUI
+
 - **Esc avec les complétions ouvertes garde le brouillon tapé.**
 - **La vérification de changement de phase est asynchrone** au lieu de `block_in_place(block_on(...))` dans le gestionnaire d'événements.
 - **`/regenerate` et `/delete` rembobinent la transcription du moteur**, pas seulement l'affichage.
 - **Le collage avec crochets est activé**, donc le collage d'un bloc de code ne soumet plus sa première ligne comme un prompt.
 
 ### CLI / CI
+
 - **`kod run` retourne le résultat du moteur** (le `let _ =` pré-correctif faisait sortir chaque échec avec 0).
 - **`kod swarm -n N` honore le nombre d'agents demandé.**
 - **`kod skills new` génère un frontmatter analysable** (le modèle portait des retraits de continuation à 9 espaces depuis la source).
@@ -154,12 +167,15 @@ Correctifs d'une revue complète de préparation à la production de tout l'espa
 - **La MSRV est déclarée (1.85).**
 
 ### Structurel
+
 - **`engine_from_config`.** Les sept commandes CLI qui construisaient un `KodEngine` (chat, swarm, agent, prompt, streaming-prompt, acp, serve) portaient chacune un bootstrap écrit à la main de 80 lignes. `run_agent` ne définissait jamais `network_access`, `run_swarm` ne définissait jamais hooks ou limites, et le bug P0-1 de politique manquante existait parce que trois des sept oubliaient l'installation de politique. Les sept routent maintenant à travers un helper unique avec un `EngineBootstrapOptions` explicite ; la forme partagée est la seule forme.
 - **`install_session_recorder` / `install_jev`.** Les deux installations par commande restantes qui étaient sûres à factoriser — les deux étaient dupliquées textuellement entre chat, prompt, agent et swarm.
 
 ### Documentation
+
 - CONTRIBUTING.md MSRV corrigé.
 - Les docs de fonction qui promettaient un comportement que le code n'avait pas (le fallback d'approbation ACP, le contenu `ensure_open` de LSP, le teardown du hub d'essaim, le fail-open du filtre mémoire) correspondent maintenant au code.
 
 ---
+
 *(Note : Ce journal a été abrégé pour la traduction. Les notes de version complètes de la v0.1.0 à la v0.1.27 sont disponibles dans le fichier original en anglais.)*
