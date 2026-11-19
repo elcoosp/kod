@@ -95,5 +95,13 @@
   "snippetDrift.syntaxError": "Code block in {route} ({lang}) has a syntax error: {detail}.",
   "snippetDrift.importPhantom": "Code block in {route} imports unknown symbol `{detail}`.",
   "snippetDrift.versionDrift": "Code block in {route} references outdated version `{detail}`.",
-  "snippetDrift.reportTitle": "Code Snippet Drift & Syntax Report"
+  "snippetDrift.reportTitle": "Code Snippet Drift & Syntax Report",
+  "diataxis.tutorials": "Tutorials",
+  "diataxis.tutorialsDesc": "Follow a step-by-step walkthrough from installation to a working project.",
+  "diataxis.howTo": "How-to Guides",
+  "diataxis.howToDesc": "Solve specific tasks with focused, practical recipes and configuration patterns.",
+  "diataxis.reference": "Reference",
+  "diataxis.referenceDesc": "Look up exact APIs, types, CLI flags, configuration keys, and error codes.",
+  "diataxis.explanation": "Explanation",
+  "diataxis.explanationDesc": "Understand the architecture, design trade-offs, and mental model under the hood."
 }

@@ -95,5 +95,13 @@
   "snippetDrift.syntaxError": "Le bloc de code dans {route} ({lang}) contient une erreur de syntaxe : {detail}.",
   "snippetDrift.importPhantom": "Le bloc de code dans {route} importe un symbole introuvable `{detail}`.",
   "snippetDrift.versionDrift": "Le bloc de code dans {route} référence une version obsolète `{detail}`.",
-  "snippetDrift.reportTitle": "Rapport de dérive des extraits de code"
+  "snippetDrift.reportTitle": "Rapport de dérive des extraits de code",
+  "diataxis.tutorials": "Tutoriels",
+  "diataxis.tutorialsDesc": "Suivez un parcours pas à pas de l'installation à un projet fonctionnel.",
+  "diataxis.howTo": "Guides pratiques",
+  "diataxis.howToDesc": "Résolvez des tâches précises avec des recettes ciblées et des exemples concrets.",
+  "diataxis.reference": "Référence",
+  "diataxis.referenceDesc": "Consultez les API exactes, les types, les options CLI et la configuration.",
+  "diataxis.explanation": "Explications",
+  "diataxis.explanationDesc": "Comprenez l'architecture, les choix de conception et le fonctionnement interne."
 }
