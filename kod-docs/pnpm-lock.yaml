@@ -12,8 +12,8 @@ importers:
         specifier: ^0.43.1
         version: 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@elcoosp/docs-toolkit':
-        specifier: ^1.7.0
-        version: 1.7.0(@astrojs/compiler-rs@0.5.3)(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@expressive-code/core@0.44.4)(@types/node@26.6.6)(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.4)(playwright@1.65.1)(supports-color@10.2.2)
+        specifier: ^1.7.1
+        version: 1.7.1(@astrojs/compiler-rs@0.5.3)(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@expressive-code/core@0.44.4)(@types/node@26.6.6)(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.4)(playwright@1.65.1)(supports-color@10.2.2)
       astro:
         specifier: ^7.4.13
         version: 7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
@@ -400,8 +400,8 @@ packages:
       linkedom:
         optional: true
 
-  '@elcoosp/docs-toolkit@1.7.0':
-    resolution: {integrity: sha512-r6TiP9IuD5IXttuI4FX6qeGXE0eTFm7sDvC+ypxCvOs4N0GUjGM5bRGOsQrLrNwTHFDuEoOV6i7QTFd1kL4ABQ==}
+  '@elcoosp/docs-toolkit@1.7.1':
+    resolution: {integrity: sha512-9Au2dGL/nr8i3CRo+mUqhiF1F3EOxH3TwLZCePob0b1fEYTDZVbatHvCWjMbU7iEkPhuH1nGZcCpIbb2WIrwYg==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -3769,7 +3769,7 @@ snapshots:
       - csstype
       - preact
 
-  '@elcoosp/docs-toolkit@1.7.0(@astrojs/compiler-rs@0.5.3)(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@expressive-code/core@0.44.4)(@types/node@26.6.6)(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.4)(playwright@1.65.1)(supports-color@10.2.2)':
+  '@elcoosp/docs-toolkit@1.7.1(@astrojs/compiler-rs@0.5.3)(@astrojs/markdown-satteri@0.4.10)(@astrojs/starlight@0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3))(@expressive-code/core@0.44.4)(@types/node@26.6.6)(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(csstype@3.2.4)(playwright@1.65.1)(supports-color@10.2.2)':
     dependencies:
       '@astrojs/starlight': 0.43.1(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(astro@7.4.13(@astrojs/markdown-remark@7.3.9(supports-color@10.2.2))(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))(supports-color@10.2.2)(typescript@6.0.3)
       '@elcoosp/astro-takumi': 2.2.0(csstype@3.2.4)(linkedom@0.18.15)
