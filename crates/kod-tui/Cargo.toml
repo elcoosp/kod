@@ -19,12 +19,12 @@ all-features = true
 
 [dependencies]
 num-traits = { workspace = true }
-kod-core-tools = { path = "../kod-core-tools", version = "0.1.28" }
-kod-core-quality = { path = "../kod-core-quality", version = "0.1.28" }
-kod-core-routing = { path = "../kod-core-routing", version = "0.1.28" }
-kod-core-state = { path = "../kod-core-state", version = "0.1.28" }
+kod-core-tools = { path = "../kod-core-tools", version = "0.1.29" }
+kod-core-quality = { path = "../kod-core-quality", version = "0.1.29" }
+kod-core-routing = { path = "../kod-core-routing", version = "0.1.29" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.29" }
 unicode-width = { workspace = true }
-kod-provider = { path = "../kod-provider", version = "0.1.28" }
+kod-provider = { path = "../kod-provider", version = "0.1.29" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 syntect = { workspace = true }
@@ -35,14 +35,14 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.28" }
-kod-error = { path = "../kod-error", version = "0.1.28" }
-kod-config = { path = "../kod-config", version = "0.1.28" }
-kod-core = { path = "../kod-core", version = "0.1.28" }
-kod-skills = { path = "../kod-skills", version = "0.1.28" }
-kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.28" }
-kod-tools = { path = "../kod-tools", version = "0.1.28" }
-kod-memory = { path = "../kod-memory", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
+kod-config = { path = "../kod-config", version = "0.1.29" }
+kod-core = { path = "../kod-core", version = "0.1.29" }
+kod-skills = { path = "../kod-skills", version = "0.1.29" }
+kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.29" }
+kod-tools = { path = "../kod-tools", version = "0.1.29" }
+kod-memory = { path = "../kod-memory", version = "0.1.29" }
 walkdir = { workspace = true }
 regex = { workspace = true }
 dirs = { workspace = true }
