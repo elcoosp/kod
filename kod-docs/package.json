@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.43.1",
-    "@elcoosp/docs-toolkit": "^1.7.1",
+    "@elcoosp/docs-toolkit": "^1.7.2",
     "astro": "^7.4.13"
   },
   "devDependencies": {
