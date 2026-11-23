@@ -19,8 +19,10 @@ let ctx = RiskContext {
     scratch_dir: PathBuf::from("/tmp"),
 };
 
-// A catastrophic command is refused outright.
-assert_eq!(assess("rm -rf /", &ctx).level, RiskLevel::Catastrophic);
+// A catastrophic command is refused outright. The home directory is
+// a catastrophic target on every platform (`rm -rf /` is Unix-only:
+// Windows has no `/` root, so this example uses `~` to stay portable).
+assert_eq!(assess("rm -rf ~", &ctx).level, RiskLevel::Catastrophic);
 
 // A safe command runs without a prompt.
 assert!(assess("ls -la", &ctx).level.runs_immediately());
