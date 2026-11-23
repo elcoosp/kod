@@ -1333,7 +1333,7 @@ mod redaction_wiring_tests {
     //! never reaches `TypeSafe`).
 
     use super::*;
-    use crate::{LlmProvider, RouterConfig};
+    use crate::RouterConfig;
     use kod_config::JevConfig;
     use std::sync::Arc;
 

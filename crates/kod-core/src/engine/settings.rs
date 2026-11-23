@@ -6,7 +6,7 @@ use super::{
 
 impl KodEngine {
     #[cfg(test)]
-    pub(crate) async fn install_test_provider(&self, provider: Arc<dyn LlmProvider>) {
+    pub(crate) async fn install_test_provider(&self, provider: Arc<dyn kod_provider::LlmProvider>) {
         let mut reg = kod_provider::ProviderRegistry::new();
         reg.insert(
             "default",

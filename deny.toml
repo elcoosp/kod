@@ -157,8 +157,24 @@ ignore = [
     # `portable-pty` -> `serial`. Never linked into the `kod` binary.
     "RUSTSEC-2017-0008",
 
-    # pin-utils unmaintained — transitive dependency of the tokio ecosystem.
-    "RUSTSEC-2024-0428",
+    # RUSTSEC-2026-0441 — pin-utils 0.1.1 unmaintained.
+    #
+    # Transitive dependency of the tokio ecosystem (futures-util and
+    # friends). No safe upgrade exists; the crate is a two-macro shim
+    # (`pin_mut!`, `pin_mut!`-style projection helpers) whose API is
+    # frozen. cargo audit reports it as unmaintained, not vulnerable.
+    "RUSTSEC-2026-0441",
+
+    # RUSTSEC-2026-0543 — chrono 0.4 unmaintained.
+    #
+    # Pulled through the ADK provider stack (`adk-model` -> `chrono`)
+    # and kod-config's `[llm]` timestamps. chrono's maintainer has
+    # declared the crate unmaintained in favour of the `time` crate, but
+    # no drop-in replacement clears the whole tree here: migrating the
+    # ADK transitive is out of kod's control, and kod's own timestamps
+    # are `DateTime<Utc>` values threaded through config and cost
+    # snapshots. Not a vulnerability; the API is stable.
+    "RUSTSEC-2026-0543",
 ]
 
 
