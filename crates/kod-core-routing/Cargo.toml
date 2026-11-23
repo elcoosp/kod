@@ -32,14 +32,14 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
-kod-types = { path = "../kod-types", version = "0.1.28" }
-kod-error = { path = "../kod-error", version = "0.1.28" }
-kod-config = { path = "../kod-config", version = "0.1.28" }
-kod-provider = { path = "../kod-provider", version = "0.1.28" }
-kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.28" }
-kod-provider-anthropic = { path = "../kod-provider-anthropic", version = "0.1.28" }
-kod-memory = { path = "../kod-memory", version = "0.1.28" }
-kod-core-state = { path = "../kod-core-state", version = "0.1.28" }
+kod-types = { path = "../kod-types", version = "0.1.29" }
+kod-error = { path = "../kod-error", version = "0.1.29" }
+kod-config = { path = "../kod-config", version = "0.1.29" }
+kod-provider = { path = "../kod-provider", version = "0.1.29" }
+kod-provider-openai = { path = "../kod-provider-openai", version = "0.1.29" }
+kod-provider-anthropic = { path = "../kod-provider-anthropic", version = "0.1.29" }
+kod-memory = { path = "../kod-memory", version = "0.1.29" }
+kod-core-state = { path = "../kod-core-state", version = "0.1.29" }
 
 [dev-dependencies]
 proptest = { workspace = true }
